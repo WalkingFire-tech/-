@@ -19,7 +19,22 @@
 
 ## 快速开始
 
-[详细安装步骤...]
+### 1. 安装依赖
+
+python -m venv venv
+source venv/bin/activate        # Linux/macOS
+.\venv\Scripts\Activate.ps1     # Windows
+pip install -r requirements.txt
+
+### 2. 配置 Ollama 模型
+
+ollama pull mindchat
+ollama pull qwen2.5-coder:1.5b
+
+### 3. 运行
+
+python main.py
+
 
 ## 许可证
 
