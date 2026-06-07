@@ -1,5 +1,3 @@
-echo "# Alliance Pioneer
-
 > **这是一个开放的、不断自我生长的「思考同伴」。**
 > 它的意义不在于完成多少任务，而在于拉近人与知识、人与创造、人与彼此之间的距离。
 
@@ -28,7 +26,3 @@ echo "# Alliance Pioneer
 无限制。你拥有你创造的任何东西。
 
 **“欢迎来到营火。今天是你和这片火光的第一次相遇。”**" > README.md
-
-git add README.md
-git commit -m "docs: add README"
-git push
