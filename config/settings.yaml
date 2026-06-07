@@ -1,0 +1,251 @@
+# 联盟拓荒者配置文件
+
+# 模型配置
+models:
+  # 本地模型配置
+  local:
+    ollama_base_url: "http://localhost:11434"
+    default_timeout: 120
+    retry_times: 3
+    retry_delay: 2
+    
+    # 可用的本地模型列表
+    available:
+      mindchat:
+        enabled: true
+        description: "心理/通用对话模型"
+        temperature: 0.7
+        max_tokens: 512
+      qwen2.5-coder:1.5b:
+        enabled: true
+        description: "轻量代码生成模型"
+        temperature: 0.5
+        max_tokens: 1024
+      deepcoder:
+        enabled: false
+        description: "深度代码模型"
+        temperature: 0.3
+        max_tokens: 2048
+
+  # 远程模型配置
+  remote:
+    enabled: true
+    timeout: 60
+    retry_times: 2
+    retry_delay: 3
+    models:
+      gpt-4o-mini:
+        description: "GPT-4o mini"
+        temperature: 0.7
+        max_tokens: 2048
+        base_url: null  # 使用OpenAI默认URL
+      deepseek-chat:
+        description: "DeepSeek Chat - 通用对话模型"
+        temperature: 0.7
+        max_tokens: 4096
+        base_url: "https://api.deepseek.com/v1"
+      deepseek-coder:
+        description: "DeepSeek Coder - 代码专用模型"
+        temperature: 0.3
+        max_tokens: 4096
+        base_url: "https://api.deepseek.com/v1"
+
+# 模型路由策略
+routing:
+  # 任务类型到模型的映射(与实际注册模型名称一致)
+  task_model_mapping:
+    code:
+      preferred: ["qwen2.5-coder:1.5b", "deepseek-coder", "deepseek-chat"]
+      fallback: "mindchat"
+    chat:
+      preferred: ["mindchat", "deepseek-chat", "qwen2.5-coder:1.5b"]
+      fallback: "mindchat"
+    question:
+      preferred: ["mindchat", "deepseek-chat", "qwen2.5-coder:1.5b"]
+      fallback: "mindchat"
+    calculation:
+      preferred: ["deepseek-chat", "qwen2.5-coder:1.5b", "mindchat"]
+      fallback: "mindchat"
+    memory:
+      preferred: ["mindchat", "deepseek-chat", "qwen2.5-coder:1.5b"]
+      fallback: "mindchat"
+    document:
+      preferred: ["deepseek-chat", "mindchat", "qwen2.5-coder:1.5b"]
+      fallback: "mindchat"
+  
+  # 全局fallback顺序(当特定意图无配置时使用)
+  fallback:
+    default_order:
+      - deepseek-chat
+      - mindchat
+      - qwen2.5-coder:1.5b
+    # 按任务类型的fallback顺序
+    task_model_order:
+      code:
+        - qwen2.5-coder:1.5b
+        - deepseek-coder
+        - mindchat
+      question:
+        - mindchat
+        - deepseek-chat
+        - qwen2.5-coder:1.5b
+      chat:
+        - mindchat
+        - deepseek-chat
+        - qwen2.5-coder:1.5b
+      calculation:
+        - deepseek-chat
+        - qwen2.5-coder:1.5b
+        - mindchat
+      document:
+        - deepseek-chat
+        - mindchat
+        - qwen2.5-coder:1.5b
+  
+  # 复杂任务判定
+  complex_task:
+    min_text_length: 100
+    keywords: ["π", "Π", "pi", "圆周率", "复杂", "详细"]
+    calculation_keywords: ["计算", "输出", "数值", "前", "位"]
+
+# 意图识别配置
+intent:
+  # 意图识别阈值
+  confidence_threshold: 0.6
+  
+  # 自定义规则(正则表达式)
+  custom_rules:
+    code:
+      - "代码"
+      - "写.*代码"
+      - "生成.*代码"
+      - "编程"
+      - "实现"
+      - "算法"
+      - "冒泡"
+      - "快速"
+      - "递归"
+      - "函数"
+      - "类"
+      - "模块"
+    question:
+      - "什么是"
+      - "为什么"
+      - "怎么"
+      - "如何"
+      - "哪"
+      - "谁"
+      - "多少"
+      - "解释"
+      - "介绍"
+      - "说明"
+    memory:
+      - "记住"
+      - "忘记"
+      - "回忆"
+      - "之前"
+      - "刚才"
+      - "聊过"
+      - "说过"
+      - "我们.*什么"
+    calculation:
+      - "Π"
+      - "π"
+      - "圆周率"
+      - "前\\s*\\d+\\s*位"
+      - "输出.*数值"
+      - "计算.*值"
+      - "给出.*结果"
+    feedback:
+      - "^\\+1$"
+      - "^-1$"
+      - "点赞"
+      - "踩"
+      - "好评"
+      - "差评"
+
+# 记忆系统配置
+memory:
+  # 短期记忆
+  short_term:
+    max_rounds: 5
+    file_path: "campfire_log.txt"
+  
+  # 长期记忆(经验池)
+  long_term:
+    db_path: "experience_pool.db"
+    max_experiences: 10000
+    auto_induction: false
+    induction_interval: 100
+
+# 统计系统配置
+stats:
+  db_path: "model_stats.db"
+  
+  # 质量评估权重
+  quality_weights:
+    response_length: 0.3
+    code_correctness: 0.4
+    user_feedback: 0.3
+
+# 安全审核配置
+audit:
+  enabled: true
+  
+  # 危险操作拦截
+  dangerous_patterns:
+    - "rm\\s+-rf\\s+/"
+    - "drop\\s+database"
+    - "format\\s+[a-z]:"
+    - "chmod\\s+777"
+    - "os\\.remove\\("
+    - "shutil\\.rmtree\\("
+  
+  # 隐私信息检测
+  privacy_detection: true
+
+# 代码执行沙盒配置
+sandbox:
+  enabled: true
+  timeout: 15
+  max_output_length: 10000
+  
+  # 禁止的模块
+  forbidden_modules:
+    - "os"
+    - "subprocess"
+    - "shutil"
+    - "sys"
+    - "__import__"
+    - "eval"
+    - "exec"
+    - "compile"
+
+# UI配置
+ui:
+  type: "cli"
+  
+  # CLI配置
+  cli:
+    prompt_style: "rich"
+    show_model_info: true
+    show_quality_score: true
+
+# 日志配置
+logging:
+  level: "INFO"
+  file: "campfire.log"
+  rotation: "1 day"
+  format: "{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
+
+# 计算任务特殊处理
+calculation:
+  # π值计算
+  pi:
+    # 使用预定义字符串(快速)
+    use_predefined: true
+    predefined_value: "3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170679"
+    
+    # 或使用mpmath计算(精确)
+    use_mpmath: false
+    precision: 100

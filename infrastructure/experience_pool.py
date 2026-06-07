@@ -1,6 +1,7 @@
 ﻿import sqlite3
 import json
 from datetime import datetime, timedelta
+from typing import Optional, Dict, List, Any
 from loguru import logger
 
 class ExperiencePool:
@@ -29,15 +30,43 @@ class ExperiencePool:
 
     def add_experience(self, intent_type: str, raw_input: str, plan: str,
                        model_name: str, quality_score: int, user_feedback: int,
-                       success: bool, duration: float):
+                       success: bool, duration: float, response: str = "") -> int:
+        """添加经验并返回ID"""
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute('''
+                INSERT INTO experiences (timestamp, intent_type, raw_input, plan, model_name,
+                                         quality_score, user_feedback, success, duration, response)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (datetime.now().isoformat(), intent_type, raw_input, plan,
+                  model_name, quality_score, user_feedback, success, duration, response))
+            
+            experience_id = cur.lastrowid
+        
+        logger.debug(f"经验已存储: {intent_type}, 质量 {quality_score}, ID {experience_id}")
+        return experience_id
+    
+    def update_feedback(self, experience_id: int, feedback: int):
+        """更新经验的用户反馈"""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute('''
-                INSERT INTO experiences (timestamp, intent_type, raw_input, plan, model_name,
-                                         quality_score, user_feedback, success, duration)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (datetime.now().isoformat(), intent_type, raw_input, plan,
-                  model_name, quality_score, user_feedback, success, duration))
-        logger.debug(f"经验已存储: {intent_type}, 质量 {quality_score}")
+                UPDATE experiences
+                SET user_feedback = ?
+                WHERE id = ?
+            ''', (feedback, experience_id))
+        
+        logger.debug(f"更新经验反馈: ID {experience_id}, 反馈 {feedback}")
+    
+    def get_last_experience_id(self, model_name: str, intent_type: str) -> Optional[int]:
+        """获取最近一次经验的ID"""
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute('''
+                SELECT id FROM experiences
+                WHERE model_name = ? AND intent_type = ?
+                ORDER BY timestamp DESC LIMIT 1
+            ''', (model_name, intent_type))
+            
+            row = cur.fetchone()
+            return row[0] if row else None
 
     def get_high_quality_experiences(self, intent_type: str = None, min_quality: int = 70, limit: int = 100):
         """获取高质量经验用于归纳"""

@@ -60,7 +60,24 @@ class ModelStats:
             else:
                 return {"total": 0, "success_rate": 0.5, "avg_duration": 10.0, "avg_feedback": 0, "avg_quality": 50}
 
-    def get_best_model_for_task(self, task_type: str, speed_weight=0.3, quality_weight=0.7) -> str:
+    def get_best_model_for_task(self, task_type: str, weights: dict = None, 
+                                speed_weight=0.3, quality_weight=0.7) -> str:
+        """获取最佳模型
+        
+        Args:
+            task_type: 任务类型
+            weights: 权重字典 {'quality': x, 'speed': y, 'cost': z}
+            speed_weight: 速度权重(旧参数,保持兼容)
+            quality_weight: 质量权重(旧参数,保持兼容)
+        """
+        # 处理新旧参数兼容
+        if weights:
+            quality_weight = weights.get('quality', 0.5)
+            speed_weight = weights.get('speed', 0.3)
+            cost_weight = weights.get('cost', 0.2)
+        else:
+            cost_weight = 0.0
+        
         with sqlite3.connect(self.db_path) as conn:
             cur = conn.execute('''
                 SELECT model_name,
@@ -75,13 +92,13 @@ class ModelStats:
             candidates = []
             for row in cur.fetchall():
                 model, success_rate, avg_duration, avg_feedback, avg_quality = row
-                norm_success = success_rate
+                norm_success = success_rate if success_rate else 0.5
                 norm_feedback = (avg_feedback + 1) / 2 if avg_feedback is not None else 0.5
                 norm_quality = avg_quality / 100.0 if avg_quality else 0.5
-                norm_speed = max(0, 1 - (avg_duration / 60.0))
+                norm_speed = max(0, 1 - (avg_duration / 60.0)) if avg_duration else 0.5
                 # 综合质量：反馈+自动评分
                 combined_quality = 0.5 * norm_feedback + 0.5 * norm_quality
-                score = quality_weight * combined_quality + speed_weight * norm_speed
+                score = quality_weight * combined_quality + speed_weight * norm_speed + cost_weight * 0.5
                 candidates.append((score, model))
             if candidates:
                 candidates.sort(reverse=True)

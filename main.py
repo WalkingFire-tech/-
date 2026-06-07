@@ -1,8 +1,10 @@
-﻿"""
+"""
 Alliance Pioneer - Main Entry (Fixed Feedback Loop)
 """
 import os
 import sys
+import signal
+import atexit
 sys.stdin.reconfigure(encoding='utf-8')
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -11,6 +13,8 @@ from loguru import logger
 from infrastructure.event_bus import bus
 from infrastructure.logger import CampfireLogger
 from infrastructure.model_stats import ModelStats
+from infrastructure.config_manager import config
+from infrastructure.calculation_handler import CalculationHandler
 from adapters.ui.cli_ui import CliUI
 from core.services.intent_parser import IntentParser
 from core.services.planner import Planner
@@ -19,6 +23,19 @@ from adapters.llm.remote_adapter import RemoteAdapter
 
 load_dotenv()
 logger.add("campfire.log", rotation="1 day", level="INFO")
+
+try:
+    from infrastructure.database import init_all_databases
+    init_all_databases()
+except Exception as e:
+    logger.warning(f"数据库初始化失败: {e}")
+
+try:
+    from infrastructure.vector_retriever import vector_retriever
+    vector_retriever.load_index()
+    logger.info("向量索引已加载")
+except Exception as e:
+    logger.debug(f"向量索引加载失败(首次运行): {e}")
 
 campfire = CampfireLogger()
 adapters = {}
@@ -51,9 +68,23 @@ if not adapters:
     try:
         if os.getenv("OPENAI_API_KEY"):
             adapters["remote_gpt4"] = RemoteAdapter(model_name="gpt-4o-mini")
-            logger.info("Loaded remote model")
+            logger.info("Loaded remote GPT-4o-mini")
     except Exception as e:
-        logger.warning(f"Remote model unavailable: {e}")
+        logger.warning(f"Remote GPT model unavailable: {e}")
+
+    try:
+        if os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY"):
+            adapters["deepseek-chat"] = RemoteAdapter(model_name="deepseek-chat")
+            logger.info("Loaded DeepSeek Chat")
+    except Exception as e:
+        logger.warning(f"DeepSeek Chat unavailable: {e}")
+
+    try:
+        if os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY"):
+            adapters["deepseek-coder"] = RemoteAdapter(model_name="deepseek-coder")
+            logger.info("Loaded DeepSeek Coder")
+    except Exception as e:
+        logger.warning(f"DeepSeek Coder unavailable: {e}")
 
     if not adapters:
         from adapters.llm.mock_adapter import MockAdapter
@@ -62,6 +93,22 @@ if not adapters:
 intent_parser = IntentParser()
 planner = Planner(adapters)
 stats = ModelStats()
+
+try:
+    from meta.controller import get_meta_controller
+    meta_controller = get_meta_controller()
+    meta_controller.start_scheduler()
+    logger.info("元控制层调度器已启动")
+except Exception as e:
+    logger.warning(f"元控制层启动失败: {e}")
+    meta_controller = None
+
+try:
+    from infrastructure.config_watcher import config_watcher
+    config_watcher.start()
+    logger.info("配置文件监控已启动")
+except Exception as e:
+    logger.warning(f"配置监控启动失败: {e}")
 
 def on_user_input(data):
     campfire.log_user(data)
@@ -84,12 +131,14 @@ def on_user_input(data):
             ui.show_response("Sorry, cannot record feedback now")
         return
 
-    # Special handling for pi calculation to avoid remote timeout
-    if intent.type == "calculation" and ("π" in intent.raw_text or "Π" in intent.raw_text or "pi" in intent.raw_text.lower()):
-        pi_100 = "3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170679"
-        ui.show_response(f"Computation result:\n{pi_100}")
-        # Also record a dummy call for stats (optional)
-        return
+    if intent.type == "calculation":
+        calc_result = CalculationHandler.handle_calculation(intent.raw_text)
+        if calc_result["success"]:
+            ui.show_response(f"计算结果:\n{calc_result['result']}")
+            return
+        elif calc_result["error"]:
+            ui.show_response(f"计算失败: {calc_result['error']}")
+            return
 
     # Normal planning
     planner.plan(intent)
@@ -102,9 +151,114 @@ def on_plan_executed(response):
 bus.subscribe("user_input", on_user_input)
 bus.subscribe("plan_executed", on_plan_executed)
 
+
+def on_optimize_request(data):
+    """处理优化命令请求"""
+    method = data.get("method", "bayesian")
+    iterations = data.get("iterations", 15)
+    
+    if meta_controller:
+        result = meta_controller.run_manual_optimization(
+            method=method,
+            n_iterations=iterations
+        )
+        
+        if result.get("success"):
+            ui.show_response(
+                f"✓ 优化完成!\n"
+                f"最佳得分: {result['best_score']:.4f}\n"
+                f"最佳参数: {result['best_params']}"
+            )
+        else:
+            ui.show_response(f"✗ 优化失败: {result.get('error')}")
+    else:
+        ui.show_response("元控制层未启动,无法优化")
+
+
+def on_induction_request(data):
+    """处理归纳命令请求"""
+    days = data.get("days", 7)
+    
+    try:
+        from meta.induction import induction_scheduler
+        result = induction_scheduler.run_induction(days)
+        
+        if result.get("success"):
+            ui.show_response(
+                f"✓ 归纳完成!\n"
+                f"发现模式: {result['patterns']}个\n"
+                f"生成规则: {result['rules']}条"
+            )
+        else:
+            ui.show_response(f"✗ 归纳失败: {result.get('message')}")
+    except Exception as e:
+        ui.show_response(f"✗ 归纳失败: {e}")
+
+
+from infrastructure.events import Events
+bus.subscribe(Events.CMD_OPTIMIZE, on_optimize_request)
+bus.subscribe(Events.CMD_INDUCTION, on_induction_request)
+
+
+def shutdown():
+    """优雅关闭所有资源"""
+    if hasattr(shutdown, '_called'):
+        return
+    shutdown._called = True
+    
+    logger.info("正在关闭系统...")
+    
+    try:
+        from infrastructure.vector_retriever import vector_retriever
+        vector_retriever.save_index()
+        logger.info("向量索引已保存")
+    except Exception as e:
+        logger.debug(f"向量索引保存失败: {e}")
+    
+    try:
+        from infrastructure.config_watcher import config_watcher
+        config_watcher.stop()
+        logger.info("配置监控已停止")
+    except Exception as e:
+        logger.warning(f"停止配置监控失败: {e}")
+    
+    if meta_controller:
+        try:
+            meta_controller.stop_scheduler()
+            logger.info("元控制层调度器已停止")
+        except Exception as e:
+            logger.warning(f"停止调度器失败: {e}")
+    
+    try:
+        from infrastructure.db_pool import close_all_pools
+        close_all_pools()
+    except Exception as e:
+        logger.debug(f"关闭连接池失败: {e}")
+    
+    logger.info("系统已安全关闭")
+
+
+def signal_handler(sig, frame):
+    """处理Ctrl+C等退出信号"""
+    print("\n收到退出信号,正在清理...")
+    shutdown()
+    sys.exit(0)
+
+
+atexit.register(shutdown)
+signal.signal(signal.SIGINT, signal_handler)
+if hasattr(signal, 'SIGTERM'):
+    signal.signal(signal.SIGTERM, signal_handler)
+
 if __name__ == "__main__":
     ui = CliUI()
     recent = campfire.get_recent_context(5)
     if recent:
         print("\n🔥 Campfire warmth (recent conversations):\n", recent, "\n")
-    ui.start()
+    
+    try:
+        ui.start()
+    except KeyboardInterrupt:
+        logger.info("收到键盘中断")
+    finally:
+        shutdown()
