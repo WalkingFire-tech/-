@@ -28,12 +28,39 @@ pip install -r requirements.txt
 
 ### 2. 配置 Ollama 模型
 
-ollama pull mindchat
-ollama pull qwen2.5-coder:1.5b
+  ollama pull mindchat
+
+  ollama pull qwen2.5-coder:1.5b
 
 ### 3. 运行
 
 python main.py
+
+## 目录结构（核心）
+
+alliance_pioneer/
+├── core/                     # 领域逻辑（意图、规划、审核）
+├── adapters/                 # 外部适配器（LLM、UI、文件）
+├── infrastructure/           # 基础设施（事件总线、统计库、经验池等）
+├── config/                   # 配置文件（路由策略、意图规则）
+├── scripts/                  # 运维脚本（离线归纳）
+├── main.py                   # 入口
+├── campfire_log.txt          # 短期记忆（自动生成）
+├── model_stats.db            # 模型调用统计
+└── experience_pool.db        # 长期经验池
+
+## 路线图（营火搭建阶段）
+
+✅ 阶段 0：燃起篝火（基础 CLI + 事件总线）
+
+✅ 阶段 1：让营火可以添柴（短期记忆 + 规则意图识别）
+
+✅ 阶段 2：让火焰学会呼吸（动态路由 + 模型统计 + 反馈闭环）
+
+⏳ 阶段 3：让火光传递给更多人（Web UI / 热键 / 多用户）
+
+⏳ 阶段 4：让火焰自己学习添柴（离线归纳 + 规则自动注入）
+
 
 
 ## 许可证
