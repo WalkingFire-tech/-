@@ -39,15 +39,27 @@ python main.py
 ## 目录结构（核心）
 
 alliance_pioneer/
-├── core/                     # 领域逻辑（意图、规划、审核）
-├── adapters/                 # 外部适配器（LLM、UI、文件）
-├── infrastructure/           # 基础设施（事件总线、统计库、经验池等）
-├── config/                   # 配置文件（路由策略、意图规则）
-├── scripts/                  # 运维脚本（离线归纳）
-├── main.py                   # 入口
-├── campfire_log.txt          # 短期记忆（自动生成）
-├── model_stats.db            # 模型调用统计
-└── experience_pool.db        # 长期经验池
+
+├── core/ # 领域逻辑（意图、规划、审核）
+
+├── adapters/ # 外部适配器（LLM、UI、文件）
+
+├── infrastructure/ # 基础设施（事件总线、统计库、经验池等）
+
+├── main.py # 入口
+
+├── models/ # 本地模型占位（模型文件本身不提交）
+
+├── config/ # （规划中）配置文件
+
+├── scripts/ # （规划中）运维脚本
+
+├── campfire_log.txt # 短期记忆（运行时自动生成）
+
+├── model_stats.db # 模型调用统计（运行时自动生成）
+
+└── experience_pool.db # 长期经验池（运行时自动生成）
+
 
 ## 路线图（营火搭建阶段）
 
