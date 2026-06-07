@@ -1,0 +1,19 @@
+# 开发依赖
+pytest>=7.0.0
+pytest-cov>=4.0.0
+flake8>=6.0.0
+black>=23.0.0
+mypy>=1.0.0
+isort>=5.12.0
+
+# 文档生成
+sphinx>=5.0.0
+sphinx-rtd-theme>=1.2.0
+
+# 性能分析
+py-spy>=0.3.14
+memory-profiler>=0.61.0
+
+# 代码质量
+pylint>=2.17.0
+pre-commit>=3.3.0
