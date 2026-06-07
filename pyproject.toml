@@ -1,0 +1,149 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alliance-pioneer"
+version = "3.1.1"
+description = "生产级自我进化智能体系统 - 完全自动理解、学习并完善自我的中枢"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "WalkingFire-tech", email = "kun_phone@139.com"}
+]
+maintainers = [
+    {name = "WalkingFire-tech", email = "kun_phone@139.com"}
+]
+keywords = [
+    "ai",
+    "agent",
+    "self-evolution",
+    "bayesian-optimization",
+    "meta-learning",
+    "ollama",
+    "llm"
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.11"
+dependencies = [
+    "rich>=13.0.0",
+    "loguru>=0.7.0",
+    "PyYAML>=6.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+    "numpy>=1.24.0",
+    "scipy>=1.11.0",
+    "scikit-learn>=1.3.0",
+    "schedule>=1.2.0",
+]
+
+[project.optional-dependencies]
+optimization = [
+    "scikit-optimize>=0.10.0",
+]
+vector = [
+    "faiss-cpu>=1.7.0",
+    "sentence-transformers>=2.2.0",
+]
+math = [
+    "mpmath>=1.3.0",
+]
+rules = [
+    "simpleeval>=1.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "flake8>=6.0.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0",
+]
+all = [
+    "alliance-pioneer[optimization,vector,math,rules,dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/WalkingFire-tech/Alliance-Pioneer"
+Documentation = "https://github.com/WalkingFire-tech/Alliance-Pioneer/tree/main/docs"
+Repository = "https://github.com/WalkingFire-tech/Alliance-Pioneer.git"
+Issues = "https://github.com/WalkingFire-tech/Alliance-Pioneer/issues"
+Changelog = "https://github.com/WalkingFire-tech/Alliance-Pioneer/blob/main/CHANGELOG.md"
+
+[project.scripts]
+alliance-pioneer = "main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["adapters*", "core*", "infrastructure*", "meta*", "tools*"]
+exclude = ["tests*", "docs*", "archives*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+
+[tool.coverage.run]
+source = ["core", "adapters", "infrastructure", "meta", "tools"]
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+[tool.black]
+line-length = 120
+target-version = ['py311']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | build
+  | dist
+  | __pycache__
+)/
+'''
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.flake8]
+max-line-length = 120
+exclude = [".git", "__pycache__", "build", "dist", ".venv"]
