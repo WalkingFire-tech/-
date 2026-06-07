@@ -1,0 +1,31 @@
+# CODEOWNERS - 代码所有者定义
+# 
+# 这些规则定义了谁负责审查代码。
+# 更多信息：https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# 核心维护者
+* @WalkingFire-tech
+
+# 核心服务层
+/core/services/ @WalkingFire-tech
+
+# 适配器层
+/adapters/ @WalkingFire-tech
+
+# 基础设施层
+/infrastructure/ @WalkingFire-tech
+
+# 元控制层
+/meta/ @WalkingFire-tech
+
+# 工具系统
+/tools/ @WalkingFire-tech
+
+# 配置文件
+/config/ @WalkingFire-tech
+
+# 测试
+/tests/ @WalkingFire-tech
+
+# 文档
+/docs/ @WalkingFire-tech
