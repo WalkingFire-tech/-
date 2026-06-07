@@ -1,0 +1,24 @@
+﻿# 虚拟环境
+venv/
+__pycache__/
+*.pyc
+
+# 模型文件（GGUF 等）
+models/*.gguf
+*.gguf
+*.safetensors
+
+# 日志和数据库
+*.log
+*.db
+campfire_log.txt
+feedback.json
+model_stats.db
+experience_pool.db
+
+# 环境变量（可能包含密钥）
+.env
+
+# 临时文件
+temp/
+*.tmp
