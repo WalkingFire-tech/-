@@ -2,6 +2,9 @@
 venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
 
 # 模型文件（GGUF 等）
 models/*.gguf
@@ -15,10 +18,45 @@ campfire_log.txt
 feedback.json
 model_stats.db
 experience_pool.db
+learning_rules.db
+tool_stats.db
+
+# 数据目录
+data/
+*.faiss
+*.json
 
 # 环境变量（可能包含密钥）
 .env
+.env.local
 
 # 临时文件
 temp/
 *.tmp
+*.bak
+*.backup
+*_backup*.py
+
+# IDE和编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 测试覆盖率
+.coverage
+htmlcov/
+.pytest_cache/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 构建和分发
+dist/
+build/
+*.egg-info/
+
+# Arts目录（IDE配置）
+.arts/
