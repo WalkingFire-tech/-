@@ -248,6 +248,12 @@ pip install -e ".[dev]"
 
 查看 `docs/` 目录获取详细架构设计文档（20+文档）。
 
+### 📖 设计哲学
+
+阅读 [联盟拓荒者与 Claude 5 的殊途同归](docs/PHILOSOPHY_AND_VISION.md)，了解项目背后的思考。
+
+> 我们不是在建造工具，而是在孕育同行者。
+
 ---
 
 ## 🤝 贡献指南 (Contributing)
