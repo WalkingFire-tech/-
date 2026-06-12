@@ -137,6 +137,17 @@ async function sendMessage() {
         if (data.error) {
             addMessage('system', `❌ 错误: ${data.error}`);
         } else {
+            // 显示思考过程（透明度信息）
+            if (data.intent) {
+                const thinkingInfo = document.createElement('div');
+                thinkingInfo.className = 'thinking-info';
+                thinkingInfo.innerHTML = `
+                    <span class="thinking-label">💭 思考过程</span>
+                    <span class="thinking-detail">识别意图: <strong>${data.intent}</strong></span>
+                `;
+                messagesContainer.appendChild(thinkingInfo);
+            }
+            
             // 使用增强的格式化
             const responseText = formatResponseEnhanced(data.response);
             addMessageHTML('assistant', responseText);
