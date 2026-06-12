@@ -15,6 +15,15 @@ class EventBus:
             self._subscribers[event_type] = []
         self._subscribers[event_type].append(callback)
         logger.debug(f"订阅事件: {event_type}")
+    
+    def unsubscribe(self, event_type: str, callback: Callable):
+        """取消订阅事件"""
+        if event_type in self._subscribers:
+            try:
+                self._subscribers[event_type].remove(callback)
+                logger.debug(f"取消订阅事件: {event_type}")
+            except ValueError:
+                pass
 
     def publish(self, event_type: str, data: Any = None):
         """发布事件"""

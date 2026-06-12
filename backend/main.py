@@ -4,6 +4,8 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 import asyncio
 import json
 from loguru import logger
@@ -40,9 +42,10 @@ async def lifespan(app: FastAPI):
     campfire = CampfireLogger()
     intent_parser = IntentParser()
     
-    # 加载模型适配器（与原有 main.py 类似）
+    # 加载模型适配器
     adapters = {}
     
+    # 尝试加载Ollama模型
     try:
         adapters["mindchat"] = OllamaAdapter(model_name="mindchat")
         logger.info("Loaded MindChat")
@@ -55,6 +58,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Code model unavailable: {e}")
     
+    # 尝试加载远程模型
     try:
         if os.getenv("OPENAI_API_KEY"):
             adapters["remote_gpt4"] = RemoteAdapter(model_name="gpt-4o-mini")
@@ -69,11 +73,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"DeepSeek Chat unavailable: {e}")
     
-    # 确保至少有一个适配器
+    # 确保至少有一个适配器（降级方案）
     if not adapters:
         from adapters.llm.mock_adapter import MockAdapter
-        adapters["default"] = MockAdapter()
-        logger.warning("使用Mock适配器作为降级方案")
+        adapters["mock"] = MockAdapter()
+        logger.warning("所有模型不可用，使用Mock适配器作为降级方案")
+    else:
+        logger.info(f"已加载 {len(adapters)} 个模型适配器: {list(adapters.keys())}")
     
     planner = Planner(adapters)
     
@@ -99,6 +105,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 挂载前端静态文件
+FRONTEND_DIR = ROOT_DIR / "frontend"
+if FRONTEND_DIR.exists():
+    app.mount("/frontend", StaticFiles(directory=str(FRONTEND_DIR)), name="frontend")
+
+@app.get("/")
+async def root():
+    """根路径返回前端页面"""
+    frontend_index = FRONTEND_DIR / "index.html"
+    if frontend_index.exists():
+        from fastapi.responses import HTMLResponse
+        with open(frontend_index, 'r', encoding='utf-8') as f:
+            html_content = f.read()
+        return HTMLResponse(content=html_content)
+    return {"message": "联盟拓荒者 API", "docs": "/docs"}
 
 @app.get("/api/health")
 async def health():
@@ -127,35 +149,38 @@ async def chat(request: dict):
     if not user_input:
         return {"error": "Empty message"}
     
-    # 解析意图
-    intent = intent_parser.parse(user_input)
-    
-    # 捕获 planner 的响应（通过事件总线）
-    response_queue = asyncio.Queue()
-    
-    def on_response(data):
-        response_queue.put_nowait(data)
-    
-    bus.subscribe("plan_executed", on_response)
-    
     try:
+        # 解析意图
+        intent = intent_parser.parse(user_input)
+        
+        # 捕获 planner 的响应（通过事件总线）
+        response_queue = asyncio.Queue()
+        
+        def on_response(data):
+            response_queue.put_nowait(data)
+        
+        bus.subscribe("plan_executed", on_response)
+        
         # 执行规划（同步方法，但我们在异步上下文中调用）
         planner.plan(intent)
         
         # 等待响应（超时 60 秒）
-        response = await asyncio.wait_for(response_queue.get(), timeout=60.0)
-        return {"response": response, "intent": intent.type}
-    
-    except asyncio.TimeoutError:
-        logger.error("请求超时")
-        return {"error": "Timeout"}
-    
+        try:
+            response = await asyncio.wait_for(response_queue.get(), timeout=60.0)
+            return {"response": response, "intent": intent.type}
+        except asyncio.TimeoutError:
+            logger.error("请求超时")
+            return {"error": "Timeout", "intent": intent.type}
+        
     except Exception as e:
         logger.error(f"处理请求失败: {e}")
         return {"error": str(e)}
     
     finally:
-        bus.unsubscribe("plan_executed", on_response)
+        try:
+            bus.unsubscribe("plan_executed", on_response)
+        except:
+            pass
 
 @app.post("/api/optimize")
 async def run_optimize(request: dict):

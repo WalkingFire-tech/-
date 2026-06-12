@@ -18,7 +18,7 @@ class ToolGenerator:
     def __init__(self, llm_adapter=None):
         self.llm_adapter = llm_adapter
         self.generated_tools_dir = Path("tools/generated")
-        self.generated_tools_dir.mkdir(exist_ok=True)
+        self.generated_tools_dir.mkdir(parents=True, exist_ok=True)
     
     def analyze_need_for_new_tool(self, failure_context: Dict) -> Optional[Dict]:
         """分析是否需要新工具"""

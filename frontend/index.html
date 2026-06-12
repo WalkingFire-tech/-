@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>联盟拓荒者 - 智能体系统</title>
+    <link rel="stylesheet" href="/frontend/styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- 头部 -->
+        <header class="header">
+            <div class="header-content">
+                <h1>🔥 联盟拓荒者</h1>
+                <div class="status">
+                    <span id="status-indicator" class="status-dot"></span>
+                    <span id="status-text">连接中...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- 主内容区 -->
+        <main class="main">
+            <!-- 左侧面板 -->
+            <aside class="sidebar">
+                <div class="panel">
+                    <h3>📊 系统状态</h3>
+                    <div id="stats" class="stats-grid">
+                        <div class="stat-item">
+                            <span class="stat-label">经验池</span>
+                            <span id="stat-experiences" class="stat-value">-</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">活跃规则</span>
+                            <span id="stat-active-rules" class="stat-value">-</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">待激活</span>
+                            <span id="stat-pending-rules" class="stat-value">-</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">模型数</span>
+                            <span id="stat-models" class="stat-value">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h3>🤖 可用模型</h3>
+                    <ul id="model-list" class="model-list"></ul>
+                </div>
+
+                <div class="panel">
+                    <h3>⚡ 快捷操作</h3>
+                    <button onclick="runOptimize()" class="btn btn-secondary">
+                        🎯 运行优化
+                    </button>
+                    <button onclick="runInduction()" class="btn btn-secondary">
+                        📚 归纳总结
+                    </button>
+                </div>
+            </aside>
+
+            <!-- 聊天区域 -->
+            <section class="chat-area">
+                <div id="messages" class="messages">
+                    <div class="message system">
+                        <div class="message-content">
+                            <p>👋 欢迎使用联盟拓荒者智能体系统！</p>
+                            <p>我可以帮助你完成各种任务，包括代码生成、问题解答、数据分析等。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="input-area">
+                    <textarea 
+                        id="user-input" 
+                        placeholder="输入你的问题或任务..."
+                        rows="3"
+                        onkeydown="handleKeyDown(event)"
+                    ></textarea>
+                    <div class="input-actions">
+                        <button onclick="sendMessage()" class="btn btn-primary" id="send-btn">
+                            发送
+                        </button>
+                        <button onclick="clearMessages()" class="btn btn-secondary">
+                            清空
+                        </button>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- 底部 -->
+        <footer class="footer">
+            <p>联盟拓荒者 v3.1.1 | 生产级自我进化智能体系统</p>
+        </footer>
+    </div>
+
+    <script src="/frontend/app.js"></script>
+</body>
+</html>
