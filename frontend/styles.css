@@ -279,6 +279,51 @@ body {
     border-radius: 6px;
     font-size: 0.875rem;
     color: var(--text-primary);
+    transition: all 0.2s;
+}
+
+.model-list li:hover {
+    background: rgba(196, 181, 253, 0.2);
+    transform: translateX(2px);
+}
+
+/* 模型选择器 */
+.model-selector {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-light);
+}
+
+.selector-label {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-soft);
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+}
+
+.model-select {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: rgba(125, 211, 252, 0.1);
+    border: 2px solid var(--primary-sky-light);
+    border-radius: 8px;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+}
+
+.model-select:hover {
+    border-color: var(--primary-sky);
+    background: rgba(125, 211, 252, 0.15);
+}
+
+.model-select:focus {
+    outline: none;
+    border-color: var(--primary-sky-deep);
+    box-shadow: var(--shadow-glow-sky);
 }
 
 /* ========== 聊天区域 ========== */

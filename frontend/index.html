@@ -48,6 +48,13 @@
                 <div class="panel">
                     <h3>🤖 可用模型</h3>
                     <ul id="model-list" class="model-list"></ul>
+                    
+                    <div class="model-selector">
+                        <label class="selector-label">当前模型:</label>
+                        <select id="model-select" class="model-select" onchange="switchModel(this.value)">
+                            <option value="auto">🔄 自动选择</option>
+                        </select>
+                    </div>
                 </div>
 
                 <div class="panel">

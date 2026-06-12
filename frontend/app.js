@@ -136,14 +136,66 @@ async function loadModels() {
         const modelList = document.getElementById('model-list');
         modelList.innerHTML = '';
         
+        const modelSelect = document.getElementById('model-select');
+        modelSelect.innerHTML = '<option value="auto">🔄 自动选择</option>';
+        
         data.models.forEach(model => {
+            // 添加到列表
             const li = document.createElement('li');
             li.textContent = `${model.name} (${model.type})`;
+            li.dataset.model = model.name;
+            li.style.cursor = 'pointer';
+            li.onclick = () => {
+                modelSelect.value = model.name;
+                switchModel(model.name);
+            };
             modelList.appendChild(li);
+            
+            // 添加到选择器
+            const option = document.createElement('option');
+            option.value = model.name;
+            option.textContent = `🤖 ${model.name}`;
+            modelSelect.appendChild(option);
         });
     } catch (error) {
         console.error('加载模型失败:', error);
     }
+}
+
+// 当前选择的模型
+let selectedModel = 'auto';
+
+// 切换模型
+function switchModel(modelName) {
+    selectedModel = modelName;
+    
+    // 更新UI提示
+    const modelList = document.getElementById('model-list');
+    const items = modelList.querySelectorAll('li');
+    items.forEach(item => {
+        if (item.dataset.model === modelName) {
+            item.style.background = 'rgba(125, 211, 252, 0.3)';
+            item.style.borderLeftColor = 'var(--primary-sky-deep)';
+        } else {
+            item.style.background = 'rgba(196, 181, 253, 0.1)';
+            item.style.borderLeftColor = 'var(--accent-lavender)';
+        }
+    });
+    
+    // 显示提示
+    const statusText = document.getElementById('status-text');
+    const originalText = statusText.textContent;
+    if (modelName === 'auto') {
+        statusText.textContent = '🔄 自动选择模式';
+    } else {
+        statusText.textContent = `✓ 已选择: ${modelName}`;
+    }
+    
+    setTimeout(() => {
+        statusText.textContent = originalText;
+    }, 2000);
+    
+    console.log('切换模型:', modelName);
 }
 
 // 发送消息
@@ -157,12 +209,18 @@ async function sendMessage() {
     sendBtn.disabled = true;
     
     try {
+        // 构建请求体，包含选择的模型
+        const requestBody = { message };
+        if (selectedModel !== 'auto') {
+            requestBody.model = selectedModel;
+        }
+        
         const response = await fetch(`${API_BASE}/api/chat`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ message })
+            body: JSON.stringify(requestBody)
         });
         
         const data = await response.json();
@@ -174,9 +232,15 @@ async function sendMessage() {
             if (data.intent) {
                 const thinkingInfo = document.createElement('div');
                 thinkingInfo.className = 'thinking-info';
+                
+                let modelInfo = selectedModel === 'auto' ? '自动选择' : selectedModel;
+                
                 thinkingInfo.innerHTML = `
                     <span class="thinking-label">💭 思考过程</span>
-                    <span class="thinking-detail">识别意图: <strong>${data.intent}</strong></span>
+                    <span class="thinking-detail">
+                        识别意图: <strong>${data.intent}</strong>
+                        ${selectedModel !== 'auto' ? `| 指定模型: <strong>${selectedModel}</strong>` : ''}
+                    </span>
                 `;
                 messagesContainer.appendChild(thinkingInfo);
             }
