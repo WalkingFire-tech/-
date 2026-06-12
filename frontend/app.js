@@ -51,6 +51,39 @@ function addMessageHTML(role, htmlContent) {
     messageDiv.appendChild(contentDiv);
     messagesContainer.appendChild(messageDiv);
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    
+    // 添加代码复制功能
+    addCopyButtons(contentDiv);
+}
+
+// 添加代码复制按钮功能
+function addCopyButtons(container) {
+    const codeBlocks = container.querySelectorAll('pre');
+    codeBlocks.forEach((pre, index) => {
+        pre.addEventListener('click', (e) => {
+            if (e.target === pre || e.target === pre.querySelector('code')) {
+                const code = pre.querySelector('code').textContent;
+                copyToClipboard(code, pre);
+            }
+        });
+    });
+}
+
+// 复制到剪贴板
+async function copyToClipboard(text, element) {
+    try {
+        await navigator.clipboard.writeText(text);
+        
+        // 显示复制成功提示
+        const originalBefore = element.style.getPropertyValue('--before-content');
+        element.style.cssText = element.style.cssText.replace('📋 复制', '✅ 已复制');
+        
+        setTimeout(() => {
+            element.style.cssText = element.style.cssText.replace('✅ 已复制', '📋 复制');
+        }, 2000);
+    } catch (err) {
+        console.error('复制失败:', err);
+    }
 }
 
 // 初始化
