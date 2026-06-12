@@ -1,4 +1,7 @@
 @echo off
+chcp 65001 >nul
+cd /d "%~dp0"
+
 echo ========================================
 echo 联盟拓荒者 - 后端服务启动
 echo ========================================
@@ -18,7 +21,7 @@ echo 后端地址: http://localhost:8000
 echo API文档: http://localhost:8000/docs
 echo.
 
-cd ..\backend
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+cd ..
+python -m uvicorn api:app --reload --host 0.0.0.0 --port 8000
 
 pause

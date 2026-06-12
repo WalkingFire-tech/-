@@ -41,10 +41,10 @@ class ConfigManager:
         return cls._instance
     
     def _load_config(self):
-        config_path = Path(self._get_config_path())
+        config_path = self._find_config_file()
         
-        if not config_path.exists():
-            logger.warning(f"配置文件不存在: {config_path}, 使用默认配置")
+        if not config_path or not config_path.exists():
+            logger.warning(f"配置文件不存在，使用默认配置")
             self._config = self._get_default_config()
         else:
             try:
@@ -57,9 +57,26 @@ class ConfigManager:
         
         self._apply_env_overrides()
     
-    def _get_config_path(self) -> str:
+    def _find_config_file(self) -> Optional[Path]:
         settings = Settings()
-        return settings.config_file
+        config_file = settings.config_file
+        
+        # 尝试多个可能的路径
+        possible_paths = [
+            Path(config_file),  # 当前工作目录
+            Path(__file__).parent.parent / config_file,  # 项目根目录
+            Path.cwd() / config_file,  # 当前目录
+        ]
+        
+        for path in possible_paths:
+            if path.exists():
+                return path
+        
+        return None
+    
+    def _get_config_path(self) -> str:
+        config_path = self._find_config_file()
+        return str(config_path) if config_path else "config/settings.yaml"
     
     def _get_default_config(self) -> Dict[str, Any]:
         return {
