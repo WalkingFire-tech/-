@@ -1,3 +1,5 @@
+/* 天青营火主题 - 清新、温暖、有生命力 */
+
 * {
     margin: 0;
     padding: 0;
@@ -5,41 +7,73 @@
 }
 
 :root {
-    /* 营火主题配色 - 温暖、安全、陪伴 */
-    --fire-orange: #e67e22;
-    --fire-amber: #f39c12;
-    --fire-glow: #d35400;
-    --ember-red: #c0392b;
-    --ash-gray: #7f8c8d;
+    /* ========== 天青营火主题 ========== */
+    /* 主色调 - 天蓝色（柔和、信任、开阔） */
+    --primary-sky: #7dd3fc;
+    --primary-sky-deep: #38bdf8;
+    --primary-sky-light: #bae6fd;
     
-    /* 暗色背景 - 营火旁的夜空 */
-    --bg-dark: #1a1a2e;
-    --bg-darker: #16213e;
-    --bg-card: #0f3460;
+    /* 点缀色 - 浅紫（温柔、优雅） */
+    --accent-lavender: #c4b5fd;
+    --accent-lavender-light: #ede9fe;
+    --accent-lavender-deep: #a78bfa;
     
-    /* 文字颜色 */
-    --text-warm: #ffeaa7;
-    --text-light: #dfe6e9;
-    --text-muted: #b2bec3;
+    /* 点缀色 - 米绿（清新、生机） */
+    --accent-mint: #a7f3d0;
+    --accent-mint-dark: #6ee7b7;
+    --accent-mint-light: #d1fae5;
     
-    /* 功能色 */
-    --success-color: #00b894;
-    --warning-color: #fdcb6e;
-    --danger-color: #e17055;
+    /* ========== 背景 ========== */
+    --bg-main: #e0f2fe;
+    --bg-gradient: linear-gradient(145deg, #e0f2fe 0%, #bae6fd 50%, #f0f9ff 100%);
+    --bg-sidebar: rgba(255, 255, 255, 0.6);
+    --bg-chat: #ffffff;
+    --bg-card: #f8fafc;
     
-    /* 兼容旧变量 */
-    --primary-color: var(--fire-orange);
-    --secondary-color: var(--ash-gray);
-    --bg-color: var(--bg-dark);
+    /* ========== 文字 ========== */
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-soft: #64748b;
+    --text-light: #94a3b8;
+    
+    /* ========== 气泡 ========== */
+    --bubble-user: linear-gradient(135deg, #7dd3fc 0%, #38bdf8 100%);
+    --bubble-user-text: #0f172a;
+    --bubble-assistant: #f1f5f9;
+    --bubble-assistant-text: #1e293b;
+    
+    /* ========== 边框与阴影 ========== */
+    --border-light: #e2e8f0;
+    --border-soft: #f1f5f9;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.03), 0 0 0 1px rgba(0, 0, 0, 0.02);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.05);
+    --shadow-glow-sky: 0 0 0 3px rgba(125, 211, 252, 0.3);
+    --shadow-glow-mint: 0 0 0 3px rgba(167, 243, 208, 0.3);
+    
+    /* ========== 营火元素（5%点缀） ========== */
+    --flame-orange: #fbbf24;
+    --flame-amber: #f59e0b;
+    --flame-red: #f87171;
+    --flame-glow: rgba(251, 191, 36, 0.2);
+    
+    /* ========== 功能色 ========== */
+    --success-color: #6ee7b7;
+    --warning-color: #f59e0b;
+    --danger-color: #f87171;
+    
+    /* ========== 兼容旧变量 ========== */
+    --primary-color: var(--primary-sky);
+    --secondary-color: var(--text-soft);
+    --bg-color: var(--bg-main);
     --card-bg: var(--bg-card);
-    --text-color: var(--text-light);
-    --border-color: rgba(255, 255, 255, 0.1);
+    --text-color: var(--text-primary);
+    --border-color: var(--border-light);
 }
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    background-color: var(--bg-color);
-    color: var(--text-color);
+    background: var(--bg-gradient);
+    color: var(--text-primary);
     height: 100vh;
     overflow: hidden;
 }
@@ -50,31 +84,32 @@ body {
     height: 100vh;
 }
 
-/* 头部 - 营火渐变 */
+/* ========== 头部 - 天蓝渐变 ========== */
 .header {
-    background: linear-gradient(135deg, var(--fire-glow) 0%, var(--fire-orange) 50%, var(--fire-amber) 100%);
-    color: var(--text-warm);
+    background: linear-gradient(135deg, var(--primary-sky-light) 0%, var(--primary-sky) 100%);
+    color: var(--text-primary);
     padding: 1rem 2rem;
-    box-shadow: 0 4px 20px rgba(230, 126, 34, 0.3);
+    box-shadow: var(--shadow-md);
     position: relative;
     overflow: hidden;
 }
 
-/* 营火光晕动画 */
+/* 微妙的营火呼吸动画 */
 .header::before {
     content: '';
     position: absolute;
-    top: -50%;
-    left: -50%;
-    width: 200%;
-    height: 200%;
-    background: radial-gradient(circle, rgba(243, 156, 18, 0.1) 0%, transparent 70%);
-    animation: fireGlow 8s ease-in-out infinite;
+    top: 0;
+    right: 0;
+    width: 100px;
+    height: 100px;
+    background: radial-gradient(circle, var(--flame-glow) 0%, transparent 70%);
+    animation: flameBreath 4s ease-in-out infinite;
+    pointer-events: none;
 }
 
-@keyframes fireGlow {
-    0%, 100% { transform: translate(0, 0) scale(1); }
-    50% { transform: translate(10%, 10%) scale(1.1); }
+@keyframes flameBreath {
+    0%, 100% { opacity: 0.3; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(1.2); }
 }
 
 .header-content {
@@ -83,6 +118,8 @@ body {
     align-items: center;
     max-width: 1400px;
     margin: 0 auto;
+    position: relative;
+    z-index: 1;
 }
 
 .header h1 {
@@ -96,8 +133,8 @@ body {
 .header .subtitle {
     font-size: 0.875rem;
     font-weight: 400;
-    opacity: 0.8;
-    color: var(--text-warm);
+    opacity: 0.7;
+    color: var(--text-secondary);
 }
 
 .status {
@@ -110,7 +147,7 @@ body {
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background-color: #ffc107;
+    background-color: var(--flame-amber);
     animation: pulse 2s infinite;
 }
 
@@ -119,11 +156,11 @@ body {
 }
 
 @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(0.9); }
 }
 
-/* 主内容区 */
+/* ========== 主内容区 ========== */
 .main {
     display: flex;
     flex: 1;
@@ -133,23 +170,28 @@ body {
     width: 100%;
 }
 
-/* 侧边栏 */
+/* ========== 侧边栏 ========== */
 .sidebar {
     width: 280px;
-    background-color: var(--card-bg);
-    border-right: 1px solid var(--border-color);
+    background: var(--bg-sidebar);
+    backdrop-filter: blur(10px);
+    border-right: 1px solid var(--border-light);
     padding: 1rem;
     overflow-y: auto;
 }
 
 .panel {
     margin-bottom: 1.5rem;
+    background: var(--bg-card);
+    border-radius: 12px;
+    padding: 1rem;
+    box-shadow: var(--shadow-sm);
 }
 
 .panel h3 {
     font-size: 1rem;
     margin-bottom: 0.75rem;
-    color: var(--text-color);
+    color: var(--text-primary);
 }
 
 .stats-grid {
@@ -162,20 +204,20 @@ body {
     display: flex;
     flex-direction: column;
     padding: 0.5rem;
-    background-color: var(--bg-color);
-    border-radius: 4px;
+    background: rgba(167, 243, 208, 0.1);
+    border-radius: 8px;
+    border-left: 2px solid var(--accent-mint);
 }
 
 .stat-label {
     font-size: 0.75rem;
-    color: var(--secondary-color);
+    color: var(--text-soft);
 }
 
 .stat-value {
     font-size: 1.25rem;
     font-weight: 600;
-    color: var(--fire-amber);
-    text-shadow: 0 0 10px rgba(243, 156, 18, 0.3);
+    color: var(--primary-sky-deep);
 }
 
 .model-list {
@@ -185,17 +227,19 @@ body {
 .model-list li {
     padding: 0.5rem;
     margin-bottom: 0.5rem;
-    background-color: var(--bg-color);
-    border-radius: 4px;
+    background: rgba(196, 181, 253, 0.1);
+    border-left: 2px solid var(--accent-lavender);
+    border-radius: 6px;
     font-size: 0.875rem;
+    color: var(--text-primary);
 }
 
-/* 聊天区域 */
+/* ========== 聊天区域 ========== */
 .chat-area {
     flex: 1;
     display: flex;
     flex-direction: column;
-    background-color: var(--card-bg);
+    background: var(--bg-chat);
 }
 
 .messages {
@@ -217,28 +261,33 @@ body {
 .message-content {
     max-width: 80%;
     padding: 1rem;
-    border-radius: 8px;
-    background-color: var(--bg-color);
+    border-radius: 18px;
+    background: var(--bubble-assistant);
+    box-shadow: var(--shadow-sm);
 }
 
+/* 用户气泡 - 天蓝渐变 */
 .message.user .message-content {
     margin-left: auto;
-    background: linear-gradient(135deg, var(--fire-orange), var(--fire-amber));
-    color: var(--text-warm);
-    box-shadow: 0 2px 10px rgba(230, 126, 34, 0.3);
+    background: var(--bubble-user);
+    color: var(--bubble-user-text);
+    border-radius: 18px 18px 6px 18px;
 }
 
+/* 系统提示 - 米绿淡底 */
 .message.system .message-content {
-    background-color: rgba(127, 140, 141, 0.2);
-    border-left: 3px solid var(--ash-gray);
-    color: var(--text-muted);
+    background: rgba(167, 243, 208, 0.15);
+    border-left: 3px solid var(--accent-mint);
+    color: var(--text-secondary);
+    border-radius: 12px;
 }
 
+/* 助手气泡 - 浅紫边框 */
 .message.assistant .message-content {
-    background-color: rgba(15, 52, 96, 0.6);
-    border-left: 3px solid var(--fire-amber);
-    color: var(--text-light);
-    box-shadow: 0 2px 15px rgba(243, 156, 18, 0.2);
+    background: var(--bubble-assistant);
+    border-left: 3px solid var(--accent-lavender);
+    color: var(--bubble-assistant-text);
+    border-radius: 18px 18px 18px 6px;
 }
 
 .message-content p {
@@ -249,27 +298,29 @@ body {
     margin-bottom: 0;
 }
 
-/* 输入区域 */
+/* ========== 输入区域 ========== */
 .input-area {
     padding: 1rem;
-    border-top: 1px solid var(--border-color);
-    background-color: var(--card-bg);
+    border-top: 1px solid var(--border-light);
+    background: var(--bg-chat);
 }
 
 #user-input {
     width: 100%;
     padding: 0.75rem;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border: 2px solid var(--border-light);
+    border-radius: 12px;
     font-size: 0.9375rem;
     resize: none;
     font-family: inherit;
+    background: white;
+    transition: all 0.2s;
 }
 
 #user-input:focus {
     outline: none;
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.1);
+    border-color: var(--accent-mint);
+    box-shadow: var(--shadow-glow-mint);
 }
 
 .input-actions {
@@ -279,69 +330,78 @@ body {
     justify-content: flex-end;
 }
 
-/* 按钮 */
+/* ========== 按钮 ========== */
 .btn {
     padding: 0.5rem 1rem;
     border: none;
-    border-radius: 6px;
+    border-radius: 10px;
     font-size: 0.875rem;
     cursor: pointer;
     transition: all 0.2s;
     font-weight: 500;
 }
 
+/* 主按钮 - 天蓝到浅紫渐变 */
 .btn-primary {
-    background-color: var(--primary-color);
+    background: linear-gradient(135deg, var(--primary-sky) 0%, var(--accent-lavender) 100%);
     color: white;
+    box-shadow: var(--shadow-sm);
 }
 
 .btn-primary:hover {
-    background-color: #3a7bc8;
+    background: linear-gradient(135deg, var(--primary-sky-deep) 0%, var(--accent-lavender-deep) 100%);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
 }
 
+/* 次按钮 - 米绿 */
 .btn-secondary {
-    background-color: var(--secondary-color);
-    color: white;
+    background: var(--accent-mint-light);
+    color: var(--text-primary);
+    border: 1px solid var(--accent-mint);
 }
 
 .btn-secondary:hover {
-    background-color: #5a6268;
+    background: var(--accent-mint);
+    transform: translateY(-1px);
 }
 
 .btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+    transform: none;
 }
 
-/* 底部 */
+/* ========== 底部 ========== */
 .footer {
-    background-color: var(--card-bg);
-    border-top: 1px solid var(--border-color);
+    background: var(--bg-card);
+    border-top: 1px solid var(--border-light);
     padding: 0.75rem 2rem;
     text-align: center;
     font-size: 0.875rem;
-    color: var(--secondary-color);
+    color: var(--text-soft);
 }
 
-/* 滚动条样式 */
+/* ========== 滚动条样式 ========== */
 ::-webkit-scrollbar {
     width: 8px;
 }
 
 ::-webkit-scrollbar-track {
-    background: var(--bg-color);
+    background: var(--border-soft);
+    border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: var(--secondary-color);
+    background: var(--primary-sky-light);
     border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #5a6268;
+    background: var(--primary-sky);
 }
 
-/* 加载动画 */
+/* ========== 加载动画 ========== */
 .loading-dots {
     display: inline-flex;
     gap: 4px;
@@ -352,7 +412,7 @@ body {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background-color: var(--primary-color);
+    background-color: var(--flame-orange);
     animation: bounce 1.4s infinite ease-in-out both;
 }
 
@@ -373,11 +433,12 @@ body {
     }
 }
 
-/* 代码块样式 */
+/* ========== 代码块样式 ========== */
 .message-content pre {
-    background-color: #f6f8fa;
-    border: 1px solid #e1e4e8;
-    border-radius: 6px;
+    background: #f1f5f9;
+    border: 1px solid var(--border-light);
+    border-left: 4px solid var(--accent-lavender);
+    border-radius: 12px;
     padding: 12px;
     overflow-x: auto;
     margin: 8px 0;
@@ -394,23 +455,25 @@ body {
 }
 
 .message-content code:not(pre code) {
-    background-color: rgba(27, 31, 35, 0.05);
+    background: rgba(196, 181, 253, 0.1);
     padding: 2px 6px;
-    border-radius: 3px;
+    border-radius: 4px;
     font-size: 0.875em;
+    color: var(--accent-lavender-deep);
 }
 
-/* Markdown元素样式 */
+/* ========== Markdown元素样式 ========== */
 .message-content h1,
 .message-content h2,
 .message-content h3 {
     margin: 12px 0 8px 0;
     font-weight: 600;
+    color: var(--text-primary);
 }
 
 .message-content h1 {
     font-size: 1.5em;
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: 2px solid var(--primary-sky-light);
     padding-bottom: 8px;
 }
 
@@ -432,7 +495,7 @@ body {
 }
 
 .message-content a {
-    color: var(--primary-color);
+    color: var(--primary-sky-deep);
     text-decoration: none;
 }
 
@@ -448,30 +511,30 @@ body {
     font-style: italic;
 }
 
-/* 思考过程显示 - 透明度信息 */
+/* ========== 思考过程显示 ========== */
 .thinking-info {
     max-width: 80%;
     margin-bottom: 0.5rem;
     padding: 0.5rem 1rem;
-    background: rgba(243, 156, 18, 0.1);
-    border-left: 2px solid var(--fire-amber);
-    border-radius: 4px;
+    background: rgba(167, 243, 208, 0.1);
+    border-left: 2px solid var(--accent-mint);
+    border-radius: 8px;
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-soft);
     display: flex;
     gap: 1rem;
     align-items: center;
 }
 
 .thinking-label {
-    color: var(--fire-amber);
+    color: var(--accent-mint-dark);
     font-weight: 500;
 }
 
 .thinking-detail {
-    color: var(--text-light);
+    color: var(--text-secondary);
 }
 
 .thinking-detail strong {
-    color: var(--fire-amber);
+    color: var(--primary-sky-deep);
 }
