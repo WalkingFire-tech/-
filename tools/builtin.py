@@ -410,4 +410,11 @@ def register_builtin_tools():
     except Exception as e:
         logger.warning(f"注册文件工具失败: {e}")
     
+    try:
+        from tools.math_calculator import math_calculator_tool
+        registry.register(math_calculator_tool, overwrite=True)
+        logger.info("高级数学计算器工具已注册")
+    except Exception as e:
+        logger.warning(f"注册数学计算器失败: {e}")
+    
     logger.info(f"注册{len(tools)}个内置工具")

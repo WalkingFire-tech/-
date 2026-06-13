@@ -117,3 +117,31 @@ class ModelStats:
                 )
             ''', (feedback, model_name, task_type))
         logger.debug(f"更新最近反馈: {model_name}, {task_type}, 反馈 {feedback}")
+    
+    def get_all_model_stats(self) -> dict:
+        """获取所有模型的统计信息"""
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.execute('''
+                SELECT model_name,
+                       COUNT(*) as total_calls,
+                       SUM(CASE WHEN success THEN 1 ELSE 0 END) as success_count,
+                       AVG(duration) as avg_duration,
+                       AVG(CASE WHEN user_feedback IS NOT NULL THEN user_feedback ELSE 0 END) as avg_feedback,
+                       AVG(quality_score) as avg_quality
+                FROM model_performance
+                GROUP BY model_name
+            ''')
+            
+            result = {}
+            for row in cur.fetchall():
+                model_name, total_calls, success_count, avg_duration, avg_feedback, avg_quality = row
+                result[model_name] = {
+                    "total_calls": total_calls,
+                    "success_count": success_count,
+                    "success_rate": success_count / total_calls if total_calls > 0 else 0,
+                    "avg_duration": avg_duration,
+                    "avg_feedback": avg_feedback,
+                    "avg_quality": avg_quality
+                }
+            
+            return result
