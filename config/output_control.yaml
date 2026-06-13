@@ -1,0 +1,38 @@
+# 系统输出控制配置
+
+# 是否显示内部思考过程（默认不显示）
+show_internal_thinking: false
+
+# 是否显示意图分析过程（默认不显示）
+show_intent_analysis: false
+
+# 是否显示决策过程（默认不显示）
+show_decision_process: false
+
+# 是否显示调试信息（默认不显示）
+show_debug_info: false
+
+# 回答策略
+answer_strategy:
+  # 低置信度时的策略：direct_answer（直接回答）或 ask_clarification（询问澄清）
+  low_confidence: direct_answer
+  
+  # 置信度阈值（低于此值触发策略）
+  confidence_threshold: 0.6
+  
+  # 是否添加免责声明
+  add_disclaimer: true
+  
+  # 免责声明模板
+  disclaimer_template: "（如果理解有误，请纠正我）"
+
+# 输出格式
+output_format:
+  # 是否包含意图类型
+  include_intent_type: false
+  
+  # 是否包含置信度
+  include_confidence: false
+  
+  # 是否包含思考过程
+  include_thinking_process: false
