@@ -81,8 +81,15 @@ class DataDrivenPlanner:
         self.failure_history: Dict[str, List[int]] = {}
         self.decomposer = None
         self.tool_generator = None
+        
+        # 缓存常用配置（减少I/O）
         self.optimization_enabled = config.get("optimization.enabled", True)
         self.induction_interval = config.get("optimization.induction_interval_hours", 24)
+        self.parallel_enabled = config.get("parallel_scheduling.enabled", True)
+        self.parallel_top_k = config.get("parallel_scheduling.top_k", 2)
+        self.parallel_max_concurrent = config.get("parallel_scheduling.max_concurrent", 3)
+        self.parallel_timeout = config.get("parallel_scheduling.timeout_seconds", 20)
+        
         self.last_induction_time = 0
         self.last_optimization_score = None
         
@@ -1572,8 +1579,10 @@ _共显示最近10轮对话_"""
                 if response:
                     bus.publish("plan_executed", response)
                     return
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"并行调度网络错误，降级到单模型: {e}")
             except Exception as e:
-                logger.warning(f"并行调度失败，降级到单模型: {e}")
+                logger.error(f"并行调度未知错误: {type(e).__name__}: {e}")
         
         # 优先检查向量检索是否有相似成功案例
         if VECTOR_AVAILABLE:
@@ -1585,8 +1594,10 @@ _共显示最近10轮对话_"""
                     if response:
                         bus.publish("plan_executed", response)
                         return
+            except (KeyError, TypeError) as e:
+                logger.debug(f"向量检索数据格式错误: {e}")
             except Exception as e:
-                logger.debug(f"向量检索失败: {e}")
+                logger.error(f"向量检索未知错误: {type(e).__name__}: {e}")
         
         rule = self._match_learning_rule(intent)
         if rule:
