@@ -90,6 +90,17 @@ class CharterExecutor:
             if learning_tasks:
                 self._save_learning_tasks(learning_tasks)
             
+            # 【新增】触发主动学习器
+            for task in learning_tasks:
+                try:
+                    from infrastructure.active_learner import active_learner
+                    active_learner.record_event("intent_failure", {
+                        "intent": task['intent_type'],
+                        "failure_count": task['failure_count']
+                    })
+                except Exception as al_error:
+                    logger.debug(f"主动学习器触发失败: {al_error}")
+            
             return learning_tasks
             
         except Exception as e:

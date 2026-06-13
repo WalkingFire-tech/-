@@ -1763,6 +1763,17 @@ class DataDrivenPlanner:
             except:
                 pass
             
+            # 【新增】触发主动学习器
+            try:
+                from infrastructure.active_learner import active_learner
+                active_learner.record_event("intent_failure", {
+                    "intent": intent.type,
+                    "query": intent.raw_text,
+                    "error": error
+                })
+            except Exception as al_error:
+                logger.debug(f"主动学习器触发失败: {al_error}")
+            
         except Exception as e:
             logger.debug(f"失败学习触发失败: {e}")
     

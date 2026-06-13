@@ -183,6 +183,10 @@ class EnhancedCliUI(UIPort):
             self.console.print("  :learning stats - 显示统计")
             self.console.print("  :learning rollback [n] - 回滚n次")
             self.console.print("  :learning cleanup - 清理过期规则")
+            self.console.print("  :learning log - 查看学习活动日志")
+            self.console.print("  :learning knowledge [topic] - 查看已学习知识")
+            self.console.print("  :learning pause - 暂停学习")
+            self.console.print("  :learning resume - 恢复学习")
             return
         
         try:
@@ -218,6 +222,44 @@ class EnhancedCliUI(UIPort):
             elif sub_cmd == "cleanup":
                 cleaned = learning_safety.cleanup_expired_rules()
                 self.console.print(f"[green]✓ 清理{cleaned}条过期规则[/]")
+            
+            elif sub_cmd == "log":
+                try:
+                    from infrastructure.active_learner import active_learner
+                    activities = active_learner.get_activities(limit=10)
+                    self.console.print(f"[cyan]学习活动日志 ({len(activities)}条):[/]")
+                    for act in activities:
+                        status_color = "green" if act['status'] == "completed" else "yellow"
+                        self.console.print(f"  [{status_color}]{act['id']}[/{status_color}] {act['trigger']} - {act['query'][:30]} ({act['status']})")
+                except Exception as e:
+                    self.console.print(f"[red]获取学习日志失败: {e}[/]")
+            
+            elif sub_cmd == "knowledge":
+                try:
+                    from infrastructure.active_learner import active_learner
+                    topic = parts[1] if len(parts) > 1 else None
+                    knowledge = active_learner.get_knowledge(topic=topic, limit=10)
+                    self.console.print(f"[cyan]已学习知识 ({len(knowledge)}条):[/]")
+                    for k in knowledge:
+                        self.console.print(f"  {k['id']}. {k['topic'][:40]} (有用性: {k['usefulness_score']:.2f})")
+                except Exception as e:
+                    self.console.print(f"[red]获取知识失败: {e}[/]")
+            
+            elif sub_cmd == "pause":
+                try:
+                    from infrastructure.active_learner import active_learner
+                    active_learner.pause()
+                    self.console.print("[yellow]学习器已暂停[/]")
+                except Exception as e:
+                    self.console.print(f"[red]暂停失败: {e}[/]")
+            
+            elif sub_cmd == "resume":
+                try:
+                    from infrastructure.active_learner import active_learner
+                    active_learner.resume()
+                    self.console.print("[green]学习器已恢复[/]")
+                except Exception as e:
+                    self.console.print(f"[red]恢复失败: {e}[/]")
             
             else:
                 self.console.print(f"[yellow]未知子命令: {sub_cmd}[/]")

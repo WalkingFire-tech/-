@@ -278,7 +278,7 @@ class TextExtractorTool(Tool):
             )
         ]
     
-    def execute(self, **kwargs) -> TextExtractorTool:
+    def execute(self, **kwargs) -> ToolResult:
         text = kwargs.get("text")
         pattern_type = kwargs.get("pattern")
         
@@ -416,5 +416,13 @@ def register_builtin_tools():
         logger.info("高级数学计算器工具已注册")
     except Exception as e:
         logger.warning(f"注册数学计算器失败: {e}")
+    
+    try:
+        from tools.web_search import WebSearchTool, QuickSearchTool
+        registry.register(WebSearchTool(), overwrite=True)
+        registry.register(QuickSearchTool(), overwrite=True)
+        logger.info("网络搜索工具已注册")
+    except Exception as e:
+        logger.warning(f"注册网络搜索工具失败: {e}")
     
     logger.info(f"注册{len(tools)}个内置工具")
