@@ -342,6 +342,9 @@ async def send_feedback(request: dict):
                 'type': 'explicit_negative_feedback',
                 'action': 'trigger_induction'
             })
+            
+            # 新增：规则降级机制
+            _handle_negative_feedback_for_rules()
         
         logger.info(f"收到用户反馈: {score}")
         return {"success": True}
@@ -349,6 +352,50 @@ async def send_feedback(request: dict):
     except Exception as e:
         logger.error(f"反馈处理失败: {e}")
         return {"success": False, "error": str(e)}
+
+def _handle_negative_feedback_for_rules():
+    """处理负面反馈对规则的影响"""
+    try:
+        import sqlite3
+        from datetime import datetime, timedelta
+        
+        # 查找最近应用的规则（5分钟内）
+        cutoff_time = (datetime.now() - timedelta(minutes=5)).isoformat()
+        
+        with sqlite3.connect("learning_rules.db") as conn:
+            # 增加拒绝计数
+            cursor = conn.execute('''
+                UPDATE learning_rules
+                SET user_rejection_count = user_rejection_count + 1
+                WHERE status = 'active'
+                  AND last_applied >= ?
+            ''', (cutoff_time,))
+            
+            affected = cursor.rowcount
+            
+            # 标记连续两次负面反馈的规则为expired
+            cursor = conn.execute('''
+                UPDATE learning_rules
+                SET status = 'expired'
+                WHERE status = 'active'
+                  AND user_rejection_count >= 2
+            ''')
+            
+            expired = cursor.rowcount
+            conn.commit()
+            
+            if expired > 0:
+                logger.warning(f"已标记 {expired} 条规则为过期（用户连续负面反馈）")
+                
+                # 触发重新学习
+                from infrastructure.event_bus import bus
+                bus.publish("rule_expired", {
+                    'count': expired,
+                    'action': 're_induction_needed'
+                })
+                
+    except Exception as e:
+        logger.warning(f"规则降级处理失败: {e}")
 
 # ========== 外部模型配置API ==========
 
