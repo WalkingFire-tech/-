@@ -284,3 +284,23 @@ user_preferences:
     quality: 0.5
     speed: 0.3
     cost: 0.2
+
+# 循环推理配置（借鉴OpenMythos RDT架构）
+recurrent:
+  # 最大迭代次数
+  max_iterations: 4
+  
+  # 收敛阈值（相似度超过此值则提前退出）
+  convergence_threshold: 0.95
+  
+  # 质量阈值（质量超过此值则提前退出）
+  quality_threshold: 0.85
+  
+  # LTI稳定性因子（谱半径约束，确保<1）
+  stability_factor: 0.9
+  
+  # 启用循环推理的任务类型
+  enabled_intents:
+    - code
+    - question
+    - meta

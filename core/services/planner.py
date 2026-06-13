@@ -45,6 +45,13 @@ except Exception as e:
     TOOL_GENERATOR_AVAILABLE = False
     logger.warning(f"工具生成器加载失败: {e}")
 
+try:
+    from infrastructure.recurrent_reasoner import recurrent_reasoner
+    RECURRENT_AVAILABLE = True
+except Exception as e:
+    RECURRENT_AVAILABLE = False
+    logger.warning(f"循环推理器加载失败: {e}")
+
 
 class DataDrivenPlanner:
     """完全数据驱动的规划器"""
@@ -1284,6 +1291,25 @@ _共显示最近10轮对话_"""
                 model_name = best.get('model_name')
                 quality_score = best.get('final_score', 0.5) * 100
                 duration = best.get('duration', 0)
+                
+                # 应用循环推理（深度思考）
+                if RECURRENT_AVAILABLE and quality_score < 85:
+                    logger.info(f"质量不足({quality_score:.0f})，启用循环推理增强")
+                    try:
+                        model = self.adapters.get(model_name)
+                        if model:
+                            enhanced_response, trajectory = recurrent_reasoner.reason_with_loops(
+                                model=model,
+                                prompt=intent.raw_text,
+                                intent_type=intent.type,
+                                context=context,
+                                max_iterations=3
+                            )
+                            if enhanced_response:
+                                response = enhanced_response
+                                logger.info(f"循环推理增强完成: {len(trajectory)}轮迭代")
+                    except Exception as e:
+                        logger.warning(f"循环推理失败: {e}")
                 
                 self.experience_pool.add_experience(
                     intent_type=intent.type,
