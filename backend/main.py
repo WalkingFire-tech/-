@@ -636,6 +636,146 @@ async def get_parallel_stats():
         logger.error(f"获取并行统计失败: {e}")
         return {"error": str(e)}
 
+# ========== 规则管理API ==========
+
+@app.get("/api/rules")
+async def list_rules(status: str = None, limit: int = 20):
+    """列出学习规则
+    
+    Args:
+        status: 过滤状态 (trial/active/expired)
+        limit: 返回数量限制
+    """
+    try:
+        import sqlite3
+        
+        with sqlite3.connect("learning_rules.db") as conn:
+            if status:
+                cur = conn.execute('''
+                    SELECT id, condition, action, confidence, status, source, 
+                           trial_count, trial_success, created_at
+                    FROM learning_rules
+                    WHERE status = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                ''', (status, limit))
+            else:
+                cur = conn.execute('''
+                    SELECT id, condition, action, confidence, status, source,
+                           trial_count, trial_success, created_at
+                    FROM learning_rules
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                ''', (limit,))
+            
+            rules = []
+            for row in cur.fetchall():
+                rules.append({
+                    "id": row[0],
+                    "condition": row[1],
+                    "action": row[2],
+                    "confidence": row[3],
+                    "status": row[4],
+                    "source": row[5],
+                    "trial_count": row[6],
+                    "trial_success": row[7],
+                    "created_at": row[8]
+                })
+            
+            return {"rules": rules, "count": len(rules)}
+            
+    except Exception as e:
+        logger.error(f"列出规则失败: {e}")
+        return {"rules": [], "error": str(e)}
+
+@app.post("/api/rules/{rule_id}/approve")
+async def approve_rule(rule_id: int):
+    """批准规则（用户干预）"""
+    try:
+        import sqlite3
+        
+        with sqlite3.connect("learning_rules.db") as conn:
+            conn.execute('''
+                UPDATE learning_rules
+                SET status = 'active', confidence = 0.9
+                WHERE id = ?
+            ''', (rule_id,))
+            conn.commit()
+            
+            logger.info(f"用户批准规则 #{rule_id}")
+            
+            return {"success": True, "rule_id": rule_id, "action": "approved"}
+            
+    except Exception as e:
+        logger.error(f"批准规则失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/rules/{rule_id}/reject")
+async def reject_rule(rule_id: int):
+    """拒绝规则（用户干预）"""
+    try:
+        import sqlite3
+        
+        with sqlite3.connect("learning_rules.db") as conn:
+            conn.execute('''
+                UPDATE learning_rules
+                SET status = 'expired'
+                WHERE id = ?
+            ''', (rule_id,))
+            conn.commit()
+            
+            logger.info(f"用户拒绝规则 #{rule_id}")
+            
+            return {"success": True, "rule_id": rule_id, "action": "rejected"}
+            
+    except Exception as e:
+        logger.error(f"拒绝规则失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/decision/why")
+async def explain_last_decision():
+    """解释最近一次决策原因"""
+    try:
+        import sqlite3
+        
+        # 获取最近的决策日志
+        with sqlite3.connect("data/decision_log.db") as conn:
+            cur = conn.execute('''
+                SELECT decision_type, choice, reason, alternatives, score, timestamp
+                FROM decisions
+                ORDER BY timestamp DESC
+                LIMIT 1
+            ''')
+            
+            row = cur.fetchone()
+            
+            if not row:
+                return {"message": "暂无决策记录"}
+            
+            return {
+                "decision_type": row[0],
+                "choice": row[1],
+                "reason": row[2],
+                "alternatives": row[3].split(",") if row[3] else [],
+                "score": row[4],
+                "timestamp": row[5]
+            }
+            
+    except Exception as e:
+        logger.error(f"获取决策原因失败: {e}")
+        return {"error": str(e)}
+
+@app.get("/api/trial_stats")
+async def get_trial_stats():
+    """获取试用期统计"""
+    try:
+        from infrastructure.rule_trial_manager import rule_trial_manager
+        stats = rule_trial_manager.get_trial_stats()
+        return stats
+    except Exception as e:
+        logger.error(f"获取试用期统计失败: {e}")
+        return {"error": str(e)}
+
 # ========== 模型热加载API ==========
 
 @app.post("/api/models/add")

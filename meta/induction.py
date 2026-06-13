@@ -315,7 +315,22 @@ class InductionScheduler:
         rules = self.generator.generate_rules(patterns)
         
         if rules:
-            self.generator.save_rules(rules)
+            # 使用试用期机制保存规则
+            try:
+                from infrastructure.rule_trial_manager import rule_trial_manager
+                
+                for rule in rules:
+                    rule_trial_manager.create_trial_rule(
+                        condition=rule["condition"],
+                        action=rule["action"],
+                        confidence=rule["confidence"],
+                        source=rule.get("source", "induction")
+                    )
+                
+                logger.info(f"已创建 {len(rules)} 条试用期规则")
+            except Exception as e:
+                logger.warning(f"试用期创建失败，使用常规保存: {e}")
+                self.generator.save_rules(rules)
         
         result = {
             "success": True,
