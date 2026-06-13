@@ -54,7 +54,7 @@ class CounterfactualSimulator:
         task_type: str,
         adapters: Dict
     ) -> List[Dict]:
-        """模拟替代模型的表现"""
+        """模拟替代模型的表现（优化版：超时控制+并行执行）"""
         if not self.simulation_enabled:
             return []
         
@@ -64,16 +64,22 @@ class CounterfactualSimulator:
             actual_model, task_type, adapters
         )
         
-        for alt_model in alternative_models:
+        # 限制模拟模型数量（最多2个，避免阻塞）
+        alternative_models = alternative_models[:2]
+        
+        # 并行执行模拟（带超时）
+        async def simulate_one(alt_model):
             try:
                 logger.info(f"反事实模拟: {alt_model} 处理任务 {task_id}")
                 
                 adapter = adapters.get(alt_model)
                 if not adapter:
-                    continue
+                    return None
                 
-                sim_score = await self._simulate_with_model(
-                    adapter, task_input, task_type
+                # 添加超时控制（最多15秒）
+                sim_score = await asyncio.wait_for(
+                    self._simulate_with_model(adapter, task_input, task_type),
+                    timeout=15.0
                 )
                 
                 gap = sim_score - actual_score
@@ -88,7 +94,6 @@ class CounterfactualSimulator:
                     "timestamp": datetime.now().isoformat()
                 }
                 
-                results.append(result)
                 self._save_counterfactual(result)
                 
                 if gap > 10:
@@ -96,8 +101,23 @@ class CounterfactualSimulator:
                     self.insights[task_type].append(insight)
                     logger.warning(f"发现改进机会: {alt_model} 比 {actual_model} 高 {gap:.2f} 分")
                 
+                return result
+                
+            except asyncio.TimeoutError:
+                logger.warning(f"反事实模拟超时 ({alt_model})")
+                return None
             except Exception as e:
                 logger.warning(f"反事实模拟失败 ({alt_model}): {e}")
+                return None
+        
+        # 并行执行所有模拟
+        tasks = [simulate_one(model) for model in alternative_models]
+        completed = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # 收集成功的结果
+        for result in completed:
+            if isinstance(result, dict):
+                results.append(result)
         
         return results
     
@@ -224,7 +244,7 @@ class CounterfactualSimulator:
         return all_insights[:limit]
     
     def apply_insights(self) -> int:
-        """应用洞察到路由策略"""
+        """应用洞察到路由策略（增强版：自动生成学习规则）"""
         applied_count = 0
         
         try:
@@ -238,7 +258,7 @@ class CounterfactualSimulator:
                     recommended_model = insight['recommendation'].split()[-1]
                     
                     try:
-                        # 使用update_capability方法提升模型能力
+                        # 1. 更新能力矩阵
                         current_score = model_capability.score_model_for_task(
                             recommended_model, task_type
                         )
@@ -250,8 +270,79 @@ class CounterfactualSimulator:
                         )
                         applied_count += 1
                         logger.info(f"应用洞察: {insight['recommendation']}")
+                        
+                        # 2. 自动生成学习规则（新增）
+                        self._generate_learning_rule_from_insight(
+                            insight, task_type, recommended_model
+                        )
+                        
                     except Exception as e:
                         logger.warning(f"洞察应用失败: {e}")
+            
+            if applied_count > 0:
+                self._mark_insights_applied()
+                
+                # 3. 激活待定规则（新增）
+                self._activate_high_confidence_rules()
+            
+        except Exception as e:
+            logger.error(f"洞察应用失败: {e}")
+        
+        return applied_count
+    
+    def _generate_learning_rule_from_insight(self, insight: Dict, task_type: str, recommended_model: str):
+        """从洞察生成学习规则"""
+        try:
+            import sqlite3
+            from datetime import datetime
+            
+            # 提取当前模型
+            actual_model = insight.get('evidence', '').split()[1] if '比' in insight.get('evidence', '') else None
+            if not actual_model:
+                return
+            
+            # 生成规则
+            condition = f"intent_type == '{task_type}'"
+            action = f"prefer_model:{recommended_model}"
+            
+            # 计算置信度（基于gap）
+            gap = insight.get('confidence', 0) * 20  # 转换回gap值
+            confidence = min(0.95, 0.6 + gap / 50)  # gap越大，置信度越高
+            
+            # 保存到数据库
+            with sqlite3.connect("learning_rules.db") as conn:
+                conn.execute('''
+                    INSERT INTO learning_rules
+                    (condition, action, confidence, status, source, priority, created_at)
+                    VALUES (?, ?, ?, 'active', 'counterfactual_auto', 8, ?)
+                ''', (condition, action, confidence, datetime.now().isoformat()))
+                conn.commit()
+            
+            logger.info(f"自动生成规则: {condition} → {action} (置信度: {confidence:.2f})")
+            
+        except Exception as e:
+            logger.warning(f"生成学习规则失败: {e}")
+    
+    def _activate_high_confidence_rules(self):
+        """激活高置信度规则"""
+        try:
+            import sqlite3
+            
+            with sqlite3.connect("learning_rules.db") as conn:
+                # 激活置信度>=0.7的待定规则
+                cursor = conn.execute('''
+                    UPDATE learning_rules
+                    SET status = 'active'
+                    WHERE status = 'pending' AND confidence >= 0.7
+                ''')
+                activated = cursor.rowcount
+                conn.commit()
+                
+                if activated > 0:
+                    logger.info(f"自动激活 {activated} 条高置信度规则")
+                    
+        except Exception as e:
+            logger.warning(f"激活规则失败: {e}")
             
             if applied_count > 0:
                 self._mark_insights_applied()

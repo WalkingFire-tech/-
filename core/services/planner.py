@@ -387,11 +387,20 @@ class DataDrivenPlanner:
             except Exception as e:
                 logger.warning(f"元归纳优化失败: {e}")
     
-    def _get_user_preference_weights(self) -> tuple:
-        """获取用户偏好权重"""
+    def _get_user_preference_weights(self, urgency: str = 'normal') -> tuple:
+        """获取用户偏好权重（增强版：情绪感知）"""
         prefs = config.get("user_preferences", {})
         mode = prefs.get("mode", "balanced")
         
+        # 情绪影响权重调整
+        if urgency == 'urgent':
+            # 紧急情况：优先速度
+            return (0.2, 0.7, 0.1)  # quality, speed, cost
+        elif urgency == 'relaxed':
+            # 放松情况：优先质量
+            return (0.7, 0.2, 0.1)
+        
+        # 正常情况：使用用户配置
         if mode == "quality":
             return (1.0, 0.0, 0.0)  # quality, speed, cost
         elif mode == "speed":
@@ -406,7 +415,7 @@ class DataDrivenPlanner:
             return (w_quality, w_speed, w_cost)
     
     def _select_model(self, intent: Intent):
-        """完全数据驱动的模型选择"""
+        """完全数据驱动的模型选择（增强版：情绪感知）"""
         intent_type = intent.type
         
         # 0. 检查学习规则设置的临时优先模型
@@ -417,8 +426,12 @@ class DataDrivenPlanner:
                 self._temp_preferred_model = None
                 return self.adapters[preferred]
         
+        # 0.5. 情绪感知权重调整（新增）
+        emotion_info = self._infer_emotion(intent)
+        urgency = emotion_info.get('urgency', 'normal')
+        
         # 1. 从统计库获取最佳模型(核心决策)
-        w_quality, w_speed, w_cost = self._get_user_preference_weights()
+        w_quality, w_speed, w_cost = self._get_user_preference_weights(urgency)
         
         weights = {
             "quality": w_quality,
@@ -426,6 +439,10 @@ class DataDrivenPlanner:
             "cost": w_cost,
             "success": 0.1
         }
+        
+        # 记录情绪影响
+        if urgency == 'urgent':
+            logger.info(f"⚡ 检测到紧急情绪，优先选择快速模型")
         
         best_model_name = self.stats.get_best_model_for_task(
             task_type=intent_type,
@@ -502,14 +519,28 @@ class DataDrivenPlanner:
         raise RuntimeError("No model available")
     
     def _get_recent_context(self, rounds: int = None) -> str:
-        """获取最近对话上下文(内存缓存优化)"""
+        """获取最近对话上下文(内存缓存优化 + 会话压缩)"""
         if rounds is None:
             rounds = config.get("memory.short_term.max_rounds", 3)
         
         if len(self.context_buffer) == 0:
             self._load_context_from_file()
         
+        # 会话压缩（新增）
         context_list = list(self.context_buffer)
+        if len(context_list) > 20:  # 超过20轮触发压缩
+            try:
+                from infrastructure.session_compressor import SessionCompressor
+                compressor = SessionCompressor()
+                compressed, info = compressor.compress(context_list[:-8])
+                
+                if info.get("compressed"):
+                    # 使用压缩后的上下文
+                    context_list = compressed + context_list[-8:]
+                    logger.info(f"会话压缩: {info.get('original_length')} → {len(context_list)}")
+            except Exception as e:
+                logger.debug(f"会话压缩失败: {e}")
+        
         recent = context_list[-rounds*2:] if len(context_list) >= rounds*2 else context_list
         
         if not recent:
@@ -1489,6 +1520,20 @@ class DataDrivenPlanner:
                 duration=duration,
                 response=response
             )
+            
+            # 在线反思（新增）
+            if quality < 40:
+                try:
+                    from infrastructure.online_reflector import online_reflector
+                    online_reflector.reflect(
+                        intent_type=intent.type,
+                        raw_input=intent.raw_text,
+                        model_name=model.model_name,
+                        quality_score=quality,
+                        response=response
+                    )
+                except Exception as e:
+                    logger.debug(f"在线反思失败: {e}")
             
             # 记录到统计库 (新增)
             try:

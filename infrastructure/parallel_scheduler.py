@@ -20,13 +20,23 @@ class ParallelScheduler:
         self._init_db()
         
         self.max_concurrent = 3
-        self.timeout_seconds = 60
+        self.timeout_seconds = 30  # 降低超时时间，避免长时间阻塞
         self.retry_count = 2
+        
+        # 模型性能阈值（秒）
+        self.performance_thresholds = {
+            'fast': 5.0,      # 快速模型阈值
+            'normal': 15.0,   # 正常模型阈值
+            'slow': 30.0      # 慢速模型阈值
+        }
         
         # 模型黑名单（失败后暂时禁用）
         self.model_blacklist = {}  # {model_name: until_timestamp}
         
-        logger.info("并行调度器已初始化")
+        # 模型性能记录（用于动态调整）
+        self.model_performance = {}  # {model_name: avg_duration}
+        
+        logger.info("并行调度器已初始化（超时30秒，性能监控启用）")
     
     def _init_db(self):
         """初始化数据库"""
@@ -162,7 +172,7 @@ class ParallelScheduler:
     
     async def _safe_call(self, model_adapter, model_name: str, 
                         prompt: str, task_id: str) -> Optional[Dict]:
-        """安全调用单个模型 - 智能重试"""
+        """安全调用单个模型 - 智能重试和动态超时"""
         # 可重试的错误类型
         RETRYABLE_ERRORS = (asyncio.TimeoutError, ConnectionError, ConnectionResetError)
         
@@ -171,6 +181,16 @@ class ParallelScheduler:
         
         last_error = None
         
+        # 动态调整超时时间
+        dynamic_timeout = self.timeout_seconds
+        if model_name in self.model_performance:
+            avg_duration = self.model_performance[model_name]
+            # 根据历史性能动态调整超时
+            if avg_duration > 20:
+                dynamic_timeout = min(60, avg_duration * 1.5)  # 慢模型给更多时间
+            elif avg_duration < 5:
+                dynamic_timeout = 10  # 快模型减少超时
+        
         for attempt in range(self.retry_count):
             try:
                 start = time.time()
@@ -178,15 +198,22 @@ class ParallelScheduler:
                 if asyncio.iscoroutinefunction(model_adapter.generate):
                     response = await asyncio.wait_for(
                         model_adapter.generate(prompt),
-                        timeout=self.timeout_seconds
+                        timeout=dynamic_timeout
                     )
                 else:
                     response = await asyncio.wait_for(
                         asyncio.to_thread(model_adapter.generate, prompt),
-                        timeout=self.timeout_seconds
+                        timeout=dynamic_timeout
                     )
                 
                 duration = time.time() - start
+                
+                # 更新模型性能记录
+                if model_name not in self.model_performance:
+                    self.model_performance[model_name] = duration
+                else:
+                    # 指数移动平均
+                    self.model_performance[model_name] = 0.7 * self.model_performance[model_name] + 0.3 * duration
                 
                 result_text = response if isinstance(response, str) else str(response)
                 
