@@ -14,16 +14,71 @@ from loguru import logger
 
 class OllamaAdapter(LLMPort):
     _stats = ModelStats()
+    
+    # 类级别的失败计数（所有实例共享）
+    _failure_counts = {}  # {model_name: count}
+    _circuit_breaker = {}  # {model_name: until_timestamp}
 
     def __init__(self, model_name: str = "mindchat", base_url: str = None):
         self._model_name = model_name
         self.base_url = base_url or config.get("models.local.ollama_base_url", "http://localhost:11434")
         self.default_timeout = config.get("models.local.default_timeout", 120)
+        
+        # 熔断配置
+        self.failure_threshold = 3  # 连续失败3次触发熔断
+        self.circuit_breaker_duration = 300  # 熔断持续5分钟
+        
         logger.info(f"Ollama适配器初始化,模型: {model_name}, URL: {self.base_url}")
 
     @property
     def model_name(self) -> str:
         return self._model_name
+    
+    def _is_circuit_broken(self) -> bool:
+        """检查是否处于熔断状态"""
+        if self._model_name not in self._circuit_breaker:
+            return False
+        
+        until_time = self._circuit_breaker[self._model_name]
+        if time.time() < until_time:
+            remaining = int(until_time - time.time())
+            logger.warning(f"模型 {self._model_name} 处于熔断状态，剩余 {remaining} 秒")
+            return True
+        else:
+            # 熔断时间已过，清除状态
+            del self._circuit_breaker[self._model_name]
+            self._failure_counts[self._model_name] = 0
+            logger.info(f"模型 {self._model_name} 熔断恢复")
+            return False
+    
+    def _record_success(self):
+        """记录成功调用，重置失败计数"""
+        self._failure_counts[self._model_name] = 0
+    
+    def _record_failure(self, error: str):
+        """记录失败调用，可能触发熔断"""
+        count = self._failure_counts.get(self._model_name, 0) + 1
+        self._failure_counts[self._model_name] = count
+        
+        logger.warning(f"模型 {self._model_name} 失败次数: {count}/{self.failure_threshold}")
+        
+        # 触发熔断
+        if count >= self.failure_threshold:
+            until_time = time.time() + self.circuit_breaker_duration
+            self._circuit_breaker[self._model_name] = until_time
+            
+            # 通知健康检查器
+            try:
+                from infrastructure.model_health_checker import model_health_checker
+                model_health_checker.record_failure(
+                    self._model_name, 
+                    "circuit_breaker", 
+                    f"连续失败{count}次: {error}"
+                )
+            except:
+                pass
+            
+            logger.error(f"⚠️ 模型 {self._model_name} 触发熔断，禁用 {self.circuit_breaker_duration} 秒")
 
     def _get_model_config(self) -> dict:
         """获取模型配置"""
@@ -69,6 +124,10 @@ class OllamaAdapter(LLMPort):
         return None
 
     def generate(self, prompt: str, task_type: str = "chat", **kwargs) -> str:
+        # 检查熔断状态
+        if self._is_circuit_broken():
+            raise Exception(f"模型 {self._model_name} 处于熔断状态，请稍后重试或使用其他模型")
+        
         url = f"{self.base_url}/api/generate"
         
         model_config = self._get_model_config()
@@ -105,10 +164,17 @@ class OllamaAdapter(LLMPort):
             quality_score = QualityEvaluator.evaluate(response_text, task_type)
             logger.info(f"质量评估: {quality_score}/100 for {task_type}")
             
+            # 记录成功，重置失败计数
+            self._record_success()
+            
             return response_text
         
         except Exception as e:
             logger.error(f"Ollama请求失败: {e}")
+            
+            # 记录失败，可能触发熔断
+            self._record_failure(str(e))
+            
             raise
         
         finally:
