@@ -11,14 +11,22 @@ from loguru import logger
 class EmotionInferencer:
     """情绪推断器"""
     
-    # 情绪关键词词典
+    # 情绪关键词词典（增强版）
     EMOTION_KEYWORDS = {
-        "urgent": ["快", "急", "马上", "立刻", "赶紧", "紧急", "快点", "快点啊"],
-        "frustrated": ["烦", "气死", "无语", "算了", "不玩了", "什么鬼", "怎么又", "老是"],
-        "angry": ["滚", "闭嘴", "别说了", "够了", "讨厌", "可恶", "混蛋"],
-        "happy": ["谢谢", "太好了", "棒", "厉害", "完美", "优秀", "喜欢", "赞"],
-        "confused": ["不懂", "不明白", "什么意思", "怎么用", "为什么", "搞不懂"],
-        "disappointed": ["唉", "失望", "不行", "不好", "差劲", "一般", "就这"],
+        "urgent": ["快", "急", "马上", "立刻", "赶紧", "紧急", "快点", "快点啊", "等不及", "现在就要", "马上要", " ASAP", "asap", "紧急情况"],
+        "frustrated": ["烦", "气死", "无语", "算了", "不玩了", "什么鬼", "怎么又", "老是", "受不了", "崩溃", "抓狂", "郁闷", "烦躁", "真难用", "怎么这么难"],
+        "angry": ["滚", "闭嘴", "别说了", "够了", "讨厌", "可恶", "混蛋", "垃圾", "废物", "什么破系统", "太烂了", "气死我了"],
+        "happy": ["谢谢", "太好了", "棒", "厉害", "完美", "优秀", "喜欢", "赞", "好棒", "真棒", "太棒了", "爱了", "给力", "牛逼", "666", "感谢", "多谢"],
+        "confused": ["不懂", "不明白", "什么意思", "怎么用", "为什么", "搞不懂", "看不懂", "不理解", "啥意思", "这是啥", "怎么操作", "如何使用"],
+        "disappointed": ["唉", "失望", "不行", "不好", "差劲", "一般", "就这", "也就这样", "没什么用", "不太行", "不太满意", "还可以吧"],
+        "neutral": ["好的", "嗯", "哦", "明白", "了解", "收到", "知道了", "好的呢"],
+    }
+    
+    # 情绪强度修饰词
+    INTENSITY_MODIFIERS = {
+        "very": ["太", "非常", "特别", "超级", "极其", "真的", "实在"],
+        "somewhat": ["有点", "稍微", "略微", "还算"],
+        "negative": ["不", "没", "别", "不要"],
     }
     
     # 标点符号强度
@@ -81,15 +89,31 @@ class EmotionInferencer:
         elif result["emotion"] == "frustrated":
             result["urgency"] = 0.6 * punct_multiplier
         
-        # 5. 计算耐心
-        if result["emotion"] == "frustrated":
-            result["patience"] = 0.3
-        elif result["emotion"] == "angry":
-            result["patience"] = 0.1
-        elif result["emotion"] == "disappointed":
-            result["patience"] = 0.4
-        elif result["emotion"] == "happy":
-            result["patience"] = 1.0
+        # 5. 计算耐心（增强版）
+        base_patience = 1.0
+        
+        # 根据情绪调整基础耐心
+        emotion_patience_map = {
+            "frustrated": 0.3,
+            "angry": 0.1,
+            "disappointed": 0.4,
+            "urgent": 0.5,  # 紧急但不是没耐心
+            "confused": 0.6,  # 困惑需要更多耐心解释
+            "happy": 1.0,
+            "neutral": 0.8,
+        }
+        
+        if result["emotion"] in emotion_patience_map:
+            base_patience = emotion_patience_map[result["emotion"]]
+        
+        # 检查强度修饰词
+        for modifier in self.INTENSITY_MODIFIERS.get("very", []):
+            if modifier in text:
+                if result["emotion"] in ["frustrated", "angry", "disappointed"]:
+                    base_patience *= 0.7  # 更强烈的负面情绪
+                break
+        
+        result["patience"] = base_patience
         
         # 6. 计算挫折度
         if context:

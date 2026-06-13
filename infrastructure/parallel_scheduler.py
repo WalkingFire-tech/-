@@ -23,6 +23,9 @@ class ParallelScheduler:
         self.timeout_seconds = 60
         self.retry_count = 2
         
+        # 模型黑名单（失败后暂时禁用）
+        self.model_blacklist = {}  # {model_name: until_timestamp}
+        
         logger.info("并行调度器已初始化")
     
     def _init_db(self):
@@ -55,6 +58,35 @@ class ParallelScheduler:
             ''')
             conn.commit()
     
+    def _is_blacklisted(self, model_name: str) -> bool:
+        """检查模型是否在黑名单中"""
+        if model_name in self.model_blacklist:
+            if time.time() < self.model_blacklist[model_name]:
+                return True
+            else:
+                # 黑名单过期，移除
+                del self.model_blacklist[model_name]
+        return False
+    
+    def _mark_failed(self, model_name: str, duration: int = 300):
+        """将失败模型加入黑名单
+        
+        Args:
+            model_name: 模型名称
+            duration: 禁用时长（秒），默认5分钟
+        """
+        self.model_blacklist[model_name] = time.time() + duration
+        logger.warning(f"模型 {model_name} 已加入黑名单（{duration}秒）")
+    
+    def _get_available_models(self, models: List[Any]) -> List[Any]:
+        """过滤黑名单模型"""
+        available = []
+        for model in models:
+            model_name = getattr(model, 'model_name', str(model))
+            if not self._is_blacklisted(model_name):
+                available.append(model)
+        return available
+    
     async def parallel_call(self, models: List[Any], prompt: str,
                            task_type: str = 'default',
                            progress_callback: Optional[Callable] = None) -> Dict:
@@ -72,14 +104,24 @@ class ParallelScheduler:
         task_id = f"{task_type}_{int(time.time()*1000)}"
         start_time = time.time()
         
+        # 过滤黑名单模型
+        available_models = self._get_available_models(models)
+        if not available_models:
+            logger.warning("所有模型都在黑名单中")
+            return {'error': 'all_models_blacklisted', 'best': None}
+        
         semaphore = asyncio.Semaphore(self.max_concurrent)
         
         async def call_with_semaphore(model_adapter, model_name):
             async with semaphore:
-                return await self._safe_call(model_adapter, model_name, prompt, task_id)
+                result = await self._safe_call(model_adapter, model_name, prompt, task_id)
+                # 如果失败，加入黑名单
+                if not result or not result.get('success'):
+                    self._mark_failed(model_name)
+                return result
         
         tasks = []
-        for model_adapter in models:
+        for model_adapter in available_models:
             model_name = getattr(model_adapter, 'model_name', str(model_adapter))
             tasks.append(call_with_semaphore(model_adapter, model_name))
         

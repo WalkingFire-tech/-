@@ -20,10 +20,10 @@ echo.
 
 REM 步骤2: 启动后端
 echo [步骤2] 启动后端服务...
-echo 启动命令: python -m uvicorn api:app --host 0.0.0.0 --port 8000
+echo 启动命令: python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 echo.
 
-start "后端服务" cmd /k "python -m uvicorn api:app --host 0.0.0.0 --port 8000"
+start "后端服务" cmd /k "python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000"
 
 echo 等待后端启动（10秒）...
 timeout /t 10 /nobreak >nul

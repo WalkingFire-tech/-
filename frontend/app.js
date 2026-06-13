@@ -247,7 +247,32 @@ async function sendMessage() {
             
             // 使用增强的格式化
             const responseText = formatResponseEnhanced(data.response);
-            addMessageHTML('assistant', responseText);
+            
+            // 添加助手消息（带反馈按钮）
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant';
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.innerHTML = responseText;
+            
+            // 添加反馈按钮
+            const feedbackDiv = document.createElement('div');
+            feedbackDiv.className = 'feedback-buttons';
+            feedbackDiv.innerHTML = `
+                <button class="feedback-btn positive" onclick="sendFeedback(1, this)" title="好评">👍</button>
+                <button class="feedback-btn negative" onclick="sendFeedback(-1, this)" title="差评">👎</button>
+            `;
+            
+            messageDiv.appendChild(contentDiv);
+            messageDiv.appendChild(feedbackDiv);
+            messagesContainer.appendChild(messageDiv);
+            
+            // 添加代码复制功能
+            addCopyButtons(contentDiv);
+            
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
         }
     } catch (error) {
         addMessage('system', `❌ 请求失败: ${error.message}`);
@@ -363,5 +388,189 @@ function handleKeyDown(event) {
     if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
         sendMessage();
+    }
+}
+
+// 发送反馈
+async function sendFeedback(score, buttonElement) {
+    try {
+        // 更新按钮状态
+        const feedbackDiv = buttonElement.parentElement;
+        const buttons = feedbackDiv.querySelectorAll('.feedback-btn');
+        buttons.forEach(btn => btn.disabled = true);
+        
+        buttonElement.style.opacity = '1';
+        buttonElement.style.transform = 'scale(1.2)';
+        
+        // 发送反馈到后端
+        const response = await fetch(`${API_BASE}/api/feedback`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ score: score })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // 显示感谢提示
+            const thankYou = document.createElement('span');
+            thankYou.className = 'feedback-thank';
+            thankYou.textContent = score > 0 ? ' ✓ 感谢好评！' : ' ✓ 已收到反馈';
+            feedbackDiv.appendChild(thankYou);
+            
+            setTimeout(() => {
+                thankYou.remove();
+            }, 3000);
+        }
+        
+    } catch (error) {
+        console.error('反馈发送失败:', error);
+        // 恢复按钮状态
+        const feedbackDiv = buttonElement.parentElement;
+        const buttons = feedbackDiv.querySelectorAll('.feedback-btn');
+        buttons.forEach(btn => btn.disabled = false);
+    }
+}
+
+// ========== 外脑配置功能 ==========
+
+// 显示外脑配置模态框
+function showExternalModelConfig() {
+    document.getElementById('external-model-modal').style.display = 'block';
+    loadExternalModels();
+}
+
+// 关闭外脑配置模态框
+function closeExternalModelConfig() {
+    document.getElementById('external-model-modal').style.display = 'none';
+}
+
+// 加载外部模型列表
+async function loadExternalModels() {
+    try {
+        const response = await fetch(`${API_BASE}/api/external_models`);
+        const data = await response.json();
+        
+        const listDiv = document.getElementById('external-models-list');
+        listDiv.innerHTML = '';
+        
+        if (data.models && data.models.length > 0) {
+            data.models.forEach(model => {
+                const modelDiv = document.createElement('div');
+                modelDiv.className = 'model-item';
+                modelDiv.innerHTML = `
+                    <div class="model-header">
+                        <strong>${model.name}</strong>
+                        <div class="model-actions">
+                            <button onclick="testModel('${model.name}')" class="btn-small">测试</button>
+                            <button onclick="deleteModel('${model.name}')" class="btn-small btn-danger">删除</button>
+                        </div>
+                    </div>
+                    <div class="model-info">
+                        <div>API地址: ${model.api_url}</div>
+                        <div>密钥: ●●●●●●●●</div>
+                        <div>配额: ${model.used_today}/${model.daily_limit} 请求/日</div>
+                    </div>
+                `;
+                listDiv.appendChild(modelDiv);
+            });
+        } else {
+            listDiv.innerHTML = '<p class="no-models">暂无配置的外部模型</p>';
+        }
+    } catch (error) {
+        console.error('加载模型失败:', error);
+    }
+}
+
+// 显示添加模型表单
+function showAddModelForm() {
+    document.getElementById('add-model-modal').style.display = 'block';
+}
+
+// 关闭添加模型表单
+function closeAddModelForm() {
+    document.getElementById('add-model-modal').style.display = 'none';
+    document.getElementById('add-model-form').reset();
+}
+
+// 添加模型表单提交
+document.getElementById('add-model-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const name = document.getElementById('model-name').value;
+    const apiUrl = document.getElementById('model-api-url').value;
+    const apiKey = document.getElementById('model-api-key').value;
+    const dailyLimit = parseInt(document.getElementById('model-daily-limit').value);
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/external_models`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                name: name,
+                api_url: apiUrl,
+                api_key: apiKey,
+                daily_limit: dailyLimit
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            alert('✓ 模型已添加');
+            closeAddModelForm();
+            loadExternalModels();
+        } else {
+            alert('✗ 添加失败: ' + data.error);
+        }
+    } catch (error) {
+        alert('✗ 添加失败: ' + error.message);
+    }
+});
+
+// 测试模型连接
+async function testModel(name) {
+    try {
+        const response = await fetch(`${API_BASE}/api/external_models/test`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: name})
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            alert(`✓ ${name}: 连接成功`);
+        } else {
+            alert(`✗ ${name}: ${data.message}`);
+        }
+    } catch (error) {
+        alert('✗ 测试失败: ' + error.message);
+    }
+}
+
+// 删除模型
+async function deleteModel(name) {
+    if (!confirm(`确定删除模型 "${name}" 吗？`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/external_models/${name}`, {
+            method: 'DELETE'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            alert('✓ 模型已删除');
+            loadExternalModels();
+        } else {
+            alert('✗ 删除失败: ' + data.error);
+        }
+    } catch (error) {
+        alert('✗ 删除失败: ' + error.message);
     }
 }

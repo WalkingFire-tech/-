@@ -86,17 +86,32 @@ class HealthDashboard:
             from infrastructure.model_capability import model_capability
             
             stats = model_capability.export_stats()
-            total_models = stats.get("total_models", 0)
-            total_dimensions = stats.get("total_dimensions", 0)
+            total_models = stats.get("registered_models", 0)
+            total_dimensions = stats.get("dimensions", 0)
             
             if total_models == 0 or total_dimensions == 0:
                 return 50.0
             
-            avg_confidence = stats.get("avg_confidence", 0.5)
+            # 计算能力矩阵覆盖率
+            # 理想情况: 每个模型都有所有维度的能力评估
+            matrix_size = stats.get("matrix_size", 0)
+            ideal_size = total_models * len(model_capability.DEFAULT_DIMENSIONS)
             
-            coverage = min(100, (total_models * total_dimensions * avg_confidence) / 10)
+            if ideal_size == 0:
+                return 50.0
             
-            return round(coverage, 2)
+            coverage_ratio = min(1.0, matrix_size / ideal_size)
+            
+            # 基础分 + 覆盖率加成
+            base_score = 50.0
+            coverage_score = coverage_ratio * 50.0
+            
+            # 模型数量加成（最多20分）
+            model_bonus = min(20, total_models * 2)
+            
+            coverage = base_score + coverage_score + model_bonus
+            
+            return round(min(100, coverage), 2)
             
         except Exception as e:
             logger.warning(f"能力覆盖率测量失败: {e}")

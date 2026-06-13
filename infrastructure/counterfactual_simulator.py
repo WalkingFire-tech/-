@@ -128,7 +128,10 @@ class CounterfactualSimulator:
         try:
             start_time = datetime.now()
             
-            response = await adapter.generate(task_input)
+            if asyncio.iscoroutinefunction(adapter.generate):
+                response = await adapter.generate(task_input)
+            else:
+                response = await asyncio.to_thread(adapter.generate, task_input)
             
             duration = (datetime.now() - start_time).total_seconds()
             
@@ -225,7 +228,7 @@ class CounterfactualSimulator:
         applied_count = 0
         
         try:
-            from infrastructure.model_capability import capability_matrix
+            from infrastructure.model_capability import model_capability
             
             for task_type, insights in self.insights.items():
                 for insight in insights[:3]:
@@ -235,10 +238,15 @@ class CounterfactualSimulator:
                     recommended_model = insight['recommendation'].split()[-1]
                     
                     try:
-                        capability_matrix.boost_model(
+                        # 使用update_capability方法提升模型能力
+                        current_score = model_capability.score_model_for_task(
+                            recommended_model, task_type
+                        )
+                        model_capability.update_capability(
                             model_name=recommended_model,
                             task_type=task_type,
-                            boost_factor=1.1
+                            score=min(1.0, current_score * 1.1),  # 提升10%
+                            source='counterfactual_insight'
                         )
                         applied_count += 1
                         logger.info(f"应用洞察: {insight['recommendation']}")
