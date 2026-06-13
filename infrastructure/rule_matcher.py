@@ -31,10 +31,31 @@ class RuleMatcher:
             条件是否满足
         """
         try:
-            return self._simple_eval(condition, context)
+            normalized = self._normalize_condition(condition)
+            return self._simple_eval(normalized, context)
         except Exception as e:
             logger.debug(f"条件评估失败: {condition}, 错误: {e}")
             return self._fallback_match(condition, context)
+    
+    def _normalize_condition(self, condition: str) -> str:
+        """规范化条件表达式（转换SQL语法为Python语法）"""
+        import re
+        
+        result = condition
+        
+        like_pattern = r"(\w+)\s+LIKE\s+'%([^%]+)%'"
+        result = re.sub(like_pattern, r"'\2' in \1", result, flags=re.IGNORECASE)
+        
+        like_pattern2 = r"(\w+)\s+LIKE\s+'([^%]+)%'"
+        result = re.sub(like_pattern2, r"\1.startswith('\2')", result, flags=re.IGNORECASE)
+        
+        like_pattern3 = r"(\w+)\s+LIKE\s+'%([^%]+)'"
+        result = re.sub(like_pattern3, r"\1.endswith('\2')", result, flags=re.IGNORECASE)
+        
+        contains_pattern = r"(\w+)\s+contains\s+'([^']+)'"
+        result = re.sub(contains_pattern, r"'\2' in \1", result, flags=re.IGNORECASE)
+        
+        return result
     
     def _simple_eval(self, expression: str, context: Dict[str, Any]) -> bool:
         """简单表达式求值(安全)"""

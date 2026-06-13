@@ -100,11 +100,24 @@ class VectorRetriever:
         """获取文本embedding"""
         try:
             from sentence_transformers import SentenceTransformer
+            import os
+            
+            offline_mode = config.get("embedding.offline_mode", True)
+            if offline_mode:
+                os.environ['HF_HUB_OFFLINE'] = '1'
             
             model_name = config.get("embedding.model", "paraphrase-multilingual-MiniLM-L12-v2")
             
             if not hasattr(self, '_embedding_model'):
-                self._embedding_model = SentenceTransformer(model_name)
+                try:
+                    self._embedding_model = SentenceTransformer(model_name)
+                except Exception as e:
+                    logger.warning(f"无法加载embedding模型(离线模式): {e}")
+                    logger.info("使用简单hash embedding作为降级方案")
+                    self._embedding_model = None
+            
+            if self._embedding_model is None:
+                return self._simple_embedding(text)
             
             embedding = self._embedding_model.encode(text)
             return embedding
@@ -115,7 +128,7 @@ class VectorRetriever:
         
         except Exception as e:
             logger.error(f"获取embedding失败: {e}")
-            return None
+            return self._simple_embedding(text)
     
     def _simple_embedding(self, text: str) -> np.ndarray:
         """简单embedding(降级方案)"""

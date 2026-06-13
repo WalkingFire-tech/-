@@ -716,6 +716,9 @@ class DataDrivenPlanner:
             logger.error(f"收集系统状态失败: {e}")
             exp_count, exp_quality, active_rules, best_score = 0, 0.0, 0, 0.0
         
+        exp_quality = exp_quality if exp_quality is not None else 0.0
+        best_score = best_score if best_score is not None else 0.0
+        
         meta_prompt = f"""用户问我关于自身能力的问题：" {user_question} "
 
 作为联盟拓荒者智能体，我需要反思自己的能力。以下是我的当前状态：
@@ -767,6 +770,55 @@ class DataDrivenPlanner:
 3. 主动提出澄清问题
 
 你觉得我在哪方面最需要改进？"""
+    
+    def _handle_memory_query(self, intent: Intent) -> str:
+        """处理记忆查询意图
+        
+        Args:
+            intent: 记忆意图
+        
+        Returns:
+            历史对话内容
+        """
+        user_question = intent.raw_text.lower()
+        
+        # 检查是否是回顾历史对话
+        if any(kw in user_question for kw in ["回顾历史", "历史对话", "历史问题", "回顾对话", "之前的对话"]):
+            try:
+                # 从campfire_log.txt读取最近20条对话
+                if hasattr(self, 'campfire') and self.campfire:
+                    context = self.campfire.get_recent_context(rounds=10)
+                    if not context:
+                        return "暂无历史对话记录。"
+                    
+                    return f"""以下是最近的对话历史：
+
+{context}
+
+---
+_共显示最近10轮对话_"""
+                
+                # 如果campfire未初始化，临时创建
+                from infrastructure.logger import CampfireLogger
+                temp_logger = CampfireLogger()
+                context = temp_logger.get_recent_context(rounds=10)
+                
+                if not context:
+                    return "暂无历史对话记录。"
+                
+                return f"""以下是最近的对话历史：
+
+{context}
+
+---
+_共显示最近10轮对话_"""
+                
+            except Exception as e:
+                logger.error(f"读取历史对话失败: {e}")
+                return "抱歉，无法读取历史对话记录。"
+        
+        # 其他记忆查询（记住、忘记等）
+        return "我目前只能记住当前对话中的内容。如果需要回顾历史对话，请说'回顾历史对话'。"
     
     def _report_capability_boundary(self) -> str:
         """报告能力边界"""
@@ -934,10 +986,13 @@ class DataDrivenPlanner:
 """
             for i, (intent_type, raw_input, quality, success, model) in enumerate(recent, 1):
                 status = "✅" if success else "❌"
+                quality_val = quality if quality is not None else 0.0
+                model_val = model if model is not None else "未知"
                 report += f"{i}. {status} [{intent_type}] {raw_input[:30]}...\n"
-                report += f"   质量: {quality:.1f}分 | 模型: {model}\n\n"
+                report += f"   质量: {quality_val:.1f}分 | 模型: {model_val}\n\n"
             
-            avg_quality = sum(r[2] for r in recent) / len(recent)
+            qualities = [r[2] for r in recent if r[2] is not None]
+            avg_quality = sum(qualities) / len(qualities) if qualities else 0.0
             success_rate = sum(1 for r in recent if r[3]) / len(recent) * 100
             
             report += f"""
@@ -1408,6 +1463,13 @@ class DataDrivenPlanner:
         if intent.type == "meta":
             logger.info("处理元认知问题")
             response = self._handle_meta_question(intent.raw_text)
+            bus.publish("plan_executed", response)
+            return
+        
+        # 5.5. 记忆意图处理
+        if intent.type == "memory":
+            logger.info("处理记忆查询")
+            response = self._handle_memory_query(intent)
             bus.publish("plan_executed", response)
             return
         
