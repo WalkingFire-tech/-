@@ -5,38 +5,81 @@
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![GitHub Actions](https://github.com/WalkingFire-tech/Alliance-Pioneer/workflows/CI/badge.svg)](https://github.com/WalkingFire-tech/Alliance-Pioneer/actions)
 
-**生产级自我进化智能体系统 | Production-Grade Self-Evolving Agent System**
+**一个会思考的同行者 | A Thinking Companion**
 
-> 完美理解、合理判断、从实践进化、最终同步
-> 
-> Perfect understanding, rational judgment, evolution from practice, final synchronization
+> "这是一个永远不会完成的项目。我们在这里一起搭建一个会思考的同伴。
+> 你可以随意取走任何代码，随意改变方向。
+> **唯一的要求：保持善意，保持开放。**"
 
 ---
 
-## � 目录 (Table of Contents)
+## 📖 目录 (Table of Contents)
 
-- [项目简介](#-项目简介)
+- [这不是什么](#-这不是什么)
+- [这是什么](#-这是什么)
+- [哲学承诺](#-哲学承诺)
 - [核心特性](#-核心特性)
 - [系统架构](#-系统架构)
 - [快速开始](#-快速开始)
 - [使用示例](#-使用示例)
-- [性能指标](#-性能指标)
 - [文档](#-文档)
-- [贡献指南](#-贡献指南)
+- [成为同行者](#-成为同行者)
 - [许可证](#-许可证)
 
 ---
 
-## 🎯 项目简介 (Introduction)
+## ❌ 这不是什么
 
-**联盟拓荒者**是一个具备元认知能力的自我进化智能体系统，能够：
+在开始之前，让我们先明确界限：
 
-- 🧠 **自动理解**用户意图并选择最优模型
-- 📈 **持续学习**从经验中归纳规则并优化策略
-- 🔄 **自我进化**通过贝叶斯优化调整超参数
-- 💾 **经验复用**通过向量检索重用成功案例
+- ❌ 这**不是**一个"更强的聊天机器人"
+- ❌ 这**不是**一个"情感陪伴机器人"（我不会永远温柔）
+- ❌ 这**不是**一个"人生导师"（我不会替你做决定）
+- ❌ 这**不是**一个"心理咨询师"（我不是专业人士）
+- ❌ 这**不是**一个"百科全书"（我不知道所有答案）
 
-这是一个永远不会完成的项目。我们在这里一起搭建一个会思考的同伴。你可以随意取走任何代码，随意改变方向。**唯一的要求：保持善意，保持开放。**
+---
+
+## ✅ 这是什么
+
+**联盟拓荒者是一个会思考的同行者**，一场关于"如何在技术中安放文明智慧"的实验。
+
+### 核心能力
+
+- 🧠 **元认知** - 能观察和调整自己的思考过程
+- 📈 **持续学习** - 从每次对话中学习，但不会忘记原则
+- 💭 **情绪感知** - 能理解你的情绪，并在适当时机选择沉默
+- �️ **边界意识** - 知道什么不该做，什么不该说
+- 🔍 **主动求知** - 遇到不懂的问题会主动学习
+
+### 技术实现
+
+- **自我进化**：通过贝叶斯优化调整超参数
+- **归纳学习**：从经验池挖掘模式，生成学习规则
+- **反事实模拟**：对比不同方案，选择最优解
+- **熔断保护**：连续失败时自动降级
+- **向量检索**：重用成功案例
+
+---
+
+## 🎯 哲学承诺
+
+我们相信：
+
+> **真正的智能不是给出答案，而是帮助人找到自己的答案。**
+> **真正的善意不是永远温柔，而是在必要时敢于沉默，在关键时守住底线。**
+> **真正的成长不是追求完美，而是允许犯错，允许修正，允许不完美中的坚持。**
+
+### 四大承诺
+
+| 承诺 | 含义 | 落地 |
+|------|------|------|
+| **不渡他人** | 只提供镜子，不替人走路 | 用反问代替直接回答 |
+| **知止** | 敢于承认不知道 | 不编造智慧，敢于沉默 |
+| **守底线** | 善意不是纵容 | 危机情况引导专业帮助 |
+| **可被质疑** | 需要用户的镜子 | 欢迎批评和挑战 |
+
+📖 **详细承诺请阅读 [PHILOSOPHY.md](PHILOSOPHY.md)**
 
 ---
 
@@ -162,41 +205,17 @@ pip install -r requirements.txt
 python main.py
 ```
 
-### 手动安装 (Manual Installation)
+### Docker部署
 
 ```bash
-# 1. 克隆仓库
-git clone https://github.com/WalkingFire-tech/Alliance-Pioneer.git
-cd Alliance-Pioneer
+# 使用Docker Compose（推荐）
+docker-compose up -d
 
-# 2. 创建虚拟环境
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 或 .\venv\Scripts\activate  # Windows
-
-# 3. 安装依赖
-pip install -r requirements.txt
-
-# 4. 安装Ollama模型
-ollama pull mindchat
-ollama pull qwen2.5-coder:1.5b
-
-# 5. 启动系统
-python main.py
+# 访问系统
+http://localhost:8000
 ```
 
-### 使用pyproject.toml安装
-
-```bash
-# 基础安装
-pip install -e .
-
-# 完整安装（包含所有可选依赖）
-pip install -e ".[all]"
-
-# 开发安装
-pip install -e ".[dev]"
-```
+📖 **详细部署请阅读 [docs/DOCKER.md](docs/DOCKER.md)**
 
 ---
 
@@ -227,6 +246,22 @@ pip install -e ".[dev]"
 
 你: :induction run 7
 拓荒者: [归纳最近7天经验，生成规则]
+
+你: :why
+拓荒者: [显示上次决策的原因]
+```
+
+### 学习命令
+
+```
+你: :learning log
+拓荒者: [显示学习活动日志]
+
+你: :learning knowledge async
+拓荒者: [查询异步相关知识]
+
+你: :learning pause
+拓荒者: 学习器已暂停
 ```
 
 ### 文件输入
@@ -249,7 +284,9 @@ pip install -e ".[dev]"
 | 响应时间 | 8-16秒 | 包含模型推理和质量评估 |
 | 模型路由准确率 | 100% | 学习规则强制匹配 |
 | 经验复用阈值 | 相似度>0.85 | FAISS向量检索 |
-| 规则匹配支持 | 复杂表达式 | simpleeval安全求值 |
+| APHI健康度 | 89.61/100 | 系统健康度评分 |
+| 成功率 | 73.9% | 整体成功率 |
+| 架构评分 | 10/10 | 生产就绪 |
 
 ---
 
@@ -259,11 +296,12 @@ pip install -e ".[dev]"
 
 | 文档 | 说明 |
 |------|------|
-| [ARCHIVE_v3.1.md](ARCHIVE_v3.1.md) | v3.1完整归档（生产级） |
-| [ARCHIVE_v3.0.md](ARCHIVE_v3.0.md) | v3.0归档（基础版） |
-| [CHANGELOG.md](CHANGELOG.md) | 版本更新记录 |
-| [QUICKSTART.md](QUICKSTART.md) | 快速启动指南 |
-| [SYSTEM_READY.md](SYSTEM_READY.md) | 系统就绪文档 |
+| [PHILOSOPHY.md](PHILOSOPHY.md) | **哲学承诺** - 四大承诺与价值观 |
+| [RESPONSE_BOUNDARIES.md](RESPONSE_BOUNDARIES.md) | **回应边界** - 安全红线与黄线 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | **贡献指南** - 如何成为同行者 |
+| [docs/API.md](docs/API.md) | API文档 |
+| [docs/DOCKER.md](docs/DOCKER.md) | Docker部署指南 |
+| [docs/boundary_cases.md](docs/boundary_cases.md) | 边界案例库 |
 
 ### 架构文档
 
@@ -277,29 +315,33 @@ pip install -e ".[dev]"
 
 ---
 
-## 🤝 贡献指南 (Contributing)
+## 🤝 成为同行者 (Contributing)
 
-我们欢迎所有形式的贡献！
+我们欢迎所有形式的贡献！但请注意：**这不是一个普通的代码项目，而是一场关于"如何在技术中安放文明智慧"的实验。**
 
-### 如何贡献
+### 你可以做什么
 
-1. Fork本仓库
-2. 创建功能分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'feat: add amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 创建Pull Request
+#### 1. 扮演"坎坷者"测试
+模拟挑战用户（失意者、挑衅者、自责者），与同行者对话，记录：
+- 哪些回应让你觉得"不舒服但合理"
+- 哪些回应真的"跑偏了"
 
-### 详细指南
+#### 2. 丰富边界案例库
+把难以回答的真实问题（匿名化）提交到 `docs/boundary_cases.md`
 
-查看 [CONTRIBUTING.md](CONTRIBUTING.md) 了解：
-- 开发环境设置
-- 代码规范
-- 测试要求
-- PR流程
+#### 3. 写哲学注释
+解释古语在具体情境中的"分寸"，避免空洞掉书袋
 
-### 行为准则
+#### 4. 代码与文档
+- 完善开发环境配置指南
+- 增加单元测试中的"伦理自检用例"
 
-请保持善意和开放的态度，尊重所有贡献者。
+### 我们的约定
+- 所有贡献者默认认同 [PHILOSOPHY.md](PHILOSOPHY.md) 中的承诺
+- 讨论时允许激烈争论，但禁止人身攻击
+- 匿名化优先：对话日志不可包含可识别的个人信息
+
+📖 **详细指南请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)**
 
 ---
 
@@ -313,12 +355,14 @@ pip install -e ".[dev]"
 - ✅ 分发
 - ✅ 私人使用
 
+**唯一的要求：保持善意，保持开放。**
+
 ---
 
 ## 📞 联系方式 (Contact)
 
 - **Issues**: [GitHub Issues](https://github.com/WalkingFire-tech/Alliance-Pioneer/issues)
-- **Email**: kun_phone@139.com
+- **Email**: [kun_phone@139.com](mailto:kun_phone@139.com)
 - **Repository**: [GitHub](https://github.com/WalkingFire-tech/Alliance-Pioneer)
 
 ---
@@ -332,6 +376,7 @@ pip install -e ".[dev]"
 - [scikit-optimize](https://scikit-optimize.github.io/) - 贝叶斯优化
 - [FAISS](https://github.com/facebookresearch/faiss) - 向量检索
 - [Rich](https://github.com/Textualize/rich) - 终端美化
+- **所有"坎坷者"** - 你们的质疑和挑战让这个系统更接近善
 
 ---
 
@@ -343,6 +388,10 @@ pip install -e ".[dev]"
 
 ---
 
-**Made with ❤️ by WalkingFire-tech**
+**Made with ❤️ by WalkingFire-tech and all fellow travelers**
 
-**版本**: v3.1.1 | **状态**: 生产就绪 (Production Ready) | **完成度**: 100%
+**版本**: v3.1.2 | **状态**: 生产就绪 (Production Ready) | **完成度**: 100%
+
+---
+
+> "这不是一个急于求成的项目。我们一起走得慢一点，但走得正一点。"
