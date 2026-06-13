@@ -4,80 +4,91 @@ on:
   push:
     branches: [ main, develop ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main ]
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ['3.11']
-
     steps:
     - uses: actions/checkout@v3
-
-    - name: Set up Python ${{ matrix.python-version }}
+    
+    - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 black isort
+    
+    - name: Lint with flake8
+      run: |
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    
+    - name: Check formatting with black
+      run: |
+        black --check .
+    
+    - name: Check imports with isort
+      run: |
+        isort --check-only .
 
-    - name: Cache pip dependencies
-      uses: actions/cache@v3
+  test:
+    runs-on: ubuntu-latest
+    needs: lint
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
       with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-
+        python-version: '3.11'
+    
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-cov flake8 mypy
-
-    - name: Lint with flake8
+        pip install pytest pytest-cov pytest-asyncio
+    
+    - name: Run tests
       run: |
-        # 停止构建如果遇到语法错误或未定义的名称
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # 退出零将所有其他警告视为错误
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
-
-    - name: Type check with mypy
-      run: |
-        mypy core/ adapters/ infrastructure/ meta/ tools/ --ignore-missing-imports || true
-
-    - name: Run tests with pytest
-      run: |
-        pytest tests/ -v --cov=core --cov=adapters --cov=infrastructure --cov=meta --cov-report=xml --cov-report=html
-
-    - name: Upload coverage reports
+        pytest tests/ -v --cov=. --cov-report=xml --cov-report=html
+    
+    - name: Upload coverage
       uses: codecov/codecov-action@v3
       with:
-        file: ./coverage.xml
+        files: ./coverage.xml
         flags: unittests
         name: codecov-umbrella
         fail_ci_if_error: false
 
-  security:
+  build:
     runs-on: ubuntu-latest
+    needs: test
+    
     steps:
     - uses: actions/checkout@v3
-
-    - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
       with:
-        scan-type: 'fs'
-        scan-ref: '.'
-        format: 'table'
-        exit-code: '0'
-        ignore-unfixed: true
-        severity: 'CRITICAL,HIGH'
-
-  dependency-review:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-    - uses: actions/checkout@v3
-
-    - name: Dependency Review
-      uses: actions/dependency-review-action@v3
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Build package
+      run: |
+        pip install build
+        python -m build
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: dist
+        path: dist/

@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  alliance-pioneer:
+    build: .
+    container_name: alliance-pioneer
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+    restart: unless-stopped
+    networks:
+      - pioneer-network
+
+  # 可选：Ollama服务（如果需要在容器中运行）
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - pioneer-network
+
+networks:
+  pioneer-network:
+    driver: bridge
+
+volumes:
+  ollama-data:
