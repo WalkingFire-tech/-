@@ -902,6 +902,136 @@ async def get_model_health(model_name: str):
         logger.error(f"获取健康状态失败: {e}")
         return {"error": str(e)}
 
+# ========== 主动学习API ==========
+
+@app.get("/api/learning/log")
+async def get_learning_log(limit: int = 20):
+    """查看学习活动日志"""
+    try:
+        from infrastructure.active_learner import active_learner
+        
+        activities = active_learner.get_activities(limit=limit)
+        
+        return {
+            "success": True,
+            "activities": activities,
+            "total": len(activities)
+        }
+        
+    except Exception as e:
+        logger.error(f"获取学习日志失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/learning/knowledge")
+async def get_learning_knowledge(topic: str = None, limit: int = 20):
+    """查看已学习的知识"""
+    try:
+        from infrastructure.active_learner import active_learner
+        
+        knowledge = active_learner.get_knowledge(topic=topic, limit=limit)
+        
+        return {
+            "success": True,
+            "knowledge": knowledge,
+            "total": len(knowledge)
+        }
+        
+    except Exception as e:
+        logger.error(f"获取知识失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/learning/trigger")
+async def trigger_learning(query: str, trigger_type: str = "manual"):
+    """手动触发学习"""
+    try:
+        from infrastructure.active_learner import active_learner, LearningTrigger
+        
+        trigger_map = {
+            "manual": LearningTrigger.MANUAL,
+            "user_question": LearningTrigger.USER_QUESTION,
+            "intent_failure": LearningTrigger.INTENT_FAILURE,
+            "capability_low": LearningTrigger.CAPABILITY_LOW,
+            "aphi_decline": LearningTrigger.APHI_DECLINE
+        }
+        
+        trigger = trigger_map.get(trigger_type, LearningTrigger.MANUAL)
+        
+        activity = await active_learner.trigger_learning(trigger, query)
+        
+        return {
+            "success": True,
+            "activity": {
+                "id": activity.id,
+                "trigger": activity.trigger.value,
+                "query": activity.query,
+                "status": activity.status.value,
+                "impact_score": activity.impact_score
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"触发学习失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/learning/pause")
+async def pause_learning():
+    """暂停学习"""
+    try:
+        from infrastructure.active_learner import active_learner
+        
+        active_learner.pause()
+        
+        return {"success": True, "message": "学习器已暂停"}
+        
+    except Exception as e:
+        logger.error(f"暂停学习失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/learning/resume")
+async def resume_learning():
+    """恢复学习"""
+    try:
+        from infrastructure.active_learner import active_learner
+        
+        active_learner.resume()
+        
+        return {"success": True, "message": "学习器已恢复"}
+        
+    except Exception as e:
+        logger.error(f"恢复学习失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/learning/rollback/{activity_id}")
+async def rollback_learning(activity_id: int):
+    """回滚学习"""
+    try:
+        from infrastructure.active_learner import active_learner
+        
+        success = active_learner.rollback_learning(activity_id)
+        
+        return {"success": success, "message": f"已回滚学习活动 {activity_id}"}
+        
+    except Exception as e:
+        logger.error(f"回滚学习失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/learning/stats")
+async def get_learning_stats():
+    """获取学习统计"""
+    try:
+        from infrastructure.active_learner import active_learner
+        
+        stats = active_learner.get_statistics()
+        
+        return {
+            "success": True,
+            "stats": stats
+        }
+        
+    except Exception as e:
+        logger.error(f"获取学习统计失败: {e}")
+        return {"success": False, "error": str(e)}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
