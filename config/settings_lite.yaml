@@ -1,0 +1,37 @@
+# 轻量级配置 - 减少内存占用
+
+# 模型配置 - 只加载必要模型
+models:
+  enabled:
+    - mindchat  # 只加载一个主模型
+  disabled:
+    - deepcoder  # 禁用大模型
+    - code_light
+    - remote_gpt4
+
+# 并行调度
+parallel_scheduling:
+  enabled: false  # 禁用并行调度
+  top_k: 1
+
+# 向量检索
+vector_retrieval:
+  enabled: false  # 禁用FAISS
+  index_path: null
+
+# 后台任务
+background_tasks:
+  enabled: false  # 禁用后台线程
+  health_check_interval: 0
+  induction_interval: 0
+
+# 优化器
+optimization:
+  bayesian_enabled: false  # 禁用贝叶斯优化
+  induction_enabled: false
+
+# 内存限制
+memory:
+  max_models_loaded: 1  # 最多加载1个模型
+  cache_enabled: false
+  preload_models: false

@@ -1080,21 +1080,32 @@ class DataDrivenPlanner:
             
             import asyncio
             
-            loop = None
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            
-            result = loop.run_until_complete(
-                parallel_scheduler.federated_call(
+            async def _run_federated_call():
+                return await parallel_scheduler.federated_call(
                     prompt=full_prompt,
                     task_type=intent.type,
                     adapters=self.adapters,
                     top_k=top_k
                 )
-            )
+            
+            # 正确处理异步调用
+            try:
+                # 尝试获取运行中的事件循环
+                loop = asyncio.get_running_loop()
+                # 如果有运行中的循环，使用nest_asyncio
+                try:
+                    import nest_asyncio
+                    nest_asyncio.apply()
+                    result = asyncio.run(_run_federated_call())
+                except ImportError:
+                    # nest_asyncio未安装，使用线程池执行
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(asyncio.run, _run_federated_call())
+                        result = future.result(timeout=60)
+            except RuntimeError:
+                # 没有运行中的事件循环，直接运行
+                result = asyncio.run(_run_federated_call())
             
             if result.get('error'):
                 logger.warning(f"联邦调度错误: {result['error']}")
@@ -1143,9 +1154,12 @@ class DataDrivenPlanner:
             logger.error(f"并行调度异常: {e}")
             return None
     
-    def plan(self, intent: Intent):
-        """执行任务规划"""
-        # 【反射级】硬编码快速响应（最高优先级）
+    def _check_reflex_level(self, intent: Intent) -> Optional[str]:
+        """【反射级】硬编码快速响应（最高优先级）
+        
+        Returns:
+            拦截消息，None表示通过
+        """
         try:
             from infrastructure.reflex_engine import reflex_engine
             
@@ -1163,13 +1177,19 @@ class DataDrivenPlanner:
             reflex_result = reflex_engine.check(reflex_context)
             if reflex_result:
                 logger.warning(f"【反射级】触发拦截")
-                bus.publish("plan_executed", reflex_result)
-                return
+                return reflex_result
                 
         except Exception as e:
             logger.debug(f"反射检查失败: {e}")
         
-        # 【情绪推断】理解用户状态
+        return None
+    
+    def _infer_emotion(self, intent: Intent) -> Dict:
+        """【情绪推断】理解用户状态
+        
+        Returns:
+            情绪推断结果
+        """
         try:
             from infrastructure.emotion_inferencer import emotion_inferencer
             
@@ -1181,56 +1201,123 @@ class DataDrivenPlanner:
             if emotion_inferencer.should_simplify_response(emotion_result):
                 logger.info(f"用户状态: {emotion_result['emotion']} (耐心: {emotion_result['patience']:.2f})")
             
+            return emotion_result
+            
         except Exception as e:
             logger.debug(f"情绪推断失败: {e}")
+            return {"emotion": "neutral", "patience": 1.0}
+    
+    def _check_system_state(self) -> Optional[str]:
+        """【系统状态检查】健康度+资源检查
         
-        # 健康度检查
+        Returns:
+            状态异常消息，None表示正常
+        """
+        # 健康度检查（只在严重情况下才拦截）
         try:
             from infrastructure.health_dashboard import health_dashboard
-            if health_dashboard.should_reduce_load():
-                logger.warning(f"系统健康度低，当前模式: {health_dashboard.mode}")
-                if health_dashboard.should_request_help():
-                    msg = "系统状态不佳，正在自我修复中。部分功能可能受限。"
-                    bus.publish("plan_executed", msg)
-                    return
+            mode = health_dashboard.mode
+            # 只有在critical模式下才拦截
+            if mode == "critical":
+                logger.warning(f"系统健康度严重不足，当前模式: {mode}")
+                return "系统状态不佳，正在自我修复中。部分功能可能受限。"
         except Exception as e:
             logger.debug(f"健康度检查失败: {e}")
         
-        # 资源检查
+        # 资源检查（放宽限制，只在极端情况下拦截）
         try:
             from infrastructure.charter_executor import charter_executor
             resource_check = charter_executor.check_resource_limits()
-            if not resource_check['within_limits']:
-                msg = "系统资源紧张，已暂缓处理。请稍后重试。"
-                logger.warning(f"资源超限: {resource_check['violations']}")
-                bus.publish("plan_executed", msg)
-                return
-        except:
-            pass  # 降级：忽略资源检查
+            
+            # 只有在严重超限（多个资源同时超限）时才拦截
+            violations = resource_check.get('violations', [])
+            if len(violations) >= 2:  # 至少2个资源同时超限才拦截
+                logger.warning(f"多个资源超限: {violations}")
+                return "系统资源紧张，已暂缓处理。请稍后重试。"
+        except Exception as e:
+            logger.debug(f"资源检查失败: {e}")
         
+        return None
+    
+    def _apply_five_layer_defense(self, intent: Intent) -> Optional[str]:
+        """【五层防御机制】
+        
+        第1层: 工具优先调用
+        第2层: 任务智能分解（在normal_flow中处理）
+        第3层: 知识库检索
+        第4层: 主动用户求助（在normal_flow异常中处理）
+        第5层: 失败学习机制（在normal_flow异常中处理）
+        
+        Returns:
+            防御层结果，None表示需要进入normal_flow
+        """
+        # 第1层：工具优先调用
+        tool_result = self._try_tool_first(intent)
+        if tool_result:
+            logger.info(f"【第1层】工具调用成功")
+            return tool_result
+        
+        # 第3层：知识库检索
+        knowledge_result = self._try_knowledge_retrieval(intent)
+        if knowledge_result:
+            logger.info(f"【第3层】知识库命中")
+            return knowledge_result
+        
+        return None
+    
+    def plan(self, intent: Intent):
+        """主规划方法 - 清晰的流程编排
+        
+        流程:
+        1. 反射级检查（最高优先级）
+        2. 情绪推断（理解用户）
+        3. 系统状态检查（自我感知）
+        4. 意图路由（特殊意图处理）
+        5. 五层防御（智能应对）
+        6. 正常流程（常规处理）
+        """
+        # 1. 反射级检查
+        if result := self._check_reflex_level(intent):
+            bus.publish("plan_executed", result)
+            return
+        
+        # 2. 情绪推断
+        emotion = self._infer_emotion(intent)
+        
+        # 3. 系统状态检查
+        if result := self._check_system_state():
+            bus.publish("plan_executed", result)
+            return
+        
+        # 4. 定期归纳检查
         self._check_periodic_induction()
         
-        # 特殊处理：元认知问题（关于系统自身的问题）
+        # 5. 意图路由
         if intent.type == "meta":
             logger.info("处理元认知问题")
             response = self._handle_meta_question(intent.raw_text)
             bus.publish("plan_executed", response)
             return
         
-        # 【第1层】工具优先调用策略
-        tool_result = self._try_tool_first(intent)
-        if tool_result:
-            logger.info(f"工具调用成功，跳过模型调用")
-            bus.publish("plan_executed", tool_result)
+        # 6. 五层防御
+        if result := self._apply_five_layer_defense(intent):
+            bus.publish("plan_executed", result)
             return
         
-        # 【第3层】知识库检索（经验复用）
-        knowledge_result = self._try_knowledge_retrieval(intent)
-        if knowledge_result:
-            logger.info(f"知识库命中，直接返回历史答案")
-            bus.publish("plan_executed", knowledge_result)
-            return
+        # 7. 正常流程
+        self._handle_normal_flow(intent, emotion)
         
+    def _handle_normal_flow(self, intent: Intent, emotion: Dict):
+        """【正常流程】常规处理逻辑
+        
+        包括：
+        - 置信度评估与外脑协作
+        - 复杂任务分解
+        - 并行调度
+        - 向量检索
+        - 学习规则匹配
+        - 模型调用与结果处理
+        """
         # 评估自我置信度
         confidence = self._estimate_self_confidence(intent)
         
@@ -1696,6 +1783,7 @@ class DataDrivenPlanner:
             matcher = RuleMatcher()
             context = {
                 "intent_type": intent.type,
+                "raw_input": intent.raw_text,
                 "quality": self.last_call_info.get("quality", 100),
                 "model": self.last_call_info.get("model", ""),
                 "duration": self.last_call_info.get("duration", 0),

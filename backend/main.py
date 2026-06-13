@@ -2,7 +2,7 @@ import sys
 import os
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -587,6 +587,132 @@ async def get_parallel_stats():
         
     except Exception as e:
         logger.error(f"获取并行统计失败: {e}")
+        return {"error": str(e)}
+
+# ========== 模型热加载API ==========
+
+@app.post("/api/models/add")
+async def add_model(request: dict):
+    """动态添加模型"""
+    global adapters
+    
+    model_name = request.get("name")
+    model_type = request.get("type", "ollama")  # ollama, remote, mock
+    
+    if not model_name:
+        return {"success": False, "error": "模型名称不能为空"}
+    
+    if model_name in adapters:
+        return {"success": False, "error": f"模型 {model_name} 已存在"}
+    
+    try:
+        if model_type == "ollama":
+            from adapters.llm.ollama_adapter import OllamaAdapter
+            adapters[model_name] = OllamaAdapter(model_name=model_name)
+            
+        elif model_type == "remote":
+            api_url = request.get("api_url")
+            api_key = request.get("api_key")
+            if not api_url or not api_key:
+                return {"success": False, "error": "远程模型需要api_url和api_key"}
+            
+            from adapters.llm.remote_adapter import RemoteAdapter
+            adapters[model_name] = RemoteAdapter(model_name=model_name)
+            
+        elif model_type == "mock":
+            from adapters.llm.mock_adapter import MockAdapter
+            adapters[model_name] = MockAdapter()
+        else:
+            return {"success": False, "error": f"不支持的模型类型: {model_type}"}
+        
+        # 注册到能力矩阵
+        from infrastructure.model_capability import model_capability
+        model_capability.ensure_model_registered(model_name)
+        
+        logger.info(f"成功添加模型: {model_name} (类型: {model_type})")
+        return {"success": True, "model": model_name, "type": model_type}
+        
+    except Exception as e:
+        logger.error(f"添加模型失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.delete("/api/models/{model_name}")
+async def remove_model(model_name: str):
+    """移除模型"""
+    global adapters
+    
+    if model_name not in adapters:
+        return {"success": False, "error": f"模型 {model_name} 不存在"}
+    
+    if len(adapters) <= 1:
+        return {"success": False, "error": "至少需要保留一个模型"}
+    
+    try:
+        del adapters[model_name]
+        logger.info(f"已移除模型: {model_name}")
+        return {"success": True, "model": model_name}
+        
+    except Exception as e:
+        logger.error(f"移除模型失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/models/{model_name}/test")
+async def test_model(model_name: str):
+    """测试模型连接"""
+    if model_name not in adapters:
+        return {"success": False, "error": f"模型 {model_name} 不存在"}
+    
+    try:
+        adapter = adapters[model_name]
+        
+        # 测试简单生成
+        test_prompt = "Hello, this is a test."
+        
+        import asyncio
+        if asyncio.iscoroutinefunction(adapter.generate):
+            response = await asyncio.wait_for(
+                adapter.generate(test_prompt),
+                timeout=10.0
+            )
+        else:
+            response = await asyncio.to_thread(adapter.generate, test_prompt)
+        
+        # 记录成功
+        from infrastructure.model_health_checker import model_health_checker
+        model_health_checker.record_success(model_name, 1.0)
+        
+        return {
+            "success": True,
+            "model": model_name,
+            "response_preview": response[:100] if response else None
+        }
+        
+    except asyncio.TimeoutError:
+        from infrastructure.model_health_checker import model_health_checker
+        model_health_checker.record_failure(model_name, "timeout", "Test timeout")
+        return {"success": False, "error": "连接超时"}
+        
+    except Exception as e:
+        from infrastructure.model_health_checker import model_health_checker
+        model_health_checker.record_failure(model_name, "test_failed", str(e))
+        logger.error(f"测试模型失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/models/{model_name}/health")
+async def get_model_health(model_name: str):
+    """获取模型健康状态"""
+    try:
+        from infrastructure.model_health_checker import model_health_checker
+        
+        health = model_health_checker.get_model_health(model_name)
+        
+        return {
+            "model": model_name,
+            "health": health
+        }
+        
+    except Exception as e:
+        logger.error(f"获取健康状态失败: {e}")
         return {"error": str(e)}
 
 if __name__ == "__main__":

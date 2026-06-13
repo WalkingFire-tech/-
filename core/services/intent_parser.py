@@ -37,7 +37,10 @@ class IntentParser:
                 r"你.*懂|你.*明白|你.*认为|如何.*让.*你.*更|"
                 r"你.*能力.*边界|能力边界.*在哪|你的.*边界|"
                 r"自我.*评估|评估.*体系|你.*决策|你.*如何.*认识|"
-                r"你.*最优|你.*贴切|完善.*你|回顾.*对话|给出.*评价",
+                r"你.*最优|你.*贴切|完善.*你|回顾.*对话|给出.*评价|"
+                r"能力边界|自我评估|决策机制|怎么认识自己|评估体系|"
+                r"知道自己.*?|你的.*能力|你.*如何.*决策|你.*学习.*方式|"
+                r"你.*改进.*自己|你.*反思|你.*优点|你.*缺点",
                 re.IGNORECASE
             ),
             # 代码意图
@@ -284,3 +287,37 @@ class IntentParser:
             self.rules[intent_type] = re.compile(new_pattern, re.IGNORECASE)
         
         logger.info(f"添加自定义规则: {intent_type} <- {pattern}")
+    
+    def learn_from_correction(self, text: str, correct_intent: str):
+        """从用户纠正中学习
+        
+        Args:
+            text: 用户输入文本
+            correct_intent: 正确的意图类型
+        """
+        try:
+            import sqlite3
+            conn = sqlite3.connect("learning_rules.db")
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS learning_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    condition TEXT,
+                    action TEXT,
+                    confidence REAL,
+                    status TEXT,
+                    source TEXT,
+                    created_at TEXT
+                )
+            ''')
+            conn.execute('''
+                INSERT INTO learning_rules 
+                (condition, action, confidence, status, source, created_at)
+                VALUES (?, ?, 0.8, 'pending', 'user_correction', datetime('now'))
+            ''', (f"raw_input LIKE '%{text}%'", f"set_intent:{correct_intent}"))
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"从纠正中学习: '{text[:30]}...' -> {correct_intent}")
+            
+        except Exception as e:
+            logger.warning(f"学习记录失败: {e}")
