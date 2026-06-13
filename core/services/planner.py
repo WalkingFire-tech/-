@@ -52,6 +52,13 @@ except Exception as e:
     RECURRENT_AVAILABLE = False
     logger.warning(f"循环推理器加载失败: {e}")
 
+try:
+    from infrastructure.cognitive_layer import cognitive_layer
+    COGNITIVE_AVAILABLE = True
+except Exception as e:
+    COGNITIVE_AVAILABLE = False
+    logger.warning(f"认知层加载失败: {e}")
+
 
 class DataDrivenPlanner:
     """完全数据驱动的规划器"""
@@ -1499,6 +1506,13 @@ _共显示最近10轮对话_"""
             bus.publish("plan_executed", response)
             return
         
+        # 5.6. 认知模式检查（逻辑导向）
+        if self._should_use_cognitive_mode(intent):
+            logger.info("启用认知模式 - 逻辑导向")
+            response = self._cognitive_mode(intent)
+            bus.publish("plan_executed", response)
+            return
+        
         # 6. 五层防御
         if result := self._apply_five_layer_defense(intent):
             bus.publish("plan_executed", result)
@@ -2060,6 +2074,80 @@ _共显示最近10轮对话_"""
             return {"type": "ask_user", "message": action.split(":", 1)[1]}
         else:
             return {"type": "other", "raw": action}
+    
+    def _should_use_cognitive_mode(self, intent: Intent) -> bool:
+        """
+        判断是否应该使用认知模式
+        
+        条件：
+        1. 用户明确请求（:plan命令）
+        2. 资源不足（无可用模型）
+        3. 任务复杂度高且信息缺口多
+        """
+        # 检查用户是否请求逻辑模式
+        if hasattr(intent, 'entities') and intent.entities:
+            if intent.entities.get("logic_only"):
+                return True
+        
+        # 检查资源可用性
+        if not self.adapters or len(self.adapters) == 0:
+            logger.info("无可用模型，切换到认知模式")
+            return True
+        
+        # 检查模型健康度
+        if self.health_checker:
+            healthy_models = [
+                name for name in self.adapters.keys()
+                if not self.health_checker.is_blacklisted(name)
+            ]
+            if not healthy_models:
+                logger.info("所有模型不可用，切换到认知模式")
+                return True
+        
+        # 检查任务复杂度
+        if len(intent.raw_text) > 200:
+            # 复杂任务，考虑使用认知模式辅助
+            # 但不强制，只是增强
+            pass
+        
+        return False
+    
+    def _cognitive_mode(self, intent: Intent) -> str:
+        """
+        认知模式 - 仅输出逻辑分析，不执行模型
+        
+        核心价值：
+        - 即使没有模型，也能提供有价值的分析框架
+        - 输出问题分解、因果链、执行计划
+        """
+        logger.info("进入认知模式")
+        
+        if not COGNITIVE_AVAILABLE:
+            return "认知层不可用，无法提供逻辑分析。"
+        
+        try:
+            # 调用认知层
+            result = cognitive_layer.analyze(
+                text=intent.raw_text,
+                intent_type=intent.type,
+                context=self._get_recent_context()
+            )
+            
+            # 生成报告
+            report = cognitive_layer.generate_report(result)
+            
+            # 添加说明
+            report += "\n\n---\n"
+            report += "**说明**：以上为系统的逻辑分析结果。"
+            report += "如需执行具体子任务，请确保模型可用或提供更多信息。"
+            
+            logger.info(f"认知模式完成: {len(result['subtasks'])}个子任务")
+            
+            return report
+            
+        except Exception as e:
+            logger.error(f"认知模式失败: {e}")
+            return f"逻辑分析失败：{str(e)}\n\n请尝试提供更明确的问题描述。"
 
 
 # 向后兼容
