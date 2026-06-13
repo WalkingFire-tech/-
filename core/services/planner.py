@@ -72,6 +72,20 @@ class DataDrivenPlanner:
         self.last_induction_time = 0
         self.last_optimization_score = None
         
+        # 决策日志器
+        try:
+            from infrastructure.decision_logger import decision_logger
+            self.decision_logger = decision_logger
+        except:
+            self.decision_logger = None
+        
+        # 模型健康检查器
+        try:
+            from infrastructure.model_health_checker import model_health_checker
+            self.health_checker = model_health_checker
+        except:
+            self.health_checker = None
+        
         try:
             from core.services.problem_decomposer import problem_decomposer
             self.decomposer = problem_decomposer
@@ -400,7 +414,7 @@ class DataDrivenPlanner:
             preferred = self._temp_preferred_model
             if preferred in self.adapters:
                 logger.info(f"✓ 学习规则优先模型: {preferred}")
-                self._temp_preferred_model = None  # 清除临时标记
+                self._temp_preferred_model = None
                 return self.adapters[preferred]
         
         # 1. 从统计库获取最佳模型(核心决策)
@@ -410,7 +424,7 @@ class DataDrivenPlanner:
             "quality": w_quality,
             "speed": w_speed,
             "cost": w_cost,
-            "success": 0.1  # 成功率基础权重
+            "success": 0.1
         }
         
         best_model_name = self.stats.get_best_model_for_task(
@@ -418,8 +432,25 @@ class DataDrivenPlanner:
             weights=weights
         )
         
+        # 健康检查：确保模型可用
+        if best_model_name and best_model_name in self.adapters:
+            if self.health_checker and not self.health_checker.is_available(best_model_name):
+                logger.warning(f"模型 {best_model_name} 不可用，选择备选")
+                best_model_name = None
+        
         if best_model_name and best_model_name in self.adapters:
             logger.info(f"✓ 统计库推荐模型: {best_model_name} for {intent_type}")
+            
+            # 记录决策
+            if self.decision_logger:
+                self.decision_logger.log_decision(
+                    decision_type="model_selection",
+                    choice=best_model_name,
+                    reason=f"统计库推荐，任务类型: {intent_type}",
+                    alternatives=list(self.adapters.keys())[:3],
+                    score=0.8
+                )
+            
             return self.adapters[best_model_name]
         
         # 2. 降级:使用配置文件中的fallback顺序
@@ -428,20 +459,45 @@ class DataDrivenPlanner:
             []
         )
         
-        # 如果没有特定意图的fallback,使用全局默认
         if not fallback_order:
             fallback_order = config.get("fallback.default_order", [])
+        
+        # 过滤不可用模型
+        if self.health_checker:
+            fallback_order = [
+                m for m in fallback_order 
+                if self.health_checker.is_available(m)
+            ]
         
         for model_name in fallback_order:
             if model_name in self.adapters:
                 logger.warning(f"⚠ 统计库无记录,使用fallback: {model_name}")
+                
+                # 记录决策
+                if self.decision_logger:
+                    self.decision_logger.log_decision(
+                        decision_type="model_selection",
+                        choice=model_name,
+                        reason="统计库无记录，使用fallback",
+                        alternatives=fallback_order
+                    )
+                
                 return self.adapters[model_name]
         
         # 3. 最终降级:使用第一个可用模型
         if self.adapters:
-            fallback = next(iter(self.adapters.values()))
-            logger.warning(f"⚠ 无匹配模型,使用默认: {fallback.model_name}")
-            return fallback
+            available_models = list(self.adapters.keys())
+            if self.health_checker:
+                available_models = [
+                    m for m in available_models
+                    if self.health_checker.is_available(m)
+                ]
+            
+            if available_models:
+                fallback_model = available_models[0]
+                fallback = self.adapters[fallback_model]
+                logger.warning(f"⚠ 无匹配模型,使用默认: {fallback.model_name}")
+                return fallback
         
         raise RuntimeError("No model available")
     
