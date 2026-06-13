@@ -362,12 +362,13 @@ class LifeSupportSystem:
         """获取状态报告"""
         health = self.get_system_health()
         
+        survival_level = health.get('survival_level', 'unknown') or 'unknown'
         report = f"""
 ╔════════════════════════════════════════════════════════╗
 ║           联盟拓荒者 - 生命维持系统状态报告              ║
 ╠════════════════════════════════════════════════════════╣
 ║ 健康评分: {health['health_score']:6.1f}/100                              ║
-║ 生存等级: {health['survival_level']:20}                        ║
+║ 生存等级: {survival_level:20}                        ║
 ╠════════════════════════════════════════════════════════╣
 ║ 能量水平: {health['energy_level']*100:6.1f}%                                ║
 ║ 计算能力: {health['compute_capacity']*100:6.1f}%                                ║
