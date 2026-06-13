@@ -428,20 +428,25 @@ class ParallelScheduler:
         for model_name, score in ranked[:top_k]:
             if model_name in adapters:
                 adapter = adapters[model_name]
-                adapter.model_name = model_name
-                selected_models.append(adapter)
+                # 不要设置model_name（只读属性），直接添加
+                selected_models.append((adapter, model_name))
         
         if not selected_models:
             if adapters:
                 adapter = next(iter(adapters.values()))
-                adapter.model_name = next(iter(adapters.keys()))
-                selected_models = [adapter]
+                model_name = next(iter(adapters.keys()))
+                selected_models = [(adapter, model_name)]
             else:
                 return {'error': '无可用模型'}
         
-        logger.info(f"联邦调度: 任务={task_type}, top_k={top_k}, 模型={[m.model_name for m in selected_models]}")
+        logger.info(f"联邦调度: 任务={task_type}, top_k={top_k}, 模型={[m[1] for m in selected_models]}")
         
-        return await self.parallel_call(selected_models, prompt, task_type)
+        # 转换为parallel_call期望的格式
+        models_with_names = []
+        for adapter, name in selected_models:
+            models_with_names.append(adapter)
+        
+        return await self.parallel_call(models_with_names, prompt, task_type)
     
     def _dynamic_top_k(self, prompt: str, task_type: str, 
                       ranked_models: List[Tuple[str, float]]) -> int:

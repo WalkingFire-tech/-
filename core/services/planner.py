@@ -532,12 +532,21 @@ class DataDrivenPlanner:
             try:
                 from infrastructure.session_compressor import SessionCompressor
                 compressor = SessionCompressor()
-                compressed, info = compressor.compress(context_list[:-8])
                 
-                if info.get("compressed"):
-                    # 使用压缩后的上下文
-                    context_list = compressed + context_list[-8:]
-                    logger.info(f"会话压缩: {info.get('original_length')} → {len(context_list)}")
+                # 转换为字典格式（压缩器期望的格式）
+                messages = []
+                for i, entry in enumerate(context_list[:-8]):
+                    role = "user" if i % 2 == 0 else "assistant"
+                    messages.append({"role": role, "content": entry})
+                
+                # 压缩
+                result = compressor.compress(messages)
+                
+                if result.get("compressed"):
+                    # 提取压缩后的摘要
+                    summary = result.get("summary", "")
+                    context_list = [f"[历史摘要] {summary[:200]}"] + context_list[-8:]
+                    logger.info(f"会话压缩: {result.get('original_length')} → {len(context_list)}")
             except Exception as e:
                 logger.debug(f"会话压缩失败: {e}")
         
