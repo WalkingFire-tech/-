@@ -211,6 +211,7 @@ class RuleGenerator:
             "condition": pattern["condition"],
             "action": self._determine_action(pattern),
             "priority": self._calculate_priority(pattern),
+            "confidence": pattern["confidence"],
             "source": "induction",
             "metadata": {
                 "pattern_type": pattern["type"],
