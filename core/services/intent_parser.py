@@ -25,42 +25,60 @@ class IntentParser:
     
     def _load_rules(self) -> dict:
         """从配置文件加载规则"""
+        default_rules = {
+            # 元认知意图 - 关于系统自身的问题（最高优先级）
+            "meta": re.compile(
+                r"你.*如何.*理解|你怎么.*知道|你觉得自己|你.*改进|你.*学习|"
+                r"你.*自我.*进化|你的.*能力|如何.*让你.*更.*好|"
+                r"你.*理解.*需求|你.*思考|你的.*理解|你.*优化|"
+                r"系统.*如何|系统.*改进|如何.*提升.*理解|"
+                r"你.*处理.*不了|你明白我.*意思|我讲的是你|你.*反思|"
+                r"你.*分析.*意图|你.*进化|你.*自我|你.*成长|"
+                r"你.*懂|你.*明白|你.*认为|如何.*让.*你.*更|"
+                r"你.*能力.*边界|能力边界.*在哪|你的.*边界|"
+                r"自我.*评估|评估.*体系|你.*决策|你.*如何.*认识|"
+                r"你.*最优|你.*贴切|完善.*你|回顾.*对话|给出.*评价",
+                re.IGNORECASE
+            ),
+            # 代码意图
+            "code": re.compile(
+                r"代码|写.*代码|生成.*代码|编程|实现|算法|冒泡|快速|递归|函数|类|模块|排序|查找|def\s|class\s|import\s",
+                re.IGNORECASE
+            ),
+            # 问题意图
+            "question": re.compile(
+                r"什么是|为什么|怎么|如何|哪|谁|多少|解释|介绍|说明|讲解|分析",
+                re.IGNORECASE
+            ),
+            # 记忆意图
+            "memory": re.compile(
+                r"记住|忘记|回忆|之前|刚才|聊过|说过|我们.*什么|讨论.*什么|谈.*什么",
+                re.IGNORECASE
+            ),
+            # 反馈意图
+            "feedback": re.compile(
+                r"^(\+1|-1|点赞|踩|好评|差评)$",
+                re.IGNORECASE
+            ),
+            # 计算意图
+            "calculation": re.compile(
+                r"Π|π|圆周率|前\s*\d+\s*位|输出.*数值|计算.*值|给出.*结果|求.*值",
+                re.IGNORECASE
+            ),
+            # 文档意图
+            "document": re.compile(
+                r"^##|^\*|^- |项目状态|已实现|核心框架|^\d+\.|能力|功能|特性",
+                re.IGNORECASE
+            ),
+        }
+        
         custom_rules = config.get("intent.custom_rules", {})
         
-        rules = {}
         for intent_type, patterns in custom_rules.items():
             combined_pattern = "|".join(patterns)
-            rules[intent_type] = re.compile(combined_pattern, re.IGNORECASE)
+            default_rules[intent_type] = re.compile(combined_pattern, re.IGNORECASE)
         
-        if not rules:
-            rules = {
-                "code": re.compile(
-                    r"代码|写.*代码|生成.*代码|编程|实现|算法|冒泡|快速|递归|函数|类|模块|排序|查找|def\s|class\s|import\s",
-                    re.IGNORECASE
-                ),
-                "question": re.compile(
-                    r"什么是|为什么|怎么|如何|哪|谁|多少|解释|介绍|说明|讲解|分析",
-                    re.IGNORECASE
-                ),
-                "memory": re.compile(
-                    r"记住|忘记|回忆|之前|刚才|聊过|说过|我们.*什么|讨论.*什么|谈.*什么",
-                    re.IGNORECASE
-                ),
-                "feedback": re.compile(
-                    r"^(\+1|-1|点赞|踩|好评|差评)$",
-                    re.IGNORECASE
-                ),
-                "calculation": re.compile(
-                    r"Π|π|圆周率|前\s*\d+\s*位|输出.*数值|计算.*值|给出.*结果|求.*值",
-                    re.IGNORECASE
-                ),
-                "document": re.compile(
-                    r"^##|^\*|^- |项目状态|已实现|核心框架|^\d+\.|能力|功能|特性",
-                    re.IGNORECASE
-                ),
-            }
-        
-        return rules
+        return default_rules
     
     def _calculate_confidence(self, text: str, intent_type: str) -> float:
         """计算意图识别的置信度"""
@@ -149,6 +167,7 @@ class IntentParser:
             return candidates[0][0]
         
         priority = {
+            "meta": 11,
             "feedback": 10,
             "calculation": 9,
             "document": 8,

@@ -238,14 +238,38 @@ logging:
   rotation: "1 day"
   format: "{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
 
-# 计算任务特殊处理
+# 计算任务配置
 calculation:
-  # π值计算
-  pi:
-    # 使用预定义字符串(快速)
-    use_predefined: true
-    predefined_value: "3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170679"
-    
-    # 或使用mpmath计算(精确)
-    use_mpmath: false
-    precision: 100
+  # 使用通用数学计算器工具（支持自我进化）
+  use_math_calculator: true
+  
+  # 默认精度（当工具不可用时的降级配置）
+  default_precision: 100
+
+# 并行调度配置
+parallel_scheduling:
+  # 是否启用并行调度
+  enabled: true
+  
+  # 每个任务使用的模型数量
+  top_k: 2
+  
+  # 最大并发数
+  max_concurrent: 3
+  
+  # 单模型超时(秒)
+  timeout_seconds: 60
+  
+  # 重试次数
+  retry_count: 2
+
+# 用户偏好配置
+user_preferences:
+  # 模式: quality(优先质量) / speed(优先速度) / cost(优先成本) / balanced(平衡)
+  mode: "balanced"
+  
+  # 自定义权重(仅balanced模式生效)
+  weights:
+    quality: 0.5
+    speed: 0.3
+    cost: 0.2

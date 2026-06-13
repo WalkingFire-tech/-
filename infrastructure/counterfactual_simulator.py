@@ -1,0 +1,292 @@
+"""
+反事实模拟器 (Counterfactual Simulator)
+让系统能对比"如果选择其他模型会怎样"，驱动路由优化
+"""
+import asyncio
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+from loguru import logger
+import sqlite3
+from pathlib import Path
+from collections import defaultdict
+
+
+class CounterfactualSimulator:
+    """反事实模拟器 - 探索如果选择其他模型会怎样"""
+    
+    def __init__(self):
+        self.db_path = Path("counterfactual_history.db")
+        self._init_db()
+        
+        self.simulation_queue = []
+        self.max_concurrent_simulations = 2
+        self.simulation_enabled = True
+        
+        self.insights = defaultdict(list)
+        
+        logger.info("反事实模拟器已初始化")
+    
+    def _init_db(self):
+        """初始化反事实历史数据库"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS counterfactual_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT,
+                    task_id TEXT,
+                    actual_model TEXT,
+                    actual_score REAL,
+                    counterfactual_model TEXT,
+                    counterfactual_score REAL,
+                    gap REAL,
+                    insight TEXT,
+                    applied BOOLEAN
+                )
+            ''')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_task ON counterfactual_records(task_id)')
+    
+    async def simulate_alternatives(
+        self,
+        task_id: str,
+        actual_model: str,
+        actual_score: float,
+        task_input: str,
+        task_type: str,
+        adapters: Dict
+    ) -> List[Dict]:
+        """模拟替代模型的表现"""
+        if not self.simulation_enabled:
+            return []
+        
+        results = []
+        
+        alternative_models = self._select_alternative_models(
+            actual_model, task_type, adapters
+        )
+        
+        for alt_model in alternative_models:
+            try:
+                logger.info(f"反事实模拟: {alt_model} 处理任务 {task_id}")
+                
+                adapter = adapters.get(alt_model)
+                if not adapter:
+                    continue
+                
+                sim_score = await self._simulate_with_model(
+                    adapter, task_input, task_type
+                )
+                
+                gap = sim_score - actual_score
+                
+                result = {
+                    "task_id": task_id,
+                    "actual_model": actual_model,
+                    "actual_score": actual_score,
+                    "counterfactual_model": alt_model,
+                    "counterfactual_score": sim_score,
+                    "gap": gap,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                results.append(result)
+                self._save_counterfactual(result)
+                
+                if gap > 10:
+                    insight = self._generate_insight(result, task_type)
+                    self.insights[task_type].append(insight)
+                    logger.warning(f"发现改进机会: {alt_model} 比 {actual_model} 高 {gap:.2f} 分")
+                
+            except Exception as e:
+                logger.warning(f"反事实模拟失败 ({alt_model}): {e}")
+        
+        return results
+    
+    def _select_alternative_models(
+        self,
+        actual_model: str,
+        task_type: str,
+        adapters: Dict
+    ) -> List[str]:
+        """选择替代模型进行模拟"""
+        alternatives = []
+        
+        for model_name in adapters.keys():
+            if model_name != actual_model:
+                alternatives.append(model_name)
+        
+        alternatives = alternatives[:3]
+        
+        return alternatives
+    
+    async def _simulate_with_model(
+        self,
+        adapter,
+        task_input: str,
+        task_type: str
+    ) -> float:
+        """使用指定模型模拟任务"""
+        try:
+            start_time = datetime.now()
+            
+            response = await adapter.generate(task_input)
+            
+            duration = (datetime.now() - start_time).total_seconds()
+            
+            score = self._evaluate_simulation(response, duration, task_type)
+            
+            return score
+            
+        except Exception as e:
+            logger.warning(f"模拟执行失败: {e}")
+            return 0.0
+    
+    def _evaluate_simulation(
+        self,
+        response: str,
+        duration: float,
+        task_type: str
+    ) -> float:
+        """评估模拟结果"""
+        score = 50.0
+        
+        if response and len(response) > 10:
+            score += 20
+        
+        if len(response) > 100:
+            score += 10
+        
+        if duration < 2.0:
+            score += 15
+        elif duration < 5.0:
+            score += 10
+        elif duration < 10.0:
+            score += 5
+        
+        if task_type == "code":
+            if "def " in response or "class " in response:
+                score += 10
+        elif task_type == "question":
+            if "。" in response or "？" in response:
+                score += 10
+        
+        return min(100, score)
+    
+    def _generate_insight(self, result: Dict, task_type: str) -> Dict:
+        """生成洞察"""
+        insight = {
+            "type": "model_preference",
+            "task_type": task_type,
+            "recommendation": f"对于{task_type}任务，优先使用 {result['counterfactual_model']}",
+            "evidence": f"相比 {result['actual_model']}，得分提升 {result['gap']:.2f}",
+            "confidence": min(1.0, result['gap'] / 20),
+            "timestamp": result['timestamp']
+        }
+        
+        return insight
+    
+    def _save_counterfactual(self, result: Dict):
+        """保存反事实记录"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    INSERT INTO counterfactual_records
+                    (timestamp, task_id, actual_model, actual_score,
+                     counterfactual_model, counterfactual_score, gap, insight, applied)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    result['timestamp'],
+                    result['task_id'],
+                    result['actual_model'],
+                    result['actual_score'],
+                    result['counterfactual_model'],
+                    result['counterfactual_score'],
+                    result['gap'],
+                    '',
+                    False
+                ))
+        except Exception as e:
+            logger.warning(f"反事实记录保存失败: {e}")
+    
+    def get_top_insights(self, task_type: str = None, limit: int = 10) -> List[Dict]:
+        """获取顶级洞察"""
+        if task_type:
+            return self.insights.get(task_type, [])[:limit]
+        
+        all_insights = []
+        for insights_list in self.insights.values():
+            all_insights.extend(insights_list)
+        
+        all_insights.sort(key=lambda x: x.get('confidence', 0), reverse=True)
+        
+        return all_insights[:limit]
+    
+    def apply_insights(self) -> int:
+        """应用洞察到路由策略"""
+        applied_count = 0
+        
+        try:
+            from infrastructure.model_capability import capability_matrix
+            
+            for task_type, insights in self.insights.items():
+                for insight in insights[:3]:
+                    if insight.get('confidence', 0) < 0.5:
+                        continue
+                    
+                    recommended_model = insight['recommendation'].split()[-1]
+                    
+                    try:
+                        capability_matrix.boost_model(
+                            model_name=recommended_model,
+                            task_type=task_type,
+                            boost_factor=1.1
+                        )
+                        applied_count += 1
+                        logger.info(f"应用洞察: {insight['recommendation']}")
+                    except Exception as e:
+                        logger.warning(f"洞察应用失败: {e}")
+            
+            if applied_count > 0:
+                self._mark_insights_applied()
+            
+        except Exception as e:
+            logger.error(f"洞察应用失败: {e}")
+        
+        return applied_count
+    
+    def _mark_insights_applied(self):
+        """标记洞察已应用"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    UPDATE counterfactual_records
+                    SET applied = TRUE
+                    WHERE applied = FALSE AND gap > 10
+                ''')
+        except Exception as e:
+            logger.warning(f"标记失败: {e}")
+    
+    def get_statistics(self) -> Dict:
+        """获取统计信息"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cur = conn.execute('SELECT COUNT(*) FROM counterfactual_records')
+                total_simulations = cur.fetchone()[0]
+                
+                cur = conn.execute('SELECT COUNT(*) FROM counterfactual_records WHERE applied = TRUE')
+                applied_insights = cur.fetchone()[0]
+                
+                cur = conn.execute('SELECT AVG(gap) FROM counterfactual_records WHERE gap > 0')
+                avg_improvement = cur.fetchone()[0] or 0
+                
+                return {
+                    "total_simulations": total_simulations,
+                    "applied_insights": applied_insights,
+                    "avg_improvement": round(avg_improvement, 2),
+                    "pending_insights": len(self.get_top_insights(limit=100))
+                }
+        except Exception as e:
+            logger.warning(f"统计获取失败: {e}")
+            return {}
+
+
+counterfactual_simulator = CounterfactualSimulator()

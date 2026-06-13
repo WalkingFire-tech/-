@@ -70,6 +70,7 @@ class DataDrivenPlanner:
         self.optimization_enabled = config.get("optimization.enabled", True)
         self.induction_interval = config.get("optimization.induction_interval_hours", 24)
         self.last_induction_time = 0
+        self.last_optimization_score = None
         
         try:
             from core.services.problem_decomposer import problem_decomposer
@@ -87,9 +88,183 @@ class DataDrivenPlanner:
         
         if INDUCTION_AVAILABLE:
             logger.info("归纳总结器已就绪")
+        
+        try:
+            from infrastructure.dialogue_stream_learner import dialogue_learner
+            bus.subscribe("learning_opportunity", self._on_learning_opportunity)
+            logger.info("对话流学习器已激活")
+        except Exception as e:
+            logger.warning(f"对话流学习器加载失败: {e}")
+        
+        try:
+            from meta.meta_induction import meta_inductor
+            logger.info("元归纳器已就绪")
+        except Exception as e:
+            logger.warning(f"元归纳器加载失败: {e}")
+        
+        try:
+            from infrastructure.model_capability import model_capability
+            from infrastructure.parallel_scheduler import parallel_scheduler
+            from infrastructure.model_discovery import model_discovery
+            from infrastructure.task_decomposer import task_decomposer
+            from infrastructure.result_fusion import result_fusion
+            
+            self.capability = model_capability
+            self.parallel_scheduler = parallel_scheduler
+            self.model_discovery = model_discovery
+            self.task_decomposer = task_decomposer
+            self.result_fusion = result_fusion
+            
+            for name in self.adapters:
+                self.capability.ensure_model_registered(name)
+            
+            logger.info("联邦调度模块已激活（含任务分解与结果融合）")
+            
+            import threading
+            threading.Thread(target=self._auto_load_models, daemon=True).start()
+            
+        except Exception as e:
+            logger.warning(f"联邦调度模块加载失败: {e}")
+            self.parallel_scheduler = None
+            self.capability = None
     
     def get_last_call_info(self):
         return self.last_call_info
+    
+    def _auto_load_models(self):
+        """后台线程：自动发现并加载新模型"""
+        if not hasattr(self, 'model_discovery'):
+            return
+        try:
+            discovered = self.model_discovery.discover_all_models_sync()
+            
+            for info in discovered:
+                name = info['name']
+                if name not in self.adapters:
+                    try:
+                        from adapters.llm.ollama_adapter import OllamaAdapter
+                        self.adapters[name] = OllamaAdapter(model_name=name)
+                        
+                        capabilities = info.get('capabilities', {})
+                        self.capability.ensure_model_registered(name, capabilities)
+                        
+                        logger.info(f"自动发现并加载新模型: {name}")
+                    except Exception as e:
+                        logger.warning(f"无法加载模型 {name}: {e}")
+        except Exception as e:
+            logger.error(f"自动发现模型失败: {e}")
+    
+    def _is_complex_task(self, intent: Intent) -> bool:
+        """判断是否为复杂任务（需要联邦调度）
+        
+        复杂度判定标准：
+        1. 文本长度 > 200字符
+        2. 包含复杂关键词（并且、同时、比较、分析等）
+        3. 特定意图类型（analysis、comparison、document）
+        """
+        if len(intent.raw_text) > 200:
+            return True
+        
+        complex_keywords = [
+            "并且", "同时", "先", "再", "比较", "分析", 
+            "对比", "分别", "既要", "又要", "详细", "全面"
+        ]
+        if any(kw in intent.raw_text for kw in complex_keywords):
+            return True
+        
+        if intent.type in ["analysis", "comparison", "document"]:
+            return True
+        
+        if intent.type == "calculation":
+            if any(op in intent.raw_text for op in ["+", "-", "*", "/", "(", ")"]):
+                if len(intent.raw_text) > 50:
+                    return True
+        
+        return False
+    
+    def _update_capability_from_result(self, model_name: str, task_type: str,
+                                       quality: float, success: bool):
+        """根据调用结果更新能力矩阵"""
+        try:
+            self.capability.update_from_feedback(
+                model_name=model_name,
+                task_type=task_type,
+                success=success,
+                quality_score=quality
+            )
+        except Exception as e:
+            logger.warning(f"能力矩阵更新失败: {e}")
+    
+    def _decompose_and_execute(self, intent: Intent) -> Optional[str]:
+        """分解复杂任务并执行
+        
+        Args:
+            intent: 用户意图
+        
+        Returns:
+            融合后的结果
+        """
+        try:
+            # 1. 分解任务
+            llm_adapter = self.adapters.get('code_light') or next(iter(self.adapters.values()))
+            subtasks = self.task_decomposer.decompose_with_llm(
+                intent.raw_text, 
+                llm_adapter=llm_adapter
+            )
+            
+            if len(subtasks) <= 1:
+                logger.info("任务无法分解，使用联邦调度")
+                return self._parallel_schedule(intent)
+            
+            logger.info(f"任务已分解为 {len(subtasks)} 个子任务")
+            
+            # 2. 执行子任务
+            results = []
+            for subtask in subtasks:
+                sub_intent = Intent(
+                    type=subtask['type'],
+                    raw_text=subtask['description'],
+                    confidence=0.8,
+                    entities=[]
+                )
+                
+                # 使用联邦调度执行子任务
+                result = self._parallel_schedule(sub_intent)
+                if result:
+                    results.append(result)
+                else:
+                    # 降级到单模型
+                    model = self._select_model(sub_intent)
+                    result = model.generate(subtask['description'], task_type=subtask['type'])
+                    if isinstance(result, tuple):
+                        result = result[0]
+                    results.append(result if result else "")
+            
+            # 3. 融合结果
+            summary_model = self.adapters.get('remote_gpt4') or self.adapters.get('mindchat')
+            fused_result = self.result_fusion.fuse(
+                subtasks=subtasks,
+                results=results,
+                original_intent=intent.raw_text,
+                strategy='auto',
+                summary_model=summary_model
+            )
+            
+            # 4. 保存分解记录
+            self.task_decomposer.save_decomposition(
+                original_task=intent.raw_text,
+                subtasks=subtasks,
+                strategy='llm' if llm_adapter else 'rule',
+                success=True,
+                quality_score=self._evaluate_quality(fused_result, intent.type) / 100.0
+            )
+            
+            logger.info(f"任务分解执行完成，融合结果长度: {len(fused_result)}")
+            return fused_result
+            
+        except Exception as e:
+            logger.error(f"任务分解执行失败: {e}")
+            return None
     
     def _setup_bayesian_optimization(self):
         """设置贝叶斯优化目标函数"""
@@ -140,6 +315,8 @@ class DataDrivenPlanner:
             bayesian_optimizer.apply_best_params(result.best_params)
             bayesian_optimizer.save_optimization_result(result)
             
+            self.last_optimization_score = result.best_score
+            
             return {
                 "success": True,
                 "best_params": result.best_params,
@@ -185,6 +362,16 @@ class DataDrivenPlanner:
         if hours_since_last >= self.induction_interval:
             logger.info("触发定期归纳任务")
             self.run_induction(days=7)
+            
+            try:
+                from meta.meta_induction import meta_inductor
+                if meta_inductor.should_trigger_optimization():
+                    logger.info("触发元归纳优化")
+                    meta_result = meta_inductor.optimize_parameters()
+                    if meta_result.get('success'):
+                        logger.info(f"元归纳完成: {len(meta_result.get('adjustments', []))}项调整")
+            except Exception as e:
+                logger.warning(f"元归纳优化失败: {e}")
     
     def _get_user_preference_weights(self) -> tuple:
         """获取用户偏好权重"""
@@ -308,17 +495,736 @@ class DataDrivenPlanner:
         else:
             return intent.raw_text
     
+    def _on_learning_opportunity(self, opportunity: Dict):
+        """处理学习机会事件"""
+        opp_type = opportunity.get('type')
+        action = opportunity.get('action')
+        
+        logger.info(f"捕获学习机会: {opp_type} → {action}")
+        
+        if action == 'trigger_induction' or action == 'force_induction':
+            if INDUCTION_AVAILABLE:
+                logger.info("从学习机会触发归纳")
+                self.run_induction(days=1)
+        
+        elif action == 'consider_clarification':
+            logger.debug("语义漂移已记录，等待后续处理")
+    
+    def _handle_meta_question(self, user_question: str) -> str:
+        """
+        处理元认知问题（关于系统自身的问题）
+        
+        Args:
+            user_question: 用户关于系统的问题
+        
+        Returns:
+            系统的自我反思回答
+        """
+        import sqlite3
+        
+        # 特殊处理：能力边界查询
+        if any(kw in user_question for kw in ["能力边界", "边界", "能力在哪", "你的能力"]):
+            return self._report_capability_boundary()
+        
+        # 特殊处理：自我评估体系查询
+        if any(kw in user_question for kw in ["自我评估", "评估体系", "如何决策", "如何认识"]):
+            return self._report_self_assessment()
+        
+        # 特殊处理：对话评价
+        if any(kw in user_question for kw in ["回顾对话", "评价", "给出评价"]):
+            return self._evaluate_recent_dialogs()
+        
+        # 通用元认知问题处理
+        try:
+            conn_exp = sqlite3.connect('experience_pool.db')
+            cur = conn_exp.execute("SELECT COUNT(*), AVG(quality_score) FROM experiences")
+            exp_count, exp_quality = cur.fetchone()
+            conn_exp.close()
+            
+            conn_rules = sqlite3.connect('learning_rules.db')
+            cur = conn_rules.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
+            active_rules = cur.fetchone()[0]
+            conn_rules.close()
+            
+            best_score = getattr(self, 'last_optimization_score', 0.0)
+            
+        except Exception as e:
+            logger.error(f"收集系统状态失败: {e}")
+            exp_count, exp_quality, active_rules, best_score = 0, 0.0, 0, 0.0
+        
+        meta_prompt = f"""用户问我关于自身能力的问题：" {user_question} "
+
+作为联盟拓荒者智能体，我需要反思自己的能力。以下是我的当前状态：
+
+【系统状态】
+- 经验池: {exp_count}条经验
+- 平均响应质量: {exp_quality:.2f}分
+- 活跃学习规则: {active_rules}条
+- 最近优化得分: {best_score:.2f}
+
+【我的理解能力】
+我通过以下方式理解用户需求：
+1. 意图识别：使用规则匹配识别任务类型（code/question/meta等）
+2. 模型路由：根据统计库选择最适合的模型
+3. 经验复用：通过向量检索重用历史成功案例
+4. 规则学习：从失败中归纳新规则
+
+【改进方向】
+为了更好地理解需求，我可以：
+1. 积累更多对话经验，学习用户的表达习惯
+2. 主动提出澄清问题，减少误解
+3. 从用户反馈中学习，调整路由策略
+4. 优化意图识别规则，覆盖更多表达方式
+
+请以第一人称"我"的语气回答用户，提供真诚的反思和具体的改进建议。
+回答要简洁、具体、有温度。"""
+
+        model = self.adapters.get("code_light") or self.adapters.get("remote_gpt4")
+        
+        if model:
+            try:
+                response = model.generate(meta_prompt, task_type="meta")
+                if isinstance(response, tuple):
+                    response, _ = response
+                return response
+            except Exception as e:
+                logger.error(f"元认知回答生成失败: {e}")
+        
+        return f"""作为联盟拓荒者，我目前通过意图识别和模型路由来理解你的需求。
+
+当前状态：
+- 已积累 {exp_count} 条经验
+- 平均响应质量 {exp_quality:.1f} 分
+- 活跃学习规则 {active_rules} 条
+
+为了更好地理解你的需求，我需要：
+1. 从你的反馈中学习更多表达方式
+2. 积累更多对话经验
+3. 主动提出澄清问题
+
+你觉得我在哪方面最需要改进？"""
+    
+    def _report_capability_boundary(self) -> str:
+        """报告能力边界"""
+        try:
+            from infrastructure.health_dashboard import health_dashboard
+            from infrastructure.model_capability import model_capability
+            
+            # 获取健康度
+            aphi = health_dashboard.calculate_aphi()
+            
+            # 获取能力矩阵
+            cap_stats = model_capability.export_stats()
+            
+            # 可用模型
+            models = list(self.adapters.keys())
+            
+            # 构建报告
+            report = f"""
+╔══════════════════════════════════════════════════════════╗
+║              联盟拓荒者能力边界报告                        ║
+╚══════════════════════════════════════════════════════════╝
+
+📊 健康状态
+- APHI指数: {aphi['aphi']}/100
+- 运行模式: {aphi['mode']}
+- 任务成功率: {aphi['task_success_rate']}%
+- 用户满意度: {aphi['user_satisfaction']}%
+
+🤖 可用模型 ({len(models)}个)
+"""
+            for model in models:
+                report += f"  • {model}\n"
+            
+            report += f"""
+🧠 能力矩阵
+- 已注册模型: {cap_stats.get('total_models', 0)}
+- 能力维度: {cap_stats.get('total_dimensions', 0)}
+- 平均置信度: {cap_stats.get('avg_confidence', 0):.2f}
+
+🛠️ 工具系统
+  ✅ 数学计算器 (支持高精度计算、动态常量)
+  ✅ 代码执行器 (安全沙盒)
+  ✅ 文件操作工具
+  ✅ 文本提取工具
+  ✅ 日期时间工具
+
+🎯 意图识别能力
+  ✅ code - 代码生成、算法实现
+  ✅ question - 问题解答、知识查询
+  ✅ calculation - 数学计算、数值处理
+  ✅ document - 文档处理、信息提取
+  ✅ meta - 元认知、自我反思
+  ✅ memory - 记忆管理、上下文理解
+  ✅ feedback - 用户反馈、质量评估
+
+⚡ 当前限制
+- 最大上下文: 4096 tokens
+- 并发任务数: 3个
+- 资源限制: CPU<80%, Memory<4GB
+- 单次超时: 60秒
+
+🔄 自我进化能力
+  ✅ 能力矩阵动态更新
+  ✅ 反事实模拟优化
+  ✅ 失败案例学习
+  ✅ 规则自动归纳
+  ✅ 健康度监控
+
+💡 我可以通过以下方式扩展能力边界：
+1. 积累更多对话经验，提升意图识别准确率
+2. 从用户反馈中学习，优化模型路由策略
+3. 自动生成新工具，扩展功能覆盖
+4. 通过反事实模拟探索更优决策路径
+"""
+            return report
+            
+        except Exception as e:
+            logger.error(f"能力边界报告生成失败: {e}")
+            return "抱歉，我暂时无法获取完整的能力边界信息。请稍后再试。"
+    
+    def _report_self_assessment(self) -> str:
+        """报告自我评估体系"""
+        try:
+            from infrastructure.health_dashboard import health_dashboard
+            from infrastructure.counterfactual_simulator import counterfactual_simulator
+            
+            aphi = health_dashboard.calculate_aphi()
+            cf_stats = counterfactual_simulator.get_statistics()
+            
+            return f"""
+╔══════════════════════════════════════════════════════════╗
+║              自我评估体系报告                              ║
+╚══════════════════════════════════════════════════════════╝
+
+🎯 评估体系架构
+
+1️⃣ 健康度仪表盘 (APHI)
+   综合指标: {aphi['aphi']}/100
+   ├─ 能力覆盖率: {aphi['capability_coverage']}%
+   ├─ 任务成功率: {aphi['task_success_rate']}%
+   ├─ 资源可用性: {aphi['resource_availability']}%
+   ├─ 进化活力: {aphi['evolution_vitality']}%
+   └─ 用户满意度: {aphi['user_satisfaction']}%
+
+2️⃣ 反事实模拟器
+   ├─ 总模拟次数: {cf_stats.get('total_simulations', 0)}
+   ├─ 已应用洞察: {cf_stats.get('applied_insights', 0)}
+   └─ 平均提升: {cf_stats.get('avg_improvement', 0):.2f}分
+
+3️⃣ 能力矩阵
+   ├─ 多维度评估: reasoning, coding, math, creative...
+   ├─ 动态更新: 每次调用后自动调整
+   └─ 时效衰减: 旧数据权重降低
+
+4️⃣ 章程守护线程
+   ├─ 每6小时健康检查
+   ├─ 每日失败回顾
+   ├─ 每日功能监控
+   └─ 每周经验归档
+
+🔄 决策流程
+
+用户输入
+  → 意图识别 (置信度评估)
+  → 健康度检查 (APHI < 60? 降级模式)
+  → 能力矩阵查询 (最佳模型选择)
+  → 模型调用
+  → 质量评估
+  → 反事实模拟 (异步探索更优解)
+  → 能力矩阵更新
+  → 经验记录
+
+💡 我通过"评估即驱动"的理念：
+- 所有指标都形成闭环
+- 评估结果反馈到决策
+- 指标映射到具体行动
+- 优化方向与长期目标对齐
+"""
+        except Exception as e:
+            logger.error(f"自我评估报告生成失败: {e}")
+            return "抱歉，我暂时无法获取评估体系信息。请稍后再试。"
+    
+    def _evaluate_recent_dialogs(self) -> str:
+        """评价最近对话"""
+        try:
+            import sqlite3
+            conn = sqlite3.connect('experience_pool.db')
+            cur = conn.execute('''
+                SELECT intent_type, raw_input, quality_score, success, model_name
+                FROM experiences
+                ORDER BY timestamp DESC
+                LIMIT 10
+            ''')
+            recent = cur.fetchall()
+            conn.close()
+            
+            if not recent:
+                return "暂无最近对话记录。"
+            
+            report = """
+╔══════════════════════════════════════════════════════════╗
+║              最近对话评价报告                              ║
+╚══════════════════════════════════════════════════════════╝
+
+"""
+            for i, (intent_type, raw_input, quality, success, model) in enumerate(recent, 1):
+                status = "✅" if success else "❌"
+                report += f"{i}. {status} [{intent_type}] {raw_input[:30]}...\n"
+                report += f"   质量: {quality:.1f}分 | 模型: {model}\n\n"
+            
+            avg_quality = sum(r[2] for r in recent) / len(recent)
+            success_rate = sum(1 for r in recent if r[3]) / len(recent) * 100
+            
+            report += f"""
+📊 统计摘要
+- 平均质量: {avg_quality:.1f}分
+- 成功率: {success_rate:.1f}%
+- 对话数: {len(recent)}
+
+💡 改进建议
+"""
+            if avg_quality < 70:
+                report += "- 质量偏低，建议检查意图识别准确率\n"
+            if success_rate < 80:
+                report += "- 成功率不足，建议回顾失败案例并创建学习任务\n"
+            if avg_quality >= 70 and success_rate >= 80:
+                report += "- 整体表现良好，继续保持！\n"
+            
+            return report
+            
+        except Exception as e:
+            logger.error(f"对话评价失败: {e}")
+            return "抱歉，无法获取对话评价信息。"
+    
+    def _estimate_self_confidence(self, intent: Intent) -> float:
+        """评估系统对当前任务的理解置信度 (0~1)"""
+        # 1. 意图识别置信度
+        intent_conf = intent.confidence
+        
+        # 2. 历史相似任务成功率
+        try:
+            conn = sqlite3.connect('experience_pool.db')
+            cursor = conn.execute('''
+                SELECT success FROM experiences
+                WHERE intent_type = ?
+                ORDER BY timestamp DESC
+                LIMIT 5
+            ''', (intent.type,))
+            
+            similar = cursor.fetchall()
+            success_rate = sum(1 for row in similar if row[0]) / max(len(similar), 1)
+            conn.close()
+        except:
+            success_rate = 0.5
+        
+        # 3. 任务复杂度
+        complexity = min(1.0, len(intent.raw_text) / 500)
+        
+        # 4. 是否有匹配规则
+        has_rule = self._match_learning_rule(intent) is not None
+        
+        # 加权计算
+        confidence = (
+            0.4 * intent_conf +
+            0.3 * success_rate +
+            0.2 * (1 - complexity) +
+            0.1 * (1.0 if has_rule else 0.0)
+        )
+        
+        return min(0.95, max(0.05, confidence))
+    
+    def _try_tool_first(self, intent: Intent) -> Optional[str]:
+        """【第1层防御】工具优先调用策略
+        
+        当意图类型明确且存在对应工具时，优先调用工具而非模型。
+        这避免了模型"我不知道"的尴尬，直接给出精确答案。
+        
+        Returns:
+            工具执行结果，失败返回None
+        """
+        try:
+            from tools.registry import registry
+            from tools.base import ToolCategory
+            
+            # 意图到工具类别的映射
+            intent_to_category = {
+                "calculation": ToolCategory.CALCULATION,
+                "code": ToolCategory.CODE,
+                "document": ToolCategory.FILE,
+            }
+            
+            category = intent_to_category.get(intent.type)
+            if not category:
+                return None
+            
+            # 查找最佳工具
+            best_tool = registry.get_best_tool(category, min_success_rate=0.5)
+            if not best_tool:
+                # 降级：列出所有该类别工具
+                tools = registry.list_tools(category)
+                if not tools:
+                    return None
+                best_tool = tools[0]
+            
+            logger.info(f"【第1层防御】工具优先: {best_tool.name} for {intent.type}")
+            
+            # 执行工具
+            result = registry.execute(best_tool.name, expression=intent.raw_text)
+            
+            if result.success and result.output:
+                # 格式化输出
+                if isinstance(result.output, (int, float)):
+                    return f"计算结果: {result.output}"
+                elif isinstance(result.output, str):
+                    return result.output
+                else:
+                    return str(result.output)
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"工具调用失败: {e}")
+            return None
+    
+    def _try_knowledge_retrieval(self, intent: Intent) -> Optional[str]:
+        """【第3层防御】知识库检索（经验复用）
+        
+        当问题在知识库中有记录时，直接返回历史答案。
+        这避免了重复调用模型，实现"一次学习，终身受益"。
+        
+        Returns:
+            历史答案，未找到返回None
+        """
+        try:
+            from infrastructure.knowledge_injector import knowledge_injector
+            
+            result = knowledge_injector.retrieve_knowledge(
+                question=intent.raw_text,
+                intent_type=intent.type,
+                min_quality=70.0
+            )
+            
+            if result:
+                answer, confidence = result
+                logger.info(f"【第3层防御】知识库命中 (置信度: {confidence:.2f})")
+                
+                # 高置信度直接返回
+                if confidence > 0.8:
+                    return answer
+                # 中等置信度添加提示
+                else:
+                    return f"{answer}\n\n_(基于历史经验，置信度: {confidence:.0%})_"
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"知识检索失败: {e}")
+            return None
+    
+    def _expert_collaboration(self, intent: Intent, confidence: float) -> str:
+        """调用外部模型进行结构化分析（外脑协作）"""
+        
+        # 选择专家（优先远程模型）
+        expert = None
+        if "remote_gpt4" in self.adapters:
+            expert = self.adapters["remote_gpt4"]
+        elif "deepseek-chat" in self.adapters:
+            expert = self.adapters["deepseek-chat"]
+        elif "deepcoder" in self.adapters:
+            expert = self.adapters["deepcoder"]
+        else:
+            expert = next(iter(self.adapters.values()))
+        
+        logger.info(f"外脑协作专家: {expert.model_name}")
+        
+        # 构建分析请求
+        prompt = f"""用户问题：{intent.raw_text}
+
+当前系统理解：
+- 意图类型：{intent.type}（置信度{confidence:.2f}）
+- 系统整体置信度：{confidence:.2f}
+
+请作为专家，分析这个问题并给出建议：
+1. 用户的真实意图是什么？
+2. 这个问题可能存在哪些歧义？
+3. 系统应该如何处理？
+
+请给出你的分析和建议。"""
+        
+        try:
+            response = expert.generate(prompt, task_type="analysis")
+            
+            if isinstance(response, tuple):
+                response, _ = response
+            
+            # 存储专家分析（为未来逆向学习预留）
+            self._store_expert_analysis(intent, response, confidence, expert.model_name)
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"外脑协作失败: {e}")
+            # 降级到普通生成
+            return self._normal_generate(intent)
+    
+    def _store_expert_analysis(self, intent: Intent, analysis: str, confidence: float, expert_model: str):
+        """存储专家分析（为逆向学习预留）"""
+        try:
+            conn = sqlite3.connect('experience_pool.db')
+            conn.execute('''
+                INSERT INTO experiences
+                (intent_type, raw_input, plan, model_name, 
+                 quality_score, user_feedback, success, 
+                 response, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                intent.type,
+                intent.raw_text,
+                f"expert_collaboration:{expert_model}",
+                expert_model,
+                0,  # 待评估
+                0,
+                False,
+                analysis,
+                time.time()
+            ))
+            conn.commit()
+            conn.close()
+            logger.debug(f"已存储专家分析 (置信度: {confidence:.2f})")
+        except Exception as e:
+            logger.warning(f"存储专家分析失败: {e}")
+    
+    def _normal_generate(self, intent: Intent) -> str:
+        """降级到普通生成"""
+        model = self._select_model(intent)
+        response = model.generate(intent.raw_text, task_type=intent.type)
+        if isinstance(response, tuple):
+            response, _ = response
+        return response
+    
+    def _parallel_schedule(self, intent: Intent) -> Optional[str]:
+        """并行调度多模型
+        
+        Args:
+            intent: 用户意图
+        
+        Returns:
+            最佳响应，None表示降级到单模型
+        """
+        try:
+            from infrastructure.parallel_scheduler import parallel_scheduler
+            from infrastructure.model_capability import model_capability
+            
+            context = self._get_recent_context()
+            base_prompt = self._build_prompt(intent)
+            full_prompt = f"{context}\n{base_prompt}" if context else base_prompt
+            
+            top_k = config.get("parallel_scheduling.top_k", 2)
+            
+            import asyncio
+            
+            loop = None
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            result = loop.run_until_complete(
+                parallel_scheduler.federated_call(
+                    prompt=full_prompt,
+                    task_type=intent.type,
+                    adapters=self.adapters,
+                    top_k=top_k
+                )
+            )
+            
+            if result.get('error'):
+                logger.warning(f"联邦调度错误: {result['error']}")
+                return None
+            
+            best = result.get('best')
+            if best and best.get('success'):
+                response = best.get('response')
+                model_name = best.get('model_name')
+                quality_score = best.get('final_score', 0.5) * 100
+                duration = best.get('duration', 0)
+                
+                self.experience_pool.add_experience(
+                    intent_type=intent.type,
+                    raw_input=intent.raw_text,
+                    plan=base_prompt,
+                    model_name=model_name,
+                    quality_score=int(quality_score),
+                    user_feedback=0,
+                    success=quality_score >= 50,
+                    duration=duration,
+                    response=response
+                )
+                
+                try:
+                    model_capability.update_from_feedback(
+                        model_name=model_name,
+                        task_type=intent.type,
+                        success=quality_score >= 50,
+                        quality_score=quality_score / 100.0
+                    )
+                except Exception as cap_error:
+                    logger.warning(f"能力矩阵更新失败: {cap_error}")
+                
+                stats = result.get('stats', {})
+                logger.info(
+                    f"并行调度完成: {stats.get('successful')}/{stats.get('total_models')}个模型成功, "
+                    f"最佳={model_name}, 耗时={stats.get('duration', 0):.2f}s"
+                )
+                
+                return response
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"并行调度异常: {e}")
+            return None
+    
     def plan(self, intent: Intent):
         """执行任务规划"""
+        # 【反射级】硬编码快速响应（最高优先级）
+        try:
+            from infrastructure.reflex_engine import reflex_engine
+            
+            reflex_context = {
+                "user_input": intent.raw_text,
+                "recent_failures": len(self.failure_history.get(intent.type, []))
+            }
+            
+            try:
+                import psutil
+                reflex_context["memory_percent"] = psutil.virtual_memory().percent
+            except:
+                pass
+            
+            reflex_result = reflex_engine.check(reflex_context)
+            if reflex_result:
+                logger.warning(f"【反射级】触发拦截")
+                bus.publish("plan_executed", reflex_result)
+                return
+                
+        except Exception as e:
+            logger.debug(f"反射检查失败: {e}")
+        
+        # 【情绪推断】理解用户状态
+        try:
+            from infrastructure.emotion_inferencer import emotion_inferencer
+            
+            emotion_result = emotion_inferencer.infer(
+                intent.raw_text,
+                {"recent_failures": len(self.failure_history.get(intent.type, []))}
+            )
+            
+            if emotion_inferencer.should_simplify_response(emotion_result):
+                logger.info(f"用户状态: {emotion_result['emotion']} (耐心: {emotion_result['patience']:.2f})")
+            
+        except Exception as e:
+            logger.debug(f"情绪推断失败: {e}")
+        
+        # 健康度检查
+        try:
+            from infrastructure.health_dashboard import health_dashboard
+            if health_dashboard.should_reduce_load():
+                logger.warning(f"系统健康度低，当前模式: {health_dashboard.mode}")
+                if health_dashboard.should_request_help():
+                    msg = "系统状态不佳，正在自我修复中。部分功能可能受限。"
+                    bus.publish("plan_executed", msg)
+                    return
+        except Exception as e:
+            logger.debug(f"健康度检查失败: {e}")
+        
+        # 资源检查
+        try:
+            from infrastructure.charter_executor import charter_executor
+            resource_check = charter_executor.check_resource_limits()
+            if not resource_check['within_limits']:
+                msg = "系统资源紧张，已暂缓处理。请稍后重试。"
+                logger.warning(f"资源超限: {resource_check['violations']}")
+                bus.publish("plan_executed", msg)
+                return
+        except:
+            pass  # 降级：忽略资源检查
+        
         self._check_periodic_induction()
+        
+        # 特殊处理：元认知问题（关于系统自身的问题）
+        if intent.type == "meta":
+            logger.info("处理元认知问题")
+            response = self._handle_meta_question(intent.raw_text)
+            bus.publish("plan_executed", response)
+            return
+        
+        # 【第1层】工具优先调用策略
+        tool_result = self._try_tool_first(intent)
+        if tool_result:
+            logger.info(f"工具调用成功，跳过模型调用")
+            bus.publish("plan_executed", tool_result)
+            return
+        
+        # 【第3层】知识库检索（经验复用）
+        knowledge_result = self._try_knowledge_retrieval(intent)
+        if knowledge_result:
+            logger.info(f"知识库命中，直接返回历史答案")
+            bus.publish("plan_executed", knowledge_result)
+            return
+        
+        # 评估自我置信度
+        confidence = self._estimate_self_confidence(intent)
+        
+        # 低置信度时启用外脑协作
+        if confidence < 0.6:
+            logger.info(f"自我置信度低({confidence:.2f})，启用外脑协作模式")
+            response = self._expert_collaboration(intent, confidence)
+            bus.publish("plan_executed", response)
+            return
+        
+        # 检测复杂任务，启用联邦并行调度
+        if hasattr(self, 'parallel_scheduler') and self.parallel_scheduler:
+            if self._is_complex_task(intent):
+                logger.info(f"检测到复杂任务，启用智能分解与联邦调度 (意图: {intent.type})")
+                
+                # 尝试任务分解
+                if hasattr(self, 'task_decomposer') and hasattr(self, 'result_fusion'):
+                    response = self._decompose_and_execute(intent)
+                    if response:
+                        bus.publish("plan_executed", response)
+                        return
+                    else:
+                        logger.warning("任务分解失败，降级到联邦调度")
+                
+                # 降级到联邦调度
+                response = self._parallel_schedule(intent)
+                if response:
+                    bus.publish("plan_executed", response)
+                    return
+                else:
+                    logger.warning("联邦调度失败，降级到普通路由")
+        
+        # 尝试并行调度（多模型联邦）
+        parallel_enabled = config.get("parallel_scheduling.enabled", True)
+        if parallel_enabled and len(self.adapters) >= 2:
+            try:
+                response = self._parallel_schedule(intent)
+                if response:
+                    bus.publish("plan_executed", response)
+                    return
+            except Exception as e:
+                logger.warning(f"并行调度失败，降级到单模型: {e}")
         
         # 优先检查向量检索是否有相似成功案例
         if VECTOR_AVAILABLE:
             try:
-                similar = vector_retriever.find_similar_plan(intent.raw_text, intent.type, top_k=1)
-                if similar and similar[0].get('quality_score', 0) >= 70:
-                    logger.info(f"✓ 复用相似成功案例(相似度:{similar[0].get('similarity', 0):.2f})")
-                    response = similar[0].get('plan', {}).get('response', '')
+                similar = vector_retriever.find_similar_plan(intent.raw_text, intent.type)
+                if similar and similar.get('plan', {}).get('quality_score', 0) >= 70:
+                    logger.info(f"✓ 复用相似成功案例(相似度:{similar.get('similarity', 0):.2f})")
+                    response = similar.get('plan', {}).get('response', '')
                     if response:
                         bus.publish("plan_executed", response)
                         return
@@ -441,6 +1347,49 @@ class DataDrivenPlanner:
                 response=response
             )
             
+            # 记录到统计库 (新增)
+            try:
+                input_tokens = len(full_prompt.split())
+                output_tokens = len(response.split())
+                self.stats.record_call(
+                    model_name=model.model_name,
+                    task_type=intent.type,
+                    duration=duration,
+                    success=quality >= 50,
+                    quality_score=quality,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens
+                )
+            except Exception as stats_error:
+                logger.warning(f"统计记录失败: {stats_error}")
+            
+            # 触发反事实模拟（异步）
+            try:
+                import asyncio
+                from infrastructure.counterfactual_simulator import counterfactual_simulator
+                
+                task_id = f"{intent.type}_{int(time.time())}"
+                asyncio.create_task(
+                    counterfactual_simulator.simulate_alternatives(
+                        task_id=task_id,
+                        actual_model=model.model_name,
+                        actual_score=quality,
+                        task_input=intent.raw_text,
+                        task_type=intent.type,
+                        adapters=self.adapters
+                    )
+                )
+            except Exception as cf_error:
+                logger.debug(f"反事实模拟触发失败: {cf_error}")
+            
+            # 更新能力矩阵
+            self._update_capability_from_result(
+                model.model_name,
+                intent.type,
+                quality / 100.0,
+                success=True
+            )
+            
             self.context_buffer.append(f"用户: {intent.raw_text}")
             self.context_buffer.append(f"拓荒者: {response[:200]}")
             
@@ -495,7 +1444,16 @@ class DataDrivenPlanner:
                         return
                 
                 error_msg = self._format_error(e)
-                bus.publish("plan_executed", error_msg)
+                
+                # 【第4层】主动向用户求助
+                help_msg = self._request_user_help(intent, str(e))
+                if help_msg:
+                    bus.publish("plan_executed", help_msg)
+                else:
+                    bus.publish("plan_executed", error_msg)
+                
+                # 【第5层】失败学习机制
+                self._trigger_failure_learning(intent, str(e))
     
     def _evaluate_quality(self, response: str, task_type: str) -> int:
         """评估响应质量"""
@@ -527,6 +1485,89 @@ class DataDrivenPlanner:
                 score += 10
         
         return min(score, 100)
+    
+    def _request_user_help(self, intent: Intent, error: str) -> Optional[str]:
+        """【第4层防御】主动向用户求助
+        
+        当系统确定自己无法解决时，坦诚告知用户并提供帮助途径。
+        这不仅是诚实，也是邀请用户参与完善的过程。
+        
+        Returns:
+            求助消息，失败返回None
+        """
+        try:
+            # 检查失败次数
+            intent_key = f"{intent.type}"
+            failures = self.failure_history.get(intent_key, [])
+            recent_failures = [t for t in failures if time.time() - t < 300]
+            
+            # 只有连续失败才求助
+            if len(recent_failures) < 2:
+                return None
+            
+            logger.info(f"【第4层防御】主动求助 (失败{len(recent_failures)}次)")
+            
+            help_msg = f"""
+抱歉，我在处理这个问题时遇到了困难。
+
+**问题**: {intent.raw_text[:100]}...
+**错误**: {error[:100]}
+
+**您可以通过以下方式帮助我**：
+
+1. 📝 **提供答案** - 如果您知道正确答案，请告诉我，我会记住它
+   ```
+   :teach <答案>
+   ```
+
+2. 🔍 **授权搜索** - 允许我调用外部工具
+   ```
+   :enable web_search
+   ```
+
+3. 🔄 **换种问法** - 尝试用不同的方式提问
+
+4. 📊 **查看我的能力边界**
+   ```
+   你的能力边界在哪里？
+   ```
+
+我会从这次失败中学习，下次遇到类似问题时做得更好。
+"""
+            return help_msg
+            
+        except Exception as e:
+            logger.debug(f"求助消息生成失败: {e}")
+            return None
+    
+    def _trigger_failure_learning(self, intent: Intent, error: str):
+        """【第5层防御】失败学习机制
+        
+        记录失败案例，触发归纳总结，生成学习规则。
+        """
+        try:
+            from infrastructure.knowledge_injector import knowledge_injector
+            
+            # 记录失败（质量分为0）
+            knowledge_injector.inject_knowledge(
+                question=intent.raw_text,
+                answer=f"[失败] {error}",
+                source="failure_record",
+                intent_type=intent.type,
+                metadata={"error": error, "timestamp": datetime.now().isoformat()}
+            )
+            
+            logger.info(f"【第5层防御】失败已记录，等待学习")
+            
+            # 触发归纳总结（如果有归纳器）
+            try:
+                from meta.induction import induction_scheduler
+                induction_scheduler.trigger_induction()
+            except:
+                pass
+            
+        except Exception as e:
+            logger.debug(f"失败学习触发失败: {e}")
     
     def _try_fallback_models(self, intent: Intent, full_prompt: str) -> Optional[str]:
         """尝试fallback模型"""

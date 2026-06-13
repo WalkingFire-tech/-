@@ -54,9 +54,15 @@ async def lifespan(app: FastAPI):
     
     try:
         adapters["code_light"] = OllamaAdapter(model_name="qwen2.5-coder:1.5b")
-        logger.info("Loaded code model")
+        logger.info("Loaded code_light (qwen2.5-coder:1.5b)")
     except Exception as e:
-        logger.warning(f"Code model unavailable: {e}")
+        logger.warning(f"Code light model unavailable: {e}")
+    
+    try:
+        adapters["deepcoder"] = OllamaAdapter(model_name="deepcoder")
+        logger.info("Loaded DeepCoder")
+    except Exception as e:
+        logger.warning(f"DeepCoder unavailable: {e}")
     
     # 尝试加载远程模型
     try:
@@ -82,6 +88,63 @@ async def lifespan(app: FastAPI):
         logger.info(f"已加载 {len(adapters)} 个模型适配器: {list(adapters.keys())}")
     
     planner = Planner(adapters)
+    
+    # 确保能力矩阵已初始化
+    try:
+        from infrastructure.model_capability import model_capability
+        for name in adapters:
+            model_capability.ensure_model_registered(name)
+        logger.info("能力矩阵已就绪")
+    except Exception as e:
+        logger.warning(f"能力矩阵初始化失败: {e}")
+    
+    # 启动章程执行器后台任务
+    try:
+        import threading
+        import time
+        from datetime import datetime
+        from infrastructure.charter_executor import charter_executor
+        from infrastructure.health_dashboard import health_dashboard
+        from infrastructure.counterfactual_simulator import counterfactual_simulator
+        
+        def charter_background_tasks():
+            """章程后台任务：健康监控、失败回顾、反事实模拟、资源管理"""
+            while True:
+                try:
+                    # 每6小时检查健康度
+                    health_metrics = health_dashboard.calculate_aphi()
+                    logger.info(f"健康度检查: APHI={health_metrics['aphi']}, 模式={health_metrics['mode']}")
+                    
+                    # 每日回顾失败案例
+                    charter_executor.review_failures()
+                    
+                    # 每日监控功能使用
+                    charter_executor.monitor_feature_usage()
+                    
+                    # 每日应用反事实洞察
+                    applied = counterfactual_simulator.apply_insights()
+                    if applied > 0:
+                        logger.info(f"应用了 {applied} 条反事实洞察")
+                    
+                    # 每周归档旧经验（周一执行）
+                    if datetime.now().weekday() == 0:
+                        charter_executor.archive_old_experiences(days=90, min_importance=0.3)
+                        
+                    # 检查资源限制
+                    resource_check = charter_executor.check_resource_limits()
+                    if not resource_check['within_limits']:
+                        charter_executor.enforce_resource_limits()
+                        
+                except Exception as e:
+                    logger.error(f"章程后台任务失败: {e}")
+                
+                time.sleep(21600)  # 每6小时执行一次
+        
+        threading.Thread(target=charter_background_tasks, daemon=True).start()
+        logger.info("章程守护线程已启动（健康监控+反事实模拟+资源管理）")
+        
+    except Exception as e:
+        logger.warning(f"章程执行器启动失败: {e}")
     
     logger.info("后端服务初始化完成")
     
@@ -245,6 +308,285 @@ async def get_stats():
         }
     except Exception as e:
         logger.error(f"获取统计失败: {e}")
+        return {"error": str(e)}
+
+@app.post("/api/feedback")
+async def send_feedback(request: dict):
+    """接收用户反馈"""
+    score = request.get("score", 0)
+    
+    try:
+        import sqlite3
+        
+        # 更新最近一条经验的反馈
+        conn = sqlite3.connect('experience_pool.db')
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            UPDATE experiences
+            SET user_feedback = ?
+            WHERE id = (
+                SELECT id FROM experiences
+                ORDER BY timestamp DESC
+                LIMIT 1
+            )
+        """, (score,))
+        
+        conn.commit()
+        conn.close()
+        
+        # 触发学习机会
+        if score < 0:
+            from infrastructure.event_bus import bus
+            bus.publish("learning_opportunity", {
+                'type': 'explicit_negative_feedback',
+                'action': 'trigger_induction'
+            })
+        
+        logger.info(f"收到用户反馈: {score}")
+        return {"success": True}
+        
+    except Exception as e:
+        logger.error(f"反馈处理失败: {e}")
+        return {"success": False, "error": str(e)}
+
+# ========== 外部模型配置API ==========
+
+@app.get("/api/external_models")
+async def list_external_models():
+    """列出所有外部模型配置"""
+    try:
+        from infrastructure.external_model_config import external_model_config
+        models = external_model_config.list_models()
+        return {"models": models}
+    except Exception as e:
+        logger.error(f"列出模型失败: {e}")
+        return {"models": [], "error": str(e)}
+
+@app.post("/api/external_models")
+async def add_external_model(request: Request):
+    """添加外部模型配置"""
+    try:
+        from infrastructure.external_model_config import external_model_config
+        data = await request.json()
+        
+        success = external_model_config.add_model(
+            name=data["name"],
+            api_url=data["api_url"],
+            api_key=data["api_key"],
+            daily_limit=data.get("daily_limit", 1000)
+        )
+        
+        if success:
+            return {"success": True, "message": "模型已添加"}
+        else:
+            return {"success": False, "error": "添加失败"}
+            
+    except Exception as e:
+        logger.error(f"添加模型失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.delete("/api/external_models/{name}")
+async def delete_external_model(name: str):
+    """删除外部模型配置"""
+    try:
+        from infrastructure.external_model_config import external_model_config
+        success = external_model_config.delete_model(name)
+        
+        if success:
+            return {"success": True, "message": "模型已删除"}
+        else:
+            return {"success": False, "error": "删除失败"}
+            
+    except Exception as e:
+        logger.error(f"删除模型失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/external_models/test")
+async def test_external_model(request: Request):
+    """测试外部模型连接"""
+    try:
+        import requests
+        from infrastructure.external_model_config import external_model_config
+        
+        data = await request.json()
+        name = data.get("name")
+        
+        # 获取模型配置
+        model = external_model_config.get_model(name)
+        if not model:
+            return {"success": False, "message": "模型不存在"}
+        
+        # 检查配额
+        if not external_model_config.check_quota(name):
+            return {"success": False, "message": "已超出每日配额"}
+        
+        # 发送测试请求
+        try:
+            # 根据API类型调整测试方式
+            if "openai" in model['api_url'].lower():
+                # OpenAI风格API
+                response = requests.post(
+                    f"{model['api_url']}/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {model['api_key']}"},
+                    json={
+                        "model": "gpt-3.5-turbo",
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "max_tokens": 1
+                    },
+                    timeout=10
+                )
+            else:
+                # 通用测试
+                response = requests.get(
+                    f"{model['api_url']}/v1/models",
+                    headers={"Authorization": f"Bearer {model['api_key']}"},
+                    timeout=10
+                )
+            
+            if response.status_code == 200:
+                external_model_config.record_usage(name, tokens=1, success=True)
+                return {"success": True, "message": "连接成功"}
+            else:
+                external_model_config.record_usage(name, tokens=0, success=False, error=f"HTTP {response.status_code}")
+                return {"success": False, "message": f"HTTP {response.status_code}: {response.text[:100]}"}
+                
+        except requests.Timeout:
+            external_model_config.record_usage(name, tokens=0, success=False, error="Timeout")
+            return {"success": False, "message": "连接超时"}
+        except Exception as e:
+            external_model_config.record_usage(name, tokens=0, success=False, error=str(e))
+            return {"success": False, "message": f"连接失败: {str(e)}"}
+            
+    except Exception as e:
+        logger.error(f"测试模型失败: {e}")
+        return {"success": False, "message": str(e)}
+
+@app.get("/api/external_models/{name}/stats")
+async def get_external_model_stats(name: str):
+    """获取外部模型使用统计"""
+    try:
+        from infrastructure.external_model_config import external_model_config
+        stats = external_model_config.get_usage_stats(name)
+        model = external_model_config.get_model(name)
+        
+        if model:
+            return {
+                "name": name,
+                "used_today": model['used_today'],
+                "daily_limit": model['daily_limit'],
+                "remaining": model['daily_limit'] - model['used_today'],
+                **stats
+            }
+        else:
+            return {"error": "模型不存在"}
+            
+    except Exception as e:
+        logger.error(f"获取统计失败: {e}")
+        return {"error": str(e)}
+
+# ========== 联邦调度API ==========
+
+@app.get("/api/capability_matrix")
+async def get_capability_matrix():
+    """获取能力矩阵"""
+    try:
+        from infrastructure.model_capability import model_capability
+        matrix = model_capability.get_capability_matrix()
+        stats = model_capability.export_stats()
+        
+        return {
+            "matrix": matrix,
+            "stats": stats
+        }
+    except Exception as e:
+        logger.error(f"获取能力矩阵失败: {e}")
+        return {"error": str(e)}
+
+@app.post("/api/capability_matrix/register")
+async def register_model_capability(request: dict):
+    """注册模型能力"""
+    try:
+        from infrastructure.model_capability import model_capability
+        
+        model_name = request.get("model_name")
+        capabilities = request.get("capabilities")
+        
+        if not model_name:
+            return {"success": False, "error": "缺少模型名称"}
+        
+        model_capability.register_model(model_name, capabilities)
+        
+        return {"success": True, "message": f"已注册模型: {model_name}"}
+        
+    except Exception as e:
+        logger.error(f"注册模型能力失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/capability_matrix/rank/{task_type}")
+async def rank_models_for_task(task_type: str):
+    """为任务排序模型"""
+    try:
+        from infrastructure.model_capability import model_capability
+        
+        models = list(adapters.keys())
+        ranked = model_capability.rank_models_for_task(task_type, models)
+        
+        return {
+            "task_type": task_type,
+            "ranking": [
+                {"model": model, "score": score}
+                for model, score in ranked
+            ]
+        }
+        
+    except Exception as e:
+        logger.error(f"排序模型失败: {e}")
+        return {"error": str(e)}
+
+@app.post("/api/discover_models")
+async def discover_models():
+    """发现可用模型"""
+    try:
+        from infrastructure.model_discovery import model_discovery
+        
+        result = await model_discovery.refresh()
+        
+        return {
+            "success": True,
+            "discovered": result['discovered'],
+            "sources": result['sources'],
+            "timestamp": result['timestamp']
+        }
+        
+    except Exception as e:
+        logger.error(f"模型发现失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/discovered_models")
+async def get_discovered_models():
+    """获取已发现的模型"""
+    try:
+        from infrastructure.model_discovery import model_discovery
+        models = model_discovery.get_discovered_models()
+        
+        return {"models": models}
+        
+    except Exception as e:
+        logger.error(f"获取发现模型失败: {e}")
+        return {"models": [], "error": str(e)}
+
+@app.get("/api/parallel_stats")
+async def get_parallel_stats():
+    """获取并行调度统计"""
+    try:
+        from infrastructure.parallel_scheduler import parallel_scheduler
+        stats = parallel_scheduler.get_stats()
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"获取并行统计失败: {e}")
         return {"error": str(e)}
 
 if __name__ == "__main__":

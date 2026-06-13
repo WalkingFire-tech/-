@@ -1,0 +1,47 @@
+# 反射规则配置 - 可配置的硬编码快速响应
+# 用户可通过 CLI 命令修改: :reflex set <规则名> <参数> <值>
+
+reflexes:
+  # 1. 危险命令拦截（最高优先级）
+  - name: dangerous_command_block
+    condition: dangerous_command
+    action: block
+    priority: 100
+    enabled: true
+    description: "拦截危险命令（rm -rf /, drop database等）"
+  
+  # 2. CPU过热保护
+  - name: cpu_overheat
+    condition: cpu_temperature
+    action: throttle
+    threshold: 85.0
+    priority: 95
+    enabled: true
+    fallback: shutdown
+    description: "CPU过热保护（阈值可调整）"
+  
+  # 3. 内存耗尽保护
+  - name: memory_exhaustion
+    condition: memory_usage
+    action: reject
+    threshold: 90.0
+    priority: 90
+    enabled: true
+    description: "内存耗尽保护（阈值可调整）"
+  
+  # 4. 用户挫折响应
+  - name: user_frustration_response
+    condition: user_frustration
+    action: apologize
+    threshold: 3
+    priority: 70
+    enabled: true
+    description: "用户挫折响应（连续失败N次）"
+  
+  # 5. 安全漏洞告警
+  - name: security_breach_alert
+    condition: security_breach
+    action: alert
+    priority: 99
+    enabled: true
+    description: "安全漏洞告警"

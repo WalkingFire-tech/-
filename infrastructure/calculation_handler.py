@@ -1,12 +1,11 @@
 """
 计算任务处理模块 - 增强版
-支持通用数学表达式计算和π值计算
+使用通用数学计算器工具，不再硬编码
 """
 import re
 import math
 from typing import Dict, Any, Optional
 from loguru import logger
-from infrastructure.config_manager import config
 
 
 SAFE_FUNCTIONS = {
@@ -23,7 +22,7 @@ SAFE_FUNCTIONS = {
 
 
 class CalculationHandler:
-    """计算任务处理器 - 支持π值和通用表达式"""
+    """计算任务处理器 - 使用工具系统，支持自我进化"""
     
     @staticmethod
     def extract_pi_digits(text: str) -> Optional[int]:
@@ -60,29 +59,35 @@ class CalculationHandler:
     
     @staticmethod
     def calculate_pi(digits: int = 100) -> str:
-        """计算π的前N位"""
-        use_predefined = config.get("calculation.pi.use_predefined", True)
-        
-        predefined = config.get(
-            "calculation.pi.predefined_value",
-            "3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170679"
-        )
-        
-        if use_predefined and digits <= len(predefined) - 2:
-            return predefined[:digits + 2]
-        
+        """计算π的前N位 - 使用工具系统"""
         try:
-            from mpmath import mp
-            mp.dps = digits + 10
-            pi_str = str(mp.pi)
-            return pi_str[:digits + 2]
-        except ImportError:
-            logger.warning("mpmath未安装,使用预定义值")
-            return predefined[:min(digits + 2, len(predefined))]
+            from tools.math_calculator import math_calculator
+            result = math_calculator.get_constant('pi', digits)
+            logger.info(f"使用数学计算器计算π的前{digits}位")
+            return result
+        except Exception as e:
+            logger.warning(f"数学计算器失败，降级到基础方法: {e}")
+            try:
+                from mpmath import mp
+                mp.dps = digits + 10
+                pi_str = str(mp.pi)
+                return pi_str[:digits + 2]
+            except ImportError:
+                logger.warning("mpmath未安装,使用标准库")
+                return str(math.pi)
     
     @staticmethod
     def evaluate_expression(expression: str) -> str:
-        """安全计算数学表达式"""
+        """安全计算数学表达式 - 使用工具系统"""
+        try:
+            from tools.math_calculator import math_calculator
+            result = math_calculator.calculate(expression)
+            if result.get('success'):
+                logger.info(f"使用数学计算器计算表达式")
+                return str(result['result'])
+        except Exception as e:
+            logger.warning(f"数学计算器失败，降级到基础方法: {e}")
+        
         clean_expr = re.sub(r'[^a-zA-Z0-9+\-*/%().,\s]', '', expression)
         
         try:
@@ -107,7 +112,7 @@ class CalculationHandler:
     
     @staticmethod
     def handle_calculation(intent_text: str) -> Dict[str, Any]:
-        """处理计算任务(π值或数学表达式)"""
+        """处理计算任务(π值或数学表达式) - 优先使用工具系统"""
         result = {
             "success": False,
             "result": None,
