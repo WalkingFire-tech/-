@@ -1,12 +1,8 @@
 // API基础URL
 const API_BASE = 'http://localhost:8000';
 
-// DOM元素
-const statusIndicator = document.getElementById('status-indicator');
-const statusText = document.getElementById('status-text');
-const messagesContainer = document.getElementById('messages');
-const userInput = document.getElementById('user-input');
-const sendBtn = document.getElementById('send-btn');
+// DOM元素（延迟获取）
+let statusIndicator, statusText, messagesContainer, userInput, sendBtn;
 
 // Markdown简单渲染
 function renderMarkdown(text) {
@@ -88,6 +84,13 @@ async function copyToClipboard(text, element) {
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
+    // 初始化DOM元素
+    statusIndicator = document.getElementById('status-indicator');
+    statusText = document.getElementById('status-text');
+    messagesContainer = document.getElementById('messages');
+    userInput = document.getElementById('user-input');
+    sendBtn = document.getElementById('send-btn');
+    
     checkHealth();
     loadStats();
     loadModels();
