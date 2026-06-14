@@ -722,12 +722,12 @@ class DataDrivenPlanner:
         
         # 通用元认知问题处理
         try:
-            conn_exp = sqlite3.connect('experience_pool.db')
+            conn_exp = sqlite3.connect('data/experience_pool.db')
             cur = conn_exp.execute("SELECT COUNT(*), AVG(quality_score) FROM experiences")
             exp_count, exp_quality = cur.fetchone()
             conn_exp.close()
             
-            conn_rules = sqlite3.connect('learning_rules.db')
+            conn_rules = sqlite3.connect('data/learning_rules.db')
             cur = conn_rules.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
             active_rules = cur.fetchone()[0]
             conn_rules.close()
@@ -987,7 +987,7 @@ _共显示最近10轮对话_"""
         """评价最近对话"""
         try:
             import sqlite3
-            conn = sqlite3.connect('experience_pool.db')
+            conn = sqlite3.connect('data/experience_pool.db')
             cur = conn.execute('''
                 SELECT intent_type, raw_input, quality_score, success, model_name
                 FROM experiences
@@ -1045,7 +1045,7 @@ _共显示最近10轮对话_"""
         
         # 2. 历史相似任务成功率
         try:
-            conn = sqlite3.connect('experience_pool.db')
+            conn = sqlite3.connect('data/experience_pool.db')
             cursor = conn.execute('''
                 SELECT success FROM experiences
                 WHERE intent_type = ?
@@ -1216,7 +1216,7 @@ _共显示最近10轮对话_"""
     def _store_expert_analysis(self, intent: Intent, analysis: str, confidence: float, expert_model: str):
         """存储专家分析（为逆向学习预留）"""
         try:
-            conn = sqlite3.connect('experience_pool.db')
+            conn = sqlite3.connect('data/experience_pool.db')
             conn.execute('''
                 INSERT INTO experiences
                 (intent_type, raw_input, plan, model_name, 

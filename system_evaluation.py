@@ -18,7 +18,7 @@ print("=" * 70)
 # 1. 经验池统计
 print("\n【1. 经验池统计】")
 try:
-    conn = sqlite3.connect('experience_pool.db')
+    conn = sqlite3.connect('data/experience_pool.db')
     cur = conn.execute('SELECT COUNT(*) FROM experiences')
     total = cur.fetchone()[0]
     
@@ -49,7 +49,7 @@ except Exception as e:
 # 2. 学习规则统计
 print("\n【2. 学习规则统计】")
 try:
-    conn = sqlite3.connect('learning_rules.db')
+    conn = sqlite3.connect('data/learning_rules.db')
     cur = conn.execute('SELECT COUNT(*) FROM learning_rules')
     total = cur.fetchone()[0]
     

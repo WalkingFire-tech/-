@@ -1,7 +1,7 @@
 """激活pending规则（降低阈值）"""
 import sqlite3
 
-conn = sqlite3.connect('learning_rules.db')
+conn = sqlite3.connect('data/learning_rules.db')
 cursor = conn.cursor()
 
 print("激活pending规则（阈值0.5）")

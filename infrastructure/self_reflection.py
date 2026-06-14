@@ -117,7 +117,7 @@ class SelfReflectionReport:
     def _analyze_rule_activation(self, since: datetime) -> Dict:
         """分析规则激活情况"""
         try:
-            conn = sqlite3.connect('learning_rules.db')
+            conn = sqlite3.connect('data/learning_rules.db')
             
             # 活跃规则数
             cursor = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")

@@ -1,7 +1,7 @@
 """查看pending规则详情"""
 import sqlite3
 
-conn = sqlite3.connect('learning_rules.db')
+conn = sqlite3.connect('data/learning_rules.db')
 cursor = conn.cursor()
 
 # 查看pending规则的置信度分布

@@ -29,7 +29,7 @@ print(f"✓ _handle_meta_question方法存在: {hasattr(DataDrivenPlanner, '_han
 
 # 3. 数据库状态
 import sqlite3
-conn = sqlite3.connect('learning_rules.db')
+conn = sqlite3.connect('data/learning_rules.db')
 cur = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
 active_rules = cur.fetchone()[0]
 conn.close()

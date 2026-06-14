@@ -44,7 +44,7 @@ class CharterExecutor:
         logger.info("回顾失败案例...")
         
         try:
-            conn = sqlite3.connect('experience_pool.db')
+            conn = sqlite3.connect('data/experience_pool.db')
             
             # 查询最近7天的失败案例
             cursor = conn.execute('''
@@ -110,7 +110,7 @@ class CharterExecutor:
     def _save_learning_tasks(self, tasks: List[Dict]):
         """保存学习任务"""
         try:
-            conn = sqlite3.connect('learning_rules.db')
+            conn = sqlite3.connect('data/learning_rules.db')
             
             for task in tasks:
                 conn.execute('''
@@ -360,7 +360,7 @@ class CharterExecutor:
         logger.info(f"开始归档 {days} 天前的低重要性经验...")
         
         try:
-            conn = sqlite3.connect('experience_pool.db')
+            conn = sqlite3.connect('data/experience_pool.db')
             
             # 查询符合条件的经验
             cursor = conn.execute('''

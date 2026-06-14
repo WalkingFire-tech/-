@@ -10,7 +10,7 @@ print("=" * 60)
 # 验证1: 规则激活
 print("\n[验证1] 规则激活")
 import sqlite3
-conn = sqlite3.connect('learning_rules.db')
+conn = sqlite3.connect('data/learning_rules.db')
 cursor = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
 active_rules = cursor.fetchone()[0]
 conn.close()
@@ -34,7 +34,7 @@ try:
     )
     
     # 验证记录
-    conn = sqlite3.connect('model_stats.db')
+    conn = sqlite3.connect('data/model_stats.db')
     cursor = conn.execute("SELECT COUNT(*) FROM model_performance")
     count = cursor.fetchone()[0]
     conn.close()
@@ -49,7 +49,7 @@ try:
     import sqlite3
     
     # 检查experience_pool表结构
-    conn = sqlite3.connect('experience_pool.db')
+    conn = sqlite3.connect('data/experience_pool.db')
     cursor = conn.execute("PRAGMA table_info(experiences)")
     columns = [row[1] for row in cursor.fetchall()]
     conn.close()

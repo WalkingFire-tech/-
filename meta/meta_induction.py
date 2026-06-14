@@ -67,7 +67,7 @@ class MetaInductor:
             各类规则的成功率统计
         """
         try:
-            conn = sqlite3.connect('learning_rules.db')
+            conn = sqlite3.connect('data/learning_rules.db')
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             

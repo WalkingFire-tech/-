@@ -1,7 +1,7 @@
 """激活pending规则"""
 import sqlite3
 
-conn = sqlite3.connect('learning_rules.db')
+conn = sqlite3.connect('data/learning_rules.db')
 cursor = conn.cursor()
 
 # 查看当前状态
