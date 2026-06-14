@@ -3,6 +3,7 @@
 使用watchdog库监控指定目录,自动触发文件处理
 """
 import time
+import threading
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set
 from datetime import datetime
@@ -17,6 +18,13 @@ except ImportError:
     WATCHDOG_AVAILABLE = False
     logger.warning("watchdog未安装,目录监控功能不可用")
 
+ALLOWED_BASE_DIRS = [
+    Path.cwd() / "monitored",
+    Path.cwd() / "uploads",
+    Path.cwd() / "data",
+]
+MAX_PROCESSED_FILES = 1000
+
 
 class FileChangeHandler(FileSystemEventHandler if WATCHDOG_AVAILABLE else object):
     """文件变化处理器"""
@@ -25,27 +33,45 @@ class FileChangeHandler(FileSystemEventHandler if WATCHDOG_AVAILABLE else object
                  on_created: Optional[Callable] = None,
                  on_modified: Optional[Callable] = None,
                  on_deleted: Optional[Callable] = None,
-                 file_patterns: Optional[List[str]] = None):
+                 file_patterns: Optional[List[str]] = None,
+                 allowed_base_dir: Optional[Path] = None):
         self.on_created_callback = on_created
         self.on_modified_callback = on_modified
         self.on_deleted_callback = on_deleted
         self.file_patterns = file_patterns or ["*.py", "*.txt", "*.md", "*.json"]
         self.processed_files: Set[str] = set()
+        self._processed_lock = threading.Lock()
+        self.allowed_base_dir = allowed_base_dir
         
         logger.info(f"文件处理器初始化,监控模式: {self.file_patterns}")
     
     def _should_process(self, file_path: str) -> bool:
         """判断是否应该处理该文件"""
-        path = Path(file_path)
-        
-        if not path.is_file():
+        try:
+            path = Path(file_path)
+            
+            if path.is_symlink():
+                logger.warning(f"跳过符号链接: {file_path}")
+                return False
+            
+            resolved = path.resolve()
+            
+            if self.allowed_base_dir:
+                if not resolved.is_relative_to(self.allowed_base_dir.resolve()):
+                    logger.warning(f"文件路径越权: {file_path}")
+                    return False
+            
+            if not resolved.is_file():
+                return False
+            
+            for pattern in self.file_patterns:
+                if resolved.match(pattern):
+                    return True
+            
             return False
-        
-        for pattern in self.file_patterns:
-            if path.match(pattern):
-                return True
-        
-        return False
+        except (OSError, RuntimeError) as e:
+            logger.warning(f"路径验证失败: {file_path} - {e}")
+            return False
     
     def on_created(self, event):
         """文件创建事件"""
@@ -73,13 +99,14 @@ class FileChangeHandler(FileSystemEventHandler if WATCHDOG_AVAILABLE else object
         
         file_key = f"{event.src_path}_{int(time.time() / 5)}"
         
-        if file_key in self.processed_files:
-            return
-        
-        self.processed_files.add(file_key)
-        
-        if len(self.processed_files) > 1000:
-            self.processed_files.clear()
+        with self._processed_lock:
+            if file_key in self.processed_files:
+                return
+            
+            self.processed_files.add(file_key)
+            
+            if len(self.processed_files) > MAX_PROCESSED_FILES:
+                self.processed_files.clear()
         
         logger.info(f"检测到文件修改: {event.src_path}")
         
@@ -141,38 +168,67 @@ class DirectoryMonitor:
                 "message": "watchdog未安装,请执行: pip install watchdog"
             }
         
-        dir_path = Path(directory)
+        dir_path = Path(directory).resolve()
+        
+        allowed_dir = None
+        for base_dir in ALLOWED_BASE_DIRS:
+            base_resolved = base_dir.resolve()
+            if not base_resolved.exists():
+                try:
+                    base_resolved.mkdir(parents=True, exist_ok=True)
+                except Exception as e:
+                    logger.warning(f"无法创建允许目录 {base_dir}: {e}")
+                    continue
+            
+            if dir_path.is_relative_to(base_resolved) or dir_path == base_resolved:
+                allowed_dir = base_resolved
+                break
+        
+        if not allowed_dir:
+            logger.error(f"目录不在允许范围内: {directory}")
+            return {
+                "success": False,
+                "message": f"目录不在允许范围内。允许的目录: {[str(d) for d in ALLOWED_BASE_DIRS]}"
+            }
         
         if not dir_path.exists():
-            dir_path.mkdir(parents=True, exist_ok=True)
-            logger.info(f"创建监控目录: {directory}")
+            try:
+                dir_path.mkdir(parents=True, exist_ok=True)
+                logger.info(f"创建监控目录: {directory}")
+            except Exception as e:
+                logger.error(f"无法创建目录: {e}")
+                return {
+                    "success": False,
+                    "message": f"无法创建目录: {e}"
+                }
         
         handler = FileChangeHandler(
             on_created=on_created,
             on_modified=on_modified,
             on_deleted=on_deleted,
-            file_patterns=file_patterns
+            file_patterns=file_patterns,
+            allowed_base_dir=allowed_dir
         )
         
         try:
-            self.observer.schedule(handler, directory, recursive=recursive)
+            self.observer.schedule(handler, str(dir_path), recursive=recursive)
             
             watch_id = f"watch_{len(self.watched_dirs)}"
             self.handlers[watch_id] = handler
             self.watched_dirs[watch_id] = {
-                "directory": directory,
+                "directory": str(dir_path),
                 "recursive": recursive,
                 "patterns": file_patterns,
                 "start_time": datetime.now().isoformat()
             }
             
-            logger.info(f"开始监控目录: {directory} (递归={recursive})")
+            logger.info(f"开始监控目录: {dir_path} (递归={recursive})")
             
             return {
                 "success": True,
                 "watch_id": watch_id,
-                "directory": directory,
-                "message": f"已开始监控 {directory}"
+                "directory": str(dir_path),
+                "message": f"已开始监控 {dir_path}"
             }
         
         except Exception as e:
@@ -207,8 +263,12 @@ class DirectoryMonitor:
         
         if self.observer and self.observer.is_alive():
             self.observer.stop()
-            self.observer.join()
-            logger.info("目录监控已停止")
+            self.observer.join(timeout=5.0)
+            
+            if self.observer.is_alive():
+                logger.warning("观察者线程未在5秒内停止")
+            else:
+                logger.info("目录监控已停止")
     
     def status(self) -> Dict:
         """获取监控状态"""
@@ -264,14 +324,25 @@ class DirectoryMonitor:
 directory_monitor = DirectoryMonitor()
 
 
-def create_default_file_handler() -> Callable:
-    """创建默认文件处理器"""
+def create_default_file_handler(allowed_base_dir: Optional[Path] = None) -> Callable:
+    """创建默认文件处理器
+    
+    Args:
+        allowed_base_dir: 允许的基目录（沙盒）
+    """
     def handle_file_change(file_path: str, event_type: str):
         """处理文件变化"""
-        logger.info(f"处理文件{event_type}: {file_path}")
-        
-        if event_type in ["created", "modified"]:
-            try:
+        try:
+            resolved = Path(file_path).resolve()
+            
+            if allowed_base_dir:
+                if not resolved.is_relative_to(allowed_base_dir.resolve()):
+                    logger.warning(f"文件路径越权，拒绝处理: {file_path}")
+                    return
+            
+            logger.info(f"处理文件{event_type}: {file_path}")
+            
+            if event_type in ["created", "modified"]:
                 from adapters.input.file_adapter import file_adapter
                 result = file_adapter.on_file_selected(file_path)
                 
@@ -286,8 +357,8 @@ def create_default_file_handler() -> Callable:
                     })
                 else:
                     logger.warning(f"自动处理文件失败: {result.get('error')}")
-            
-            except Exception as e:
-                logger.error(f"文件处理异常: {e}")
+        
+        except Exception as e:
+            logger.error(f"文件处理异常: {e}")
     
     return handle_file_change
