@@ -8,6 +8,12 @@ from dataclasses import dataclass
 from loguru import logger
 from infrastructure.event_bus import bus
 
+ALLOWED_HANDLERS = {
+    "code_model", "chat_model", "local_kb", "calculator",
+    "static_analyzer", "parser", "extractor", "formatter",
+    "template", "user_clarify", "document_processor"
+}
+
 
 @dataclass
 class SubTask:
@@ -212,10 +218,15 @@ class ProblemDecomposer:
             
             subtasks = []
             for i, item in enumerate(data):
+                handler = item.get("handler", "chat_model")
+                if handler not in ALLOWED_HANDLERS:
+                    logger.warning(f"非法handler '{handler}'，使用默认'chat_model'")
+                    handler = "chat_model"
+                
                 subtasks.append(SubTask(
                     task_id=f"task_{i+1}",
                     description=item.get("task", ""),
-                    handler=item.get("handler", "chat_model"),
+                    handler=handler,
                     priority=i+1,
                     dependencies=[f"task_{i}"] if i > 0 else []
                 ))
