@@ -366,8 +366,24 @@ async def preview_folder(request: dict):
     
     try:
         from pathlib import Path
+        import os
         
-        folder = Path(folder_path)
+        folder = Path(folder_path).resolve()
+        
+        # 安全检查：限制访问范围
+        allowed_bases = [
+            Path.cwd(),  # 当前工作目录
+            Path.home(),  # 用户主目录
+        ]
+        
+        is_allowed = any(
+            str(folder).startswith(str(base.resolve()))
+            for base in allowed_bases
+        )
+        
+        if not is_allowed:
+            return {"success": False, "error": "路径不在允许范围内"}
+        
         if not folder.exists():
             return {"success": False, "error": "文件夹不存在"}
         
@@ -413,7 +429,22 @@ async def learn_from_folder(request: dict):
         from pathlib import Path
         import os
         
-        folder = Path(folder_path)
+        folder = Path(folder_path).resolve()
+        
+        # 安全检查：限制访问范围
+        allowed_bases = [
+            Path.cwd(),  # 当前工作目录
+            Path.home(),  # 用户主目录
+        ]
+        
+        is_allowed = any(
+            str(folder).startswith(str(base.resolve()))
+            for base in allowed_bases
+        )
+        
+        if not is_allowed:
+            return {"success": False, "error": "路径不在允许范围内"}
+        
         if not folder.exists():
             return {"success": False, "error": "文件夹不存在"}
         

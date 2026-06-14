@@ -152,9 +152,26 @@ class SubTaskExecutor:
             return f"[本地知识库] 检索: {task.description}"
     
     def _handle_calculator(self, task: SubTask, context: Dict) -> str:
-        """处理计算任务"""
+        """处理计算任务（安全增强）"""
         try:
             from math import sqrt, sin, cos, tan, log, log10, exp, pi, e
+            import re
+            
+            expression = task.description.strip()
+            
+            # 安全检查：只允许数字、运算符、数学函数
+            allowed_pattern = r'^[\d\s\+\-\*\/\(\)\.\,\%\^]+$|' \
+                            r'(sqrt|sin|cos|tan|log|log10|exp|abs|round|min|max|sum|pow|pi|e)'
+            
+            # 移除所有空格后检查
+            clean_expr = expression.replace(' ', '')
+            if not re.match(allowed_pattern, clean_expr):
+                return f"计算错误: 表达式包含不允许的字符"
+            
+            # 检查危险模式
+            dangerous_patterns = ['__', 'import', 'exec', 'eval', 'open', 'file']
+            if any(pattern in expression for pattern in dangerous_patterns):
+                return f"计算错误: 表达式包含危险操作"
             
             safe_dict = {
                 'abs': abs, 'round': round, 'min': min, 'max': max,
@@ -164,7 +181,6 @@ class SubTaskExecutor:
                 'pi': pi, 'e': e
             }
             
-            expression = task.description
             result = eval(expression, {"__builtins__": {}}, safe_dict)
             return str(result)
         
