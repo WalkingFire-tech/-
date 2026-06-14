@@ -219,15 +219,19 @@
                 <h3>📁 文件浏览器</h3>
                 
                 <div style="margin: 15px 0;">
-                    <input type="text" id="browser-path" placeholder="输入路径或点击目录浏览" style="width: 70%; padding: 8px;">
+                    <input type="text" id="browser-path" placeholder="输入完整路径，如: E:\LMTHZlearn\OpenMythos-main" style="width: 70%; padding: 8px;">
                     <button onclick="browsePath()" class="btn btn-secondary" style="padding: 8px 15px;">浏览</button>
                     <button onclick="goToParent()" class="btn btn-secondary" style="padding: 8px 15px;">⬆ 上级</button>
                 </div>
                 
+                <div style="margin: 10px 0; padding: 10px; background: #fff3cd; border-radius: 5px;">
+                    <small style="color: #856404;">💡 提示：请输入完整路径（如 E:\LMTHZlearn），或点击下方快捷路径按钮</small>
+                </div>
+                
                 <div style="margin: 10px 0;">
                     <small>快捷路径：</small>
-                    <button onclick="setBrowserPath('data/workspace')" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">data/workspace</button>
                     <button onclick="setBrowserPath('.')" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">项目根目录</button>
+                    <button onclick="setBrowserPath('data')" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">data</button>
                     <button onclick="setBrowserPath('E:/LMTHZlearn')" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">E:/LMTHZlearn</button>
                 </div>
                 
