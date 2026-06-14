@@ -4,6 +4,8 @@
 """
 import re
 import json
+import threading
+import asyncio
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
@@ -32,7 +34,9 @@ class AutoIntentParser:
         self.learning_data = self._load_learning_data()
         self.correction_count = 0
         
-        # 意图类型定义
+        self._data_lock = threading.Lock()
+        self._file_lock = threading.Lock()
+        
         self.intent_types = {
             "code": "代码生成、编程任务",
             "question": "知识问答、概念解释",
@@ -78,12 +82,17 @@ class AutoIntentParser:
         }
     
     def _save_learning_data(self):
-        """保存学习数据"""
-        try:
-            with open(self.learning_file, 'w', encoding='utf-8') as f:
-                json.dump(self.learning_data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.error(f"保存学习数据失败: {e}")
+        """保存学习数据（线程安全）"""
+        with self._file_lock:
+            try:
+                temp_file = self.learning_file.with_suffix('.tmp')
+                with open(temp_file, 'w', encoding='utf-8') as f:
+                    json.dump(self.learning_data, f, ensure_ascii=False, indent=2)
+                temp_file.replace(self.learning_file)
+            except Exception as e:
+                logger.error(f"保存学习数据失败: {e}")
+                if temp_file.exists():
+                    temp_file.unlink()
     
     def parse(self, user_input: str) -> Intent:
         """解析意图(双模式)"""
@@ -202,16 +211,24 @@ class AutoIntentParser:
 
 只返回JSON,不要其他内容。"""
 
-            response = self.llm_adapter.generate(prompt, task_type="intent_classification")
+            try:
+                if asyncio.iscoroutinefunction(self.llm_adapter.generate):
+                    response = asyncio.run(asyncio.wait_for(
+                        self.llm_adapter.generate(prompt, task_type="intent_classification"),
+                        timeout=10.0
+                    ))
+                else:
+                    response = self.llm_adapter.generate(prompt, task_type="intent_classification")
+            except asyncio.TimeoutError:
+                logger.warning("LLM意图识别超时")
+                return None
             
-            # 解析JSON
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
                 result = json.loads(json_match.group(0))
                 intent_type = result.get("intent_type", "chat")
                 confidence = float(result.get("confidence", 0.7))
                 
-                # 验证意图类型
                 if intent_type not in self.intent_types:
                     intent_type = "chat"
                     confidence = 0.5
@@ -258,55 +275,50 @@ class AutoIntentParser:
         return entities
     
     def _record_for_learning(self, text: str, intent: Intent):
-        """记录用于学习"""
-        intent_type = intent.type
-        
-        # 添加示例
-        if intent_type not in self.learning_data["intent_examples"]:
-            self.learning_data["intent_examples"][intent_type] = []
-        
-        # 最多保留100个示例
-        examples = self.learning_data["intent_examples"][intent_type]
-        if len(examples) < 100:
-            examples.append({
-                "text": text,
-                "confidence": intent.confidence,
-                "source": intent.source
-            })
-        
-        self._save_learning_data()
+        """记录用于学习（线程安全）"""
+        with self._data_lock:
+            intent_type = intent.type
+            
+            if intent_type not in self.learning_data["intent_examples"]:
+                self.learning_data["intent_examples"][intent_type] = []
+            
+            examples = self.learning_data["intent_examples"][intent_type]
+            if len(examples) < 100:
+                examples.append({
+                    "text": text,
+                    "confidence": intent.confidence,
+                    "source": intent.source
+                })
+            
+            self._save_learning_data()
     
     def learn_from_correction(self, text: str, correct_intent: str, wrong_intent: str = None):
-        """从用户修正中学习"""
+        """从用户修正中学习（线程安全）"""
         logger.info(f"学习用户修正: '{text}' -> {correct_intent}")
         
-        # 记录修正
-        correction = {
-            "text": text,
-            "wrong_intent": wrong_intent,
-            "correct_intent": correct_intent,
-            "timestamp": str(Path.cwd())
-        }
-        self.learning_data["corrections"].append(correction)
-        self.correction_count += 1
-        
-        # 提取模式并添加到学习规则
-        # 简单实现:提取关键词
-        keywords = self._extract_keywords(text)
-        if keywords:
-            if correct_intent not in self.learning_data["learned_rules"]:
-                self.learning_data["learned_rules"][correct_intent] = []
+        with self._data_lock:
+            correction = {
+                "text": text,
+                "wrong_intent": wrong_intent,
+                "correct_intent": correct_intent,
+                "timestamp": str(Path.cwd())
+            }
+            self.learning_data["corrections"].append(correction)
+            self.correction_count += 1
             
-            # 添加关键词模式
-            pattern = "|".join(keywords[:3])  # 最多3个关键词
-            if pattern not in self.learning_data["learned_rules"][correct_intent]:
-                self.learning_data["learned_rules"][correct_intent].append(pattern)
-        
-        self._save_learning_data()
-        
-        # 定期微调(每10次修正)
-        if self.correction_count % 10 == 0:
-            logger.info(f"已收集{self.correction_count}次修正,可进行模型微调")
+            keywords = self._extract_keywords(text)
+            if keywords:
+                if correct_intent not in self.learning_data["learned_rules"]:
+                    self.learning_data["learned_rules"][correct_intent] = []
+                
+                pattern = "|".join(keywords[:3])
+                if pattern not in self.learning_data["learned_rules"][correct_intent]:
+                    self.learning_data["learned_rules"][correct_intent].append(pattern)
+            
+            self._save_learning_data()
+            
+            if self.correction_count % 10 == 0:
+                logger.info(f"已收集{self.correction_count}次修正,可进行模型微调")
     
     def _extract_keywords(self, text: str) -> List[str]:
         """提取关键词"""
