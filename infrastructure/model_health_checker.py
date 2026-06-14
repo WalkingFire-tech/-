@@ -29,6 +29,29 @@ class ModelHealthChecker:
         
         logger.info(f"模型健康检查器已初始化 (失败阈值: {failure_threshold}, 冷却: {cooldown_seconds}s)")
     
+    def is_blacklisted(self, model_name: str) -> bool:
+        """检查模型是否在黑名单中
+        
+        Args:
+            model_name: 模型名称
+        
+        Returns:
+            是否在黑名单中
+        """
+        if model_name not in self.blacklist:
+            return False
+        
+        ban_time = self.blacklist[model_name]
+        elapsed = time.time() - ban_time
+        
+        if elapsed >= self.cooldown_seconds:
+            del self.blacklist[model_name]
+            self.failure_counts[model_name] = 0
+            logger.info(f"模型 {model_name} 已从黑名单移除")
+            return False
+        
+        return True
+    
     def is_available(self, model_name: str) -> bool:
         """检查模型是否可用
         
@@ -38,22 +61,7 @@ class ModelHealthChecker:
         Returns:
             是否可用
         """
-        # 检查是否在黑名单中
-        if model_name in self.blacklist:
-            ban_time = self.blacklist[model_name]
-            elapsed = time.time() - ban_time
-            
-            if elapsed < self.cooldown_seconds:
-                remaining = self.cooldown_seconds - elapsed
-                logger.debug(f"模型 {model_name} 在黑名单中 (剩余 {remaining:.0f}s)")
-                return False
-            else:
-                # 冷却结束，移出黑名单
-                del self.blacklist[model_name]
-                self.failure_counts[model_name] = 0
-                logger.info(f"模型 {model_name} 已从黑名单移除")
-        
-        return True
+        return not self.is_blacklisted(model_name)
     
     def record_success(self, model_name: str, response_time: float = None):
         """记录成功调用
