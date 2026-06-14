@@ -152,37 +152,59 @@ class SubTaskExecutor:
             return f"[本地知识库] 检索: {task.description}"
     
     def _handle_calculator(self, task: SubTask, context: Dict) -> str:
-        """处理计算任务（安全增强）"""
+        """处理计算任务（使用numexpr安全求值）"""
         try:
-            from math import sqrt, sin, cos, tan, log, log10, exp, pi, e
-            import re
+            import numexpr
             
             expression = task.description.strip()
             
-            # 安全检查：只允许数字、运算符、数学函数
-            allowed_pattern = r'^[\d\s\+\-\*\/\(\)\.\,\%\^]+$|' \
-                            r'(sqrt|sin|cos|tan|log|log10|exp|abs|round|min|max|sum|pow|pi|e)'
-            
-            # 移除所有空格后检查
-            clean_expr = expression.replace(' ', '')
-            if not re.match(allowed_pattern, clean_expr):
-                return f"计算错误: 表达式包含不允许的字符"
-            
-            # 检查危险模式
-            dangerous_patterns = ['__', 'import', 'exec', 'eval', 'open', 'file']
+            # 安全检查：禁止危险操作
+            dangerous_patterns = ['__', 'import', 'exec', 'eval', 'open', 'file', 
+                               'getattr', 'setattr', 'delattr', 'compile', 
+                               'breakpoint', 'input', 'globals', 'locals']
             if any(pattern in expression for pattern in dangerous_patterns):
                 return f"计算错误: 表达式包含危险操作"
             
-            safe_dict = {
-                'abs': abs, 'round': round, 'min': min, 'max': max,
-                'sum': sum, 'pow': pow, 'sqrt': sqrt,
-                'sin': sin, 'cos': cos, 'tan': tan,
-                'log': log, 'log10': log10, 'exp': exp,
-                'pi': pi, 'e': e
-            }
+            # 检查括号匹配
+            if expression.count('(') != expression.count(')'):
+                return f"计算错误: 括号不匹配"
             
-            result = eval(expression, {"__builtins__": {}}, safe_dict)
+            # 使用numexpr安全求值（仅支持数学表达式）
+            result = numexpr.evaluate(expression)
             return str(result)
+        
+        except ImportError:
+            # numexpr未安装，使用降级方案
+            try:
+                from math import sqrt, sin, cos, tan, log, log10, exp, pi, e
+                import re
+                
+                expression = task.description.strip()
+                
+                # 严格的白名单检查
+                allowed_pattern = r'^[\d\s\+\-\*\/\(\)\.\,\%\^]+$|' \
+                                r'(sqrt|sin|cos|tan|log|log10|exp|abs|round|min|max|sum|pow|pi|e)'
+                
+                clean_expr = expression.replace(' ', '')
+                if not re.match(allowed_pattern, clean_expr):
+                    return f"计算错误: 表达式包含不允许的字符"
+                
+                dangerous_patterns = ['__', 'import', 'exec', 'eval', 'open', 'file']
+                if any(pattern in expression for pattern in dangerous_patterns):
+                    return f"计算错误: 表达式包含危险操作"
+                
+                safe_dict = {
+                    'abs': abs, 'round': round, 'min': min, 'max': max,
+                    'sum': sum, 'pow': pow, 'sqrt': sqrt,
+                    'sin': sin, 'cos': cos, 'tan': tan,
+                    'log': log, 'log10': log10, 'exp': exp,
+                    'pi': pi, 'e': e
+                }
+                
+                result = eval(expression, {"__builtins__": {}}, safe_dict)
+                return str(result)
+            except Exception as e:
+                return f"计算错误: {str(e)}"
         
         except Exception as e:
             return f"计算错误: {str(e)}"
