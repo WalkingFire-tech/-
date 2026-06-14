@@ -570,10 +570,13 @@ function renderFileList(items, currentPath) {
     let html = '<table style="width: 100%; border-collapse: collapse;">';
     html += '<tr style="background: #e0e0e0;"><th style="padding: 8px; text-align: left;">类型</th><th style="padding: 8px; text-align: left;">名称</th><th style="padding: 8px; text-align: right;">大小</th><th style="padding: 8px;">操作</th></tr>';
     
-    items.forEach(item => {
+    items.forEach((item, index) => {
         const icon = item.is_dir ? '📁' : '📄';
         const size = item.is_dir ? '-' : formatFileSize(item.size);
         const bgColor = item.is_dir ? '#fff9e6' : '#ffffff';
+        
+        // 使用data属性存储路径，避免转义问题
+        const pathAttr = `data-path="${item.path.replace(/"/g, '&quot;')}"`;
         
         html += `<tr style="background: ${bgColor}; border-bottom: 1px solid #eee;">`;
         html += `<td style="padding: 8px;">${icon}</td>`;
@@ -582,10 +585,10 @@ function renderFileList(items, currentPath) {
         html += `<td style="padding: 8px;">`;
         
         if (item.is_dir) {
-            html += `<button onclick="enterDirectory('${escapeHtml(item.path)}')" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">进入</button> `;
+            html += `<button onclick="enterDirectory(this.getAttribute('data-path'))" ${pathAttr} class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">进入</button> `;
         } else {
-            html += `<button onclick="toggleSelectFile('${escapeHtml(item.path)}', this)" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">选择</button> `;
-            html += `<button onclick="previewFile('${escapeHtml(item.path)}')" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">预览</button>`;
+            html += `<button onclick="toggleSelectFile(this.getAttribute('data-path'), this)" ${pathAttr} class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">选择</button> `;
+            html += `<button onclick="previewFile(this.getAttribute('data-path'))" ${pathAttr} class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">预览</button>`;
         }
         
         html += `</td></tr>`;
