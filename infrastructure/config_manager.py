@@ -44,8 +44,9 @@ class ConfigManager:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._load_config()
+                    cls._instance._config = {}
                     cls._initialized = True
+            cls._instance._load_config()
         return cls._instance
     
     def _load_config(self):
