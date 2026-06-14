@@ -286,6 +286,8 @@ async def get_models():
 async def chat(request: dict):
     """聊天端点"""
     user_input = request.get("message", "")
+    current_file = request.get("current_file", None)
+    current_topic = request.get("current_topic", None)
     
     if not user_input:
         return {"error": "Empty message"}
@@ -295,6 +297,17 @@ async def chat(request: dict):
         
         if campfire:
             campfire.log_user(user_input)
+        
+        # 环境触发器匹配
+        env_hint = None
+        try:
+            from core.learning import enhanced_learner
+            env_matches = enhanced_learner.match_environmental_triggers(current_file, current_topic)
+            if env_matches:
+                env_hint = f"💡 看到你在{current_file or '这个话题'}，我突然想起：{env_matches[0][0][:100]}... 需要我详细说说吗？"
+                logger.info(f"环境触发器命中: {current_file or current_topic}")
+        except Exception as e:
+            logger.error(f"环境触发器匹配失败: {e}")
         
         response_queue = asyncio.Queue()
         
@@ -314,6 +327,27 @@ async def chat(request: dict):
                     campfire.log_assistant(str(response)[:1000])
                 
                 response_text = str(response) if response else ""
+                
+                # 检索知识（支持回忆语气）
+                knowledge_result = None
+                try:
+                    from core.learning import enhanced_learner
+                    knowledge_result = enhanced_learner.retrieve_knowledge(user_input)
+                    
+                    if knowledge_result and knowledge_result.get('confidence', 0) > 0.6:
+                        answer = knowledge_result['answer']
+                        
+                        # 回忆语气
+                        if knowledge_result.get('reconstructed'):
+                            answer = "🤔 让我努力回想一下……（记忆有些模糊）\n\n" + answer
+                        
+                        # 环境提示
+                        if env_hint:
+                            answer = env_hint + "\n\n" + answer
+                        
+                        logger.info(f"知识检索命中: {knowledge_result['source']} ({knowledge_result['confidence']:.2f})")
+                except Exception as e:
+                    logger.error(f"知识检索失败: {e}")
                 
                 try:
                     from core.vector_retriever import vector_retriever
@@ -409,6 +443,15 @@ async def chat(request: dict):
                             response = str(response) + notification_msg
                 except Exception as e:
                     logger.error(f"文件夹学习对话处理失败: {e}")
+                
+                # 如果有高质量检索结果，优先使用
+                if knowledge_result and knowledge_result.get('confidence', 0) > 0.7:
+                    return {
+                        "response": knowledge_result['answer'],
+                        "intent": intent.type,
+                        "source": knowledge_result['source'],
+                        "reconstructed": knowledge_result.get('reconstructed', False)
+                    }
                 
                 return {"response": response, "intent": intent.type}
             except asyncio.TimeoutError:
@@ -1145,6 +1188,22 @@ async def get_forgotten_memories():
         }
     except Exception as e:
         logger.error(f"获取遗忘记忆失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/memory/last_qa")
+async def get_last_qa(limit: int = 1):
+    """获取最近问答（用于 CLI :important 命令）"""
+    try:
+        from core.learning import enhanced_learner
+        
+        last_qa = enhanced_learner.get_last_qa(limit=limit)
+        
+        return {
+            "success": True,
+            "qa_list": last_qa
+        }
+    except Exception as e:
+        logger.error(f"获取最近问答失败: {e}")
         return {"success": False, "error": str(e)}
 
 def _is_path_allowed(folder: Path) -> bool:

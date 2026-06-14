@@ -80,10 +80,11 @@ class EnhancedLearner:
             conn.execute('CREATE INDEX IF NOT EXISTS idx_question_hash ON knowledge_items(question_hash)')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_knowledge_type ON knowledge_items(knowledge_type)')
     
-    def learn_from_file(self, filename: str, content: str, context: Dict = None) -> int:
+    def learn_from_file(self, filename: str, content: str, context: Dict = None, environmental_triggers: str = None) -> int:
         """从文件学习 - 提取结构化知识"""
         
         knowledge_count = 0
+        env_trigger = environmental_triggers or filename
         
         # 1. 提取文件整体摘要
         summary = self._extract_file_summary(filename, content)
@@ -96,7 +97,8 @@ class EnhancedLearner:
                 metadata={
                     'filename': filename,
                     'language': self._detect_language(filename),
-                    'type': 'file_summary'
+                    'type': 'file_summary',
+                    'environmental_triggers': env_trigger
                 }
             )
             knowledge_count += 1
@@ -287,7 +289,7 @@ class EnhancedLearner:
     
     def mark_as_important(self, question: str) -> bool:
         """刻骨铭心 - 手动标记为永久记忆"""
-        question_hash = hashlib.md5(question.lower().encode()).hexdigest()
+        question_hash = hashlib.md5(question.lower().strip().encode()).hexdigest()
         
         with sqlite3.connect(self.db_path) as conn:
             conn.execute('''
@@ -306,6 +308,46 @@ class EnhancedLearner:
             logger.info(f"刻骨铭心: {question[:30]}...")
             return True
         return False
+    
+    def get_last_qa(self, limit: int = 1) -> List[Dict]:
+        """获取最近学习的问答对（用于 :important 命令）"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.execute('''
+                SELECT question, answer, source, created_at
+                FROM knowledge_items
+                WHERE knowledge_type = 'qa'
+                ORDER BY created_at DESC LIMIT ?
+            ''', (limit,))
+            return [dict(row) for row in cur.fetchall()]
+    
+    def match_environmental_triggers(self, current_file: str = None, current_topic: str = None) -> List[tuple]:
+        """根据当前环境（文件路径、话题）检索相关记忆，返回 (答案, 相似度)"""
+        if not current_file and not current_topic:
+            return []
+        
+        query_parts = []
+        if current_file:
+            query_parts.append(current_file)
+        if current_topic:
+            query_parts.append(current_topic)
+        query = " ".join(query_parts)
+        
+        # 使用向量检索匹配
+        if self.vector_store:
+            try:
+                vector_results = self.vector_store.search(query, top_k=3, threshold=0.7)
+                matches = []
+                for dist, meta in vector_results:
+                    layer = meta.get('layer', 2)
+                    salience = meta.get('salience', 0)
+                    if layer <= 2 and salience > 0.4:
+                        matches.append((meta.get('answer', ''), 1-dist))
+                return matches
+            except Exception as e:
+                logger.error(f"环境触发器匹配失败: {e}")
+        
+        return []
     
     def get_recently_forgotten(self, days: int = 7) -> List[Dict]:
         """获取最近遗忘的记忆（用于回忆通知）"""
@@ -506,8 +548,13 @@ class EnhancedLearner:
         
         return tools_created
     
-    def retrieve_knowledge(self, query: str, min_quality: float = 50.0) -> Optional[tuple]:
-        """检索知识（支持情境重构）"""
+    def retrieve_knowledge(self, query: str, min_quality: float = 50.0) -> Optional[Dict]:
+        """
+        检索知识（支持情境重构）
+        
+        返回: {"answer": str, "confidence": float, "source": str, "reconstructed": bool}
+        source: 'vector', 'fuzzy', 'reconstruction'
+        """
         
         # 1. 向量检索
         if self.vector_store:
@@ -517,16 +564,28 @@ class EnhancedLearner:
                     distance, meta = vector_results[0]
                     confidence = 1.0 - distance
                     answer = meta.get("answer", "")
-                    if answer and confidence > 0.6:
+                    layer = meta.get('layer', 2)
+                    if answer and confidence > 0.6 and layer in (1, 2):
                         logger.info(f"向量检索命中: {confidence:.2f}")
-                        return (answer, confidence)
+                        return {
+                            "answer": answer,
+                            "confidence": confidence,
+                            "source": "vector",
+                            "reconstructed": False
+                        }
             except Exception as e:
                 logger.error(f"向量检索失败: {e}")
         
         # 2. 情境重构（低置信度时）
         reconstruction = self.retrieve_with_context_reconstruction(query)
         if reconstruction:
-            return reconstruction
+            answer, conf = reconstruction
+            return {
+                "answer": answer,
+                "confidence": conf,
+                "source": "reconstruction",
+                "reconstructed": True
+            }
         
         # 3. SQL精确匹配
         query_hash = hashlib.md5(query.lower().encode()).hexdigest()
@@ -535,7 +594,7 @@ class EnhancedLearner:
             conn.row_factory = sqlite3.Row
             
             cursor = conn.execute('''
-                SELECT answer, quality_score 
+                SELECT answer, quality_score, memory_layer, salience
                 FROM knowledge_items 
                 WHERE question_hash = ? AND quality_score >= ?
             ''', (query_hash, min_quality))
@@ -548,23 +607,35 @@ class EnhancedLearner:
                     WHERE question_hash = ?
                 ''', (datetime.now().isoformat(), query_hash))
                 conn.commit()
-                return (row['answer'], row['quality_score'] / 100.0)
+                return {
+                    "answer": row['answer'],
+                    "confidence": row['quality_score'] / 100.0,
+                    "source": "exact",
+                    "reconstructed": False
+                }
             
             # 4. SQL模糊匹配
             keywords = re.findall(r'\w+', query.lower())
             for keyword in keywords:
                 if len(keyword) > 3:
                     cursor = conn.execute('''
-                        SELECT answer, quality_score 
+                        SELECT answer, quality_score, memory_layer, salience
                         FROM knowledge_items 
                         WHERE question LIKE ? AND quality_score >= ?
+                        AND memory_layer IN (1, 2)
                         ORDER BY quality_score DESC, access_count DESC
                         LIMIT 1
                     ''', (f'%{keyword}%', min_quality))
                     
                     row = cursor.fetchone()
                     if row:
-                        return (row['answer'], row['quality_score'] / 100.0 * 0.8)
+                        salience = row['salience'] if row['salience'] else 0.5
+                        return {
+                            "answer": row['answer'],
+                            "confidence": row['quality_score'] / 100.0 * 0.8,
+                            "source": "fuzzy",
+                            "reconstructed": False
+                        }
         
         return None
     

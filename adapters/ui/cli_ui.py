@@ -34,6 +34,8 @@ class EnhancedCliUI(UIPort):
             "  [yellow]:ml[/] 或 [yellow]:multiline[/] - 进入多行输入模式\n"
             "  [yellow]:file <路径>[/] - 输入文件\n"
             "  [yellow]:folder <路径>[/] - 输入文件夹\n"
+            "  [yellow]:important[/] - 刻骨铭心（标记永久记忆）\n"
+            "  [yellow]:recall <问题>[/] - 情境重构回忆\n"
             "  [yellow]:help[/] - 显示帮助\n"
             "  [yellow]exit/quit[/] - 退出",
             style="bold"
@@ -171,6 +173,12 @@ class EnhancedCliUI(UIPort):
         
         elif cmd == ":plan":
             self._handle_plan_command(args)
+        
+        elif cmd == ":important":
+            self._handle_important_command(args)
+        
+        elif cmd == ":recall":
+            self._handle_recall_command(args)
         
         elif cmd == ":help":
             self._show_help()
@@ -634,6 +642,59 @@ class EnhancedCliUI(UIPort):
         except Exception as e:
             self.console.print(f"[red]计划命令失败: {e}[/]")
     
+    def _handle_important_command(self, args: str):
+        """处理刻骨铭心命令 - 标记为永久记忆"""
+        try:
+            from core.learning import enhanced_learner
+            
+            if args:
+                question = args
+            else:
+                last_qa = enhanced_learner.get_last_qa(limit=1)
+                if not last_qa:
+                    self.console.print("[yellow]没有找到最近的问答记录[/]")
+                    return
+                question = last_qa[0]['question']
+            
+            result = enhanced_learner.mark_as_important(question)
+            
+            if result:
+                self.console.print(f"[green]✨ 已铭记：{question[:50]}...[/]")
+                self.console.print("[dim]这条记忆将永不遗忘[/]")
+            else:
+                self.console.print("[yellow]未找到该知识，无法标记[/]")
+        
+        except Exception as e:
+            self.console.print(f"[red]标记失败: {e}[/]")
+    
+    def _handle_recall_command(self, args: str):
+        """处理回忆命令 - 情境重构检索"""
+        try:
+            from core.learning import enhanced_learner
+            
+            if not args:
+                self.console.print("[yellow]请提供要回忆的问题: :recall <问题>[/]")
+                return
+            
+            result = enhanced_learner.retrieve_knowledge(args)
+            
+            if result:
+                confidence = result.get('confidence', 0)
+                source = result.get('source', 'unknown')
+                reconstructed = result.get('reconstructed', False)
+                
+                self.console.print(f"[cyan]置信度: {confidence:.2f} (来源: {source})[/]")
+                
+                if reconstructed:
+                    self.console.print("[yellow]🤔 这是通过情境重构回忆起来的：[/]")
+                
+                self.console.print(Panel(result['answer'], title="💭 回忆", border_style="cyan"))
+            else:
+                self.console.print("[yellow]未找到相关知识[/]")
+        
+        except Exception as e:
+            self.console.print(f"[red]回忆失败: {e}[/]")
+    
     def _show_help(self):
         """显示帮助"""
         help_text = """
@@ -675,6 +736,10 @@ class EnhancedCliUI(UIPort):
 
 [yellow]认知分析:[/]
   :plan [问题] - 进入认知模式，生成逻辑分析报告
+
+[yellow]记忆体验:[/]
+  :important [问题] - 标记为刻骨铭心的记忆（永不遗忘）
+  :recall <问题> - 情境重构回忆（带回忆语气）
 
 [yellow]学习管理:[/]
   :learning list - 列出学习规则
