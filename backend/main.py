@@ -251,7 +251,7 @@ async def chat(request: dict):
         
         # 保存用户消息
         if campfire:
-            campfire.log("用户", user_input)
+            campfire.log_user(user_input)
         
         response_queue = asyncio.Queue()
         
@@ -269,7 +269,7 @@ async def chat(request: dict):
                 
                 # 保存助手回复
                 if campfire and response:
-                    campfire.log("拓荒者", str(response)[:1000])
+                    campfire.log_assistant(str(response)[:1000])
                 
                 return {"response": response, "intent": intent.type}
             except asyncio.TimeoutError:
