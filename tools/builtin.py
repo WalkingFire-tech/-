@@ -51,17 +51,40 @@ class CodeExecutionTool(Tool):
         code = kwargs.get("code")
         timeout = kwargs.get("timeout", 10)
         
-        # 安全检查
-        dangerous = ['os', 'subprocess', 'shutil', 'sys', '__import__', 'eval', 'exec', 'compile']
-        for mod in dangerous:
-            if re.search(rf'\b{mod}\b', code):
+        SAFE_MODULES = {'math', 'json', 'datetime', 're', 'collections', 'itertools', 'functools'}
+        for match in re.finditer(r'\bimport\s+(\w+)|\bfrom\s+(\w+)', code):
+            module = match.group(1) or match.group(2)
+            if module not in SAFE_MODULES:
                 return ToolResult(
                     success=False,
                     output=None,
-                    error=f"禁止使用模块: {mod}"
+                    error=f"禁止使用模块: {module}，仅允许: {SAFE_MODULES}"
                 )
         
-        # 执行代码
+        DANGEROUS_PATTERNS = [
+            r'\bopen\s*\(',
+            r'\bfile\s*\(',
+            r'\b__import__\s*\(',
+            r'\beval\s*\(',
+            r'\bexec\s*\(',
+            r'\bcompile\s*\(',
+            r'\bglobals\s*\(',
+            r'\blocals\s*\(',
+            r'\bvars\s*\(',
+            r'\bdir\s*\(',
+            r'\bgetattr\s*\(',
+            r'\bsetattr\s*\(',
+            r'\bdelattr\s*\(',
+        ]
+        
+        for pattern in DANGEROUS_PATTERNS:
+            if re.search(pattern, code):
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"禁止使用危险函数: {pattern}"
+                )
+        
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
             f.write(code)
             tmp = f.name
@@ -128,7 +151,6 @@ class CalculatorTool(Tool):
     def execute(self, **kwargs) -> ToolResult:
         expression = kwargs.get("expression")
         
-        # 安全的数学环境
         safe_dict = {
             'abs': abs, 'round': round, 'min': min, 'max': max,
             'sum': sum, 'pow': pow, 'sqrt': math.sqrt,
@@ -138,8 +160,17 @@ class CalculatorTool(Tool):
             'floor': math.floor, 'ceil': math.ceil
         }
         
+        DANGEROUS = ['__', 'import', 'eval', 'exec', 'compile', 'open', 'file', 
+                     'globals', 'locals', 'vars', 'dir', 'getattr', 'setattr']
+        for danger in DANGEROUS:
+            if danger in expression:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"表达式包含危险字符: {danger}"
+                )
+        
         try:
-            # 安全评估
             result = eval(expression, {"__builtins__": {}}, safe_dict)
             
             return ToolResult(
@@ -158,6 +189,8 @@ class CalculatorTool(Tool):
 
 class FileReaderTool(Tool):
     """文件读取工具"""
+    
+    BASE_DIR = Path("data/workspace").resolve()
     
     @property
     def name(self) -> str:
@@ -196,13 +229,24 @@ class FileReaderTool(Tool):
             )
         ]
     
+    def _sanitize_path(self, file_path: str) -> Path:
+        """路径沙盒验证"""
+        resolved = Path(file_path).resolve()
+        self.BASE_DIR.mkdir(parents=True, exist_ok=True)
+        
+        if not resolved.is_relative_to(self.BASE_DIR):
+            logger.warning(f"路径越权，拒绝访问: {file_path}")
+            raise PermissionError(f"路径越权: {file_path}")
+        
+        return resolved
+    
     def execute(self, **kwargs) -> ToolResult:
         file_path = kwargs.get("file_path")
         encoding = kwargs.get("encoding", "utf-8")
         max_lines = kwargs.get("max_lines", 1000)
         
         try:
-            path = Path(file_path)
+            path = self._sanitize_path(file_path)
             
             if not path.exists():
                 return ToolResult(
