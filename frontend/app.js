@@ -102,15 +102,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // 健康检查
 async function checkHealth() {
+    const indicator = document.getElementById('status-indicator');
+    const text = document.getElementById('status-text');
+    
+    if (!indicator || !text) return;
+    
     try {
         const response = await fetch(`${API_BASE}/api/health`);
         const data = await response.json();
         
-        statusIndicator.classList.add('connected');
-        statusText.textContent = `已连接 (v${data.version})`;
+        indicator.classList.add('connected');
+        text.textContent = `已连接 (v${data.version})`;
     } catch (error) {
-        statusIndicator.classList.remove('connected');
-        statusText.textContent = '连接失败';
+        indicator.classList.remove('connected');
+        text.textContent = '连接失败';
         console.error('健康检查失败:', error);
     }
 }
@@ -174,42 +179,53 @@ function switchModel(modelName) {
     
     // 更新UI提示
     const modelList = document.getElementById('model-list');
-    const items = modelList.querySelectorAll('li');
-    items.forEach(item => {
-        if (item.dataset.model === modelName) {
-            item.style.background = 'rgba(125, 211, 252, 0.3)';
-            item.style.borderLeftColor = 'var(--primary-sky-deep)';
-        } else {
-            item.style.background = 'rgba(196, 181, 253, 0.1)';
-            item.style.borderLeftColor = 'var(--accent-lavender)';
-        }
-    });
+    if (modelList) {
+        const items = modelList.querySelectorAll('li');
+        items.forEach(item => {
+            if (item.dataset.model === modelName) {
+                item.style.background = 'rgba(125, 211, 252, 0.3)';
+                item.style.borderLeftColor = 'var(--primary-sky-deep)';
+            } else {
+                item.style.background = 'rgba(196, 181, 253, 0.1)';
+                item.style.borderLeftColor = 'var(--accent-lavender)';
+            }
+        });
+    }
     
     // 显示提示
     const statusText = document.getElementById('status-text');
-    const originalText = statusText.textContent;
-    if (modelName === 'auto') {
-        statusText.textContent = '🔄 自动选择模式';
-    } else {
-        statusText.textContent = `✓ 已选择: ${modelName}`;
+    if (statusText) {
+        const originalText = statusText.textContent;
+        if (modelName === 'auto') {
+            statusText.textContent = '🔄 自动选择模式';
+        } else {
+            statusText.textContent = `✓ 已选择: ${modelName}`;
+        }
+        
+        setTimeout(() => {
+            const currentText = document.getElementById('status-text');
+            if (currentText) currentText.textContent = originalText;
+        }, 2000);
     }
-    
-    setTimeout(() => {
-        statusText.textContent = originalText;
-    }, 2000);
     
     console.log('切换模型:', modelName);
 }
 
 // 发送消息
 async function sendMessage() {
-    const message = userInput.value.trim();
+    const input = document.getElementById('user-input');
+    const btn = document.getElementById('send-btn');
+    const container = document.getElementById('messages');
+    
+    if (!input || !btn || !container) return;
+    
+    const message = input.value.trim();
     if (!message) return;
     
     // 添加用户消息
     addMessage('user', message);
-    userInput.value = '';
-    sendBtn.disabled = true;
+    input.value = '';
+    btn.disabled = true;
     
     try {
         // 构建请求体，包含选择的模型
@@ -245,7 +261,7 @@ async function sendMessage() {
                         ${selectedModel !== 'auto' ? `| 指定模型: <strong>${selectedModel}</strong>` : ''}
                     </span>
                 `;
-                messagesContainer.appendChild(thinkingInfo);
+                container.appendChild(thinkingInfo);
             }
             
             // 使用增强的格式化
@@ -269,19 +285,19 @@ async function sendMessage() {
             
             messageDiv.appendChild(contentDiv);
             messageDiv.appendChild(feedbackDiv);
-            messagesContainer.appendChild(messageDiv);
+            container.appendChild(messageDiv);
             
             // 添加代码复制功能
             addCopyButtons(contentDiv);
             
-            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            container.scrollTop = container.scrollHeight;
 
         }
     } catch (error) {
         addMessage('system', `❌ 请求失败: ${error.message}`);
     } finally {
-        sendBtn.disabled = false;
-        userInput.focus();
+        btn.disabled = false;
+        input.focus();
     }
 }
 
