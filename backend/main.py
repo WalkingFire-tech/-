@@ -347,10 +347,170 @@ async def send_feedback(request: dict):
             _handle_negative_feedback_for_rules()
         
         logger.info(f"收到用户反馈: {score}")
-        return {"success": True}
         
+        return {"success": True}
     except Exception as e:
         logger.error(f"反馈处理失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/folder/preview")
+async def preview_folder(request: dict):
+    """预览文件夹内容"""
+    folder_path = request.get("path", "")
+    file_types = request.get("file_types", "all")
+    
+    if not folder_path:
+        return {"success": False, "error": "请提供文件夹路径"}
+    
+    try:
+        from pathlib import Path
+        
+        folder = Path(folder_path)
+        if not folder.exists():
+            return {"success": False, "error": "文件夹不存在"}
+        
+        if not folder.is_dir():
+            return {"success": False, "error": "路径不是文件夹"}
+        
+        # 文件类型过滤
+        extensions = {
+            "code": [".py", ".js", ".java", ".cpp", ".c", ".go", ".rs", ".ts", ".jsx", ".tsx"],
+            "doc": [".md", ".txt", ".rst", ".doc", ".docx", ".pdf"],
+            "config": [".yaml", ".yml", ".json", ".toml", ".ini", ".cfg"],
+            "all": []
+        }
+        
+        target_extensions = extensions.get(file_types, [])
+        
+        files = []
+        for ext in target_extensions if target_extensions else ["*"]:
+            files.extend([str(f.relative_to(folder)) for f in folder.rglob(f"*{ext}")])
+        
+        if not target_extensions:
+            files = [str(f.relative_to(folder)) for f in folder.rglob("*") if f.is_file()]
+        
+        # 限制数量
+        files = files[:100]
+        
+        return {"success": True, "files": files, "total": len(files)}
+    except Exception as e:
+        logger.error(f"预览文件夹失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/folder/learn")
+async def learn_from_folder(request: dict):
+    """从文件夹学习"""
+    folder_path = request.get("path", "")
+    file_types = request.get("file_types", "all")
+    learn_mode = request.get("mode", "analyze")
+    
+    if not folder_path:
+        return {"success": False, "error": "请提供文件夹路径"}
+    
+    try:
+        from pathlib import Path
+        import os
+        
+        folder = Path(folder_path)
+        if not folder.exists():
+            return {"success": False, "error": "文件夹不存在"}
+        
+        # 文件类型过滤
+        extensions = {
+            "code": [".py", ".js", ".java", ".cpp", ".c", ".go", ".rs", ".ts"],
+            "doc": [".md", ".txt", ".rst"],
+            "config": [".yaml", ".yml", ".json", ".toml"],
+            "all": []
+        }
+        
+        target_extensions = extensions.get(file_types, [])
+        
+        files = []
+        for ext in target_extensions if target_extensions else ["*"]:
+            files.extend([f for f in folder.rglob(f"*{ext}") if f.is_file()])
+        
+        if not target_extensions:
+            files = [f for f in folder.rglob("*") if f.is_file()]
+        
+        # 限制处理数量
+        files = files[:50]
+        
+        processed = 0
+        knowledge_count = 0
+        summaries = []
+        
+        for file_path in files:
+            try:
+                # 读取文件内容
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                
+                if len(content) < 10:
+                    continue
+                
+                # 根据学习模式处理
+                if learn_mode == "analyze":
+                    # 分析代码结构
+                    if file_path.suffix in [".py", ".js", ".java"]:
+                        lines = content.count('\n')
+                        functions = content.count('def ') + content.count('function ')
+                        classes = content.count('class ')
+                        summaries.append(f"{file_path.name}: {lines}行, {functions}函数, {classes}类")
+                        knowledge_count += 1
+                
+                elif learn_mode == "extract":
+                    # 提取知识点（简单实现）
+                    if 'TODO' in content or 'FIXME' in content:
+                        knowledge_count += 1
+                    summaries.append(f"{file_path.name}: 已提取")
+                
+                elif learn_mode == "summarize":
+                    # 生成摘要
+                    first_lines = '\n'.join(content.split('\n')[:5])
+                    summaries.append(f"{file_path.name}:\n{first_lines}")
+                    knowledge_count += 1
+                
+                processed += 1
+                
+            except Exception as e:
+                logger.warning(f"处理文件失败 {file_path}: {e}")
+                continue
+        
+        summary_text = '\n'.join(summaries[:10])
+        
+        # 存储到知识库
+        try:
+            import sqlite3
+            conn = sqlite3.connect('data/knowledge_store.db')
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS folder_knowledge (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    folder_path TEXT,
+                    mode TEXT,
+                    processed INTEGER,
+                    knowledge INTEGER,
+                    summary TEXT,
+                    timestamp TEXT
+                )
+            ''')
+            from datetime import datetime
+            conn.execute('''
+                INSERT INTO folder_knowledge (folder_path, mode, processed, knowledge, summary, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (folder_path, learn_mode, processed, knowledge_count, summary_text, datetime.now().isoformat()))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"存储知识失败: {e}")
+        
+        return {
+            "success": True,
+            "processed": processed,
+            "knowledge": knowledge_count,
+            "summary": summary_text
+        }
+    except Exception as e:
+        logger.error(f"文件夹学习失败: {e}")
         return {"success": False, "error": str(e)}
 
 def _handle_negative_feedback_for_rules():

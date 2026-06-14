@@ -69,6 +69,49 @@
                     <button onclick="showExternalModelConfig()" class="btn btn-secondary">
                         ⚙️ 外脑配置
                     </button>
+                    <button onclick="showFolderLearn()" class="btn btn-secondary">
+                        📁 文件夹学习
+                    </button>
+                </div>
+                
+                <!-- 文件夹学习模态框 -->
+                <div id="folder-learn-modal" class="modal" style="display: none;">
+                    <div class="modal-content">
+                        <span class="close" onclick="closeFolderLearn()">&times;</span>
+                        <h3>📁 从文件夹学习</h3>
+                        
+                        <div class="form-group">
+                            <label>文件夹路径:</label>
+                            <input type="text" id="folder-path" placeholder="如: C:\Projects\myproject" style="width: 100%; padding: 8px; margin: 5px 0;">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>文件类型:</label>
+                            <select id="file-types" style="width: 100%; padding: 8px; margin: 5px 0;">
+                                <option value="all">所有文件</option>
+                                <option value="code">代码文件 (.py, .js, .java等)</option>
+                                <option value="doc">文档文件 (.md, .txt, .rst等)</option>
+                                <option value="config">配置文件 (.yaml, .json, .toml等)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>学习模式:</label>
+                            <select id="learn-mode" style="width: 100%; padding: 8px; margin: 5px 0;">
+                                <option value="analyze">分析代码结构</option>
+                                <option value="extract">提取知识点</option>
+                                <option value="summarize">生成文档摘要</option>
+                            </select>
+                        </div>
+                        
+                        <div id="folder-preview" style="margin-top: 10px; max-height: 200px; overflow-y: auto;"></div>
+                        
+                        <div style="margin-top: 15px;">
+                            <button onclick="previewFolder()" class="btn btn-secondary">预览文件</button>
+                            <button onclick="startFolderLearn()" class="btn btn-primary">开始学习</button>
+                            <button onclick="closeFolderLearn()" class="btn btn-secondary">取消</button>
+                        </div>
+                    </div>
                 </div>
             </aside>
 

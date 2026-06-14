@@ -567,6 +567,98 @@ async function deleteModel(name) {
         if (data.success) {
             alert('✓ 模型已删除');
             loadExternalModels();
+
+// 文件夹学习功能
+function showFolderLearn() {
+    document.getElementById('folder-learn-modal').style.display = 'block';
+}
+
+function closeFolderLearn() {
+    document.getElementById('folder-learn-modal').style.display = 'none';
+}
+
+async function previewFolder() {
+    const folderPath = document.getElementById('folder-path').value;
+    const fileTypes = document.getElementById('file-types').value;
+    
+    if (!folderPath) {
+        alert('请输入文件夹路径');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/folder/preview`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                path: folderPath,
+                file_types: fileTypes
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            const preview = document.getElementById('folder-preview');
+            preview.innerHTML = `
+                <p><strong>找到 ${data.files.length} 个文件:</strong></p>
+                <ul style="margin: 5px 0; padding-left: 20px; max-height: 150px; overflow-y: auto;">
+                    ${data.files.slice(0, 20).map(f => `<li>${f}</li>`).join('')}
+                    ${data.files.length > 20 ? `<li>... 还有 ${data.files.length - 20} 个文件</li>` : ''}
+                </ul>
+            `;
+        } else {
+            alert('预览失败: ' + data.error);
+        }
+    } catch (error) {
+        alert('预览失败: ' + error.message);
+    }
+}
+
+async function startFolderLearn() {
+    const folderPath = document.getElementById('folder-path').value;
+    const fileTypes = document.getElementById('file-types').value;
+    const learnMode = document.getElementById('learn-mode').value;
+    
+    if (!folderPath) {
+        alert('请输入文件夹路径');
+        return;
+    }
+    
+    if (!confirm(`开始从文件夹学习？\n路径: ${folderPath}\n模式: ${learnMode}`)) {
+        return;
+    }
+    
+    closeFolderLearn();
+    
+    addMessageHTML('user', `<p>📁 开始从文件夹学习: ${folderPath}</p>`);
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/folder/learn`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                path: folderPath,
+                file_types: fileTypes,
+                mode: learnMode
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            addMessageHTML('assistant', `
+                <p>✅ 学习完成!</p>
+                <p>处理文件: ${data.processed} 个</p>
+                <p>提取知识点: ${data.knowledge || 0} 条</p>
+                ${data.summary ? `<p><strong>摘要:</strong><br>${data.summary}</p>` : ''}
+            `);
+        } else {
+            addMessageHTML('assistant', `<p>❌ 学习失败: ${data.error}</p>`);
+        }
+    } catch (error) {
+        addMessageHTML('assistant', `<p>❌ 学习失败: ${error.message}</p>`);
+    }
         } else {
             alert('✗ 删除失败: ' + data.error);
         }
