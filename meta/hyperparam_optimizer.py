@@ -4,8 +4,9 @@
 """
 import json
 import sqlite3
+import threading
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from loguru import logger
 from infrastructure.config_manager import config
@@ -14,13 +15,16 @@ from infrastructure.config_manager import config
 class HyperparamOptimizer:
     """超参数自动调优器"""
     
+    BASE_DATA_DIR = Path("data")
+    BASE_CONFIG_DIR = Path("config")
+    
     def __init__(self):
-        self.optimization_history_file = Path("hyperparam_optimization_history.json")
+        self.optimization_history_file = self.BASE_DATA_DIR / "hyperparam_optimization_history.json"
         self.history = self._load_history()
         self.optimization_interval = config.get("hyperparam.optimization_interval_days", 7)
         self.min_samples = config.get("hyperparam.min_samples", 50)
+        self._lock = threading.Lock()
         
-        # 参数空间定义
         self.param_space = {
             "quality_weight": (0.0, 1.0),
             "speed_weight": (0.0, 1.0),
@@ -33,6 +37,8 @@ class HyperparamOptimizer:
     
     def _load_history(self) -> List[Dict]:
         """加载优化历史"""
+        self.BASE_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        
         if self.optimization_history_file.exists():
             try:
                 with open(self.optimization_history_file, 'r', encoding='utf-8') as f:
@@ -43,11 +49,13 @@ class HyperparamOptimizer:
     
     def _save_history(self):
         """保存优化历史"""
-        try:
-            with open(self.optimization_history_file, 'w', encoding='utf-8') as f:
-                json.dump(self.history, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.error(f"保存优化历史失败: {e}")
+        with self._lock:
+            try:
+                self.BASE_DATA_DIR.mkdir(parents=True, exist_ok=True)
+                with open(self.optimization_history_file, 'w', encoding='utf-8') as f:
+                    json.dump(self.history, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.error(f"保存优化历史失败: {e}")
     
     def should_optimize(self) -> bool:
         """判断是否应该进行优化"""
@@ -71,7 +79,7 @@ class HyperparamOptimizer:
     
     def _get_sample_count(self) -> int:
         """获取样本数量"""
-        stats_db = Path("model_stats.db")
+        stats_db = self.BASE_DATA_DIR / "model_stats.db"
         if not stats_db.exists():
             return 0
         
@@ -149,14 +157,12 @@ class HyperparamOptimizer:
     
     def _evaluate_params(self, params: Dict) -> float:
         """评估参数组合"""
-        # 从历史数据评估
-        stats_db = Path("model_stats.db")
+        stats_db = self.BASE_DATA_DIR / "model_stats.db"
         if not stats_db.exists():
             return 0.0
         
         try:
             with sqlite3.connect(stats_db) as conn:
-                # 获取最近的性能数据
                 cur = conn.execute('''
                     SELECT 
                         quality_score,
@@ -173,7 +179,6 @@ class HyperparamOptimizer:
                 for row in cur.fetchall():
                     quality, duration, cost, success, feedback = row
                     
-                    # 使用参数计算评分
                     norm_quality = (quality or 50) / 100.0
                     norm_speed = max(0, 1 - (duration or 10) / 60.0)
                     norm_cost = max(0, 1 - (cost or 0) * 100)
@@ -186,13 +191,11 @@ class HyperparamOptimizer:
                         params["success_weight"] * norm_success
                     )
                     
-                    # 用户反馈加权
                     if feedback is not None:
                         score *= (1 + feedback * 0.2)
                     
                     scores.append(score)
                 
-                # 返回平均评分
                 return sum(scores) / len(scores) if scores else 0.0
         
         except Exception as e:
@@ -239,33 +242,32 @@ class HyperparamOptimizer:
     
     def _apply_params(self, params: Dict):
         """应用参数到配置"""
-        # 更新配置文件
-        config_file = Path("config/settings.yaml")
+        config_file = self.BASE_CONFIG_DIR / "settings.yaml"
         
         if config_file.exists():
             import yaml
             
             try:
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    config_data = yaml.safe_load(f)
-                
-                # 更新参数
-                config_data.setdefault("routing", {})["quality_weight"] = params["quality_weight"]
-                config_data["routing"]["speed_weight"] = params["speed_weight"]
-                config_data["routing"]["cost_weight"] = params["cost_weight"]
-                config_data["routing"]["success_weight"] = params["success_weight"]
-                
-                config_data.setdefault("planner", {})["quality_threshold"] = int(params["quality_threshold"])
-                
-                config_data.setdefault("experience", {})["decay_rate"] = params["decay_rate"]
-                config_data["experience"]["importance_threshold"] = params["importance_threshold"]
-                
-                with open(config_file, 'w', encoding='utf-8') as f:
-                    yaml.dump(config_data, f, default_flow_style=False, allow_unicode=True)
+                with self._lock:
+                    with open(config_file, 'r', encoding='utf-8') as f:
+                        config_data = yaml.safe_load(f)
+                    
+                    config_data.setdefault("routing", {})["quality_weight"] = params["quality_weight"]
+                    config_data["routing"]["speed_weight"] = params["speed_weight"]
+                    config_data["routing"]["cost_weight"] = params["cost_weight"]
+                    config_data["routing"]["success_weight"] = params["success_weight"]
+                    
+                    config_data.setdefault("planner", {})["quality_threshold"] = int(params["quality_threshold"])
+                    
+                    config_data.setdefault("experience", {})["decay_rate"] = params["decay_rate"]
+                    config_data["experience"]["importance_threshold"] = params["importance_threshold"]
+                    
+                    self.BASE_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                    with open(config_file, 'w', encoding='utf-8') as f:
+                        yaml.dump(config_data, f, default_flow_style=False, allow_unicode=True)
                 
                 logger.info("参数已更新到配置文件")
                 
-                # 重新加载配置
                 from infrastructure.config_manager import config as config_manager
                 config_manager.reload()
             
