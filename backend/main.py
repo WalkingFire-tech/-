@@ -301,12 +301,21 @@ async def run_induction(request: dict):
     try:
         from meta.induction import induction_scheduler
         result = induction_scheduler.run_induction(days=days)
-        return {
-            "success": result.get("success", False),
-            "patterns": result.get("patterns", 0),
-            "rules": result.get("rules", 0),
-            "message": result.get("message", "")
-        }
+        
+        if result.get("success"):
+            return {
+                "success": True,
+                "patterns": result.get("patterns", 0),
+                "rules": result.get("rules", 0),
+                "message": result.get("message", "")
+            }
+        else:
+            return {
+                "success": False,
+                "error": result.get("error") or result.get("message") or "归纳失败",
+                "patterns": 0,
+                "rules": 0
+            }
     except Exception as e:
         logger.error(f"归纳失败: {e}")
         return {"success": False, "error": str(e)}
