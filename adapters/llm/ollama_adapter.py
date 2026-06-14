@@ -4,6 +4,7 @@ Ollama模型适配器 - 优化版本
 """
 import requests
 import time
+import threading
 from typing import Optional
 from core.ports.llm_port import LLMPort
 from infrastructure.model_stats import ModelStats
@@ -18,6 +19,7 @@ class OllamaAdapter(LLMPort):
     # 类级别的失败计数（所有实例共享）
     _failure_counts = {}  # {model_name: count}
     _circuit_breaker = {}  # {model_name: until_timestamp}
+    _lock = threading.Lock()  # 保护类变量的线程锁
 
     def __init__(self, model_name: str = "mindchat", base_url: str = None):
         self._model_name = model_name
@@ -36,49 +38,52 @@ class OllamaAdapter(LLMPort):
     
     def _is_circuit_broken(self) -> bool:
         """检查是否处于熔断状态"""
-        if self._model_name not in self._circuit_breaker:
-            return False
-        
-        until_time = self._circuit_breaker[self._model_name]
-        if time.time() < until_time:
-            remaining = int(until_time - time.time())
-            logger.warning(f"模型 {self._model_name} 处于熔断状态，剩余 {remaining} 秒")
-            return True
-        else:
-            # 熔断时间已过，清除状态
-            del self._circuit_breaker[self._model_name]
-            self._failure_counts[self._model_name] = 0
-            logger.info(f"模型 {self._model_name} 熔断恢复")
-            return False
+        with self._lock:
+            if self._model_name not in self._circuit_breaker:
+                return False
+            
+            until_time = self._circuit_breaker[self._model_name]
+            if time.time() < until_time:
+                remaining = int(until_time - time.time())
+                logger.warning(f"模型 {self._model_name} 处于熔断状态，剩余 {remaining} 秒")
+                return True
+            else:
+                # 熔断时间已过，清除状态
+                del self._circuit_breaker[self._model_name]
+                self._failure_counts[self._model_name] = 0
+                logger.info(f"模型 {self._model_name} 熔断恢复")
+                return False
     
     def _record_success(self):
         """记录成功调用，重置失败计数"""
-        self._failure_counts[self._model_name] = 0
+        with self._lock:
+            self._failure_counts[self._model_name] = 0
     
     def _record_failure(self, error: str):
         """记录失败调用，可能触发熔断"""
-        count = self._failure_counts.get(self._model_name, 0) + 1
-        self._failure_counts[self._model_name] = count
-        
-        logger.warning(f"模型 {self._model_name} 失败次数: {count}/{self.failure_threshold}")
-        
-        # 触发熔断
-        if count >= self.failure_threshold:
-            until_time = time.time() + self.circuit_breaker_duration
-            self._circuit_breaker[self._model_name] = until_time
+        with self._lock:
+            count = self._failure_counts.get(self._model_name, 0) + 1
+            self._failure_counts[self._model_name] = count
             
-            # 通知健康检查器
-            try:
-                from infrastructure.model_health_checker import model_health_checker
-                model_health_checker.record_failure(
-                    self._model_name, 
-                    "circuit_breaker", 
-                    f"连续失败{count}次: {error}"
-                )
-            except:
-                pass
+            logger.warning(f"模型 {self._model_name} 失败次数: {count}/{self.failure_threshold}")
             
-            logger.error(f"⚠️ 模型 {self._model_name} 触发熔断，禁用 {self.circuit_breaker_duration} 秒")
+            # 触发熔断
+            if count >= self.failure_threshold:
+                until_time = time.time() + self.circuit_breaker_duration
+                self._circuit_breaker[self._model_name] = until_time
+                
+                # 通知健康检查器
+                try:
+                    from infrastructure.model_health_checker import model_health_checker
+                    model_health_checker.record_failure(
+                        self._model_name, 
+                        "circuit_breaker", 
+                        f"连续失败{count}次: {error}"
+                    )
+                except:
+                    pass
+                
+                logger.error(f"⚠️ 模型 {self._model_name} 触发熔断，禁用 {self.circuit_breaker_duration} 秒")
 
     def _get_model_config(self) -> dict:
         """获取模型配置"""
