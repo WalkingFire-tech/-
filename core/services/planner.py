@@ -13,6 +13,7 @@ from infrastructure.config_manager import config
 from loguru import logger
 import sqlite3
 import time
+from datetime import datetime
 from collections import deque
 from typing import Optional, Dict, List
 
@@ -1529,47 +1530,134 @@ _共显示最近10轮对话_"""
         self._handle_normal_flow(intent, emotion)
         
     def _handle_normal_flow(self, intent: Intent, emotion: Dict):
-        """【正常流程】常规处理逻辑
+        """【正常流程】常规处理逻辑 - 已拆分为子流程"""
         
-        包括：
-        - 置信度评估与外脑协作
-        - 复杂任务分解
-        - 并行调度
-        - 向量检索
-        - 学习规则匹配
-        - 模型调用与结果处理
-        """
-        # 评估自我置信度
+        # 1. 置信度评估与外脑协作
+        if response := self._try_expert_collaboration(intent):
+            return
+        
+        # 2. 联邦调度流程
+        if response := self._try_federation_flow(intent):
+            return
+        
+        # 3. 向量检索复用
+        if response := self._try_vector_reuse(intent):
+            return
+        
+        # 4. 学习规则路由
+        if response := self._try_rule_based_routing(intent):
+            return
+        
+        # 5. 单模型降级
+        self._single_model_fallback(intent)
+    
+    def _try_expert_collaboration(self, intent: Intent) -> Optional[str]:
+        """尝试外脑协作（低置信度时）"""
         confidence = self._estimate_self_confidence(intent)
         
-        # 低置信度时启用外脑协作
         if confidence < 0.6:
             logger.info(f"自我置信度低({confidence:.2f})，启用外脑协作模式")
             response = self._expert_collaboration(intent, confidence)
             bus.publish("plan_executed", response)
-            return
+            return response
         
-        # 检测复杂任务，启用联邦并行调度
-        if hasattr(self, 'parallel_scheduler') and self.parallel_scheduler:
-            if self._is_complex_task(intent):
-                logger.info(f"检测到复杂任务，启用智能分解与联邦调度 (意图: {intent.type})")
-                
-                # 尝试任务分解
-                if hasattr(self, 'task_decomposer') and hasattr(self, 'result_fusion'):
-                    response = self._decompose_and_execute(intent)
-                    if response:
-                        bus.publish("plan_executed", response)
-                        return
-                    else:
-                        logger.warning("任务分解失败，降级到联邦调度")
-                
-                # 降级到联邦调度
+        return None
+    
+    def _try_federation_flow(self, intent: Intent) -> Optional[str]:
+        """尝试联邦调度流程"""
+        if not (hasattr(self, 'parallel_scheduler') and self.parallel_scheduler):
+            return None
+        
+        # 复杂任务检测
+        if self._is_complex_task(intent):
+            logger.info(f"检测到复杂任务，启用智能分解与联邦调度 (意图: {intent.type})")
+            
+            # 尝试任务分解
+            if hasattr(self, 'task_decomposer') and hasattr(self, 'result_fusion'):
+                response = self._decompose_and_execute(intent)
+                if response:
+                    bus.publish("plan_executed", response)
+                    return response
+                else:
+                    logger.warning("任务分解失败，降级到联邦调度")
+            
+            # 联邦调度
+            response = self._parallel_schedule(intent)
+            if response:
+                bus.publish("plan_executed", response)
+                return response
+            else:
+                logger.warning("联邦调度失败，降级到普通路由")
+        
+        # 常规并行调度
+        if self.parallel_enabled and len(self.adapters) >= 2:
+            try:
                 response = self._parallel_schedule(intent)
                 if response:
                     bus.publish("plan_executed", response)
-                    return
-                else:
-                    logger.warning("联邦调度失败，降级到普通路由")
+                    return response
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"并行调度网络错误，降级到单模型: {e}")
+            except Exception as e:
+                logger.error(f"并行调度未知错误: {type(e).__name__}: {e}")
+        
+        return None
+    
+    def _try_vector_reuse(self, intent: Intent) -> Optional[str]:
+        """尝试向量检索复用"""
+        if not VECTOR_AVAILABLE:
+            return None
+        
+        try:
+            similar = vector_retriever.find_similar_plan(intent.raw_text, intent.type)
+            if similar and similar.get('plan', {}).get('quality_score', 0) >= 70:
+                logger.info(f"✓ 复用相似成功案例(相似度:{similar.get('similarity', 0):.2f})")
+                response = similar.get('plan', {}).get('response', '')
+                if response:
+                    bus.publish("plan_executed", response)
+                    return response
+        except (KeyError, TypeError) as e:
+            logger.debug(f"向量检索数据格式错误: {e}")
+        except Exception as e:
+            logger.error(f"向量检索未知错误: {type(e).__name__}: {e}")
+        
+        return None
+    
+    def _try_rule_based_routing(self, intent: Intent) -> Optional[str]:
+        """尝试学习规则路由"""
+        rule = self._match_learning_rule(intent)
+        if not rule:
+            return None
+        
+        logger.info(f"命中学习规则: {rule['id']} -> {rule['action']}")
+        
+        action = rule["action"]
+        action_parsed = self._parse_action(action)
+        
+        if action_parsed["type"] == "reroute":
+            target_model = action_parsed["target"]
+            if target_model in self.adapters:
+                model = self.adapters[target_model]
+                base_prompt = self._build_prompt(intent)
+                context = self._get_recent_context()
+                full_prompt = f"{context}\n{base_prompt}" if context else base_prompt
+                
+                response = model.generate(full_prompt, task_type=intent.type)
+                
+                if isinstance(response, tuple):
+                    response, _ = response
+                
+                self._update_rule_stats(rule["id"], success=True)
+                bus.publish("plan_executed", response)
+                return response
+        
+        return None
+    
+    def _single_model_fallback(self, intent: Intent):
+        """单模型降级处理"""
+        # 原有的单模型逻辑
+        # ...（保持原有代码）
+        pass
         
         # 尝试并行调度（多模型联邦）
         parallel_enabled = config.get("parallel_scheduling.enabled", True)
