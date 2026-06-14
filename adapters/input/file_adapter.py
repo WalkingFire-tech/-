@@ -13,7 +13,10 @@ from infrastructure.event_bus import bus
 class FileInputAdapter:
     """文件输入适配器"""
     
-    def __init__(self):
+    def __init__(self, allowed_base_dir: Optional[Path] = None):
+        # 设置允许的根目录（沙盒）
+        self.allowed_base_dir = (allowed_base_dir or Path.cwd()).resolve()
+        
         self.supported_extensions = {
             # 文本文件
             '.txt', '.md', '.rst', '.log',
@@ -33,11 +36,29 @@ class FileInputAdapter:
             '.exe', '.dll', '.so'
         }
         
-        logger.info("文件输入适配器初始化完成")
+        logger.info(f"文件输入适配器初始化完成 (沙盒目录: {self.allowed_base_dir})")
+    
+    def _is_path_allowed(self, path: Path) -> bool:
+        """检查路径是否在允许的沙盒目录内"""
+        try:
+            resolved = path.resolve()
+            # 检查是否在允许目录内
+            return str(resolved).startswith(str(self.allowed_base_dir))
+        except (OSError, RuntimeError) as e:
+            logger.warning(f"路径解析失败: {e}")
+            return False
     
     def on_file_selected(self, file_path: str, user_instruction: str = None) -> Dict:
         """处理单个文件选择"""
         path = Path(file_path)
+        
+        # 安全检查：路径白名单
+        if not self._is_path_allowed(path):
+            logger.error(f"路径越权访问: {file_path}")
+            return {
+                "success": False,
+                "error": "路径越权：文件不在允许的目录内"
+            }
         
         if not path.exists():
             logger.error(f"文件不存在: {file_path}")
@@ -84,6 +105,14 @@ class FileInputAdapter:
                           recursive: bool = True, max_files: int = 100) -> Dict:
         """处理文件夹选择"""
         path = Path(folder_path)
+        
+        # 安全检查：路径白名单
+        if not self._is_path_allowed(path):
+            logger.error(f"路径越权访问: {folder_path}")
+            return {
+                "success": False,
+                "error": "路径越权：文件夹不在允许的目录内"
+            }
         
         if not path.exists():
             logger.error(f"文件夹不存在: {folder_path}")
@@ -178,7 +207,7 @@ class FileInputAdapter:
     
     def _list_files(self, folder: Path, recursive: bool = True, 
                    max_files: int = 100) -> List[Dict]:
-        """列出文件夹中的文件"""
+        """列出文件夹中的文件（安全增强）"""
         files = []
         
         if recursive:
@@ -190,6 +219,16 @@ class FileInputAdapter:
             if len(files) >= max_files:
                 logger.warning(f"文件数量达到上限: {max_files}")
                 break
+            
+            # 安全检查：跳过符号链接
+            if item.is_symlink():
+                logger.debug(f"跳过符号链接: {item}")
+                continue
+            
+            # 安全检查：验证路径在沙盒内
+            if not self._is_path_allowed(item):
+                logger.warning(f"跳过越权路径: {item}")
+                continue
             
             if item.is_file():
                 file_info = {
