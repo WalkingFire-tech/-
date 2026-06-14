@@ -1,12 +1,13 @@
 ﻿"""
-记忆系统 - 优化版本
-改进上下文提取,提升长期记忆效果
+记忆系统 - 安全优化版本
+使用SQLite实现原子写入和并发安全
 """
-import os
+import sqlite3
+import threading
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Optional
 from loguru import logger
 from infrastructure.config_manager import config
 
@@ -30,47 +31,94 @@ class MemoryEntry:
 
 
 class CampfireLogger:
-    """营火记忆系统"""
+    """营火记忆系统 - SQLite实现"""
+    
+    MAX_ENTRIES = 10000
+    MAX_CONTENT_LEN = 5000
     
     def __init__(self, log_file: str = None):
-        self.log_file = Path(log_file or config.get("memory.short_term.file_path", "campfire_log.txt"))
-        self.max_rounds = config.get("memory.short_term.max_rounds", 5)
+        filename = log_file or config.get("memory.short_term.file_path", "campfire_log.db")
+        filename = Path(filename).name
+        if not filename.endswith('.db'):
+            filename = filename.rsplit('.', 1)[0] + '.db'
         
-        if not self.log_file.exists():
-            with open(self.log_file, 'w', encoding='utf-8') as f:
-                f.write(f"# 营火日志 - 创建于 {datetime.now()}\n")
-                f.write("# 格式: [时间] 角色: 内容\n\n")
+        self.log_file = Path("logs") / filename
+        self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        self.max_rounds = config.get("memory.short_term.max_rounds", 5)
+        self._lock = threading.Lock()
+        
+        self._init_db()
+        logger.info(f"营火记忆系统已初始化: {self.log_file}")
+    
+    def _init_db(self):
+        with sqlite3.connect(self.log_file) as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS memory_entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT,
+                    role TEXT,
+                    content TEXT
+                )
+            ''')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON memory_entries(timestamp)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_role ON memory_entries(role)')
     
     def log_user(self, message: str):
         """记录用户消息"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(self.log_file, 'a', encoding='utf-8') as f:
-            f.write(f"[{timestamp}] 用户: {message}\n")
+        content = str(message)[:self.MAX_CONTENT_LEN]
+        
+        with self._lock:
+            with sqlite3.connect(self.log_file) as conn:
+                conn.execute('''
+                    INSERT INTO memory_entries (timestamp, role, content)
+                    VALUES (?, '用户', ?)
+                ''', (timestamp, content))
+                
+                self._cleanup_if_needed(conn)
     
     def log_assistant(self, message: str):
         """记录助手消息"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(self.log_file, 'a', encoding='utf-8') as f:
-            f.write(f"[{timestamp}] 拓荒者: {message}\n")
+        content = str(message)[:self.MAX_CONTENT_LEN]
+        
+        with self._lock:
+            with sqlite3.connect(self.log_file) as conn:
+                conn.execute('''
+                    INSERT INTO memory_entries (timestamp, role, content)
+                    VALUES (?, '拓荒者', ?)
+                ''', (timestamp, content))
+                
+                self._cleanup_if_needed(conn)
+    
+    def _cleanup_if_needed(self, conn):
+        cursor = conn.execute('SELECT COUNT(*) FROM memory_entries')
+        count = cursor.fetchone()[0]
+        
+        if count > self.MAX_ENTRIES:
+            conn.execute('''
+                DELETE FROM memory_entries 
+                WHERE id IN (
+                    SELECT id FROM memory_entries 
+                    ORDER BY timestamp ASC 
+                    LIMIT ?
+                )
+            ''', (count - self.MAX_ENTRIES,))
     
     def _parse_all_entries(self) -> List[MemoryEntry]:
         """解析所有记忆条目"""
         entries = []
-        if not self.log_file.exists():
-            return entries
         
-        with open(self.log_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                
-                match = re.match(r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (用户|拓荒者|Pioneer|User): (.+)', line)
-                if match:
-                    timestamp, role, content = match.groups()
-                    if role in ["User", "Pioneer"]:
-                        role = "用户" if role == "User" else "拓荒者"
-                    entries.append(MemoryEntry(timestamp, role, content))
+        with sqlite3.connect(self.log_file) as conn:
+            cursor = conn.execute('''
+                SELECT timestamp, role, content
+                FROM memory_entries
+                ORDER BY timestamp ASC
+            ''')
+            
+            for row in cursor.fetchall():
+                entries.append(MemoryEntry(row[0], row[1], row[2]))
         
         return entries
     
@@ -79,59 +127,73 @@ class CampfireLogger:
         if rounds is None:
             rounds = self.max_rounds
         
-        entries = self._parse_all_entries()
-        if not entries:
-            return ""
-        
-        recent_entries = entries[-(rounds * 2):] if len(entries) >= rounds * 2 else entries
-        
-        context_lines = []
-        for entry in recent_entries:
-            context_lines.append(f"{entry.role}: {entry.content}")
-        
-        return "\n".join(context_lines)
+        with sqlite3.connect(self.log_file) as conn:
+            cursor = conn.execute('''
+                SELECT role, content
+                FROM memory_entries
+                ORDER BY timestamp DESC
+                LIMIT ?
+            ''', (rounds * 2,))
+            
+            rows = cursor.fetchall()
+            rows.reverse()
+            
+            context_lines = [f"{row[0]}: {row[1]}" for row in rows]
+            return "\n".join(context_lines)
     
     def get_conversation_summary(self, rounds: int = 3) -> str:
         """获取对话摘要(用于记忆查询)"""
-        entries = self._parse_all_entries()
-        if not entries:
-            return "我们还没有开始对话。"
-        
-        recent_entries = entries[-(rounds * 2):] if len(entries) >= rounds * 2 else entries
-        
-        summary_parts = []
-        for i, entry in enumerate(recent_entries):
-            if entry.role == "用户":
-                summary_parts.append(f"用户问了: {entry.content[:50]}...")
-            else:
-                summary_parts.append(f"拓荒者回答了相关内容")
-        
-        if not summary_parts:
-            return "我们还没有开始对话。"
-        
-        return "、".join(summary_parts[-3:])
+        with sqlite3.connect(self.log_file) as conn:
+            cursor = conn.execute('''
+                SELECT role, content
+                FROM memory_entries
+                ORDER BY timestamp DESC
+                LIMIT ?
+            ''', (rounds * 2,))
+            
+            rows = cursor.fetchall()
+            rows.reverse()
+            
+            if not rows:
+                return "我们还没有开始对话。"
+            
+            summary_parts = []
+            for role, content in rows:
+                if role == "用户":
+                    summary_parts.append(f"用户问了: {content[:50]}...")
+                else:
+                    summary_parts.append(f"拓荒者回答了相关内容")
+            
+            return "、".join(summary_parts[-3:])
     
     def search_memory(self, keyword: str, limit: int = 5) -> List[MemoryEntry]:
         """搜索记忆"""
-        entries = self._parse_all_entries()
-        results = []
-        
-        for entry in reversed(entries):
-            if keyword.lower() in entry.content.lower():
-                results.append(entry)
-                if len(results) >= limit:
-                    break
-        
-        return results
+        with sqlite3.connect(self.log_file) as conn:
+            cursor = conn.execute('''
+                SELECT timestamp, role, content
+                FROM memory_entries
+                WHERE content LIKE ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+            ''', (f'%{keyword}%', limit))
+            
+            return [MemoryEntry(row[0], row[1], row[2]) for row in cursor.fetchall()]
     
     def get_user_info(self) -> Dict[str, str]:
         """提取用户信息(如名字等)"""
-        entries = self._parse_all_entries()
         user_info = {}
         
-        for entry in entries:
-            if entry.role == "用户":
-                name_match = re.search(r'我[叫是](.+?)(?:[,.。!!\s]|$)', entry.content)
+        with sqlite3.connect(self.log_file) as conn:
+            cursor = conn.execute('''
+                SELECT content
+                FROM memory_entries
+                WHERE role = '用户'
+                ORDER BY timestamp ASC
+            ''')
+            
+            for row in cursor.fetchall():
+                content = row[0]
+                name_match = re.search(r'我[叫是](.+?)(?:[,.。!!\s]|$)', content)
                 if name_match:
                     user_info["name"] = name_match.group(1).strip()
                     break
@@ -140,32 +202,67 @@ class CampfireLogger:
     
     def get_last_user_message(self) -> Optional[str]:
         """获取用户最后一条消息"""
-        entries = self._parse_all_entries()
-        for entry in reversed(entries):
-            if entry.role == "用户":
-                return entry.content
-        return None
+        with sqlite3.connect(self.log_file) as conn:
+            cursor = conn.execute('''
+                SELECT content
+                FROM memory_entries
+                WHERE role = '用户'
+                ORDER BY timestamp DESC
+                LIMIT 1
+            ''')
+            
+            row = cursor.fetchone()
+            return row[0] if row else None
     
     def get_last_assistant_message(self) -> Optional[str]:
         """获取助手最后一条消息"""
-        entries = self._parse_all_entries()
-        for entry in reversed(entries):
-            if entry.role == "拓荒者":
-                return entry.content
-        return None
+        with sqlite3.connect(self.log_file) as conn:
+            cursor = conn.execute('''
+                SELECT content
+                FROM memory_entries
+                WHERE role = '拓荒者'
+                ORDER BY timestamp DESC
+                LIMIT 1
+            ''')
+            
+            row = cursor.fetchone()
+            return row[0] if row else None
     
     def clear_old_memories(self, keep_rounds: int = 10):
         """清理旧记忆,保留最近N轮"""
-        entries = self._parse_all_entries()
-        if len(entries) <= keep_rounds * 2:
-            return
-        
-        keep_entries = entries[-(keep_rounds * 2):]
-        
-        with open(self.log_file, 'w', encoding='utf-8') as f:
-            f.write(f"# 营火日志 - 清理于 {datetime.now()}\n")
-            f.write("# 格式: [时间] 角色: 内容\n\n")
-            for entry in keep_entries:
-                f.write(f"{entry}\n")
-        
-        logger.info(f"已清理旧记忆,保留最近{keep_rounds}轮对话")
+        with self._lock:
+            with sqlite3.connect(self.log_file) as conn:
+                cursor = conn.execute('SELECT COUNT(*) FROM memory_entries')
+                total = cursor.fetchone()[0]
+                
+                if total <= keep_rounds * 2:
+                    return
+                
+                conn.execute('''
+                    DELETE FROM memory_entries 
+                    WHERE id IN (
+                        SELECT id FROM memory_entries 
+                        ORDER BY timestamp ASC 
+                        LIMIT ?
+                    )
+                ''', (total - keep_rounds * 2,))
+                
+                logger.info(f"已清理旧记忆,保留最近{keep_rounds}轮对话")
+    
+    def get_stats(self) -> Dict:
+        """获取记忆统计信息"""
+        with sqlite3.connect(self.log_file) as conn:
+            cursor = conn.execute('''
+                SELECT 
+                    COUNT(*) as total,
+                    SUM(CASE WHEN role = '用户' THEN 1 ELSE 0 END) as user_count,
+                    SUM(CASE WHEN role = '拓荒者' THEN 1 ELSE 0 END) as assistant_count
+                FROM memory_entries
+            ''')
+            
+            row = cursor.fetchone()
+            return {
+                "total": row[0] if row[0] else 0,
+                "user_messages": row[1] if row[1] else 0,
+                "assistant_messages": row[2] if row[2] else 0
+            }
