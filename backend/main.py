@@ -221,21 +221,23 @@ async def root():
 @app.get("/api/health")
 async def health():
     """健康检查端点"""
+    async with adapters_lock:
+        models = list(adapters.keys())
     return {
         "status": "ok",
         "version": "3.1.1",
-        "models": list(adapters.keys())
+        "models": models
     }
 
 @app.get("/api/models")
 async def get_models():
     """获取可用模型列表"""
-    return {
-        "models": [
+    async with adapters_lock:
+        models_list = [
             {"name": name, "type": type(adapter).__name__}
             for name, adapter in adapters.items()
         ]
-    }
+    return {"models": models_list}
 
 @app.post("/api/chat")
 async def chat(request: dict):
@@ -246,10 +248,8 @@ async def chat(request: dict):
         return {"error": "Empty message"}
     
     try:
-        # 解析意图
         intent = intent_parser.parse(user_input)
         
-        # 捕获 planner 的响应（通过事件总线）
         response_queue = asyncio.Queue()
         
         def on_response(data):
@@ -257,27 +257,25 @@ async def chat(request: dict):
         
         bus.subscribe("plan_executed", on_response)
         
-        # 执行规划（在线程池中运行，避免阻塞事件循环）
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, planner.plan, intent)
-        
-        # 等待响应（超时 60 秒）
         try:
-            response = await asyncio.wait_for(response_queue.get(), timeout=60.0)
-            return {"response": response, "intent": intent.type}
-        except asyncio.TimeoutError:
-            logger.error("请求超时")
-            return {"error": "Timeout", "intent": intent.type}
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, planner.plan, intent)
+            
+            try:
+                response = await asyncio.wait_for(response_queue.get(), timeout=60.0)
+                return {"response": response, "intent": intent.type}
+            except asyncio.TimeoutError:
+                logger.error("请求超时")
+                return {"error": "Timeout", "intent": intent.type}
+        finally:
+            try:
+                bus.unsubscribe("plan_executed", on_response)
+            except:
+                pass
         
     except Exception as e:
         logger.error(f"处理请求失败: {e}")
         return {"error": str(e)}
-    
-    finally:
-        try:
-            bus.unsubscribe("plan_executed", on_response)
-        except:
-            pass
 
 @app.post("/api/optimize")
 async def run_optimize(request: dict):
@@ -320,19 +318,15 @@ async def get_stats():
     try:
         import sqlite3
         
-        # 经验池统计
-        conn_exp = sqlite3.connect('data/experience_pool.db')
-        cur = conn_exp.execute("SELECT COUNT(*) FROM experiences")
-        exp_count = cur.fetchone()[0]
-        conn_exp.close()
+        with sqlite3.connect('data/experience_pool.db') as conn_exp:
+            cur = conn_exp.execute("SELECT COUNT(*) FROM experiences")
+            exp_count = cur.fetchone()[0]
         
-        # 学习规则统计
-        conn_rules = sqlite3.connect('data/learning_rules.db')
-        cur = conn_rules.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
-        active_rules = cur.fetchone()[0]
-        cur = conn_rules.execute("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
-        pending_rules = cur.fetchone()[0]
-        conn_rules.close()
+        with sqlite3.connect('data/learning_rules.db') as conn_rules:
+            cur = conn_rules.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
+            active_rules = cur.fetchone()[0]
+            cur = conn_rules.execute("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
+            pending_rules = cur.fetchone()[0]
         
         return {
             "experiences": exp_count,
@@ -352,24 +346,21 @@ async def send_feedback(request: dict):
     try:
         import sqlite3
         
-        # 更新最近一条经验的反馈
-        conn = sqlite3.connect('data/experience_pool.db')
-        cursor = conn.cursor()
+        with sqlite3.connect('data/experience_pool.db') as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE experiences
+                SET user_feedback = ?
+                WHERE id = (
+                    SELECT id FROM experiences
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                )
+            """, (score,))
+            
+            conn.commit()
         
-        cursor.execute("""
-            UPDATE experiences
-            SET user_feedback = ?
-            WHERE id = (
-                SELECT id FROM experiences
-                ORDER BY timestamp DESC
-                LIMIT 1
-            )
-        """, (score,))
-        
-        conn.commit()
-        conn.close()
-        
-        # 触发学习机会
         if score < 0:
             from infrastructure.event_bus import bus
             bus.publish("learning_opportunity", {
@@ -377,7 +368,6 @@ async def send_feedback(request: dict):
                 'action': 'trigger_induction'
             })
             
-            # 新增：规则降级机制
             _handle_negative_feedback_for_rules()
         
         logger.info(f"收到用户反馈: {score}")
@@ -386,6 +376,21 @@ async def send_feedback(request: dict):
     except Exception as e:
         logger.error(f"反馈处理失败: {e}")
         return {"success": False, "error": str(e)}
+
+def _is_path_allowed(folder: Path) -> bool:
+    """检查路径是否在允许范围内（防路径遍历）"""
+    try:
+        resolved = folder.resolve()
+        allowed_bases = [
+            Path.cwd().resolve(),
+            Path.home().resolve(),
+        ]
+        return any(
+            resolved.is_relative_to(base)
+            for base in allowed_bases
+        )
+    except (OSError, RuntimeError):
+        return False
 
 @app.post("/api/folder/preview")
 async def preview_folder(request: dict):
@@ -402,18 +407,7 @@ async def preview_folder(request: dict):
         
         folder = Path(folder_path).resolve()
         
-        # 安全检查：限制访问范围
-        allowed_bases = [
-            Path.cwd(),  # 当前工作目录
-            Path.home(),  # 用户主目录
-        ]
-        
-        is_allowed = any(
-            str(folder).startswith(str(base.resolve()))
-            for base in allowed_bases
-        )
-        
-        if not is_allowed:
+        if not _is_path_allowed(folder):
             return {"success": False, "error": "路径不在允许范围内"}
         
         if not folder.exists():
@@ -422,7 +416,6 @@ async def preview_folder(request: dict):
         if not folder.is_dir():
             return {"success": False, "error": "路径不是文件夹"}
         
-        # 文件类型过滤
         extensions = {
             "code": [".py", ".js", ".java", ".cpp", ".c", ".go", ".rs", ".ts", ".jsx", ".tsx"],
             "doc": [".md", ".txt", ".rst", ".doc", ".docx", ".pdf"],
@@ -434,18 +427,26 @@ async def preview_folder(request: dict):
         
         files = []
         for ext in target_extensions if target_extensions else ["*"]:
-            files.extend([str(f.relative_to(folder)) for f in folder.rglob(f"*{ext}")])
+            for f in folder.rglob(f"*{ext}"):
+                if f.is_symlink():
+                    continue
+                if not _is_path_allowed(f):
+                    continue
+                files.append(str(f.relative_to(folder)))
         
         if not target_extensions:
-            files = [str(f.relative_to(folder)) for f in folder.rglob("*") if f.is_file()]
+            for f in folder.rglob("*"):
+                if f.is_file() and not f.is_symlink() and _is_path_allowed(f):
+                    files.append(str(f.relative_to(folder)))
         
-        # 限制数量
         files = files[:100]
         
         return {"success": True, "files": files, "total": len(files)}
     except Exception as e:
         logger.error(f"预览文件夹失败: {e}")
         return {"success": False, "error": str(e)}
+
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 @app.post("/api/folder/learn")
 async def learn_from_folder(request: dict):
@@ -463,24 +464,12 @@ async def learn_from_folder(request: dict):
         
         folder = Path(folder_path).resolve()
         
-        # 安全检查：限制访问范围
-        allowed_bases = [
-            Path.cwd(),  # 当前工作目录
-            Path.home(),  # 用户主目录
-        ]
-        
-        is_allowed = any(
-            str(folder).startswith(str(base.resolve()))
-            for base in allowed_bases
-        )
-        
-        if not is_allowed:
+        if not _is_path_allowed(folder):
             return {"success": False, "error": "路径不在允许范围内"}
         
         if not folder.exists():
             return {"success": False, "error": "文件夹不存在"}
         
-        # 文件类型过滤
         extensions = {
             "code": [".py", ".js", ".java", ".cpp", ".c", ".go", ".rs", ".ts"],
             "doc": [".md", ".txt", ".rst"],
@@ -492,12 +481,15 @@ async def learn_from_folder(request: dict):
         
         files = []
         for ext in target_extensions if target_extensions else ["*"]:
-            files.extend([f for f in folder.rglob(f"*{ext}") if f.is_file()])
+            for f in folder.rglob(f"*{ext}"):
+                if f.is_file() and not f.is_symlink() and _is_path_allowed(f):
+                    files.append(f)
         
         if not target_extensions:
-            files = [f for f in folder.rglob("*") if f.is_file()]
+            for f in folder.rglob("*"):
+                if f.is_file() and not f.is_symlink() and _is_path_allowed(f):
+                    files.append(f)
         
-        # 限制处理数量
         files = files[:50]
         
         processed = 0
@@ -506,7 +498,11 @@ async def learn_from_folder(request: dict):
         
         for file_path in files:
             try:
-                # 读取文件内容
+                file_size = file_path.stat().st_size
+                if file_size > MAX_FILE_SIZE:
+                    logger.warning(f"跳过大文件 {file_path}: {file_size} bytes")
+                    continue
+                
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
                 
@@ -543,28 +539,27 @@ async def learn_from_folder(request: dict):
         
         summary_text = '\n'.join(summaries[:10])
         
-        # 存储到知识库
         try:
             import sqlite3
-            conn = sqlite3.connect('data/knowledge_store.db')
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS folder_knowledge (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    folder_path TEXT,
-                    mode TEXT,
-                    processed INTEGER,
-                    knowledge INTEGER,
-                    summary TEXT,
-                    timestamp TEXT
-                )
-            ''')
             from datetime import datetime
-            conn.execute('''
-                INSERT INTO folder_knowledge (folder_path, mode, processed, knowledge, summary, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (folder_path, learn_mode, processed, knowledge_count, summary_text, datetime.now().isoformat()))
-            conn.commit()
-            conn.close()
+            
+            with sqlite3.connect('data/knowledge_store.db') as conn:
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS folder_knowledge (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        folder_path TEXT,
+                        mode TEXT,
+                        processed INTEGER,
+                        knowledge INTEGER,
+                        summary TEXT,
+                        timestamp TEXT
+                    )
+                ''')
+                conn.execute('''
+                    INSERT INTO folder_knowledge (folder_path, mode, processed, knowledge, summary, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (folder_path, learn_mode, processed, knowledge_count, summary_text, datetime.now().isoformat()))
+                conn.commit()
         except Exception as e:
             logger.warning(f"存储知识失败: {e}")
         
@@ -731,8 +726,8 @@ async def test_external_model(request: Request):
             return {"success": False, "message": f"连接失败: {str(e)}"}
             
     except Exception as e:
-        logger.error(f"测试模型失败: {e}")
-        return {"success": False, "message": str(e)}
+        logger.error(f"测试模型失败: 连接错误")
+        return {"success": False, "message": "连接失败，请检查配置"}
 
 @app.get("/api/external_models/{name}/stats")
 async def get_external_model_stats(name: str):
@@ -801,7 +796,8 @@ async def rank_models_for_task(task_type: str):
     try:
         from infrastructure.model_capability import model_capability
         
-        models = list(adapters.keys())
+        async with adapters_lock:
+            models = list(adapters.keys())
         ranked = model_capability.rank_models_for_task(task_type, models)
         
         return {
@@ -1009,75 +1005,75 @@ async def add_model(request: dict):
     global adapters
     
     model_name = request.get("name")
-    model_type = request.get("type", "ollama")  # ollama, remote, mock
+    model_type = request.get("type", "ollama")
     
     if not model_name:
         return {"success": False, "error": "模型名称不能为空"}
     
-    if model_name in adapters:
-        return {"success": False, "error": f"模型 {model_name} 已存在"}
-    
-    try:
-        if model_type == "ollama":
-            from adapters.llm.ollama_adapter import OllamaAdapter
-            adapters[model_name] = OllamaAdapter(model_name=model_name)
-            
-        elif model_type == "remote":
-            api_url = request.get("api_url")
-            api_key = request.get("api_key")
-            if not api_url or not api_key:
-                return {"success": False, "error": "远程模型需要api_url和api_key"}
-            
-            from adapters.llm.remote_adapter import RemoteAdapter
-            adapters[model_name] = RemoteAdapter(model_name=model_name)
-            
-        elif model_type == "mock":
-            from adapters.llm.mock_adapter import MockAdapter
-            adapters[model_name] = MockAdapter()
-        else:
-            return {"success": False, "error": f"不支持的模型类型: {model_type}"}
+    async with adapters_lock:
+        if model_name in adapters:
+            return {"success": False, "error": f"模型 {model_name} 已存在"}
         
-        # 注册到能力矩阵
-        from infrastructure.model_capability import model_capability
-        model_capability.ensure_model_registered(model_name)
-        
-        logger.info(f"成功添加模型: {model_name} (类型: {model_type})")
-        return {"success": True, "model": model_name, "type": model_type}
-        
-    except Exception as e:
-        logger.error(f"添加模型失败: {e}")
-        return {"success": False, "error": str(e)}
+        try:
+            if model_type == "ollama":
+                from adapters.llm.ollama_adapter import OllamaAdapter
+                adapters[model_name] = OllamaAdapter(model_name=model_name)
+                
+            elif model_type == "remote":
+                api_url = request.get("api_url")
+                api_key = request.get("api_key")
+                if not api_url or not api_key:
+                    return {"success": False, "error": "远程模型需要api_url和api_key"}
+                
+                from adapters.llm.remote_adapter import RemoteAdapter
+                adapters[model_name] = RemoteAdapter(model_name=model_name)
+                
+            elif model_type == "mock":
+                from adapters.llm.mock_adapter import MockAdapter
+                adapters[model_name] = MockAdapter()
+            else:
+                return {"success": False, "error": f"不支持的模型类型: {model_type}"}
+            
+            from infrastructure.model_capability import model_capability
+            model_capability.ensure_model_registered(model_name)
+            
+            logger.info(f"成功添加模型: {model_name} (类型: {model_type})")
+            return {"success": True, "model": model_name, "type": model_type}
+            
+        except Exception as e:
+            logger.error(f"添加模型失败: {e}")
+            return {"success": False, "error": str(e)}
 
 @app.delete("/api/models/{model_name}")
 async def remove_model(model_name: str):
     """移除模型"""
     global adapters
     
-    if model_name not in adapters:
-        return {"success": False, "error": f"模型 {model_name} 不存在"}
-    
-    if len(adapters) <= 1:
-        return {"success": False, "error": "至少需要保留一个模型"}
-    
-    try:
-        del adapters[model_name]
-        logger.info(f"已移除模型: {model_name}")
-        return {"success": True, "model": model_name}
+    async with adapters_lock:
+        if model_name not in adapters:
+            return {"success": False, "error": f"模型 {model_name} 不存在"}
         
-    except Exception as e:
-        logger.error(f"移除模型失败: {e}")
-        return {"success": False, "error": str(e)}
+        if len(adapters) <= 1:
+            return {"success": False, "error": "至少需要保留一个模型"}
+        
+        try:
+            del adapters[model_name]
+            logger.info(f"已移除模型: {model_name}")
+            return {"success": True, "model": model_name}
+            
+        except Exception as e:
+            logger.error(f"移除模型失败: {e}")
+            return {"success": False, "error": str(e)}
 
 @app.post("/api/models/{model_name}/test")
 async def test_model(model_name: str):
     """测试模型连接"""
-    if model_name not in adapters:
-        return {"success": False, "error": f"模型 {model_name} 不存在"}
+    async with adapters_lock:
+        if model_name not in adapters:
+            return {"success": False, "error": f"模型 {model_name} 不存在"}
+        adapter = adapters[model_name]
     
     try:
-        adapter = adapters[model_name]
-        
-        # 测试简单生成
         test_prompt = "Hello, this is a test."
         
         import asyncio
@@ -1089,7 +1085,6 @@ async def test_model(model_name: str):
         else:
             response = await asyncio.to_thread(adapter.generate, test_prompt)
         
-        # 记录成功
         from infrastructure.model_health_checker import model_health_checker
         model_health_checker.record_success(model_name, 1.0)
         
@@ -1297,7 +1292,9 @@ async def recurrent_reason(request: dict):
     try:
         from infrastructure.recurrent_reasoner import recurrent_reasoner
         
-        model = adapters.get(model_name)
+        async with adapters_lock:
+            model = adapters.get(model_name)
+        
         if not model:
             return {"error": f"模型 {model_name} 不存在"}
         
