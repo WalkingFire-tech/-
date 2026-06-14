@@ -5,6 +5,7 @@
 import sqlite3
 import json
 import time
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -18,18 +19,19 @@ class CharterExecutor:
         self.config_history = []
         self.usage_stats = []
         self.resource_limits = {
-            'cpu_max': 90.0,  # CPU使用率上限（提高到90%）
-            'memory_max': 16.0,  # 内存上限（GB）- 提高到16GB
-            'storage_max': 50.0  # 存储上限（GB）
+            'cpu_max': 90.0,
+            'memory_max': 16.0,
+            'storage_max': 50.0
         }
         
-        # 连续超限计数器（避免瞬时波动）
         self.violation_counts = {
             'cpu': 0,
             'memory': 0,
             'storage': 0
         }
-        self.violation_threshold = 3  # 连续3次超限才触发动作
+        self.violation_threshold = 3
+        
+        self._lock = threading.Lock()
         
         logger.info("章程执行器已初始化")
     
@@ -219,13 +221,11 @@ class CharterExecutor:
         backup_id = str(uuid.uuid4())[:8]
         
         try:
-            # 读取当前配置
             config_file = Path("config/settings.yaml")
             if config_file.exists():
                 with open(config_file, 'r', encoding='utf-8') as f:
                     config_content = f.read()
                 
-                # 保存备份
                 backup = {
                     'id': backup_id,
                     'config': config_content,
@@ -233,14 +233,16 @@ class CharterExecutor:
                     'timestamp': datetime.now().isoformat()
                 }
                 
-                self.config_history.append(backup)
+                with self._lock:
+                    self.config_history.append(backup)
                 
-                # 持久化
                 backup_file = Path(f"config/backups/{backup_id}.json")
                 backup_file.parent.mkdir(exist_ok=True)
                 
-                with open(backup_file, 'w', encoding='utf-8') as f:
+                temp_file = backup_file.with_suffix('.tmp')
+                with open(temp_file, 'w', encoding='utf-8') as f:
                     json.dump(backup, f, ensure_ascii=False, indent=2)
+                temp_file.replace(backup_file)
                 
                 logger.info(f"配置已备份: {backup_id} (原因: {reason})")
             
@@ -269,10 +271,11 @@ class CharterExecutor:
             with open(backup_file, 'r', encoding='utf-8') as f:
                 backup = json.load(f)
             
-            # 恢复配置
             config_file = Path("config/settings.yaml")
-            with open(config_file, 'w', encoding='utf-8') as f:
+            temp_file = config_file.with_suffix('.tmp')
+            with open(temp_file, 'w', encoding='utf-8') as f:
                 f.write(backup['config'])
+            temp_file.replace(config_file)
             
             logger.info(f"配置已回滚: {backup_id}")
             return True
@@ -394,12 +397,12 @@ class CharterExecutor:
             with open(archive_file, 'w', encoding='utf-8') as f:
                 json.dump(archive_data, f, ensure_ascii=False, indent=2)
             
-            # 从主表删除
             experience_ids = [e[0] for e in old_experiences]
+            placeholders = ','.join('?' * len(experience_ids))
             conn.execute(f'''
                 DELETE FROM experiences
-                WHERE id IN ({','.join(map(str, experience_ids))})
-            ''')
+                WHERE id IN ({placeholders})
+            ''', experience_ids)
             
             conn.commit()
             conn.close()
@@ -426,37 +429,33 @@ class CharterExecutor:
             
             violations = []
             
-            # CPU检查（放宽限制）
-            if cpu_percent > self.resource_limits['cpu_max']:
-                self.violation_counts['cpu'] += 1
-                # 只有连续超限才记录
-                if self.violation_counts['cpu'] >= self.violation_threshold:
-                    violations.append({
-                        'resource': 'cpu',
-                        'current': cpu_percent,
-                        'limit': self.resource_limits['cpu_max'],
-                        'action': 'reduce_concurrency',
-                        'count': self.violation_counts['cpu']
-                    })
-            else:
-                self.violation_counts['cpu'] = 0  # 重置计数器
+            with self._lock:
+                if cpu_percent > self.resource_limits['cpu_max']:
+                    self.violation_counts['cpu'] += 1
+                    if self.violation_counts['cpu'] >= self.violation_threshold:
+                        violations.append({
+                            'resource': 'cpu',
+                            'current': cpu_percent,
+                            'limit': self.resource_limits['cpu_max'],
+                            'action': 'reduce_concurrency',
+                            'count': self.violation_counts['cpu']
+                        })
+                else:
+                    self.violation_counts['cpu'] = 0
+                
+                if memory_gb > self.resource_limits['memory_max']:
+                    self.violation_counts['memory'] += 1
+                    if self.violation_counts['memory'] >= self.violation_threshold:
+                        violations.append({
+                            'resource': 'memory',
+                            'current': memory_gb,
+                            'limit': self.resource_limits['memory_max'],
+                            'action': 'free_memory',
+                            'count': self.violation_counts['memory']
+                        })
+                else:
+                    self.violation_counts['memory'] = 0
             
-            # 内存检查（放宽限制）
-            if memory_gb > self.resource_limits['memory_max']:
-                self.violation_counts['memory'] += 1
-                # 只有连续超限才记录
-                if self.violation_counts['memory'] >= self.violation_threshold:
-                    violations.append({
-                        'resource': 'memory',
-                        'current': memory_gb,
-                        'limit': self.resource_limits['memory_max'],
-                        'action': 'free_memory',
-                        'count': self.violation_counts['memory']
-                    })
-            else:
-                self.violation_counts['memory'] = 0  # 重置计数器
-            
-            # 只在真正超限时警告
             if violations:
                 logger.warning(f"检测到 {len(violations)} 个资源连续超限")
             
