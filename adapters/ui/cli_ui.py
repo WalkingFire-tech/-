@@ -169,6 +169,9 @@ class EnhancedCliUI(UIPort):
         elif cmd == ":watch":
             self._handle_watch_command(args)
         
+        elif cmd == ":plan":
+            self._handle_plan_command(args)
+        
         elif cmd == ":help":
             self._show_help()
         
@@ -596,6 +599,41 @@ class EnhancedCliUI(UIPort):
         except Exception as e:
             self.console.print(f"[red]监控命令失败: {e}[/]")
     
+    def _handle_plan_command(self, args: str):
+        """处理计划命令 - 进入认知模式"""
+        try:
+            from infrastructure.cognitive_layer import cognitive_layer
+            from core.services.intent_parser import IntentParser
+            
+            if args:
+                user_input = args
+            else:
+                self.console.print("[cyan]请输入要分析的问题：[/]")
+                user_input = Prompt.ask("问题")
+            
+            if not user_input.strip():
+                self.console.print("[yellow]请提供要分析的问题[/]")
+                return
+            
+            parser = IntentParser()
+            intent = parser.parse(user_input)
+            
+            self.console.print(f"[dim]分析意图: {intent.type}[/]")
+            
+            analysis = cognitive_layer.analyze(intent.raw_text, intent.type, "")
+            report = cognitive_layer.generate_report(analysis)
+            
+            self.console.print(Panel(report, title="📋 逻辑分析报告", border_style="green"))
+            
+            subtasks = cognitive_layer.plan_from_analysis(analysis)
+            if subtasks:
+                self.console.print(f"\n[cyan]生成了 {len(subtasks)} 个可执行子任务[/]")
+                for i, task in enumerate(subtasks, 1):
+                    self.console.print(f"  {i}. [{task['type']}] {task['description']}")
+        
+        except Exception as e:
+            self.console.print(f"[red]计划命令失败: {e}[/]")
+    
     def _show_help(self):
         """显示帮助"""
         help_text = """
@@ -634,6 +672,9 @@ class EnhancedCliUI(UIPort):
   :watch stop - 停止所有监控
   :watch status - 查看监控状态
   :watch list - 列出监控的目录
+
+[yellow]认知分析:[/]
+  :plan [问题] - 进入认知模式，生成逻辑分析报告
 
 [yellow]学习管理:[/]
   :learning list - 列出学习规则

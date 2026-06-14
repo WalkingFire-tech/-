@@ -238,3 +238,51 @@ class SubTaskExecutor:
             "skipped_count": sum(1 for t in self.execution_trace if t["status"] == "skipped"),
             "results": self.results
         }
+    
+    def execute_interactive(self, subtask: Dict, user_response: str = None) -> Any:
+        """
+        交互式任务执行
+        
+        Args:
+            subtask: 子任务字典
+            user_response: 用户响应（可选）
+        
+        Returns:
+            执行结果
+        """
+        if subtask.get("type") == "ask_user":
+            if user_response is None:
+                self._request_user_input(subtask)
+                return None
+            else:
+                return self._process_user_response(subtask, user_response)
+        else:
+            return self._execute_regular(subtask)
+    
+    def _request_user_input(self, subtask: Dict):
+        """请求用户输入"""
+        bus.publish("need_user_input", {
+            "subtask_id": subtask.get("id"),
+            "question": subtask.get("description"),
+            "options": subtask.get("options")
+        })
+        logger.info(f"请求用户输入: {subtask.get('description')}")
+    
+    def _process_user_response(self, subtask: Dict, response: str) -> str:
+        """处理用户响应"""
+        logger.info(f"收到用户响应: {response}")
+        return f"用户回答：{response}"
+    
+    def _execute_regular(self, subtask: Dict) -> Any:
+        """执行常规子任务"""
+        task_type = subtask.get("type", "auto")
+        description = subtask.get("description", "")
+        
+        logger.info(f"执行常规子任务: {task_type} - {description}")
+        
+        if task_type == "analysis":
+            return f"分析完成: {description}"
+        elif task_type == "action":
+            return f"执行动作: {description}"
+        else:
+            return description
