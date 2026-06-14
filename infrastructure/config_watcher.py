@@ -12,18 +12,20 @@ from loguru import logger
 from infrastructure.event_bus import bus
 from infrastructure.events import Events
 
+MAX_CONFIG_SIZE = 1 * 1024 * 1024  # 1MB
+
 
 class ConfigWatcher:
     """配置文件监控器"""
     
-    def __init__(self, config_path: str = "config/settings.yaml"):
-        self.config_path = Path(config_path)
+    def __init__(self, config_path: str = "config/settings.yaml", check_interval: int = 2):
+        self.config_path = Path(config_path).resolve()
         self.last_mtime: Optional[float] = None
-        self.running = False
+        self._stop_event = threading.Event()
         self.thread: Optional[threading.Thread] = None
-        self.check_interval = 2
+        self.check_interval = check_interval
         
-        logger.info(f"配置监控器初始化: {config_path}")
+        logger.info(f"配置监控器初始化: {self.config_path}")
     
     def start(self):
         """启动监控"""
@@ -31,8 +33,11 @@ class ConfigWatcher:
             logger.warning(f"配置文件不存在: {self.config_path}")
             return
         
+        if self.config_path.is_symlink():
+            logger.warning(f"配置路径是符号链接: {self.config_path}")
+        
         self.last_mtime = self.config_path.stat().st_mtime
-        self.running = True
+        self._stop_event.clear()
         self.thread = threading.Thread(target=self._watch_loop, daemon=True)
         self.thread.start()
         
@@ -40,7 +45,7 @@ class ConfigWatcher:
     
     def stop(self):
         """停止监控"""
-        self.running = False
+        self._stop_event.set()
         
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=2)
@@ -49,10 +54,10 @@ class ConfigWatcher:
     
     def _watch_loop(self):
         """监控循环"""
-        while self.running:
+        while not self._stop_event.is_set():
             try:
                 if not self.config_path.exists():
-                    time.sleep(self.check_interval)
+                    self._stop_event.wait(self.check_interval)
                     continue
                 
                 current_mtime = self.config_path.stat().st_mtime
@@ -64,11 +69,16 @@ class ConfigWatcher:
             except Exception as e:
                 logger.error(f"监控配置文件失败: {e}")
             
-            time.sleep(self.check_interval)
+            self._stop_event.wait(self.check_interval)
     
     def _reload_config(self):
         """重新加载配置"""
         try:
+            file_size = self.config_path.stat().st_size
+            if file_size > MAX_CONFIG_SIZE:
+                logger.error(f"配置文件过大 ({file_size}字节)，超过限制 {MAX_CONFIG_SIZE}字节，跳过加载")
+                return
+            
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 new_config = yaml.safe_load(f) or {}
             
@@ -77,7 +87,7 @@ class ConfigWatcher:
             
             bus.publish(Events.CONFIG_UPDATED, {"config": new_config})
             
-            logger.info("配置文件已热加载")
+            logger.info(f"配置文件已热加载 (大小: {file_size}字节)")
         
         except Exception as e:
             logger.error(f"重新加载配置失败: {e}")
