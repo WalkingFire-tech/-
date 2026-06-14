@@ -29,12 +29,18 @@ echo 地址: http://localhost:8000
 echo API文档: http://localhost:8000/docs
 echo.
 
-python diagnose_detailed.py
+start "联盟拓荒者后端" cmd /k "python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
 
-if %errorlevel% neq 0 (
-    echo.
-    echo ============================================================
-    echo 启动失败！错误代码: %errorlevel%
-    echo ============================================================
-    pause
-)
+echo 等待服务启动...
+ping 127.0.0.1 -n 6 >nul
+
+echo.
+echo ============================================================
+echo 启动完成！
+echo ============================================================
+echo.
+echo 后端地址: http://localhost:8000
+echo API文档: http://localhost:8000/docs
+echo.
+echo 按任意键退出（后端将继续运行）
+pause
