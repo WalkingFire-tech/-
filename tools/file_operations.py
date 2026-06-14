@@ -6,7 +6,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from datetime import datetime
 from loguru import logger
 from tools.base import Tool, ToolCategory, Parameter, ToolResult
@@ -14,6 +14,8 @@ from tools.base import Tool, ToolCategory, Parameter, ToolResult
 
 class FileWriterTool(Tool):
     """文件写入工具"""
+    
+    BASE_DIR = Path("data/workspace").resolve()
     
     @property
     def name(self) -> str:
@@ -59,6 +61,17 @@ class FileWriterTool(Tool):
             )
         ]
     
+    def _sanitize_path(self, file_path: str) -> Path:
+        """路径沙盒验证"""
+        path = Path(file_path).resolve()
+        self.BASE_DIR.mkdir(parents=True, exist_ok=True)
+        
+        if not path.is_relative_to(self.BASE_DIR):
+            logger.warning(f"路径越权，强制使用workspace目录: {file_path}")
+            return self.BASE_DIR / Path(file_path).name
+        
+        return path
+    
     def execute(self, **kwargs) -> ToolResult:
         file_path = kwargs.get("file_path")
         content = kwargs.get("content")
@@ -66,7 +79,7 @@ class FileWriterTool(Tool):
         encoding = kwargs.get("encoding", "utf-8")
         
         try:
-            path = Path(file_path)
+            path = self._sanitize_path(file_path)
             
             path.parent.mkdir(parents=True, exist_ok=True)
             
@@ -95,6 +108,8 @@ class FileWriterTool(Tool):
 
 class FileSearchTool(Tool):
     """文件搜索工具"""
+    
+    BASE_DIR = Path("data/workspace").resolve()
     
     @property
     def name(self) -> str:
@@ -139,6 +154,17 @@ class FileSearchTool(Tool):
             )
         ]
     
+    def _sanitize_path(self, path: str) -> Path:
+        """路径沙盒验证"""
+        resolved = Path(path).resolve()
+        self.BASE_DIR.mkdir(parents=True, exist_ok=True)
+        
+        if not resolved.is_relative_to(self.BASE_DIR):
+            logger.warning(f"路径越权，强制使用workspace目录: {path}")
+            return self.BASE_DIR
+        
+        return resolved
+    
     def execute(self, **kwargs) -> ToolResult:
         path = kwargs.get("path")
         pattern = kwargs.get("pattern")
@@ -146,7 +172,7 @@ class FileSearchTool(Tool):
         file_pattern = kwargs.get("file_pattern", "*")
         
         try:
-            search_path = Path(path)
+            search_path = self._sanitize_path(path)
             regex = re.compile(pattern, re.IGNORECASE)
             
             results = []
@@ -202,6 +228,8 @@ class FileSearchTool(Tool):
 class FileBatchProcessorTool(Tool):
     """文件批量处理工具"""
     
+    BASE_DIR = Path("data/workspace").resolve()
+    
     @property
     def name(self) -> str:
         return "file_batch_processor"
@@ -246,6 +274,17 @@ class FileBatchProcessorTool(Tool):
             )
         ]
     
+    def _sanitize_path(self, path: str) -> Path:
+        """路径沙盒验证"""
+        resolved = Path(path).resolve()
+        self.BASE_DIR.mkdir(parents=True, exist_ok=True)
+        
+        if not resolved.is_relative_to(self.BASE_DIR):
+            logger.warning(f"路径越权，强制使用workspace目录: {path}")
+            return self.BASE_DIR
+        
+        return resolved
+    
     def execute(self, **kwargs) -> ToolResult:
         folder_path = kwargs.get("folder_path")
         operation = kwargs.get("operation")
@@ -253,7 +292,7 @@ class FileBatchProcessorTool(Tool):
         recursive = kwargs.get("recursive", True)
         
         try:
-            folder = Path(folder_path)
+            folder = self._sanitize_path(folder_path)
             
             if not folder.is_dir():
                 return ToolResult(
@@ -342,6 +381,8 @@ class FileBatchProcessorTool(Tool):
 class FileRenameTool(Tool):
     """文件重命名工具"""
     
+    BASE_DIR = Path("data/workspace").resolve()
+    
     @property
     def name(self) -> str:
         return "file_rename"
@@ -378,13 +419,24 @@ class FileRenameTool(Tool):
             )
         ]
     
+    def _sanitize_path(self, path: str) -> Path:
+        """路径沙盒验证"""
+        resolved = Path(path).resolve()
+        self.BASE_DIR.mkdir(parents=True, exist_ok=True)
+        
+        if not resolved.is_relative_to(self.BASE_DIR):
+            logger.warning(f"路径越权，强制使用workspace目录: {path}")
+            return self.BASE_DIR / Path(path).name
+        
+        return resolved
+    
     def execute(self, **kwargs) -> ToolResult:
         source = kwargs.get("source")
         target = kwargs.get("target")
         overwrite = kwargs.get("overwrite", False)
         
         try:
-            source_path = Path(source)
+            source_path = self._sanitize_path(source)
             
             if not source_path.exists():
                 return ToolResult(
@@ -393,7 +445,7 @@ class FileRenameTool(Tool):
                     error=f"源文件不存在: {source}"
                 )
             
-            target_path = Path(target)
+            target_path = self._sanitize_path(target)
             
             if not target_path.is_absolute():
                 target_path = source_path.parent / target
@@ -426,6 +478,8 @@ class FileRenameTool(Tool):
 
 class FileCopyTool(Tool):
     """文件复制工具"""
+    
+    BASE_DIR = Path("data/workspace").resolve()
     
     @property
     def name(self) -> str:
@@ -463,14 +517,25 @@ class FileCopyTool(Tool):
             )
         ]
     
+    def _sanitize_path(self, path: str) -> Path:
+        """路径沙盒验证"""
+        resolved = Path(path).resolve()
+        self.BASE_DIR.mkdir(parents=True, exist_ok=True)
+        
+        if not resolved.is_relative_to(self.BASE_DIR):
+            logger.warning(f"路径越权，强制使用workspace目录: {path}")
+            return self.BASE_DIR / Path(path).name
+        
+        return resolved
+    
     def execute(self, **kwargs) -> ToolResult:
         source = kwargs.get("source")
         target = kwargs.get("target")
         overwrite = kwargs.get("overwrite", False)
         
         try:
-            source_path = Path(source)
-            target_path = Path(target)
+            source_path = self._sanitize_path(source)
+            target_path = self._sanitize_path(target)
             
             if not source_path.exists():
                 return ToolResult(
