@@ -3,18 +3,29 @@
 参考Claude 5的梦境整合机制，空闲时整理记忆
 """
 import sqlite3
+import threading
+import json
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 from loguru import logger
 from pathlib import Path
 
+ALLOWED_INTENT_TYPES = {
+    'code', 'question', 'chat', 'memory', 'calculation',
+    'feedback', 'meta', 'document', 'analysis', 'comparison'
+}
+MAX_EXPERIENCES = 10000
+
 
 class DreamIntegrator:
     """梦境整合器 - 空闲时整理记忆，生成跨任务关联规则"""
     
-    def __init__(self, db_path: str = "experience_pool.db"):
+    def __init__(self, db_path: str = "data/experience_pool.db"):
         self.db_path = db_path
-        self.rules_db_path = "learning_rules.db"
+        self.rules_db_path = "data/learning_rules.db"
+        self._lock = threading.Lock()
+        
+        Path("data").mkdir(exist_ok=True)
         
     def integrate(self, days: int = 7) -> Dict[str, Any]:
         """
@@ -26,78 +37,73 @@ class DreamIntegrator:
         Returns:
             整合结果统计
         """
-        logger.info(f"开始梦境整合，扫描最近{days}天的经验...")
-        
-        # 步骤1: 扫描孤立成功经验
-        isolated_experiences = self._find_isolated_experiences(days)
-        logger.info(f"发现{len(isolated_experiences)}条孤立成功经验")
-        
-        # 步骤2: 发现跨任务关联
-        cross_task_patterns = self._discover_cross_task_patterns(isolated_experiences)
-        logger.info(f"发现{len(cross_task_patterns)}个跨任务模式")
-        
-        # 步骤3: 合并或生成规则
-        new_rules = self._generate_integration_rules(cross_task_patterns)
-        logger.info(f"生成{len(new_rules)}条整合规则")
-        
-        # 步骤4: 清理冗余记忆
-        cleaned = self._cleanup_redundant_memories()
-        
-        result = {
-            "isolated_experiences": len(isolated_experiences),
-            "cross_task_patterns": len(cross_task_patterns),
-            "new_rules": len(new_rules),
-            "cleaned_memories": cleaned,
-            "integrated_at": datetime.now().isoformat()
-        }
-        
-        logger.info(f"梦境整合完成: {result}")
-        return result
+        with self._lock:
+            logger.info(f"开始梦境整合，扫描最近{days}天的经验...")
+            
+            isolated_experiences = self._find_isolated_experiences(days)
+            logger.info(f"发现{len(isolated_experiences)}条孤立成功经验")
+            
+            cross_task_patterns = self._discover_cross_task_patterns(isolated_experiences)
+            logger.info(f"发现{len(cross_task_patterns)}个跨任务模式")
+            
+            new_rules = self._generate_integration_rules(cross_task_patterns)
+            logger.info(f"生成{len(new_rules)}条整合规则")
+            
+            cleaned = self._cleanup_redundant_memories()
+            
+            result = {
+                "isolated_experiences": len(isolated_experiences),
+                "cross_task_patterns": len(cross_task_patterns),
+                "new_rules": len(new_rules),
+                "cleaned_memories": cleaned,
+                "integrated_at": datetime.now().isoformat()
+            }
+            
+            logger.info(f"梦境整合完成: {result}")
+            return result
     
     def _find_isolated_experiences(self, days: int) -> List[Dict]:
         """
         查找孤立的成功经验
         孤立定义：未被任何规则引用的成功经验
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # 查询最近N天的成功经验
         cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
         
-        cursor.execute("""
-            SELECT id, user_input, intent_type, model_name, response, quality_score
-            FROM experiences
-            WHERE timestamp >= ?
-            AND quality_score >= 0.7
-            ORDER BY timestamp DESC
-        """, (cutoff_date,))
-        
-        experiences = []
-        for row in cursor.fetchall():
-            experiences.append({
-                "id": row[0],
-                "user_input": row[1],
-                "intent_type": row[2],
-                "model_name": row[3],
-                "response": row[4],
-                "quality_score": row[5]
-            })
-        
-        # 过滤掉已被规则引用的经验
-        isolated = []
-        conn_rules = sqlite3.connect(self.rules_db_path)
-        cursor_rules = conn_rules.cursor()
-        
-        for exp in experiences:
-            # 检查是否被规则引用
-            cursor_rules.execute("""
-                SELECT COUNT(*) FROM learning_rules
-                WHERE condition LIKE ?
-            """, (f"%{exp['id']}%",))
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
             
-            count = cursor_rules.fetchone()[0]
-            if count == 0:
+            cursor.execute("""
+                SELECT id, user_input, intent_type, model_name, response, quality_score
+                FROM experiences
+                WHERE timestamp >= ?
+                AND quality_score >= 0.7
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """, (cutoff_date, MAX_EXPERIENCES))
+            
+            experiences = []
+            for row in cursor.fetchall():
+                experiences.append({
+                    "id": row[0],
+                    "user_input": row[1],
+                    "intent_type": row[2],
+                    "model_name": row[3],
+                    "response": row[4],
+                    "quality_score": row[5]
+                })
+        
+        isolated = []
+        with sqlite3.connect(self.rules_db_path) as conn_rules:
+            cursor_rules = conn_rules.cursor()
+            
+            for exp in experiences:
+                cursor_rules.execute("""
+                    SELECT COUNT(*) FROM learning_rules
+                    WHERE condition LIKE ?
+                """, (f"%{exp['id']}%",))
+                
+                count = cursor_rules.fetchone()[0]
+                if count == 0:
                 isolated.append(exp)
         
         conn.close()
@@ -165,67 +171,94 @@ class DreamIntegrator:
         根据跨任务模式生成整合规则
         """
         new_rules = []
-        conn = sqlite3.connect(self.rules_db_path)
-        cursor = conn.cursor()
         
-        for pattern in patterns:
-            if pattern["type"] == "intent_transition":
-                # 生成意图转换预测规则
-                parts = pattern["pattern"].split("→")
-                if len(parts) == 2:
-                    rule = {
-                        "condition": f"intent_type == '{parts[0]}'",
-                        "action": f"prepare_for_{parts[1]}",
-                        "confidence": pattern["confidence"],
-                        "source": "dream_integration",
-                        "description": f"用户在{parts[0]}后常问{parts[1]}"
-                    }
-                    
-                    # 插入规则
-                    cursor.execute("""
-                        INSERT INTO learning_rules
-                        (condition, action, confidence, source, description, status, created_at)
-                        VALUES (?, ?, ?, ?, ?, 'pending', ?)
-                    """, (
-                        rule["condition"],
-                        rule["action"],
-                        rule["confidence"],
-                        rule["source"],
-                        rule["description"],
-                        datetime.now().isoformat()
-                    ))
-                    
-                    new_rules.append(rule)
+        with sqlite3.connect(self.rules_db_path) as conn:
+            cursor = conn.cursor()
             
-            elif pattern["type"] == "model_preference":
-                # 生成模型偏好规则
-                parts = pattern["pattern"].split("→")
-                if len(parts) == 2:
-                    rule = {
-                        "condition": f"intent_type == '{parts[0]}'",
-                        "action": f"use_model_{parts[1]}",
-                        "confidence": pattern["confidence"],
-                        "source": "dream_integration",
-                        "description": f"{parts[0]}意图偏好使用{parts[1]}"
-                    }
-                    
-                    cursor.execute("""
-                        INSERT INTO learning_rules
-                        (condition, action, confidence, source, description, status, created_at)
-                        VALUES (?, ?, ?, ?, ?, 'pending', ?)
-                    """, (
-                        rule["condition"],
-                        rule["action"],
-                        rule["confidence"],
-                        rule["source"],
-                        rule["description"],
-                        datetime.now().isoformat()
-                    ))
-                    
-                    new_rules.append(rule)
-        
-        conn.commit()
-        conn.close()
+            for pattern in patterns:
+                if pattern["type"] == "intent_transition":
+                    parts = pattern["pattern"].split("→")
+                    if len(parts) == 2:
+                        intent_type = parts[0].strip()
+                        next_intent = parts[1].strip()
+                        
+                        if intent_type not in ALLOWED_INTENT_TYPES:
+                            logger.warning(f"跳过非法意图类型: {intent_type}")
+                            continue
+                        
+                        if next_intent not in ALLOWED_INTENT_TYPES:
+                            logger.warning(f"跳过非法目标意图: {next_intent}")
+                            continue
+                        
+                        condition_data = json.dumps({
+                            "type": "intent_equals",
+                            "intent_type": intent_type
+                        }, ensure_ascii=False)
+                        
+                        action_data = json.dumps({
+                            "type": "prepare_for",
+                            "target_intent": next_intent
+                        }, ensure_ascii=False)
+                        
+                        cursor.execute("""
+                            INSERT INTO learning_rules
+                            (condition, action, confidence, source, description, status, created_at)
+                            VALUES (?, ?, ?, ?, ?, 'pending', ?)
+                        """, (
+                            condition_data,
+                            action_data,
+                            pattern["confidence"],
+                            "dream_integration",
+                            f"用户在{intent_type}后常问{next_intent}",
+                            datetime.now().isoformat()
+                        ))
+                        
+                        new_rules.append({
+                            "condition": condition_data,
+                            "action": action_data,
+                            "confidence": pattern["confidence"]
+                        })
+                
+                elif pattern["type"] == "model_preference":
+                    parts = pattern["pattern"].split("→")
+                    if len(parts) == 2:
+                        intent_type = parts[0].strip()
+                        model_name = parts[1].strip()
+                        
+                        if intent_type not in ALLOWED_INTENT_TYPES:
+                            logger.warning(f"跳过非法意图类型: {intent_type}")
+                            continue
+                        
+                        condition_data = json.dumps({
+                            "type": "intent_equals",
+                            "intent_type": intent_type
+                        }, ensure_ascii=False)
+                        
+                        action_data = json.dumps({
+                            "type": "use_model",
+                            "model": model_name
+                        }, ensure_ascii=False)
+                        
+                        cursor.execute("""
+                            INSERT INTO learning_rules
+                            (condition, action, confidence, source, description, status, created_at)
+                            VALUES (?, ?, ?, ?, ?, 'pending', ?)
+                        """, (
+                            condition_data,
+                            action_data,
+                            pattern["confidence"],
+                            "dream_integration",
+                            f"{intent_type}意图偏好使用{model_name}",
+                            datetime.now().isoformat()
+                        ))
+                        
+                        new_rules.append({
+                            "condition": condition_data,
+                            "action": action_data,
+                            "confidence": pattern["confidence"]
+                        })
+            
+            conn.commit()
         
         return new_rules
     
@@ -235,32 +268,29 @@ class DreamIntegrator:
         - 删除质量分过低的经验（< 0.3）
         - 删除重复的失败案例
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # 删除低质量经验
-        cursor.execute("""
-            DELETE FROM experiences
-            WHERE quality_score < 0.3
-            AND timestamp < date('now', '-30 days')
-        """)
-        deleted_low_quality = cursor.rowcount
-        
-        # 删除重复失败（相同user_input的多次失败）
-        cursor.execute("""
-            DELETE FROM experiences
-            WHERE rowid NOT IN (
-                SELECT MAX(rowid)
-                FROM experiences
-                WHERE quality_score < 0.5
-                GROUP BY user_input
-            )
-            AND quality_score < 0.5
-        """)
-        deleted_duplicates = cursor.rowcount
-        
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                DELETE FROM experiences
+                WHERE quality_score < 0.3
+                AND timestamp < date('now', '-30 days')
+            """)
+            deleted_low_quality = cursor.rowcount
+            
+            cursor.execute("""
+                DELETE FROM experiences
+                WHERE rowid NOT IN (
+                    SELECT MAX(rowid)
+                    FROM experiences
+                    WHERE quality_score < 0.5
+                    GROUP BY user_input
+                )
+                AND quality_score < 0.5
+            """)
+            deleted_duplicates = cursor.rowcount
+            
+            conn.commit()
         
         total_cleaned = deleted_low_quality + deleted_duplicates
         if total_cleaned > 0:
