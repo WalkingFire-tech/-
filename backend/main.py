@@ -249,6 +249,10 @@ async def chat(request: dict):
     try:
         intent = intent_parser.parse(user_input)
         
+        # 保存用户消息
+        if campfire:
+            campfire.log("用户", user_input)
+        
         response_queue = asyncio.Queue()
         
         def on_response(data):
@@ -262,6 +266,11 @@ async def chat(request: dict):
             
             try:
                 response = await asyncio.wait_for(response_queue.get(), timeout=60.0)
+                
+                # 保存助手回复
+                if campfire and response:
+                    campfire.log("拓荒者", str(response)[:1000])
+                
                 return {"response": response, "intent": intent.type}
             except asyncio.TimeoutError:
                 logger.error("请求超时")
