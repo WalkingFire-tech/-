@@ -3,12 +3,15 @@
 使用YAML配置文件,支持环境变量覆盖
 """
 import os
+import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 import yaml
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 from loguru import logger
+
+MAX_CONFIG_SIZE = 1024 * 1024  # 1MB
 
 
 class ModelConfig(BaseModel):
@@ -33,11 +36,16 @@ class Settings(BaseSettings):
 class ConfigManager:
     _instance = None
     _config: Dict[str, Any] = {}
+    _lock = threading.Lock()
+    _initialized = False
     
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._load_config()
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._load_config()
+                    cls._initialized = True
         return cls._instance
     
     def _load_config(self):
@@ -45,15 +53,25 @@ class ConfigManager:
         
         if not config_path or not config_path.exists():
             logger.warning(f"配置文件不存在，使用默认配置")
-            self._config = self._get_default_config()
+            with self._lock:
+                self._config = self._get_default_config()
         else:
             try:
+                file_size = config_path.stat().st_size
+                if file_size > MAX_CONFIG_SIZE:
+                    raise ValueError(f"配置文件过大({file_size}字节)，超过限制{MAX_CONFIG_SIZE}字节")
+                
                 with open(config_path, 'r', encoding='utf-8') as f:
-                    self._config = yaml.safe_load(f) or {}
-                logger.info(f"配置文件加载成功: {config_path}")
+                    loaded_config = yaml.safe_load(f) or {}
+                
+                with self._lock:
+                    self._config = loaded_config
+                
+                logger.info(f"配置文件加载成功: {config_path} (大小: {file_size}字节)")
             except Exception as e:
                 logger.error(f"配置文件加载失败: {e}, 使用默认配置")
-                self._config = self._get_default_config()
+                with self._lock:
+                    self._config = self._get_default_config()
         
         self._apply_env_overrides()
     
@@ -61,16 +79,22 @@ class ConfigManager:
         settings = Settings()
         config_file = settings.config_file
         
-        # 尝试多个可能的路径
-        possible_paths = [
-            Path(config_file),  # 当前工作目录
-            Path(__file__).parent.parent / config_file,  # 项目根目录
-            Path.cwd() / config_file,  # 当前目录
+        project_root = Path(__file__).parent.parent
+        allowed_paths = [
+            project_root / config_file,
+            project_root / "config" / "settings.yaml",
         ]
         
-        for path in possible_paths:
+        for path in allowed_paths:
             if path.exists():
-                return path
+                try:
+                    resolved = path.resolve()
+                    if resolved.is_relative_to(project_root.resolve()):
+                        return path
+                    else:
+                        logger.warning(f"配置路径越权: {path}")
+                except (OSError, RuntimeError) as e:
+                    logger.warning(f"路径解析失败: {path} - {e}")
         
         return None
     
@@ -137,8 +161,11 @@ class ConfigManager:
                 pass
     
     def get(self, key: str, default: Any = None) -> Any:
+        with self._lock:
+            config_copy = self._config.copy()
+        
         keys = key.split('.')
-        value = self._config
+        value = config_copy
         for k in keys:
             if isinstance(value, dict) and k in value:
                 value = value[k]
@@ -176,12 +203,51 @@ class ConfigManager:
     
     def reload(self, new_config: Dict[str, Any] = None):
         """重新加载配置"""
-        if new_config:
-            self._config.update(new_config)
-        else:
-            self._load_config()
+        with self._lock:
+            old_config = self._config.copy()
+            
+            if new_config:
+                self._config.update(new_config)
+            else:
+                temp_config = self._config.copy()
+                self._load_config_unlocked()
+            
+            logger.info("配置已重新加载")
+    
+    def _load_config_unlocked(self):
+        """内部方法：不加锁的配置加载"""
+        config_path = self._find_config_file()
         
-        logger.info("配置已重新加载")
+        if not config_path or not config_path.exists():
+            self._config = self._get_default_config()
+        else:
+            try:
+                file_size = config_path.stat().st_size
+                if file_size > MAX_CONFIG_SIZE:
+                    raise ValueError(f"配置文件过大({file_size}字节)")
+                
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    self._config = yaml.safe_load(f) or {}
+            except Exception as e:
+                logger.error(f"配置加载失败: {e}")
+                self._config = self._get_default_config()
+        
+        self._apply_env_overrides_unlocked()
+    
+    def _apply_env_overrides_unlocked(self):
+        """内部方法：不加锁的环境变量覆盖"""
+        if os.getenv("OLLAMA_BASE_URL"):
+            self._config.setdefault("models", {}).setdefault("local", {})["ollama_base_url"] = os.getenv("OLLAMA_BASE_URL")
+        
+        if os.getenv("OPENAI_API_KEY"):
+            self._config.setdefault("models", {}).setdefault("remote", {})["enabled"] = True
+        
+        if os.getenv("CAMPFIRE_TIMEOUT"):
+            try:
+                timeout = int(os.getenv("CAMPFIRE_TIMEOUT"))
+                self._config.setdefault("models", {}).setdefault("local", {})["default_timeout"] = timeout
+            except ValueError:
+                pass
 
 
 config = ConfigManager()
