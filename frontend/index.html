@@ -83,6 +83,14 @@
                         <div class="form-group">
                             <label>文件夹路径:</label>
                             <input type="text" id="folder-path" placeholder="如: C:\Projects\myproject" style="width: 100%; padding: 8px; margin: 5px 0;">
+                            <small style="color: #666; font-size: 12px;">提示：路径必须在项目目录内，如 data/workspace</small>
+                        </div>
+                        
+                        <div style="margin: 10px 0;">
+                            <small>快捷路径：</small>
+                            <button onclick="document.getElementById('folder-path').value='data/workspace'" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">data/workspace</button>
+                            <button onclick="document.getElementById('folder-path').value='data'" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">data</button>
+                            <button onclick="document.getElementById('folder-path').value='.'" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">项目根目录</button>
                         </div>
                         
                         <div class="form-group">
