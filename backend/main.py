@@ -1,5 +1,6 @@
 import sys
 import os
+import threading
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
@@ -10,7 +11,6 @@ import asyncio
 import json
 from loguru import logger
 
-# 将项目根目录加入 Python 路径
 ROOT_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
@@ -26,12 +26,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# 全局实例（在 lifespan 中初始化）
 planner = None
 intent_parser = None
 campfire = None
 adapters = {}
-adapters_lock = asyncio.Lock()  # 保护 adapters 的异步锁
+adapters_lock = threading.Lock()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
