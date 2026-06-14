@@ -598,6 +598,144 @@ async def analyze_files(request: dict):
         logger.error(f"分析文件失败: {e}")
         return {"success": False, "error": str(e)}
 
+@app.post("/api/files/learn")
+async def learn_from_files(request: dict):
+    """从文件中学习，提取知识点保存到知识库"""
+    files = request.get("files", [])
+    
+    if not files:
+        return {"success": False, "error": "请选择要学习的文件"}
+    
+    try:
+        from pathlib import Path
+        from infrastructure.knowledge_index import KnowledgeIndex
+        
+        knowledge_index = KnowledgeIndex()
+        results = []
+        total_knowledge = 0
+        
+        for file_path in files:
+            file = Path(file_path).resolve()
+            
+            if not _is_path_allowed(file):
+                continue
+            
+            if not file.exists() or not file.is_file():
+                continue
+            
+            try:
+                file_size = file.stat().st_size
+                if file_size > 1024 * 1024:  # 限制1MB
+                    continue
+                
+                with open(file, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                
+                if len(content) < 50:
+                    continue
+                
+                # 提取知识点
+                knowledge_items = _extract_knowledge_from_file(file.name, content)
+                
+                # 保存到知识库
+                for item in knowledge_items:
+                    try:
+                        knowledge_index.add_knowledge(
+                            question=item['question'],
+                            answer=item['answer'],
+                            metadata={
+                                'source': str(file),
+                                'type': 'file_learning',
+                                'file_name': file.name
+                            }
+                        )
+                        total_knowledge += 1
+                    except:
+                        continue
+                
+                results.append({
+                    "file": file.name,
+                    "knowledge_count": len(knowledge_items),
+                    "size": file_size
+                })
+                
+            except Exception as e:
+                logger.warning(f"学习文件失败 {file}: {e}")
+                continue
+        
+        summary = f"""学习完成！
+
+📊 学习统计：
+- 处理文件: {len(results)}个
+- 提取知识点: {total_knowledge}条
+- 总大小: {sum(r['size'] for r in results) / 1024:.1f} KB
+
+📚 知识点来源:
+{chr(10).join(f"• {r['file']}: {r['knowledge_count']}条" for r in results[:10])}
+
+💡 这些知识点已保存到知识库，以后可以通过对话查询使用。"""
+        
+        return {"success": True, "summary": summary, "total_knowledge": total_knowledge}
+    except Exception as e:
+        logger.error(f"从文件学习失败: {e}")
+        return {"success": False, "error": str(e)}
+
+def _extract_knowledge_from_file(filename: str, content: str) -> list:
+    """从文件内容中提取知识点"""
+    import re
+    
+    knowledge_items = []
+    
+    # 根据文件类型提取不同知识点
+    if filename.endswith('.py'):
+        # 提取函数定义
+        functions = re.findall(r'def\s+(\w+)\s*\([^)]*\):\s*"""([^"]+)"""', content, re.DOTALL)
+        for func_name, docstring in functions:
+            if len(docstring) > 20:
+                knowledge_items.append({
+                    'question': f"函数 {func_name} 的作用是什么？",
+                    'answer': f"{func_name}: {docstring.strip()}"
+                })
+        
+        # 提取类定义
+        classes = re.findall(r'class\s+(\w+).*?:\s*"""([^"]+)"""', content, re.DOTALL)
+        for class_name, docstring in classes:
+            if len(docstring) > 20:
+                knowledge_items.append({
+                    'question': f"类 {class_name} 的作用是什么？",
+                    'answer': f"{class_name}: {docstring.strip()}"
+                })
+    
+    elif filename.endswith(('.md', '.txt')):
+        # 提取标题和段落
+        sections = re.split(r'\n#{1,3}\s+', content)
+        for section in sections[1:6]:  # 最多5个章节
+            lines = section.strip().split('\n')
+            if len(lines) > 1:
+                title = lines[0].strip()
+                body = '\n'.join(lines[1:5]).strip()  # 取前4行
+                if len(body) > 30:
+                    knowledge_items.append({
+                        'question': f"{title}",
+                        'answer': body[:500]
+                    })
+    
+    elif filename.endswith(('.yaml', '.yml', '.json')):
+        # 配置文件：提取关键配置项
+        knowledge_items.append({
+            'question': f"{filename} 配置说明",
+            'answer': f"配置文件 {filename} 的内容:\n{content[:500]}"
+        })
+    
+    # 如果没有提取到特定知识点，保存整体摘要
+    if not knowledge_items and len(content) > 100:
+        knowledge_items.append({
+            'question': f"{filename} 的主要内容",
+            'answer': content[:500]
+        })
+    
+    return knowledge_items
+
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 @app.post("/api/folder/learn")

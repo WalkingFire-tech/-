@@ -794,6 +794,51 @@ async function analyzeSelectedFiles() {
     selectedFiles = [];
 }
 
+async function learnFromFiles() {
+    if (selectedFiles.length === 0) {
+        alert('请先选择文件');
+        return;
+    }
+    
+    if (!confirm(`确定要从这 ${selectedFiles.length} 个文件中学习并保存知识点吗？\n\n知识点将保存到知识库，以后可以通过对话查询使用。`)) {
+        return;
+    }
+    
+    closeFileBrowser();
+    
+    const fileList = selectedFiles.map(f => {
+        const parts = f.replace(/\\/g, '/').split('/');
+        return `• ${parts[parts.length - 1]}`;
+    }).join('\n');
+    
+    addMessage('user', `从以下文件学习:\n${fileList}`);
+    
+    const sendBtn = document.getElementById('send-btn');
+    if (sendBtn) sendBtn.disabled = true;
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/files/learn`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ files: selectedFiles })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            addMessage('assistant', data.summary);
+        } else {
+            addMessage('assistant', `❌ 学习失败: ${data.error}`);
+        }
+    } catch (error) {
+        addMessage('assistant', `❌ 学习失败: ${error.message}`);
+    } finally {
+        if (sendBtn) sendBtn.disabled = false;
+    }
+    
+    selectedFiles = [];
+}
+
 // ==================== 初始化（DOMContentLoaded） ====================
 document.addEventListener('DOMContentLoaded', () => {
     // 绑定添加模型表单提交事件
