@@ -104,45 +104,77 @@ async def lifespan(app: FastAPI):
         import threading
         import time
         from datetime import datetime
+        import schedule
         from infrastructure.charter_executor import charter_executor
         from infrastructure.health_dashboard import health_dashboard
         from infrastructure.counterfactual_simulator import counterfactual_simulator
         
-        def charter_background_tasks():
-            """章程后台任务：健康监控、失败回顾、反事实模拟、资源管理"""
+        def health_check():
+            """健康度检查"""
+            try:
+                health_metrics = health_dashboard.calculate_aphi()
+                logger.info(f"健康度检查: APHI={health_metrics['aphi']}, 模式={health_metrics['mode']}")
+            except Exception as e:
+                logger.error(f"健康检查失败: {e}")
+        
+        def review_failures():
+            """失败案例回顾"""
+            try:
+                charter_executor.review_failures()
+            except Exception as e:
+                logger.error(f"失败回顾失败: {e}")
+        
+        def monitor_usage():
+            """功能使用监控"""
+            try:
+                charter_executor.monitor_feature_usage()
+            except Exception as e:
+                logger.error(f"使用监控失败: {e}")
+        
+        def apply_insights():
+            """应用反事实洞察"""
+            try:
+                applied = counterfactual_simulator.apply_insights()
+                if applied > 0:
+                    logger.info(f"应用了 {applied} 条反事实洞察")
+            except Exception as e:
+                logger.error(f"应用洞察失败: {e}")
+        
+        def archive_experiences():
+            """归档旧经验"""
+            try:
+                charter_executor.archive_old_experiences(days=90, min_importance=0.3)
+            except Exception as e:
+                logger.error(f"归档失败: {e}")
+        
+        def check_resources():
+            """资源限制检查"""
+            try:
+                resource_check = charter_executor.check_resource_limits()
+                if not resource_check['within_limits']:
+                    charter_executor.enforce_resource_limits()
+            except Exception as e:
+                logger.error(f"资源检查失败: {e}")
+        
+        # 配置调度任务
+        schedule.every(6).hours.do(health_check)
+        schedule.every().day.at("02:00").do(review_failures)
+        schedule.every().day.at("03:00").do(monitor_usage)
+        schedule.every().day.at("04:00").do(apply_insights)
+        schedule.every().monday.at("05:00").do(archive_experiences)
+        schedule.every().hour.do(check_resources)
+        
+        def run_scheduler():
+            """运行调度器"""
             while True:
                 try:
-                    # 每6小时检查健康度
-                    health_metrics = health_dashboard.calculate_aphi()
-                    logger.info(f"健康度检查: APHI={health_metrics['aphi']}, 模式={health_metrics['mode']}")
-                    
-                    # 每日回顾失败案例
-                    charter_executor.review_failures()
-                    
-                    # 每日监控功能使用
-                    charter_executor.monitor_feature_usage()
-                    
-                    # 每日应用反事实洞察
-                    applied = counterfactual_simulator.apply_insights()
-                    if applied > 0:
-                        logger.info(f"应用了 {applied} 条反事实洞察")
-                    
-                    # 每周归档旧经验（周一执行）
-                    if datetime.now().weekday() == 0:
-                        charter_executor.archive_old_experiences(days=90, min_importance=0.3)
-                        
-                    # 检查资源限制
-                    resource_check = charter_executor.check_resource_limits()
-                    if not resource_check['within_limits']:
-                        charter_executor.enforce_resource_limits()
-                        
+                    schedule.run_pending()
                 except Exception as e:
-                    logger.error(f"章程后台任务失败: {e}")
-                
-                time.sleep(21600)  # 每6小时执行一次
+                    logger.error(f"调度执行失败: {e}")
+                time.sleep(60)  # 每分钟检查一次
         
-        threading.Thread(target=charter_background_tasks, daemon=True).start()
-        logger.info("章程守护线程已启动（健康监控+反事实模拟+资源管理）")
+        threading.Thread(target=run_scheduler, daemon=True).start()
+        logger.info("章程守护线程已启动（使用schedule库精确调度）")
         
     except Exception as e:
         logger.warning(f"章程执行器启动失败: {e}")
