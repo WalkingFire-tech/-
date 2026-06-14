@@ -1653,109 +1653,92 @@ _共显示最近10轮对话_"""
         
         return None
     
+    def _post_process_success(self, intent: Intent, model, response: str, quality: int, duration: float, full_prompt: str):
+        """成功调用模型后的公共后处理"""
+        # 1. 记录经验
+        try:
+            self.experience_pool.add_experience(
+                intent_type=intent.type,
+                raw_input=intent.raw_text,
+                plan=self._build_prompt(intent),
+                model_name=model.model_name,
+                quality_score=quality,
+                user_feedback=0,
+                success=quality >= 50,
+                duration=duration,
+                response=response
+            )
+        except Exception as e:
+            logger.warning(f"经验记录失败: {e}")
+        
+        # 2. 在线反思（低质量时）
+        if quality < 40:
+            try:
+                from infrastructure.online_reflector import online_reflector
+                online_reflector.reflect(
+                    intent_type=intent.type,
+                    raw_input=intent.raw_text,
+                    model_name=model.model_name,
+                    quality_score=quality,
+                    response=response
+                )
+            except Exception:
+                pass
+        
+        # 3. 统计记录
+        try:
+            input_tokens = len(full_prompt.split())
+            output_tokens = len(response.split())
+            self.stats.record_call(
+                model_name=model.model_name,
+                task_type=intent.type,
+                duration=duration,
+                success=quality >= 50,
+                quality_score=quality,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens
+            )
+        except Exception:
+            pass
+        
+        # 4. 反事实模拟（异步）
+        try:
+            import asyncio
+            from infrastructure.counterfactual_simulator import counterfactual_simulator
+            task_id = f"{intent.type}_{int(time.time())}"
+            asyncio.create_task(
+                counterfactual_simulator.simulate_alternatives(
+                    task_id=task_id,
+                    actual_model=model.model_name,
+                    actual_score=quality,
+                    task_input=intent.raw_text,
+                    task_type=intent.type,
+                    adapters=self.adapters
+                )
+            )
+        except Exception:
+            pass
+        
+        # 5. 更新能力矩阵
+        try:
+            self._update_capability_from_result(model.model_name, intent.type, quality / 100.0, success=True)
+        except Exception:
+            pass
+        
+        # 6. 更新上下文缓冲区
+        self.context_buffer.append(f"用户: {intent.raw_text}")
+        self.context_buffer.append(f"拓荒者: {response[:200]}")
+        
+        # 7. 清理失败历史
+        intent_key = f"{intent.type}_{model.model_name}"
+        if intent_key in self.failure_history:
+            self.failure_history[intent_key] = [t for t in self.failure_history[intent_key] if time.time() - t < 300]
+        
+        # 8. 发布最终响应
+        bus.publish("plan_executed", response)
+    
     def _single_model_fallback(self, intent: Intent):
-        """单模型降级处理"""
-        # 原有的单模型逻辑
-        # ...（保持原有代码）
-        pass
-        
-        # 尝试并行调度（多模型联邦）
-        parallel_enabled = config.get("parallel_scheduling.enabled", True)
-        if parallel_enabled and len(self.adapters) >= 2:
-            try:
-                response = self._parallel_schedule(intent)
-                if response:
-                    bus.publish("plan_executed", response)
-                    return
-            except (ConnectionError, TimeoutError, OSError) as e:
-                logger.warning(f"并行调度网络错误，降级到单模型: {e}")
-            except Exception as e:
-                logger.error(f"并行调度未知错误: {type(e).__name__}: {e}")
-        
-        # 优先检查向量检索是否有相似成功案例
-        if VECTOR_AVAILABLE:
-            try:
-                similar = vector_retriever.find_similar_plan(intent.raw_text, intent.type)
-                if similar and similar.get('plan', {}).get('quality_score', 0) >= 70:
-                    logger.info(f"✓ 复用相似成功案例(相似度:{similar.get('similarity', 0):.2f})")
-                    response = similar.get('plan', {}).get('response', '')
-                    if response:
-                        bus.publish("plan_executed", response)
-                        return
-            except (KeyError, TypeError) as e:
-                logger.debug(f"向量检索数据格式错误: {e}")
-            except Exception as e:
-                logger.error(f"向量检索未知错误: {type(e).__name__}: {e}")
-        
-        rule = self._match_learning_rule(intent)
-        if rule:
-            logger.info(f"命中学习规则: {rule['id']} -> {rule['action']}")
-            
-            action = rule["action"]
-            action_parsed = self._parse_action(action)
-            
-            if action_parsed["type"] == "reroute":
-                target_model = action_parsed["target"]
-                if target_model in self.adapters:
-                    model = self.adapters[target_model]
-                    base_prompt = self._build_prompt(intent)
-                    context = self._get_recent_context()
-                    full_prompt = f"{context}\n{base_prompt}" if context else base_prompt
-                    
-                    response = model.generate(full_prompt, task_type=intent.type)
-                    
-                    if isinstance(response, tuple):
-                        response, _ = response
-                    
-                    self._update_rule_stats(rule["id"], success=True)
-                    bus.publish("plan_executed", response)
-                    return
-            
-            elif action_parsed["type"] == "merge":
-                for sub_action in action_parsed["actions"]:
-                    if sub_action["type"] == "reroute":
-                        target_model = sub_action["target"]
-                        if target_model in self.adapters:
-                            try:
-                                model = self.adapters[target_model]
-                                base_prompt = self._build_prompt(intent)
-                                context = self._get_recent_context()
-                                full_prompt = f"{context}\n{base_prompt}" if context else base_prompt
-                                
-                                response = model.generate(full_prompt, task_type=intent.type)
-                                
-                                if isinstance(response, tuple):
-                                    response, _ = response
-                                
-                                self._update_rule_stats(rule["id"], success=True)
-                                bus.publish("plan_executed", response)
-                                return
-                            except Exception as e:
-                                logger.warning(f"合并动作{sub_action}失败: {e}")
-                                continue
-            
-            elif action_parsed["type"] == "prefer":
-                target_model = action_parsed["target"]
-                if target_model in self.adapters:
-                    self._temp_preferred_model = target_model
-                    logger.info(f"临时优先模型: {target_model}")
-            
-            elif action_parsed["type"] == "ask_user":
-                msg = action_parsed["message"]
-                bus.publish("clarification_needed", {
-                    "question_id": f"rule_{rule['id']}",
-                    "message": msg,
-                    "options": ["确认", "取消"]
-                })
-                return
-            
-            elif action_parsed["type"] == "avoid":
-                avoid = action_parsed["target"]
-                if not hasattr(self, '_temp_avoid_models'):
-                    self._temp_avoid_models = []
-                self._temp_avoid_models.append(avoid)
-                logger.info(f"临时避免模型: {avoid}")
-        
+        """单模型降级处理（最后防线）"""
         context = self._get_recent_context()
         base_prompt = self._build_prompt(intent)
         full_prompt = f"{context}\n{base_prompt}" if context else base_prompt
@@ -1770,7 +1753,7 @@ _共显示最近10轮对话_"""
             "quality": 0
         }
         
-        logger.info(f"Planner using model: {model.model_name} for intent: {intent.type}")
+        logger.info(f"单模型降级使用: {model.model_name} for {intent.type}")
         
         try:
             start = time.time()
@@ -1786,144 +1769,61 @@ _共显示最近10轮对话_"""
             self.last_call_info["duration"] = duration
             self.last_call_info["quality"] = quality
             
+            # 审核
             audit = SelfAudit.audit(response, intent.type)
             if audit["blocked"]:
                 logger.warning(f"Audit blocked: {audit['reason']}")
                 response = f"⚠️ 系统检测到危险操作,已拦截。原因: {audit['reason']}"
             
-            self.experience_pool.add_experience(
-                intent_type=intent.type,
-                raw_input=intent.raw_text,
-                plan=base_prompt,
-                model_name=model.model_name,
-                quality_score=quality,
-                user_feedback=0,
-                success=quality >= 50,
-                duration=duration,
-                response=response
-            )
-            
-            # 在线反思（新增）
-            if quality < 40:
-                try:
-                    from infrastructure.online_reflector import online_reflector
-                    online_reflector.reflect(
-                        intent_type=intent.type,
-                        raw_input=intent.raw_text,
-                        model_name=model.model_name,
-                        quality_score=quality,
-                        response=response
-                    )
-                except Exception as e:
-                    logger.debug(f"在线反思失败: {e}")
-            
-            # 记录到统计库 (新增)
-            try:
-                input_tokens = len(full_prompt.split())
-                output_tokens = len(response.split())
-                self.stats.record_call(
-                    model_name=model.model_name,
-                    task_type=intent.type,
-                    duration=duration,
-                    success=quality >= 50,
-                    quality_score=quality,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens
-                )
-            except Exception as stats_error:
-                logger.warning(f"统计记录失败: {stats_error}")
-            
-            # 触发反事实模拟（异步）
-            try:
-                import asyncio
-                from infrastructure.counterfactual_simulator import counterfactual_simulator
-                
-                task_id = f"{intent.type}_{int(time.time())}"
-                asyncio.create_task(
-                    counterfactual_simulator.simulate_alternatives(
-                        task_id=task_id,
-                        actual_model=model.model_name,
-                        actual_score=quality,
-                        task_input=intent.raw_text,
-                        task_type=intent.type,
-                        adapters=self.adapters
-                    )
-                )
-            except Exception as cf_error:
-                logger.debug(f"反事实模拟触发失败: {cf_error}")
-            
-            # 更新能力矩阵
-            self._update_capability_from_result(
-                model.model_name,
-                intent.type,
-                quality / 100.0,
-                success=True
-            )
-            
-            self.context_buffer.append(f"用户: {intent.raw_text}")
-            self.context_buffer.append(f"拓荒者: {response[:200]}")
-            
-            intent_key = f"{intent.type}_{model.model_name}"
-            if intent_key in self.failure_history:
-                recent_failures = [
-                    t for t in self.failure_history[intent_key]
-                    if time.time() - t < 300
-                ]
-                self.failure_history[intent_key] = recent_failures
-            
-            bus.publish("plan_executed", response)
+            # 公共后处理
+            self._post_process_success(intent, model, response, quality, duration, full_prompt)
             
         except Exception as e:
-            logger.error(f"Plan execution failed: {e}")
+            logger.error(f"单模型调用失败: {e}")
             
             intent_key = f"{intent.type}_{model.model_name}"
-            if intent_key not in self.failure_history:
-                self.failure_history[intent_key] = []
-            self.failure_history[intent_key].append(int(time.time()))
+            self.failure_history.setdefault(intent_key, []).append(int(time.time()))
             
+            # 尝试工具生成
             if self.tool_generator:
-                failure_context = {
-                    "task_type": intent.type,
-                    "user_input": intent.raw_text,
-                    "failure_reason": str(e),
-                    "model": model.model_name
-                }
                 try:
-                    new_tool = self.tool_generator.generate_and_register_tool(
-                        failure_context, auto_register=False
-                    )
+                    new_tool = self.tool_generator.generate_and_register_tool({
+                        "task_type": intent.type,
+                        "user_input": intent.raw_text,
+                        "failure_reason": str(e),
+                        "model": model.model_name
+                    }, auto_register=False)
                     if new_tool:
                         logger.info(f"生成新工具: {new_tool.name}")
-                except Exception as te:
-                    logger.warning(f"工具生成失败: {te}")
+                except Exception:
+                    pass
             
+            # 尝试 fallback 模型
             fallback_response = self._try_fallback_models(intent, full_prompt)
-            
             if fallback_response:
                 bus.publish("plan_executed", fallback_response)
+                return
+            
+            # 任务分解降级
+            if self.decomposer:
+                error_count = len(self.failure_history.get(intent_key, []))
+                if self.decomposer.should_decompose(intent.type, 0, error_count):
+                    decompose_msg = self.decomposer.generate_fallback_message(
+                        intent.type,
+                        list(self.adapters.keys())
+                    )
+                    bus.publish("plan_executed", decompose_msg)
+                    return
+            
+            # 求助用户
+            help_msg = self._request_user_help(intent, str(e))
+            if help_msg:
+                bus.publish("plan_executed", help_msg)
             else:
-                if self.decomposer:
-                    error_count = len(self.failure_history.get(intent_key, []))
-                    
-                    if self.decomposer.should_decompose(intent.type, 0, error_count):
-                        decompose_msg = self.decomposer.generate_fallback_message(
-                            intent.type,
-                            list(self.adapters.keys())
-                        )
-                        bus.publish("plan_executed", decompose_msg)
-                        return
-                
-                error_msg = self._format_error(e)
-                
-                # 【第4层】主动向用户求助
-                help_msg = self._request_user_help(intent, str(e))
-                if help_msg:
-                    bus.publish("plan_executed", help_msg)
-                else:
-                    bus.publish("plan_executed", error_msg)
-                
-                # 【第5层】失败学习机制
-                self._trigger_failure_learning(intent, str(e))
+                bus.publish("plan_executed", self._format_error(e))
+            
+            # 失败学习
+            self._trigger_failure_learning(intent, str(e))
     
     def _evaluate_quality(self, response: str, task_type: str) -> int:
         """评估响应质量"""
