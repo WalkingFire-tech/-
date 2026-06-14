@@ -497,6 +497,228 @@ function escapeHtml(str) {
     });
 }
 
+// ==================== 文件浏览器（全局） ====================
+let selectedFiles = [];
+
+function openFileBrowser() {
+    const modal = document.getElementById('file-browser-modal');
+    if (modal) modal.style.display = 'block';
+    
+    // 默认浏览项目根目录
+    const pathInput = document.getElementById('browser-path');
+    if (pathInput && !pathInput.value) {
+        pathInput.value = '.';
+        browsePath();
+    }
+}
+
+function closeFileBrowser() {
+    const modal = document.getElementById('file-browser-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+function setBrowserPath(path) {
+    const pathInput = document.getElementById('browser-path');
+    if (pathInput) {
+        pathInput.value = path;
+        browsePath();
+    }
+}
+
+async function browsePath() {
+    const pathInput = document.getElementById('browser-path');
+    const fileList = document.getElementById('file-list');
+    
+    if (!pathInput || !fileList) return;
+    
+    const path = pathInput.value;
+    if (!path) {
+        fileList.innerHTML = '<p style="color: red;">请输入路径</p>';
+        return;
+    }
+    
+    fileList.innerHTML = '<p style="color: #666;">加载中...</p>';
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/folder/browse`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            renderFileList(data.items, path);
+        } else {
+            fileList.innerHTML = `<p style="color: red;">❌ ${escapeHtml(data.error)}</p>`;
+        }
+    } catch (error) {
+        fileList.innerHTML = `<p style="color: red;">❌ 请求失败: ${error.message}</p>`;
+    }
+}
+
+function renderFileList(items, currentPath) {
+    const fileList = document.getElementById('file-list');
+    if (!fileList) return;
+    
+    if (!items || items.length === 0) {
+        fileList.innerHTML = '<p style="color: #666;">文件夹为空</p>';
+        return;
+    }
+    
+    let html = '<table style="width: 100%; border-collapse: collapse;">';
+    html += '<tr style="background: #e0e0e0;"><th style="padding: 8px; text-align: left;">类型</th><th style="padding: 8px; text-align: left;">名称</th><th style="padding: 8px; text-align: right;">大小</th><th style="padding: 8px;">操作</th></tr>';
+    
+    items.forEach(item => {
+        const icon = item.is_dir ? '📁' : '📄';
+        const size = item.is_dir ? '-' : formatFileSize(item.size);
+        const bgColor = item.is_dir ? '#fff9e6' : '#ffffff';
+        
+        html += `<tr style="background: ${bgColor}; border-bottom: 1px solid #eee;">`;
+        html += `<td style="padding: 8px;">${icon}</td>`;
+        html += `<td style="padding: 8px;">${escapeHtml(item.name)}</td>`;
+        html += `<td style="padding: 8px; text-align: right; color: #666;">${size}</td>`;
+        html += `<td style="padding: 8px;">`;
+        
+        if (item.is_dir) {
+            html += `<button onclick="enterDirectory('${escapeHtml(item.path)}')" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">进入</button> `;
+        } else {
+            html += `<button onclick="toggleSelectFile('${escapeHtml(item.path)}', this)" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">选择</button> `;
+            html += `<button onclick="previewFile('${escapeHtml(item.path)}')" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">预览</button>`;
+        }
+        
+        html += `</td></tr>`;
+    });
+    
+    html += '</table>';
+    fileList.innerHTML = html;
+}
+
+function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+}
+
+function enterDirectory(path) {
+    const pathInput = document.getElementById('browser-path');
+    if (pathInput) {
+        pathInput.value = path;
+        browsePath();
+    }
+}
+
+function goToParent() {
+    const pathInput = document.getElementById('browser-path');
+    if (!pathInput) return;
+    
+    const currentPath = pathInput.value;
+    const parts = currentPath.replace(/\\/g, '/').split('/');
+    parts.pop();
+    const parentPath = parts.join('/') || '/';
+    
+    pathInput.value = parentPath;
+    browsePath();
+}
+
+function toggleSelectFile(filePath, button) {
+    const index = selectedFiles.indexOf(filePath);
+    
+    if (index === -1) {
+        selectedFiles.push(filePath);
+        button.textContent = '取消';
+        button.style.background = '#4caf50';
+        button.style.color = 'white';
+    } else {
+        selectedFiles.splice(index, 1);
+        button.textContent = '选择';
+        button.style.background = '';
+        button.style.color = '';
+    }
+    
+    updateSelectedFilesDisplay();
+}
+
+function updateSelectedFilesDisplay() {
+    const container = document.getElementById('selected-files');
+    const list = document.getElementById('selected-files-list');
+    
+    if (!container || !list) return;
+    
+    if (selectedFiles.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+    
+    container.style.display = 'block';
+    list.innerHTML = selectedFiles.map(f => `<div style="margin: 5px 0;">📄 ${escapeHtml(f)}</div>`).join('');
+}
+
+function clearSelectedFiles() {
+    selectedFiles = [];
+    updateSelectedFilesDisplay();
+    
+    // 重置所有选择按钮
+    const buttons = document.querySelectorAll('button[onclick^="toggleSelectFile"]');
+    buttons.forEach(btn => {
+        btn.textContent = '选择';
+        btn.style.background = '';
+        btn.style.color = '';
+    });
+}
+
+async function previewFile(filePath) {
+    try {
+        const response = await fetch(`${API_BASE}/api/file/preview`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: filePath })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            alert(`文件内容预览:\n\n${data.content.substring(0, 500)}${data.content.length > 500 ? '...' : ''}`);
+        } else {
+            alert(`预览失败: ${data.error}`);
+        }
+    } catch (error) {
+        alert(`预览失败: ${error.message}`);
+    }
+}
+
+async function analyzeSelectedFiles() {
+    if (selectedFiles.length === 0) {
+        alert('请先选择文件');
+        return;
+    }
+    
+    closeFileBrowser();
+    addMessage('user', `分析以下文件:\n${selectedFiles.map(f => `• ${f}`).join('\n')}`);
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/files/analyze`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ files: selectedFiles })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            addMessage('assistant', `✅ 分析完成:\n\n${data.summary}`);
+        } else {
+            addMessage('assistant', `❌ 分析失败: ${data.error}`);
+        }
+    } catch (error) {
+        addMessage('assistant', `❌ 分析失败: ${error.message}`);
+    }
+    
+    selectedFiles = [];
+}
+
 // ==================== 初始化（DOMContentLoaded） ====================
 document.addEventListener('DOMContentLoaded', () => {
     // 绑定添加模型表单提交事件
