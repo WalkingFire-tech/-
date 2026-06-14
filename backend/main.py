@@ -31,6 +31,7 @@ planner = None
 intent_parser = None
 campfire = None
 adapters = {}
+adapters_lock = asyncio.Lock()  # 保护 adapters 的异步锁
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -224,8 +225,9 @@ async def chat(request: dict):
         
         bus.subscribe("plan_executed", on_response)
         
-        # 执行规划（同步方法，但我们在异步上下文中调用）
-        planner.plan(intent)
+        # 执行规划（在线程池中运行，避免阻塞事件循环）
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, planner.plan, intent)
         
         # 等待响应（超时 60 秒）
         try:
@@ -1190,6 +1192,68 @@ async def get_learning_stats():
         
     except Exception as e:
         logger.error(f"获取学习统计失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/cognitive/analyze")
+async def cognitive_analyze(request: dict):
+    """认知层分析"""
+    text = request.get("text", "")
+    intent_type = request.get("intent_type", None)
+    
+    if not text:
+        return {"error": "请提供要分析的文本"}
+    
+    try:
+        from infrastructure.cognitive_layer import cognitive_layer
+        
+        result = cognitive_layer.analyze(text, intent_type, "")
+        report = cognitive_layer.generate_report(result)
+        subtasks = cognitive_layer.plan_from_analysis(result.get("analysis", {}))
+        
+        return {
+            "success": True,
+            "analysis": result,
+            "report": report,
+            "subtasks": subtasks
+        }
+    except Exception as e:
+        logger.error(f"认知分析失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/recurrent/reason")
+async def recurrent_reason(request: dict):
+    """循环推理"""
+    prompt = request.get("prompt", "")
+    intent_type = request.get("intent_type", "question")
+    model_name = request.get("model", "mindchat")
+    max_iterations = request.get("max_iterations", 3)
+    
+    if not prompt:
+        return {"error": "请提供提示词"}
+    
+    try:
+        from infrastructure.recurrent_reasoner import recurrent_reasoner
+        
+        model = adapters.get(model_name)
+        if not model:
+            return {"error": f"模型 {model_name} 不存在"}
+        
+        enhanced, trajectory = recurrent_reasoner.reason_with_loops(
+            model=model,
+            prompt=prompt,
+            intent_type=intent_type,
+            context="",
+            max_iterations=max_iterations
+        )
+        
+        return {
+            "success": True,
+            "response": enhanced,
+            "iterations": len(trajectory),
+            "trajectory": trajectory
+        }
+    except Exception as e:
+        logger.error(f"循环推理失败: {e}")
         return {"success": False, "error": str(e)}
 
 if __name__ == "__main__":
