@@ -253,7 +253,14 @@ class BayesianOptimizer:
         import json
         from pathlib import Path
         
-        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        safe_path = Path(filepath).resolve()
+        base_dir = Path("data").resolve()
+        
+        if not safe_path.is_relative_to(base_dir):
+            logger.warning(f"路径越权，强制使用data目录: {filepath}")
+            safe_path = base_dir / Path(filepath).name
+        
+        safe_path.parent.mkdir(parents=True, exist_ok=True)
         
         data = {
             "best_params": result.best_params,
@@ -263,10 +270,10 @@ class BayesianOptimizer:
             "history": result.optimization_history[-20:]
         }
         
-        with open(filepath, 'w', encoding='utf-8') as f:
+        with open(safe_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         
-        logger.info(f"优化结果已保存至 {filepath}")
+        logger.info(f"优化结果已保存至 {safe_path}")
 
 
 bayesian_optimizer = BayesianOptimizer()
