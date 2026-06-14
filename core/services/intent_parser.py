@@ -26,7 +26,7 @@ class IntentParser:
     def _load_rules(self) -> dict:
         """从配置文件加载规则"""
         default_rules = {
-            # 元认知意图 - 关于系统自身的问题（最高优先级）
+            # 元认知意图 - 关于系统自身的问题（最高优先级，收紧规则）
             "meta": re.compile(
                 r"你.*如何.*理解|你怎么.*知道|你觉得自己|你.*改进|你.*学习|"
                 r"你.*自我.*进化|你的.*能力|如何.*让你.*更.*好|"
@@ -34,16 +34,13 @@ class IntentParser:
                 r"系统.*如何|系统.*改进|如何.*提升.*理解|"
                 r"你.*处理.*不了|你明白我.*意思|我讲的是你|你.*反思|"
                 r"你.*分析.*意图|你.*进化|你.*自我|你.*成长|"
-                r"你.*懂|你.*明白|你.*认为|如何.*让.*你.*更|"
                 r"你.*能力.*边界|能力边界.*在哪|你的.*边界|"
                 r"自我.*评估|评估.*体系|你.*决策|你.*如何.*认识|"
                 r"你.*最优|你.*贴切|完善.*你|给出.*评价|"
                 r"能力边界|自我评估|决策机制|怎么认识自己|评估体系|"
                 r"知道自己.*?|你的.*能力|你.*如何.*决策|你.*学习.*方式|"
                 r"你.*改进.*自己|你.*反思|你.*优点|你.*缺点|"
-                r"能力的理解|学习能力|培养.*学习|提升.*学习|"
-                r"如何.*学习|怎样.*学习|怎么.*学习|学习.*方法|"
-                r"学习.*能力|学习.*技巧|学习.*习惯|自主.*学习",
+                r"能力的理解|你的.*学习.*能力|系统的.*学习",
                 re.IGNORECASE
             ),
             # 代码意图
@@ -202,9 +199,25 @@ class IntentParser:
             file_info = context["file_input"]
             file_ext = file_info.get("extension", "")
             
+            # 分析用户输入中的动词
+            user_lower = user_input.lower()
+            has_explain = any(kw in user_input for kw in ["解释", "explain", "说明", "describe"])
+            has_analyze = any(kw in user_input for kw in ["分析", "analyze", "评估", "evaluate"])
+            has_summarize = any(kw in user_input for kw in ["总结", "summarize", "摘要", "abstract"])
+            has_generate = any(kw in user_input for kw in ["写", "生成", "generate", "编写", "实现", "implement"])
+            
             if file_ext in {'.py', '.js', '.ts', '.java', '.cpp', '.go'}:
-                intent_type = "code"
-                confidence = 0.95
+                # 根据动词决定意图
+                if has_explain or has_analyze or has_summarize:
+                    intent_type = "document"
+                    confidence = 0.90
+                elif has_generate:
+                    intent_type = "code"
+                    confidence = 0.95
+                else:
+                    intent_type = "code"
+                    confidence = 0.85
+                
                 candidates = [(intent_type, confidence)]
                 
                 entities = {
@@ -213,14 +226,14 @@ class IntentParser:
                     "file_ext": file_ext
                 }
                 
-                if "分析" in user_input or "analyze" in user_input.lower():
+                if "分析" in user_input or "analyze" in user_lower:
                     entities["code_action"] = "analyze"
-                elif "优化" in user_input or "optimize" in user_input.lower():
+                elif "优化" in user_input or "optimize" in user_lower:
                     entities["code_action"] = "optimize"
-                elif "重构" in user_input or "refactor" in user_input.lower():
+                elif "重构" in user_input or "refactor" in user_lower:
                     entities["code_action"] = "refactor"
                 
-                logger.info(f"文件意图: {intent_type} (文件类型: {file_ext})")
+                logger.info(f"文件意图: {intent_type} (文件类型: {file_ext}, 动作: {entities.get('code_action', 'default')})")
                 
                 intent = Intent(
                     type=intent_type,
