@@ -5,6 +5,8 @@
 import re
 import time
 import sqlite3
+import threading
+import json
 from collections import deque
 from typing import Dict, List, Optional, Tuple
 from loguru import logger
@@ -196,13 +198,20 @@ class DialogueStreamLearner:
         self.dialogue_window = deque(maxlen=50)
         self.recent_emotions = deque(maxlen=10)
         
+        self._db_lock = threading.Lock()
+        self._listeners_initialized = False
+        
         self._setup_event_listeners()
         logger.info("对话流学习器已启动")
     
     def _setup_event_listeners(self):
         """设置事件监听"""
+        if self._listeners_initialized:
+            return
+        
         bus.subscribe("intent_parsed", self._on_intent_parsed)
         bus.subscribe("plan_executed", self._on_plan_executed)
+        self._listeners_initialized = True
     
     def _on_intent_parsed(self, intent):
         """意图解析事件处理"""
@@ -259,22 +268,22 @@ class DialogueStreamLearner:
     def _handle_implicit_negation(self, negation: Dict):
         """处理隐式否定 - 标记低质量交互"""
         try:
-            conn = sqlite3.connect('data/experience_pool.db')
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                UPDATE experiences
-                SET quality_score = 20,
-                    user_feedback = -1
-                WHERE id = (
-                    SELECT id FROM experiences
-                    ORDER BY timestamp DESC
-                    LIMIT 1
-                )
-            """)
-            
-            conn.commit()
-            conn.close()
+            with self._db_lock:
+                with sqlite3.connect('data/experience_pool.db') as conn:
+                    cursor = conn.cursor()
+                    
+                    cursor.execute("""
+                        UPDATE experiences
+                        SET quality_score = 20,
+                            user_feedback = -1
+                        WHERE id = (
+                            SELECT id FROM experiences
+                            ORDER BY timestamp DESC
+                            LIMIT 1
+                        )
+                    """)
+                    
+                    conn.commit()
             
             logger.info("已标记最近交互为低质量（隐式否定）")
             
@@ -292,25 +301,32 @@ class DialogueStreamLearner:
         try:
             correct_content = correction['correct_content']
             
-            conn = sqlite3.connect('data/learning_rules.db')
-            cursor = conn.cursor()
+            safe_content = correct_content[:20].replace("'", "''").replace('"', '""')
             
-            cursor.execute("""
-                INSERT INTO learning_rules
-                (condition, action, priority, confidence, status, source, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                f"text contains '{correct_content[:20]}'",
-                "prefer_context:user_correction",
-                5,
-                0.8,
-                'active',
-                'correction',
-                time.time()
-            ))
+            condition_data = json.dumps({
+                "type": "text_contains",
+                "content": correct_content[:20]
+            }, ensure_ascii=False)
             
-            conn.commit()
-            conn.close()
+            with self._db_lock:
+                with sqlite3.connect('data/learning_rules.db') as conn:
+                    cursor = conn.cursor()
+                    
+                    cursor.execute("""
+                        INSERT INTO learning_rules
+                        (condition, action, priority, confidence, status, source, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        condition_data,
+                        "prefer_context:user_correction",
+                        5,
+                        0.8,
+                        'active',
+                        'correction',
+                        time.time()
+                    ))
+                    
+                    conn.commit()
             
             logger.info(f"从用户修正生成规则: '{correct_content[:30]}'")
             
