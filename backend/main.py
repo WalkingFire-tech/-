@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.info(f"已加载 {len(adapters)} 个模型适配器: {list(adapters.keys())}")
     
-    planner = Planner(adapters)
+    planner = Planner(adapters, adapters_lock=adapters_lock)
     
     # 确保能力矩阵已初始化
     try:
