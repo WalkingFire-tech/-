@@ -35,21 +35,32 @@ class SubTaskExecutor:
                 continue
             
             try:
+                start_time = datetime.now()
                 result = self._execute_one(task, context)
+                duration = (datetime.now() - start_time).total_seconds()
+                
                 self.results[task.task_id] = result
-                self._record_trace(task, "success", result)
+                self._record_trace(task, "success", result, duration)
                 
             except Exception as e:
+                duration = (datetime.now() - start_time).total_seconds()
                 logger.error(f"任务 {task.task_id} 执行失败: {e}")
                 self.results[task.task_id] = None
-                self._record_trace(task, "failed", str(e))
+                self._record_trace(task, "failed", str(e), duration)
         
-        bus.publish("subtasks_executed", {
+        # 发布执行统计
+        stats = {
             "total": len(subtasks),
             "success": sum(1 for t in self.execution_trace if t["status"] == "success"),
             "failed": sum(1 for t in self.execution_trace if t["status"] == "failed"),
+            "total_duration": sum(t.get("duration", 0) for t in self.execution_trace),
             "timestamp": datetime.now().isoformat()
-        })
+        }
+        
+        bus.publish("subtasks_executed", stats)
+        
+        # 存储到经验池（用于后续优化）
+        self._store_execution_stats(stats)
         
         return self.results
     
@@ -122,7 +133,23 @@ class SubTaskExecutor:
     
     def _handle_local_kb(self, task: SubTask, context: Dict) -> str:
         """处理本地知识库检索"""
-        return f"[本地知识库] 检索: {task.description}"
+        try:
+            from infrastructure.vector_retriever import vector_retriever
+            
+            query = task.description
+            results = vector_retriever.search(query, top_k=3)
+            
+            if results:
+                summaries = []
+                for i, (doc, score) in enumerate(results, 1):
+                    summaries.append(f"{i}. {doc[:100]}... (相关度: {score:.2f})")
+                return f"[知识库检索] 找到{len(results)}条相关记录:\n" + "\n".join(summaries)
+            else:
+                return f"[知识库检索] 未找到相关内容: {query}"
+        
+        except Exception as e:
+            logger.warning(f"知识库检索失败: {e}")
+            return f"[本地知识库] 检索: {task.description}"
     
     def _handle_calculator(self, task: SubTask, context: Dict) -> str:
         """处理计算任务"""
@@ -195,15 +222,40 @@ class SubTaskExecutor:
         return f"[通用处理] {task.description}"
     
     def _get_dependency_result(self, task: SubTask, key: str = None) -> Any:
-        """获取依赖任务的结果"""
-        if task.dependencies:
-            for dep_id in task.dependencies:
-                if dep_id in self.results:
-                    result = self.results[dep_id]
-                    if key and isinstance(result, dict):
-                        return result.get(key)
-                    return result
-        return None
+        """
+        获取依赖任务的结果
+        
+        Args:
+            task: 当前任务
+            key: 如果结果是字典，提取指定键
+        
+        Returns:
+            单个依赖结果或多个依赖结果字典
+        """
+        if not task.dependencies:
+            return None
+        
+        # 单个依赖
+        if len(task.dependencies) == 1:
+            dep_id = task.dependencies[0]
+            if dep_id in self.results:
+                result = self.results[dep_id]
+                if key and isinstance(result, dict):
+                    return result.get(key)
+                return result
+            return None
+        
+        # 多个依赖 - 返回字典
+        results = {}
+        for dep_id in task.dependencies:
+            if dep_id in self.results:
+                result = self.results[dep_id]
+                if key and isinstance(result, dict):
+                    results[dep_id] = result.get(key)
+                else:
+                    results[dep_id] = result
+        
+        return results if results else None
     
     def _dependencies_met(self, task: SubTask) -> bool:
         """检查依赖是否满足"""
@@ -215,10 +267,52 @@ class SubTaskExecutor:
         return True
     
     def _topological_sort(self, tasks: List[SubTask]) -> List[SubTask]:
-        """拓扑排序(简化版:按优先级)"""
-        return sorted(tasks, key=lambda t: t.priority)
+        """
+        拓扑排序 - Kahn算法
+        确保依赖任务先执行
+        """
+        if not tasks:
+            return []
+        
+        # 构建任务ID映射
+        task_map = {t.task_id: t for t in tasks}
+        
+        # 计算入度
+        in_degree = {t.task_id: 0 for t in tasks}
+        for task in tasks:
+            for dep_id in task.dependencies:
+                if dep_id in in_degree:
+                    in_degree[task.task_id] += 1
+        
+        # 找到所有入度为0的任务
+        queue = [t for t in tasks if in_degree[t.task_id] == 0]
+        # 按优先级排序
+        queue.sort(key=lambda t: t.priority)
+        
+        result = []
+        while queue:
+            # 取出优先级最高的任务
+            task = queue.pop(0)
+            result.append(task)
+            
+            # 更新依赖此任务的其他任务入度
+            for other in tasks:
+                if task.task_id in other.dependencies:
+                    in_degree[other.task_id] -= 1
+                    if in_degree[other.task_id] == 0:
+                        queue.append(other)
+                        queue.sort(key=lambda t: t.priority)
+        
+        # 如果有环，添加剩余任务
+        if len(result) < len(tasks):
+            remaining = [t for t in tasks if t not in result]
+            remaining.sort(key=lambda t: t.priority)
+            result.extend(remaining)
+            logger.warning(f"检测到循环依赖，已按优先级处理")
+        
+        return result
     
-    def _record_trace(self, task: SubTask, status: str, result: Any):
+    def _record_trace(self, task: SubTask, status: str, result: Any, duration: float = 0):
         """记录执行轨迹"""
         self.execution_trace.append({
             "task_id": task.task_id,
@@ -226,8 +320,34 @@ class SubTaskExecutor:
             "handler": task.handler,
             "status": status,
             "result": str(result)[:200] if result else None,
+            "duration": duration,
             "timestamp": datetime.now().isoformat()
         })
+    
+    def _store_execution_stats(self, stats: Dict):
+        """存储执行统计到数据库"""
+        try:
+            import sqlite3
+            conn = sqlite3.connect('data/task_decomposition.db')
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS execution_stats (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    total INTEGER,
+                    success INTEGER,
+                    failed INTEGER,
+                    total_duration REAL,
+                    timestamp TEXT
+                )
+            ''')
+            conn.execute('''
+                INSERT INTO execution_stats (total, success, failed, total_duration, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (stats['total'], stats['success'], stats['failed'], 
+                  stats['total_duration'], stats['timestamp']))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.debug(f"存储执行统计失败: {e}")
     
     def get_execution_summary(self) -> Dict:
         """获取执行摘要"""
