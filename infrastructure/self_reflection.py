@@ -4,6 +4,9 @@
 """
 import sqlite3
 import json
+import threading
+import tempfile
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List
@@ -16,6 +19,7 @@ class SelfReflectionReport:
     def __init__(self, report_dir: str = "reports"):
         self.report_dir = Path(report_dir)
         self.report_dir.mkdir(exist_ok=True)
+        self._lock = threading.Lock()
         logger.info("自我反思报告生成器已初始化")
     
     def generate_weekly_report(self) -> Dict:
@@ -117,27 +121,21 @@ class SelfReflectionReport:
     def _analyze_rule_activation(self, since: datetime) -> Dict:
         """分析规则激活情况"""
         try:
-            conn = sqlite3.connect('data/learning_rules.db')
-            
-            # 活跃规则数
-            cursor = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
-            active_rules = cursor.fetchone()[0]
-            
-            # Pending规则数
-            cursor = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
-            pending_rules = cursor.fetchone()[0]
-            
-            # 最近激活的规则
-            cursor = conn.execute('''
-                SELECT id, condition, action, confidence
-                FROM learning_rules
-                WHERE status='active'
-                ORDER BY last_applied DESC
-                LIMIT 5
-            ''')
-            recent_rules = cursor.fetchall()
-            
-            conn.close()
+            with sqlite3.connect('data/learning_rules.db') as conn:
+                cursor = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
+                active_rules = cursor.fetchone()[0]
+                
+                cursor = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
+                pending_rules = cursor.fetchone()[0]
+                
+                cursor = conn.execute('''
+                    SELECT id, condition, action, confidence
+                    FROM learning_rules
+                    WHERE status='active'
+                    ORDER BY last_applied DESC
+                    LIMIT 5
+                ''')
+                recent_rules = cursor.fetchall()
             
             insights = []
             if active_rules > 20:
@@ -257,14 +255,33 @@ class SelfReflectionReport:
         return recommendations
     
     def _save_report(self, report: Dict):
-        """保存报告"""
-        filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        filepath = self.report_dir / filename
-        
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(report, f, ensure_ascii=False, indent=2)
-        
-        logger.info(f"报告已保存: {filepath}")
+        """保存报告（原子写入）"""
+        with self._lock:
+            filename = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            filepath = self.report_dir / filename
+            
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode='w',
+                    encoding='utf-8',
+                    suffix='.json',
+                    dir=self.report_dir,
+                    delete=False
+                ) as tmp_file:
+                    json.dump(report, tmp_file, ensure_ascii=False, indent=2)
+                    tmp_path = tmp_file.name
+                
+                os.replace(tmp_path, filepath)
+                
+                try:
+                    os.chmod(filepath, 0o600)
+                except OSError:
+                    pass
+                
+                logger.info(f"报告已保存: {filepath}")
+                
+            except Exception as e:
+                logger.error(f"保存报告失败: {e}")
     
     def print_report(self, report: Dict):
         """打印报告"""
