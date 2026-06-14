@@ -3,6 +3,7 @@
 让系统能对比"如果选择其他模型会怎样"，驱动路由优化
 """
 import asyncio
+import threading
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from loguru import logger
@@ -10,12 +11,19 @@ import sqlite3
 from pathlib import Path
 from collections import defaultdict
 
+ALLOWED_TASK_TYPES = {
+    'code', 'question', 'chat', 'memory', 'calculation',
+    'feedback', 'meta', 'document', 'analysis', 'comparison'
+}
+MAX_INSIGHTS_PER_TYPE = 100
+
 
 class CounterfactualSimulator:
     """反事实模拟器 - 探索如果选择其他模型会怎样"""
     
     def __init__(self):
-        self.db_path = Path("counterfactual_history.db")
+        self.db_path = Path("data/counterfactual_history.db")
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
         
         self.simulation_queue = []
@@ -23,6 +31,7 @@ class CounterfactualSimulator:
         self.simulation_enabled = True
         
         self.insights = defaultdict(list)
+        self._insights_lock = threading.Lock()
         
         logger.info("反事实模拟器已初始化")
     
@@ -58,16 +67,22 @@ class CounterfactualSimulator:
         if not self.simulation_enabled:
             return []
         
+        if task_type not in ALLOWED_TASK_TYPES:
+            logger.warning(f"非法任务类型: {task_type}")
+            return []
+        
+        if actual_model not in adapters:
+            logger.warning(f"模型不存在: {actual_model}")
+            return []
+        
         results = []
         
         alternative_models = self._select_alternative_models(
             actual_model, task_type, adapters
         )
         
-        # 限制模拟模型数量（最多2个，避免阻塞）
         alternative_models = alternative_models[:2]
         
-        # 并行执行模拟（带超时）
         async def simulate_one(alt_model):
             try:
                 logger.info(f"反事实模拟: {alt_model} 处理任务 {task_id}")
@@ -76,7 +91,6 @@ class CounterfactualSimulator:
                 if not adapter:
                     return None
                 
-                # 添加超时控制（最多15秒）
                 sim_score = await asyncio.wait_for(
                     self._simulate_with_model(adapter, task_input, task_type),
                     timeout=15.0
@@ -98,7 +112,12 @@ class CounterfactualSimulator:
                 
                 if gap > 10:
                     insight = self._generate_insight(result, task_type)
-                    self.insights[task_type].append(insight)
+                    with self._insights_lock:
+                        if len(self.insights[task_type]) < MAX_INSIGHTS_PER_TYPE:
+                            self.insights[task_type].append(insight)
+                        else:
+                            self.insights[task_type].pop(0)
+                            self.insights[task_type].append(insight)
                     logger.warning(f"发现改进机会: {alt_model} 比 {actual_model} 高 {gap:.2f} 分")
                 
                 return result
@@ -110,11 +129,9 @@ class CounterfactualSimulator:
                 logger.warning(f"反事实模拟失败 ({alt_model}): {e}")
                 return None
         
-        # 并行执行所有模拟
         tasks = [simulate_one(model) for model in alternative_models]
         completed = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # 收集成功的结果
         for result in completed:
             if isinstance(result, dict):
                 results.append(result)
@@ -244,13 +261,22 @@ class CounterfactualSimulator:
         return all_insights[:limit]
     
     def apply_insights(self) -> int:
-        """应用洞察到路由策略（增强版：自动生成学习规则）"""
+        """应用洞察优化系统"""
         applied_count = 0
         
         try:
             from infrastructure.model_capability import model_capability
             
-            for task_type, insights in self.insights.items():
+            with self._insights_lock:
+                insights_copy = {
+                    task_type: insights[:]
+                    for task_type, insights in self.insights.items()
+                }
+            
+            for task_type, insights in insights_copy.items():
+                if task_type not in ALLOWED_TASK_TYPES:
+                    continue
+                
                 for insight in insights[:3]:
                     if insight.get('confidence', 0) < 0.5:
                         continue
@@ -258,20 +284,18 @@ class CounterfactualSimulator:
                     recommended_model = insight['recommendation'].split()[-1]
                     
                     try:
-                        # 1. 更新能力矩阵
                         current_score = model_capability.score_model_for_task(
                             recommended_model, task_type
                         )
                         model_capability.update_capability(
                             model_name=recommended_model,
                             task_type=task_type,
-                            score=min(1.0, current_score * 1.1),  # 提升10%
+                            score=min(1.0, current_score * 1.1),
                             source='counterfactual_insight'
                         )
                         applied_count += 1
                         logger.info(f"应用洞察: {insight['recommendation']}")
                         
-                        # 2. 自动生成学习规则（新增）
                         self._generate_learning_rule_from_insight(
                             insight, task_type, recommended_model
                         )
@@ -281,8 +305,6 @@ class CounterfactualSimulator:
             
             if applied_count > 0:
                 self._mark_insights_applied()
-                
-                # 3. 激活待定规则（新增）
                 self._activate_high_confidence_rules()
             
         except Exception as e:
@@ -296,21 +318,21 @@ class CounterfactualSimulator:
             import sqlite3
             from datetime import datetime
             
-            # 提取当前模型
+            if task_type not in ALLOWED_TASK_TYPES:
+                logger.warning(f"非法任务类型: {task_type}")
+                return
+            
             actual_model = insight.get('evidence', '').split()[1] if '比' in insight.get('evidence', '') else None
             if not actual_model:
                 return
             
-            # 生成规则
             condition = f"intent_type == '{task_type}'"
             action = f"prefer_model:{recommended_model}"
             
-            # 计算置信度（基于gap）
-            gap = insight.get('confidence', 0) * 20  # 转换回gap值
-            confidence = min(0.95, 0.6 + gap / 50)  # gap越大，置信度越高
+            gap = insight.get('confidence', 0) * 20
+            confidence = min(0.95, 0.6 + gap / 50)
             
-            # 保存到数据库
-            with sqlite3.connect("learning_rules.db") as conn:
+            with sqlite3.connect("data/learning_rules.db") as conn:
                 conn.execute('''
                     INSERT INTO learning_rules
                     (condition, action, confidence, status, source, priority, created_at)
@@ -328,8 +350,7 @@ class CounterfactualSimulator:
         try:
             import sqlite3
             
-            with sqlite3.connect("learning_rules.db") as conn:
-                # 激活置信度>=0.7的待定规则
+            with sqlite3.connect("data/learning_rules.db") as conn:
                 cursor = conn.execute('''
                     UPDATE learning_rules
                     SET status = 'active'
@@ -343,14 +364,6 @@ class CounterfactualSimulator:
                     
         except Exception as e:
             logger.warning(f"激活规则失败: {e}")
-            
-            if applied_count > 0:
-                self._mark_insights_applied()
-            
-        except Exception as e:
-            logger.error(f"洞察应用失败: {e}")
-        
-        return applied_count
     
     def _mark_insights_applied(self):
         """标记洞察已应用"""
