@@ -64,8 +64,9 @@ except Exception as e:
 class DataDrivenPlanner:
     """完全数据驱动的规划器"""
     
-    def __init__(self, adapters: dict):
+    def __init__(self, adapters: dict, adapters_lock=None):
         self.adapters = adapters
+        self.adapters_lock = adapters_lock
         self.logger = CampfireLogger()
         self.stats = ModelStats()
         self.experience_pool = ExperiencePool()
@@ -176,17 +177,34 @@ class DataDrivenPlanner:
             
             for info in discovered:
                 name = info['name']
-                if name not in self.adapters:
-                    try:
-                        from adapters.llm.ollama_adapter import OllamaAdapter
-                        self.adapters[name] = OllamaAdapter(model_name=name)
-                        
-                        capabilities = info.get('capabilities', {})
-                        self.capability.ensure_model_registered(name, capabilities)
-                        
-                        logger.info(f"自动发现并加载新模型: {name}")
-                    except Exception as e:
-                        logger.warning(f"无法加载模型 {name}: {e}")
+                
+                should_add = False
+                if self.adapters_lock:
+                    with self.adapters_lock:
+                        if name not in self.adapters:
+                            should_add = True
+                            try:
+                                from adapters.llm.ollama_adapter import OllamaAdapter
+                                self.adapters[name] = OllamaAdapter(model_name=name)
+                                
+                                capabilities = info.get('capabilities', {})
+                                self.capability.ensure_model_registered(name, capabilities)
+                                
+                                logger.info(f"自动发现并加载新模型: {name}")
+                            except Exception as e:
+                                logger.warning(f"无法加载模型 {name}: {e}")
+                else:
+                    if name not in self.adapters:
+                        try:
+                            from adapters.llm.ollama_adapter import OllamaAdapter
+                            self.adapters[name] = OllamaAdapter(model_name=name)
+                            
+                            capabilities = info.get('capabilities', {})
+                            self.capability.ensure_model_registered(name, capabilities)
+                            
+                            logger.info(f"自动发现并加载新模型: {name}")
+                        except Exception as e:
+                            logger.warning(f"无法加载模型 {name}: {e}")
         except Exception as e:
             logger.error(f"自动发现模型失败: {e}")
     
@@ -722,15 +740,13 @@ class DataDrivenPlanner:
         
         # 通用元认知问题处理
         try:
-            conn_exp = sqlite3.connect('data/experience_pool.db')
-            cur = conn_exp.execute("SELECT COUNT(*), AVG(quality_score) FROM experiences")
-            exp_count, exp_quality = cur.fetchone()
-            conn_exp.close()
+            with sqlite3.connect('data/experience_pool.db') as conn_exp:
+                cur = conn_exp.execute("SELECT COUNT(*), AVG(quality_score) FROM experiences")
+                exp_count, exp_quality = cur.fetchone()
             
-            conn_rules = sqlite3.connect('data/learning_rules.db')
-            cur = conn_rules.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
-            active_rules = cur.fetchone()[0]
-            conn_rules.close()
+            with sqlite3.connect('data/learning_rules.db') as conn_rules:
+                cur = conn_rules.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
+                active_rules = cur.fetchone()[0]
             
             best_score = getattr(self, 'last_optimization_score', 0.0)
             
@@ -987,15 +1003,14 @@ _共显示最近10轮对话_"""
         """评价最近对话"""
         try:
             import sqlite3
-            conn = sqlite3.connect('data/experience_pool.db')
-            cur = conn.execute('''
-                SELECT intent_type, raw_input, quality_score, success, model_name
-                FROM experiences
-                ORDER BY timestamp DESC
-                LIMIT 10
-            ''')
-            recent = cur.fetchall()
-            conn.close()
+            with sqlite3.connect('data/experience_pool.db') as conn:
+                cur = conn.execute('''
+                    SELECT intent_type, raw_input, quality_score, success, model_name
+                    FROM experiences
+                    ORDER BY timestamp DESC
+                    LIMIT 10
+                ''')
+                recent = cur.fetchall()
             
             if not recent:
                 return "暂无最近对话记录。"
@@ -1045,17 +1060,16 @@ _共显示最近10轮对话_"""
         
         # 2. 历史相似任务成功率
         try:
-            conn = sqlite3.connect('data/experience_pool.db')
-            cursor = conn.execute('''
-                SELECT success FROM experiences
-                WHERE intent_type = ?
-                ORDER BY timestamp DESC
-                LIMIT 5
-            ''', (intent.type,))
-            
-            similar = cursor.fetchall()
+            with sqlite3.connect('data/experience_pool.db') as conn:
+                cursor = conn.execute('''
+                    SELECT success FROM experiences
+                    WHERE intent_type = ?
+                    ORDER BY timestamp DESC
+                    LIMIT 5
+                ''', (intent.type,))
+                
+                similar = cursor.fetchall()
             success_rate = sum(1 for row in similar if row[0]) / max(len(similar), 1)
-            conn.close()
         except:
             success_rate = 0.5
         
@@ -1216,26 +1230,25 @@ _共显示最近10轮对话_"""
     def _store_expert_analysis(self, intent: Intent, analysis: str, confidence: float, expert_model: str):
         """存储专家分析（为逆向学习预留）"""
         try:
-            conn = sqlite3.connect('data/experience_pool.db')
-            conn.execute('''
-                INSERT INTO experiences
-                (intent_type, raw_input, plan, model_name, 
-                 quality_score, user_feedback, success, 
-                 response, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                intent.type,
-                intent.raw_text,
-                f"expert_collaboration:{expert_model}",
-                expert_model,
-                0,  # 待评估
-                0,
-                False,
-                analysis,
-                time.time()
-            ))
-            conn.commit()
-            conn.close()
+            with sqlite3.connect('data/experience_pool.db') as conn:
+                conn.execute('''
+                    INSERT INTO experiences
+                    (intent_type, raw_input, plan, model_name, 
+                     quality_score, user_feedback, success, 
+                     response, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    intent.type,
+                    intent.raw_text,
+                    f"expert_collaboration:{expert_model}",
+                    expert_model,
+                    0,
+                    0,
+                    False,
+                    analysis,
+                    time.time()
+                ))
+                conn.commit()
             logger.debug(f"已存储专家分析 (置信度: {confidence:.2f})")
         except Exception as e:
             logger.warning(f"存储专家分析失败: {e}")
@@ -1277,23 +1290,13 @@ _共显示最近10轮对话_"""
                     top_k=top_k
                 )
             
-            # 正确处理异步调用
             try:
-                # 尝试获取运行中的事件循环
                 loop = asyncio.get_running_loop()
-                # 如果有运行中的循环，使用nest_asyncio
-                try:
-                    import nest_asyncio
-                    nest_asyncio.apply()
-                    result = asyncio.run(_run_federated_call())
-                except ImportError:
-                    # nest_asyncio未安装，使用线程池执行
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, _run_federated_call())
-                        result = future.result(timeout=60)
+                result = asyncio.run_coroutine_threadsafe(
+                    _run_federated_call(),
+                    loop
+                ).result(timeout=60)
             except RuntimeError:
-                # 没有运行中的事件循环，直接运行
                 result = asyncio.run(_run_federated_call())
             
             if result.get('error'):
@@ -2028,16 +2031,15 @@ _共显示最近10轮对话_"""
             import sqlite3
             from infrastructure.rule_matcher import RuleMatcher
             
-            conn = sqlite3.connect("learning_rules.db")
-            conn.row_factory = sqlite3.Row
-            cur = conn.execute('''
-                SELECT id, condition, action, priority, confidence
-                FROM learning_rules
-                WHERE status = 'active'
-                ORDER BY priority ASC, confidence DESC
-            ''')
-            rules = [dict(row) for row in cur.fetchall()]
-            conn.close()
+            with sqlite3.connect("learning_rules.db") as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.execute('''
+                    SELECT id, condition, action, priority, confidence
+                    FROM learning_rules
+                    WHERE status = 'active'
+                    ORDER BY priority ASC, confidence DESC
+                ''')
+                rules = [dict(row) for row in cur.fetchall()]
             
             matcher = RuleMatcher()
             context = {
