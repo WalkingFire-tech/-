@@ -4,6 +4,8 @@
 """
 import sqlite3
 import asyncio
+import threading
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
@@ -11,6 +13,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from loguru import logger
 from collections import defaultdict
+
+MAX_QUERY_LENGTH = 500
+SEARCH_TIMEOUT = 30.0
 
 
 class LearningTrigger(Enum):
@@ -68,6 +73,7 @@ class ActiveLearner:
         self._is_learning = False
         self._paused = False
         self._event_counts = defaultdict(int)
+        self._event_lock = threading.Lock()
         self._failure_threshold = 3
         self._low_capability_threshold = 0.3
         self._aphi_decline_threshold = 0.1
@@ -120,47 +126,62 @@ class ActiveLearner:
     
     def record_event(self, event_type: str, details: Dict = None):
         """记录事件（用于触发学习）"""
-        self._event_counts[event_type] += 1
+        with self._event_lock:
+            self._event_counts[event_type] += 1
+            count = self._event_counts[event_type]
         
         if event_type == "intent_failure":
-            if self._event_counts[event_type] >= self._failure_threshold:
+            if count >= self._failure_threshold:
                 logger.info(f"意图失败次数达到阈值({self._failure_threshold})，触发学习")
-                asyncio.create_task(self.trigger_learning(
+                task = asyncio.create_task(self.trigger_learning(
                     LearningTrigger.INTENT_FAILURE,
                     details.get("intent", "unknown"),
                     details
                 ))
-                self._event_counts[event_type] = 0
+                task.add_done_callback(self._handle_task_exception)
+                with self._event_lock:
+                    self._event_counts[event_type] = 0
         
         elif event_type == "capability_low":
             capability = details.get("capability", "unknown")
             score = details.get("score", 0)
             if score < self._low_capability_threshold:
                 logger.info(f"能力维度低迷({capability}: {score:.2f})，触发学习")
-                asyncio.create_task(self.trigger_learning(
+                task = asyncio.create_task(self.trigger_learning(
                     LearningTrigger.CAPABILITY_LOW,
                     f"如何提升{capability}能力",
                     details
                 ))
+                task.add_done_callback(self._handle_task_exception)
         
         elif event_type == "user_question":
             question = details.get("question", "")
             logger.info(f"用户提问，触发学习: {question[:50]}")
-            asyncio.create_task(self.trigger_learning(
+            task = asyncio.create_task(self.trigger_learning(
                 LearningTrigger.USER_QUESTION,
                 question,
                 details
             ))
+            task.add_done_callback(self._handle_task_exception)
         
         elif event_type == "aphi_decline":
             decline_rate = details.get("decline_rate", 0)
             if decline_rate > self._aphi_decline_threshold:
                 logger.info(f"APHI连续下降({decline_rate:.2%})，触发学习")
-                asyncio.create_task(self.trigger_learning(
+                task = asyncio.create_task(self.trigger_learning(
                     LearningTrigger.APHI_DECLINE,
                     "系统性能优化策略",
                     details
                 ))
+                task.add_done_callback(self._handle_task_exception)
+    
+    def _handle_task_exception(self, task: asyncio.Task):
+        """处理异步任务异常"""
+        try:
+            if task.exception():
+                logger.error(f"学习任务失败: {task.exception()}")
+        except asyncio.CancelledError:
+            pass
     
     async def trigger_learning(self, trigger: LearningTrigger, query: str, 
                                context: Dict = None) -> LearningActivity:
@@ -207,13 +228,23 @@ class ActiveLearner:
     
     async def _search_and_learn(self, query: str, context: Dict = None) -> str:
         """搜索并学习"""
+        if len(query) > MAX_QUERY_LENGTH:
+            query = query[:MAX_QUERY_LENGTH]
+            logger.warning(f"查询过长，已截断至{MAX_QUERY_LENGTH}字符")
+        
+        if not re.match(r'^[\w\s\u4e00-\u9fa5\-\.]+$', query):
+            raise ValueError("查询包含非法字符")
+        
         from tools.web_search import QuickSearchTool
         
         search_tool = QuickSearchTool()
-        result = await asyncio.to_thread(
-            search_tool.execute,
-            query=query
-        )
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(search_tool.execute, query=query),
+                timeout=SEARCH_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            raise Exception(f"搜索超时（{SEARCH_TIMEOUT}秒）")
         
         if not result.success:
             raise Exception(f"搜索失败: {result.error}")
@@ -321,12 +352,13 @@ class ActiveLearner:
         """获取知识"""
         with sqlite3.connect(self._knowledge_db) as conn:
             if topic:
+                safe_topic = topic.replace('%', r'\%').replace('_', r'\_')
                 cur = conn.execute('''
                     SELECT * FROM knowledge_base
-                    WHERE topic LIKE ? AND is_active=1
+                    WHERE topic LIKE ? ESCAPE '\\' AND is_active=1
                     ORDER BY usefulness_score DESC, created_at DESC
                     LIMIT ?
-                ''', (f"%{topic}%", limit))
+                ''', (f"%{safe_topic}%", limit))
             else:
                 cur = conn.execute('''
                     SELECT * FROM knowledge_base
