@@ -38,11 +38,11 @@ echo.
 start "联盟拓荒者后端" cmd /k "python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
 
 echo 等待后端启动（5秒）...
-timeout /t 5 /nobreak >nul
+ping 127.0.0.1 -n 6 >nul
 
 REM 步骤4: 健康检查
 echo [4/5] 健康检查...
-python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3).read()" >nul 2>&1
+curl -s http://localhost:8000/health >nul 2>&1
 if errorlevel 1 (
     echo [警告] 后端可能未完全启动，请稍后手动访问 http://localhost:8000
 ) else (
