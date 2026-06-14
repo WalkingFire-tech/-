@@ -700,8 +700,13 @@ async function analyzeSelectedFiles() {
     
     closeFileBrowser();
     
-    const fileList = selectedFiles.map(f => `• ${f}`).join('\n');
-    addMessage('user', `分析以下文件内容:\n${fileList}`);
+    // 只显示文件名，不显示完整内容
+    const fileList = selectedFiles.map(f => {
+        const parts = f.replace(/\\/g, '/').split('/');
+        return `• ${parts[parts.length - 1]}`;
+    }).join('\n');
+    
+    addMessage('user', `分析以下文件:\n${fileList}`);
     
     const sendBtn = document.getElementById('send-btn');
     if (sendBtn) sendBtn.disabled = true;
@@ -727,7 +732,7 @@ async function analyzeSelectedFiles() {
                     filesWithContent.push({
                         name: fileName,
                         path: filePath,
-                        content: data.content.substring(0, 5000), // 限制每个文件5000字符
+                        content: data.content.substring(0, 3000), // 限制每个文件3000字符
                         size: data.size
                     });
                 }
@@ -746,19 +751,21 @@ async function analyzeSelectedFiles() {
         
         filesWithContent.forEach((file, index) => {
             analysisPrompt += `=== 文件 ${index + 1}: ${file.name} ===\n`;
-            analysisPrompt += `路径: ${file.path}\n`;
             analysisPrompt += `大小: ${(file.size / 1024).toFixed(1)} KB\n\n`;
-            analysisPrompt += `内容:\n${file.content}\n\n`;
+            analysisPrompt += `${file.content}\n\n`;
             analysisPrompt += `---\n\n`;
         });
         
         analysisPrompt += `\n请总结这些文件的主要内容、结构和关键信息。`;
         
-        // 发送给AI分析
+        // 发送给AI分析（不保存到对话历史）
         const response = await fetch(`${API_BASE}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: analysisPrompt })
+            body: JSON.stringify({ 
+                message: analysisPrompt,
+                skip_history: true  // 标记不保存到历史
+            })
         });
         
         const data = await response.json();
