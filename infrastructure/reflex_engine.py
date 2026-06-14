@@ -15,6 +15,8 @@ import sqlite3
 class ReflexRule:
     """反射规则"""
     
+    SENSITIVE_FIELDS = {'password', 'token', 'key', 'secret', 'credential', 'api_key'}
+    
     def __init__(
         self,
         name: str,
@@ -36,6 +38,7 @@ class ReflexRule:
         self.description = description
         self.trigger_count = 0
         self.last_trigger_time = None
+        self._lock = threading.Lock()
     
     def check(self, context: Dict) -> bool:
         """检查条件是否触发"""
@@ -73,15 +76,14 @@ class ReflexRule:
     
     def execute(self, context: Dict) -> Optional[str]:
         """执行动作"""
-        self.trigger_count += 1
-        self.last_trigger_time = datetime.now().isoformat()
+        with self._lock:
+            self.trigger_count += 1
+            self.last_trigger_time = datetime.now().isoformat()
         
         logger.warning(f"【反射触发】{self.name} (优先级: {self.priority})")
         
-        # 记录到日志
         self._log_trigger(context)
         
-        # 执行动作
         if self.action == "block":
             return "⚠️ 危险操作已被拦截"
         
@@ -109,6 +111,15 @@ class ReflexRule:
     def _log_trigger(self, context: Dict):
         """记录触发日志"""
         try:
+            safe_context = {}
+            for key, value in context.items():
+                if key.lower() in self.SENSITIVE_FIELDS:
+                    safe_context[key] = "***REDACTED***"
+                elif key == "user_input":
+                    safe_context[key] = str(value)[:50] + "..." if len(str(value)) > 50 else str(value)
+                else:
+                    safe_context[key] = value
+            
             with sqlite3.connect("reflex_logs.db") as conn:
                 conn.execute('''
                     CREATE TABLE IF NOT EXISTS reflex_triggers (
@@ -128,7 +139,7 @@ class ReflexRule:
                     self.name,
                     self.priority,
                     self.action,
-                    str(context)[:200],
+                    str(safe_context)[:200],
                     datetime.now().isoformat()
                 ))
         except Exception as e:
@@ -190,6 +201,7 @@ class ReflexEngine:
         self.rules: List[ReflexRule] = []
         self.monitoring = False
         self.monitor_thread = None
+        self._lock = threading.RLock()
         
         self._load_rules()
         logger.info(f"反射引擎已初始化 ({len(self.rules)}条规则)")
@@ -245,53 +257,64 @@ class ReflexEngine:
         value: any
     ) -> bool:
         """设置规则参数（用户可调用）"""
-        rule = self.get_rule(name)
-        if not rule:
-            return False
-        
-        if param == "threshold":
-            rule.threshold = value
-        elif param == "enabled":
-            rule.enabled = value
-        elif param == "priority":
-            rule.priority = value
-        elif param == "action":
-            rule.action = value
-        else:
-            return False
-        
-        logger.info(f"反射规则参数更新: {name}.{param} = {value}")
-        self._save_config()
-        return True
+        with self._lock:
+            rule = self.get_rule(name)
+            if not rule:
+                return False
+            
+            if param == "threshold":
+                if not isinstance(value, (int, float)):
+                    return False
+                rule.threshold = float(value)
+            elif param == "enabled":
+                if not isinstance(value, bool):
+                    return False
+                rule.enabled = value
+            elif param == "priority":
+                if not isinstance(value, int) or not (0 <= value <= 100):
+                    return False
+                rule.priority = value
+            elif param == "action":
+                valid_actions = {"block", "reject", "throttle", "shutdown", "apologize", "alert", "safe_mode"}
+                if value not in valid_actions:
+                    return False
+                rule.action = value
+            else:
+                return False
+            
+            logger.info(f"反射规则参数更新: {name}.{param} = {value}")
+            self._save_config()
+            return True
     
     def _save_config(self):
         """保存配置"""
-        try:
-            self.config_path.parent.mkdir(exist_ok=True)
-            
-            config = {
-                "reflexes": [
-                    {
-                        "name": r.name,
-                        "condition": r.condition,
-                        "action": r.action,
-                        "priority": r.priority,
-                        "enabled": r.enabled,
-                        "threshold": r.threshold,
-                        "fallback": r.fallback,
-                        "description": r.description
-                    }
-                    for r in self.rules
-                ]
-            }
-            
-            with open(self.config_path, 'w', encoding='utf-8') as f:
-                yaml.dump(config, f, allow_unicode=True, indent=2)
-            
-            logger.info(f"反射规则配置已保存到 {self.config_path}")
-            
-        except Exception as e:
-            logger.error(f"配置保存失败: {e}")
+        with self._lock:
+            try:
+                self.config_path.parent.mkdir(exist_ok=True)
+                
+                config = {
+                    "reflexes": [
+                        {
+                            "name": r.name,
+                            "condition": r.condition,
+                            "action": r.action,
+                            "priority": r.priority,
+                            "enabled": r.enabled,
+                            "threshold": r.threshold,
+                            "fallback": r.fallback,
+                            "description": r.description
+                        }
+                        for r in self.rules
+                    ]
+                }
+                
+                with open(self.config_path, 'w', encoding='utf-8') as f:
+                    yaml.dump(config, f, allow_unicode=True, indent=2)
+                
+                logger.info(f"反射规则配置已保存到 {self.config_path}")
+                
+            except Exception as e:
+                logger.error(f"配置保存失败: {e}")
     
     def get_statistics(self) -> Dict:
         """获取统计信息"""
