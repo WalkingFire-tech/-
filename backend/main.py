@@ -271,6 +271,9 @@ async def chat(request: dict):
                 if campfire and response:
                     campfire.log_assistant(str(response)[:1000])
                 
+                # 自动学习：如果用户点赞，保存到知识库
+                # （这个会在feedback接口中处理）
+                
                 return {"response": response, "intent": intent.type}
             except asyncio.TimeoutError:
                 logger.error("请求超时")
@@ -357,26 +360,57 @@ async def get_stats():
 
 @app.post("/api/feedback")
 async def send_feedback(request: dict):
-    """接收用户反馈"""
+    """接收用户反馈并自动学习"""
     score = request.get("score", 0)
     
     try:
         import sqlite3
         
         with sqlite3.connect('data/experience_pool.db') as conn:
+            conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
+            # 获取最近一条经验
             cursor.execute("""
-                UPDATE experiences
-                SET user_feedback = ?
-                WHERE id = (
-                    SELECT id FROM experiences
-                    ORDER BY timestamp DESC
-                    LIMIT 1
-                )
-            """, (score,))
+                SELECT id, raw_input, response, intent_type, quality_score
+                FROM experiences
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """)
+            last_exp = cursor.fetchone()
             
-            conn.commit()
+            if last_exp:
+                # 更新反馈
+                cursor.execute("""
+                    UPDATE experiences
+                    SET user_feedback = ?
+                    WHERE id = ?
+                """, (score, last_exp['id']))
+                
+                conn.commit()
+                
+                # 如果用户点赞（正面反馈），自动学习保存到知识库
+                if score > 0 and last_exp['response']:
+                    try:
+                        from infrastructure.knowledge_injector import KnowledgeInjector
+                        
+                        knowledge_injector = KnowledgeInjector()
+                        
+                        # 保存为知识点
+                        knowledge_injector.inject_knowledge(
+                            question=last_exp['raw_input'],
+                            answer=last_exp['response'][:1000],  # 限制长度
+                            source="user_feedback_positive",
+                            intent_type=last_exp['intent_type'],
+                            metadata={
+                                'quality_score': last_exp['quality_score'],
+                                'type': 'conversation_learning'
+                            }
+                        )
+                        
+                        logger.info(f"从用户反馈学习: {last_exp['raw_input'][:50]}...")
+                    except Exception as e:
+                        logger.warning(f"自动学习失败: {e}")
         
         if score < 0:
             from infrastructure.event_bus import bus
@@ -608,9 +642,9 @@ async def learn_from_files(request: dict):
     
     try:
         from pathlib import Path
-        from infrastructure.knowledge_index import KnowledgeIndex
+        from infrastructure.knowledge_injector import KnowledgeInjector
         
-        knowledge_index = KnowledgeIndex()
+        knowledge_injector = KnowledgeInjector()
         results = []
         total_knowledge = 0
         
@@ -640,17 +674,20 @@ async def learn_from_files(request: dict):
                 # 保存到知识库
                 for item in knowledge_items:
                     try:
-                        knowledge_index.add_knowledge(
+                        knowledge_injector.inject_knowledge(
                             question=item['question'],
                             answer=item['answer'],
+                            source=f"file:{file.name}",
+                            intent_type="knowledge",
                             metadata={
-                                'source': str(file),
-                                'type': 'file_learning',
-                                'file_name': file.name
+                                'file_path': str(file),
+                                'file_name': file.name,
+                                'type': 'file_learning'
                             }
                         )
                         total_knowledge += 1
-                    except:
+                    except Exception as e:
+                        logger.warning(f"保存知识点失败: {e}")
                         continue
                 
                 results.append({
@@ -673,7 +710,10 @@ async def learn_from_files(request: dict):
 📚 知识点来源:
 {chr(10).join(f"• {r['file']}: {r['knowledge_count']}条" for r in results[:10])}
 
-💡 这些知识点已保存到知识库，以后可以通过对话查询使用。"""
+💡 这些知识点已保存到知识库，以后可以通过对话查询使用。
+例如：询问"函数xxx的作用是什么？"或"xxx的配置说明" """
+        
+        logger.info(f"文件学习完成: {total_knowledge}条知识点")
         
         return {"success": True, "summary": summary, "total_knowledge": total_knowledge}
     except Exception as e:
