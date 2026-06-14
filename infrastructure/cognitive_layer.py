@@ -7,7 +7,7 @@
 - 生成分析报告
 - 支持动态降级
 """
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from loguru import logger
 from infrastructure.problem_analyzer import problem_analyzer
 from infrastructure.causal_reasoner import causal_reasoner
@@ -207,6 +207,52 @@ class CognitiveLayer:
         conf = uncertainty.get("overall_confidence", 0)
         
         return f"问题'{core}'已分解为{n_tasks}个子任务，整体置信度{conf:.0%}"
+    
+    def plan_from_analysis(self, analysis: Dict) -> List[Dict]:
+        """
+        将认知分析结果转换为可执行的子任务列表
+        
+        Args:
+            analysis: 认知分析结果
+        
+        Returns:
+            可执行的子任务列表
+        """
+        subtasks = []
+        
+        if "plan" in analysis and isinstance(analysis["plan"], list):
+            for step in analysis["plan"]:
+                subtask = {
+                    "type": step.get("type", "auto"),
+                    "description": step.get("description", ""),
+                    "dependencies": step.get("dependencies", [])
+                }
+                subtasks.append(subtask)
+        else:
+            if "core_need" in analysis:
+                subtasks.append({
+                    "type": "analysis",
+                    "description": f"分析核心需求：{analysis['core_need']}",
+                    "dependencies": []
+                })
+            
+            if "info_gaps" in analysis and analysis["info_gaps"]:
+                for gap in analysis["info_gaps"][:2]:
+                    subtasks.append({
+                        "type": "ask_user",
+                        "description": gap,
+                        "dependencies": []
+                    })
+            
+            if "suggested_actions" in analysis:
+                for action in analysis["suggested_actions"][:3]:
+                    subtasks.append({
+                        "type": "action",
+                        "description": action,
+                        "dependencies": [len(subtasks)-1] if subtasks else []
+                    })
+        
+        return subtasks
 
 
 # 全局实例

@@ -2047,6 +2047,27 @@ _共显示最近10轮对话_"""
             except Exception as al_error:
                 logger.debug(f"主动学习器触发失败: {al_error}")
             
+            # 【新增】工具自生成闭环
+            if TOOL_GENERATOR_AVAILABLE:
+                try:
+                    import time
+                    key = intent.type
+                    failures = self.failure_history.get(key, [])
+                    recent_failures = [t for t in failures if time.time() - t < 300]
+                    
+                    if len(recent_failures) >= 3:
+                        new_tool = self.tool_generator.generate_and_register_tool({
+                            "task_type": intent.type,
+                            "user_input": intent.raw_text,
+                            "failure_reason": error,
+                            "model": "unknown"
+                        }, auto_register=True)
+                        
+                        if new_tool:
+                            logger.info(f"【工具生成】自动生成新工具: {new_tool.name}")
+                except Exception as tool_error:
+                    logger.debug(f"自动工具生成失败: {tool_error}")
+            
         except Exception as e:
             logger.debug(f"失败学习触发失败: {e}")
     
