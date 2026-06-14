@@ -20,6 +20,7 @@ class ActiveScheduler:
         self.thread = None
         self.task_count = 0
         self.pending_notifications = []
+        self.last_sunday = None
         
         logger.info(f"主动调度器已初始化，间隔 {interval_seconds} 秒")
     
@@ -75,6 +76,11 @@ class ActiveScheduler:
             self._generate_memory_review()
         except Exception as e:
             logger.error(f"记忆回顾失败: {e}")
+        
+        try:
+            self._weekly_memory_review()
+        except Exception as e:
+            logger.error(f"周回顾失败: {e}")
     
     def _decay_quality_scores(self):
         """知识质量衰减（长期未访问的知识质量下降）"""
@@ -143,6 +149,33 @@ class ActiveScheduler:
         }
         
         self.pending_notifications.append(notification)
+    
+    def _weekly_memory_review(self):
+        """周回顾 - 每周日执行"""
+        today = datetime.now()
+        
+        if today.weekday() == 6:  # 周日
+            if self.last_sunday is None or (today - self.last_sunday).days >= 7:
+                try:
+                    from core.memory_review import memory_review
+                    
+                    summary = memory_review.weekly_summary()
+                    
+                    if summary['forgotten_count'] > 0 or summary['fading_count'] > 0:
+                        notification = {
+                            "type": "weekly_review",
+                            "message": summary['message'],
+                            "forgotten_count": summary['forgotten_count'],
+                            "fading_count": summary['fading_count'],
+                            "timestamp": today.isoformat()
+                        }
+                        
+                        self.pending_notifications.append(notification)
+                        logger.info(f"周回顾: {summary['message']}")
+                    
+                    self.last_sunday = today
+                except Exception as e:
+                    logger.error(f"周回顾执行失败: {e}")
     
     def start(self):
         """启动调度器"""

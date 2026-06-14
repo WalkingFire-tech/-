@@ -201,7 +201,8 @@ class FileMonitor:
         
         if self.learning_callback:
             try:
-                self.learning_callback(file_path, event_type)
+                # 传递环境触发器（文件路径）
+                self.learning_callback(file_path, event_type, environmental_triggers=file_path)
             except Exception as e:
                 logger.error(f"学习回调失败: {e}")
     
