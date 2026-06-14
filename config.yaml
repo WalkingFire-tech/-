@@ -1,0 +1,66 @@
+# 联盟拓荒者配置文件
+
+# 模型配置
+models:
+  default: "mindchat"
+  fallback: "mock"
+  
+# 学习子系统配置
+learning:
+  enabled: true
+  mode: "smart"  # auto/smart/manual
+  root_directories:
+    - "E:/LMTHZlearn"
+  auto_learn_extensions:
+    - ".py"
+    - ".md"
+    - ".txt"
+    - ".json"
+    - ".yaml"
+    - ".yml"
+    - ".csv"
+    - ".js"
+    - ".ts"
+    - ".html"
+    - ".css"
+  exclude_patterns:
+    - "*.tmp"
+    - "*.log"
+    - "__pycache__/*"
+    - ".git/*"
+    - "node_modules/*"
+    - "venv/*"
+    - "env/*"
+    - ".venv/*"
+    - "dist/*"
+    - "build/*"
+  monitor_interval_seconds: 300
+  priority_paths:
+    - "core/"
+    - "backend/"
+    - "main.py"
+    - "app.py"
+    - "api.py"
+  debounce_seconds: 2.0
+
+# 外部学习配置
+external_learning:
+  enabled: true
+  search_api_key: ""
+  search_engine_id: ""
+  llm_api_key: ""
+  llm_model: "gpt-4"
+  llm_base_url: "https://api.openai.com/v1"
+
+# 自动好奇心配置
+auto_curiosity:
+  enabled: true
+  scan_interval: 3600
+  quality_threshold: 50.0
+  min_access_count: 3
+
+# 日志配置
+logging:
+  level: "INFO"
+  file: "logs/alliance.log"
+  rotation: "10 MB"
