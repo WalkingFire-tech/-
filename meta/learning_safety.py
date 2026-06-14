@@ -3,6 +3,7 @@
 实现学习规则的置信度衰减、历史记录和回滚机制
 """
 import json
+import threading
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
@@ -47,10 +48,13 @@ class LearningRule:
 class LearningHistory:
     """学习历史管理"""
     
+    BASE_DATA_DIR = Path("data")
+    
     def __init__(self, history_file: str = "data/learning_history.json"):
-        self.history_file = Path(history_file)
+        self.history_file = self.BASE_DATA_DIR / Path(history_file).name
         self.history_file.parent.mkdir(parents=True, exist_ok=True)
         self.max_history = 100
+        self._lock = threading.Lock()
         
     def _load_history(self) -> List[Dict]:
         """加载历史记录"""
@@ -66,11 +70,12 @@ class LearningHistory:
     
     def _save_history(self, history: List[Dict]):
         """保存历史记录"""
-        try:
-            with open(self.history_file, 'w', encoding='utf-8') as f:
-                json.dump(history, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.error(f"保存学习历史失败: {e}")
+        with self._lock:
+            try:
+                with open(self.history_file, 'w', encoding='utf-8') as f:
+                    json.dump(history, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.error(f"保存学习历史失败: {e}")
     
     def record_change(self, change_type: str, change_data: Dict) -> str:
         """记录学习修改"""
@@ -113,12 +118,15 @@ class LearningHistory:
 class LearningSafetyManager:
     """学习安全管理器"""
     
+    BASE_DATA_DIR = Path("data")
+    
     def __init__(self, rules_file: str = "data/learning_rules.json"):
-        self.rules_file = Path(rules_file)
+        self.rules_file = self.BASE_DATA_DIR / Path(rules_file).name
         self.rules_file.parent.mkdir(parents=True, exist_ok=True)
         
         self.history = LearningHistory()
         self.rules: Dict[str, LearningRule] = {}
+        self._lock = threading.Lock()
         
         self._load_rules()
         
@@ -144,38 +152,41 @@ class LearningSafetyManager:
     
     def _save_rules(self):
         """保存学习规则"""
-        try:
-            data = {
-                rule_id: rule.to_dict()
-                for rule_id, rule in self.rules.items()
-            }
+        with self._lock:
+            try:
+                data = {
+                    rule_id: rule.to_dict()
+                    for rule_id, rule in self.rules.items()
+                }
+                
+                with open(self.rules_file, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
             
-            with open(self.rules_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        
-        except Exception as e:
-            logger.error(f"保存学习规则失败: {e}")
+            except Exception as e:
+                logger.error(f"保存学习规则失败: {e}")
     
     def create_rule(self, pattern: str, intent_type: str, 
                    confidence: float = 0.7, source: str = "auto") -> LearningRule:
         """创建新学习规则"""
-        rule_id = f"rule_{datetime.now().strftime('%Y%m%d%H%M%S')}_{len(self.rules)}"
+        with self._lock:
+            rule_id = f"rule_{datetime.now().strftime('%Y%m%d%H%M%S')}_{len(self.rules)}"
+            
+            now = datetime.now().isoformat()
+            
+            rule = LearningRule(
+                rule_id=rule_id,
+                pattern=pattern,
+                intent_type=intent_type,
+                confidence=confidence,
+                created_at=now,
+                last_used_at=now,
+                use_count=0,
+                is_fixed=False,
+                source=source
+            )
+            
+            self.rules[rule_id] = rule
         
-        now = datetime.now().isoformat()
-        
-        rule = LearningRule(
-            rule_id=rule_id,
-            pattern=pattern,
-            intent_type=intent_type,
-            confidence=confidence,
-            created_at=now,
-            last_used_at=now,
-            use_count=0,
-            is_fixed=False,
-            source=source
-        )
-        
-        self.rules[rule_id] = rule
         self._save_rules()
         
         self.history.record_change("rule_created", {
@@ -191,16 +202,17 @@ class LearningSafetyManager:
     
     def update_rule(self, rule_id: str, **kwargs) -> Optional[LearningRule]:
         """更新学习规则"""
-        if rule_id not in self.rules:
-            logger.error(f"规则不存在: {rule_id}")
-            return None
-        
-        rule = self.rules[rule_id]
-        old_data = rule.to_dict()
-        
-        for key, value in kwargs.items():
-            if hasattr(rule, key):
-                setattr(rule, key, value)
+        with self._lock:
+            if rule_id not in self.rules:
+                logger.error(f"规则不存在: {rule_id}")
+                return None
+            
+            rule = self.rules[rule_id]
+            old_data = rule.to_dict()
+            
+            for key, value in kwargs.items():
+                if hasattr(rule, key):
+                    setattr(rule, key, value)
         
         self._save_rules()
         
@@ -216,18 +228,21 @@ class LearningSafetyManager:
     
     def delete_rule(self, rule_id: str) -> bool:
         """删除学习规则"""
-        if rule_id not in self.rules:
-            logger.error(f"规则不存在: {rule_id}")
-            return False
-        
-        rule = self.rules[rule_id]
+        with self._lock:
+            if rule_id not in self.rules:
+                logger.error(f"规则不存在: {rule_id}")
+                return False
+            
+            rule = self.rules[rule_id]
         
         self.history.record_change("rule_deleted", {
             "rule_id": rule_id,
             "rule_data": rule.to_dict()
         })
         
-        del self.rules[rule_id]
+        with self._lock:
+            del self.rules[rule_id]
+        
         self._save_rules()
         
         logger.info(f"删除学习规则: {rule_id}")
@@ -358,10 +373,13 @@ class LearningSafetyManager:
         """处理规则使用事件"""
         rule_id = event_data.get("rule_id")
         
-        if rule_id and rule_id in self.rules:
-            rule = self.rules[rule_id]
-            rule.use_count += 1
-            rule.last_used_at = datetime.now().isoformat()
+        if rule_id:
+            with self._lock:
+                if rule_id in self.rules:
+                    rule = self.rules[rule_id]
+                    rule.use_count += 1
+                    rule.last_used_at = datetime.now().isoformat()
+            
             self._save_rules()
     
     def get_stats(self) -> Dict:
