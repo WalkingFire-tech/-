@@ -699,24 +699,89 @@ async function analyzeSelectedFiles() {
     }
     
     closeFileBrowser();
-    addMessage('user', `分析以下文件:\n${selectedFiles.map(f => `• ${f}`).join('\n')}`);
+    
+    const fileList = selectedFiles.map(f => `• ${f}`).join('\n');
+    addMessage('user', `分析以下文件内容:\n${fileList}`);
+    
+    const sendBtn = document.getElementById('send-btn');
+    if (sendBtn) sendBtn.disabled = true;
     
     try {
-        const response = await fetch(`${API_BASE}/api/files/analyze`, {
+        // 读取文件内容
+        const filesWithContent = [];
+        
+        for (const filePath of selectedFiles) {
+            try {
+                const response = await fetch(`${API_BASE}/api/file/preview`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: filePath })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    const pathParts = filePath.replace(/\\/g, '/').split('/');
+                    const fileName = pathParts[pathParts.length - 1];
+                    
+                    filesWithContent.push({
+                        name: fileName,
+                        path: filePath,
+                        content: data.content.substring(0, 5000), // 限制每个文件5000字符
+                        size: data.size
+                    });
+                }
+            } catch (e) {
+                console.error(`读取文件失败 ${filePath}:`, e);
+            }
+        }
+        
+        if (filesWithContent.length === 0) {
+            addMessage('assistant', '❌ 无法读取任何文件内容');
+            return;
+        }
+        
+        // 构建分析提示
+        let analysisPrompt = `请分析以下${filesWithContent.length}个文件的内容:\n\n`;
+        
+        filesWithContent.forEach((file, index) => {
+            analysisPrompt += `=== 文件 ${index + 1}: ${file.name} ===\n`;
+            analysisPrompt += `路径: ${file.path}\n`;
+            analysisPrompt += `大小: ${(file.size / 1024).toFixed(1)} KB\n\n`;
+            analysisPrompt += `内容:\n${file.content}\n\n`;
+            analysisPrompt += `---\n\n`;
+        });
+        
+        analysisPrompt += `\n请总结这些文件的主要内容、结构和关键信息。`;
+        
+        // 发送给AI分析
+        const response = await fetch(`${API_BASE}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ files: selectedFiles })
+            body: JSON.stringify({ message: analysisPrompt })
         });
         
         const data = await response.json();
         
-        if (data.success) {
-            addMessage('assistant', `✅ 分析完成:\n\n${data.summary}`);
-        } else {
+        if (data.error) {
             addMessage('assistant', `❌ 分析失败: ${data.error}`);
+        } else {
+            const responseHtml = formatResponseEnhanced(data.response);
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant';
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.innerHTML = responseHtml;
+            messageDiv.appendChild(contentDiv);
+            document.getElementById('messages').appendChild(messageDiv);
+            addCopyButtons(contentDiv);
+            document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
         }
+        
     } catch (error) {
         addMessage('assistant', `❌ 分析失败: ${error.message}`);
+    } finally {
+        if (sendBtn) sendBtn.disabled = false;
     }
     
     selectedFiles = [];
