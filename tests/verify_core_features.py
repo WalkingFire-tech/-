@@ -158,7 +158,7 @@ for i, opp in enumerate(learning_opportunities, 1):
 print("\n\n[验证3] 即时规则生成测试")
 print("-" * 70)
 
-conn = sqlite3.connect('learning_rules.db')
+conn = sqlite3.connect('data/learning_rules.db')
 cursor = conn.cursor()
 
 # 检查修正生成的规则
@@ -254,7 +254,7 @@ print("\n\n[验证6] 数据库状态检查")
 print("-" * 70)
 
 # 经验池
-conn_exp = sqlite3.connect('experience_pool.db')
+conn_exp = sqlite3.connect('data/experience_pool.db')
 cursor = conn_exp.cursor()
 cursor.execute("SELECT COUNT(*), AVG(quality_score) FROM experiences")
 exp_count, exp_quality = cursor.fetchone()
@@ -263,7 +263,7 @@ avg_quality = exp_quality if exp_quality else 0
 print(f"经验池: {exp_count}条经验, 平均质量: {avg_quality:.2f}")
 
 # 规则库
-conn_rules = sqlite3.connect('learning_rules.db')
+conn_rules = sqlite3.connect('data/learning_rules.db')
 cursor = conn_rules.cursor()
 cursor.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
 active_rules = cursor.fetchone()[0]

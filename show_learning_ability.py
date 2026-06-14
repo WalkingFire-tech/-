@@ -11,7 +11,7 @@ print("=" * 70)
 # 1. 学习规则统计
 print("\n【1. 学习规则来源统计】")
 try:
-    conn = sqlite3.connect('learning_rules.db')
+    conn = sqlite3.connect('data/learning_rules.db')
     
     # 总规则数
     cur = conn.execute('SELECT COUNT(*) FROM learning_rules')
@@ -43,7 +43,7 @@ except Exception as e:
 # 2. 经验池统计
 print("\n【2. 经验池学习统计】")
 try:
-    conn = sqlite3.connect('experience_pool.db')
+    conn = sqlite3.connect('data/experience_pool.db')
     
     # 总经验数
     cur = conn.execute('SELECT COUNT(*) FROM experiences')
@@ -97,7 +97,7 @@ except Exception as e:
 # 4. 反事实模拟统计
 print("\n【4. 反事实模拟学习统计】")
 try:
-    conn = sqlite3.connect('counterfactual_history.db')
+    conn = sqlite3.connect('data/counterfactual_history.db')
     
     # 模拟次数
     cur = conn.execute('SELECT COUNT(*) FROM counterfactual_records')
@@ -118,7 +118,7 @@ except Exception as e:
 # 5. 用户反馈学习
 print("\n【5. 用户反馈学习统计】")
 try:
-    conn = sqlite3.connect('experience_pool.db')
+    conn = sqlite3.connect('data/experience_pool.db')
     
     # 正面反馈
     cur = conn.execute('SELECT COUNT(*) FROM experiences WHERE user_feedback > 0')

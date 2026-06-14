@@ -29,13 +29,13 @@ print(f"  ✓ 优化{'成功' if result['success'] else '失败'}")
 print("\n[验证3] 数据库状态")
 import sqlite3
 
-conn = sqlite3.connect('learning_rules.db')
+conn = sqlite3.connect('data/learning_rules.db')
 cur = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
 active = cur.fetchone()[0]
 conn.close()
 print(f"  活跃规则: {active}条")
 
-conn = sqlite3.connect('experience_pool.db')
+conn = sqlite3.connect('data/experience_pool.db')
 cur = conn.execute("SELECT COUNT(*) FROM experiences")
 exp = cur.fetchone()[0]
 conn.close()

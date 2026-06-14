@@ -124,7 +124,7 @@ class MigrationProtocol:
         # 2. 压缩经验池（采样）
         try:
             import sqlite3
-            conn = sqlite3.connect('experience_pool.db')
+            conn = sqlite3.connect('data/experience_pool.db')
             cursor = conn.execute('''
                 SELECT intent_type, raw_input, model_name, quality_score, success
                 FROM experiences
@@ -151,7 +151,7 @@ class MigrationProtocol:
         # 3. 压缩学习规则
         try:
             import sqlite3
-            conn = sqlite3.connect('learning_rules.db')
+            conn = sqlite3.connect('data/learning_rules.db')
             cursor = conn.execute('''
                 SELECT condition, action, confidence, status
                 FROM learning_rules
@@ -368,7 +368,7 @@ class MigrationProtocol:
             # 2. 恢复经验池
             if 'experiences' in state.get('components', {}):
                 import sqlite3
-                conn = sqlite3.connect('experience_pool.db')
+                conn = sqlite3.connect('data/experience_pool.db')
                 
                 for exp in state['components']['experiences']:
                     conn.execute('''
@@ -392,7 +392,7 @@ class MigrationProtocol:
             # 3. 恢复学习规则
             if 'rules' in state.get('components', {}):
                 import sqlite3
-                conn = sqlite3.connect('learning_rules.db')
+                conn = sqlite3.connect('data/learning_rules.db')
                 
                 for rule in state['components']['rules']:
                     conn.execute('''

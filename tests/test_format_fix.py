@@ -10,7 +10,7 @@ print("=" * 60)
 # 测试1: 检查experience_pool.db中的数据
 print("\n[测试1] 检查experience_pool.db数据")
 try:
-    conn = sqlite3.connect('experience_pool.db')
+    conn = sqlite3.connect('data/experience_pool.db')
     cur = conn.execute('''
         SELECT intent_type, raw_input, quality_score, success, model_name
         FROM experiences
@@ -41,7 +41,7 @@ except Exception as e:
 # 测试2: 检查learning_rules.db中的数据
 print("\n[测试2] 检查learning_rules.db数据")
 try:
-    conn = sqlite3.connect('learning_rules.db')
+    conn = sqlite3.connect('data/learning_rules.db')
     cur = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
     active_rules = cur.fetchone()[0]
     conn.close()

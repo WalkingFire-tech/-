@@ -4,7 +4,7 @@ from datetime import datetime
 
 print("添加元认知种子规则...")
 
-conn = sqlite3.connect('learning_rules.db')
+conn = sqlite3.connect('data/learning_rules.db')
 cursor = conn.cursor()
 
 # 检查是否已存在
@@ -34,7 +34,7 @@ else:
 conn.close()
 
 # 验证
-conn = sqlite3.connect('learning_rules.db')
+conn = sqlite3.connect('data/learning_rules.db')
 cursor = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
 active_count = cursor.fetchone()[0]
 conn.close()

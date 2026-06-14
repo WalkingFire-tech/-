@@ -259,7 +259,7 @@ class DialogueStreamLearner:
     def _handle_implicit_negation(self, negation: Dict):
         """处理隐式否定 - 标记低质量交互"""
         try:
-            conn = sqlite3.connect('experience_pool.db')
+            conn = sqlite3.connect('data/experience_pool.db')
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -292,7 +292,7 @@ class DialogueStreamLearner:
         try:
             correct_content = correction['correct_content']
             
-            conn = sqlite3.connect('learning_rules.db')
+            conn = sqlite3.connect('data/learning_rules.db')
             cursor = conn.cursor()
             
             cursor.execute("""

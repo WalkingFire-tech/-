@@ -108,14 +108,14 @@ print("\n[步骤4] 检查数据库状态...")
 import sqlite3
 
 # 经验池
-conn = sqlite3.connect('experience_pool.db')
+conn = sqlite3.connect('data/experience_pool.db')
 cur = conn.execute("SELECT COUNT(*) FROM experiences")
 exp_count = cur.fetchone()[0]
 conn.close()
 print(f"  经验池: {exp_count}条")
 
 # 规则库
-conn = sqlite3.connect('learning_rules.db')
+conn = sqlite3.connect('data/learning_rules.db')
 cur = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
 active_rules = cur.fetchone()[0]
 conn.close()

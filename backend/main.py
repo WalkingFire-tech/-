@@ -287,13 +287,13 @@ async def get_stats():
         import sqlite3
         
         # 经验池统计
-        conn_exp = sqlite3.connect('experience_pool.db')
+        conn_exp = sqlite3.connect('data/experience_pool.db')
         cur = conn_exp.execute("SELECT COUNT(*) FROM experiences")
         exp_count = cur.fetchone()[0]
         conn_exp.close()
         
         # 学习规则统计
-        conn_rules = sqlite3.connect('learning_rules.db')
+        conn_rules = sqlite3.connect('data/learning_rules.db')
         cur = conn_rules.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
         active_rules = cur.fetchone()[0]
         cur = conn_rules.execute("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
@@ -319,7 +319,7 @@ async def send_feedback(request: dict):
         import sqlite3
         
         # 更新最近一条经验的反馈
-        conn = sqlite3.connect('experience_pool.db')
+        conn = sqlite3.connect('data/experience_pool.db')
         cursor = conn.cursor()
         
         cursor.execute("""
