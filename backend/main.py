@@ -220,7 +220,7 @@ async def root():
 @app.get("/api/health")
 async def health():
     """健康检查端点"""
-    async with adapters_lock:
+    with adapters_lock:
         models = list(adapters.keys())
     return {
         "status": "ok",
@@ -231,7 +231,7 @@ async def health():
 @app.get("/api/models")
 async def get_models():
     """获取可用模型列表"""
-    async with adapters_lock:
+    with adapters_lock:
         models_list = [
             {"name": name, "type": type(adapter).__name__}
             for name, adapter in adapters.items()
@@ -795,7 +795,7 @@ async def rank_models_for_task(task_type: str):
     try:
         from infrastructure.model_capability import model_capability
         
-        async with adapters_lock:
+        with adapters_lock:
             models = list(adapters.keys())
         ranked = model_capability.rank_models_for_task(task_type, models)
         
@@ -1009,7 +1009,7 @@ async def add_model(request: dict):
     if not model_name:
         return {"success": False, "error": "模型名称不能为空"}
     
-    async with adapters_lock:
+    with adapters_lock:
         if model_name in adapters:
             return {"success": False, "error": f"模型 {model_name} 已存在"}
         
@@ -1048,7 +1048,7 @@ async def remove_model(model_name: str):
     """移除模型"""
     global adapters
     
-    async with adapters_lock:
+    with adapters_lock:
         if model_name not in adapters:
             return {"success": False, "error": f"模型 {model_name} 不存在"}
         
@@ -1067,7 +1067,7 @@ async def remove_model(model_name: str):
 @app.post("/api/models/{model_name}/test")
 async def test_model(model_name: str):
     """测试模型连接"""
-    async with adapters_lock:
+    with adapters_lock:
         if model_name not in adapters:
             return {"success": False, "error": f"模型 {model_name} 不存在"}
         adapter = adapters[model_name]
@@ -1291,7 +1291,7 @@ async def recurrent_reason(request: dict):
     try:
         from infrastructure.recurrent_reasoner import recurrent_reasoner
         
-        async with adapters_lock:
+        with adapters_lock:
             model = adapters.get(model_name)
         
         if not model:
