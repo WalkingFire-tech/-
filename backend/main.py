@@ -180,9 +180,42 @@ async def lifespan(app: FastAPI):
     
     logger.info("后端服务初始化完成")
     
+    # 启动学习系统
+    try:
+        from core.learning_engine import learning_engine
+        from core.file_monitor import file_monitor
+        from core.folder_learner import folder_learner
+        from core.active_scheduler import active_scheduler
+        
+        def learning_callback(file_path: str, event_type: str):
+            """文件变化时的学习回调"""
+            from core.learning_engine import learning_engine
+            learning_engine.add_task(file_path, event_type=event_type)
+        
+        file_monitor.set_learning_callback(learning_callback)
+        learning_engine.start()
+        active_scheduler.start()
+        
+        logger.info("学习系统已启动（引擎+监听+调度器）")
+    except Exception as e:
+        logger.warning(f"学习系统启动失败: {e}")
+    
     yield
     
     # 关闭时清理
+    try:
+        from core.active_scheduler import active_scheduler
+        from core.file_monitor import file_monitor
+        from core.learning_engine import learning_engine
+        
+        active_scheduler.stop()
+        file_monitor.stop_all()
+        learning_engine.stop()
+        
+        logger.info("学习系统已关闭")
+    except:
+        pass
+    
     logger.info("后端服务关闭")
 
 app = FastAPI(
@@ -217,6 +250,17 @@ async def root():
         return HTMLResponse(content=html_content)
     return {"message": "联盟拓荒者 API", "docs": "/docs"}
 
+@app.get("/learning")
+async def learning_dashboard():
+    """学习仪表盘页面"""
+    dashboard_file = FRONTEND_DIR / "learning_dashboard.html"
+    if dashboard_file.exists():
+        from fastapi.responses import HTMLResponse
+        with open(dashboard_file, 'r', encoding='utf-8') as f:
+            html_content = f.read()
+        return HTMLResponse(content=html_content)
+    return {"error": "Learning dashboard not found"}
+
 @app.get("/api/health")
 async def health():
     """健康检查端点"""
@@ -249,7 +293,6 @@ async def chat(request: dict):
     try:
         intent = intent_parser.parse(user_input)
         
-        # 保存用户消息
         if campfire:
             campfire.log_user(user_input)
         
@@ -267,12 +310,105 @@ async def chat(request: dict):
             try:
                 response = await asyncio.wait_for(response_queue.get(), timeout=60.0)
                 
-                # 保存助手回复
                 if campfire and response:
                     campfire.log_assistant(str(response)[:1000])
                 
-                # 自动学习：如果用户点赞，保存到知识库
-                # （这个会在feedback接口中处理）
+                response_text = str(response) if response else ""
+                
+                try:
+                    from core.vector_retriever import vector_retriever
+                    
+                    vector_results = vector_retriever.hybrid_search(
+                        query=user_input,
+                        top_k=3
+                    )
+                    
+                    if vector_results:
+                        best_match = vector_results[0]
+                        if best_match.get('final_score', 0) > 0.6:
+                            logger.info(f"向量检索命中: {best_match['final_score']:.2f}")
+                except Exception as e:
+                    logger.error(f"向量检索失败: {e}")
+                
+                try:
+                    from core.learning import enhanced_learner
+                    external_result = enhanced_learner.learn_with_external(
+                        user_input=user_input,
+                        context=json.dumps({"intent": intent.type}),
+                        response_text=response_text,
+                        confidence=0.8,
+                        auto_trigger=True
+                    )
+                    
+                    if external_result.get("external_triggered"):
+                        logger.info(f"外部学习触发: {external_result.get('reason')}")
+                        
+                        if external_result.get("new_knowledge_count") > 0:
+                            external_knowledge = external_result.get("items", [])
+                            for item in external_knowledge:
+                                if item.get("knowledge_type") == "meta":
+                                    response_text += f"\n\n[外部学习] {item.get('question', '')}"
+                except Exception as e:
+                    logger.error(f"外部学习失败: {e}")
+                
+                try:
+                    from core.folder_learner import folder_learner
+                    
+                    user_lower = user_input.lower()
+                    
+                    if any(phrase in user_lower for phrase in ["学习进度", "文件夹学习", "学了多少", "学习状态"]):
+                        summary = folder_learner.get_summary()
+                        status = folder_learner.get_status()
+                        
+                        folder_response = f"""📚 文件夹学习进度报告：
+- 学习根目录: {summary.get('root_path', '未设置')}
+- 已扫描文件: {summary.get('total_files', 0)} 个
+- 成功学习: {summary.get('successful', 0)} 个
+- 学习失败: {summary.get('failed', 0)} 个
+- 提取知识: {summary.get('total_knowledge', 0)} 条
+- 最后扫描: {summary.get('last_scan', '从未')}
+- 后台监控: {'运行中' if status.get('running') else '已停止'}"""
+                        
+                        return {"response": folder_response, "intent": "folder_learning_status"}
+                    
+                    elif "显示失败" in user_lower or "失败文件" in user_lower:
+                        failed_files = folder_learner.get_failed_files()
+                        
+                        if not failed_files:
+                            return {"response": "✅ 没有学习失败的文件", "intent": "folder_learning_failed"}
+                        
+                        failed_response = "❌ 学习失败的文件：\n"
+                        for f in failed_files[:10]:
+                            failed_response += f"- {f['relative_path']}: {f['error_msg']}\n"
+                        
+                        return {"response": failed_response, "intent": "folder_learning_failed"}
+                    
+                    elif "最近学习" in user_lower or "学习历史" in user_lower:
+                        recent_files = folder_learner.get_recent_learned()
+                        
+                        if not recent_files:
+                            return {"response": "暂无学习记录", "intent": "folder_learning_recent"}
+                        
+                        recent_response = "📖 最近学习的文件：\n"
+                        for f in recent_files:
+                            status_icon = "✅" if f['status'] == 'success' else "❌"
+                            recent_response += f"{status_icon} {f['relative_path']} ({f['knowledge_count']}条知识)\n"
+                        
+                        return {"response": recent_response, "intent": "folder_learning_recent"}
+                    
+                    notifications = folder_learner.pop_notifications()
+                    if notifications:
+                        notif = notifications[-1]
+                        notification_msg = f"\n\n✨ [自动学习通知] 我刚学习了 {notif['new']} 个新文件，更新了 {notif['updated']} 个文件"
+                        if notif['failed'] > 0:
+                            notification_msg += f"，{notif['failed']} 个失败"
+                        
+                        if isinstance(response, str):
+                            response = response + notification_msg
+                        else:
+                            response = str(response) + notification_msg
+                except Exception as e:
+                    logger.error(f"文件夹学习对话处理失败: {e}")
                 
                 return {"response": response, "intent": intent.type}
             except asyncio.TimeoutError:
@@ -426,6 +562,589 @@ async def send_feedback(request: dict):
         return {"success": True}
     except Exception as e:
         logger.error(f"反馈处理失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/folder/set_root")
+async def set_folder_root(request: dict):
+    """设置学习根目录"""
+    root_path = request.get("path", "")
+    
+    try:
+        from core.folder_learner import folder_learner
+        
+        result = folder_learner.set_root_path(root_path)
+        
+        if result.get("success"):
+            return {
+                "success": True,
+                "root_path": result["root_path"],
+                "message": f"已设置学习根目录: {result['root_path']}"
+            }
+        else:
+            return {
+                "success": False,
+                "error": result.get("error", "未知错误")
+            }
+    except Exception as e:
+        logger.error(f"设置根目录失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/folder/scan")
+async def scan_folder(request: dict):
+    """扫描并学习文件夹"""
+    start_monitor = request.get("start_monitor", False)
+    interval = request.get("interval", 300)
+    
+    try:
+        from core.folder_learner import folder_learner
+        
+        if not folder_learner.root_path:
+            return {
+                "success": False,
+                "error": "请先设置学习根目录"
+            }
+        
+        result = folder_learner.scan_and_learn()
+        
+        if start_monitor:
+            folder_learner.start_background_monitor(interval_seconds=interval)
+        
+        return {
+            "success": True,
+            "result": result,
+            "summary": folder_learner.get_summary()
+        }
+    except Exception as e:
+        logger.error(f"扫描失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/folder/status")
+async def get_folder_status():
+    """获取文件夹学习状态"""
+    try:
+        from core.folder_learner import folder_learner
+        
+        return {
+            "success": True,
+            "status": folder_learner.get_status(),
+            "summary": folder_learner.get_summary(),
+            "notifications": folder_learner.pop_notifications()
+        }
+    except Exception as e:
+        logger.error(f"获取状态失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/folder/failed")
+async def get_failed_files():
+    """获取学习失败的文件"""
+    try:
+        from core.folder_learner import folder_learner
+        
+        return {
+            "success": True,
+            "failed_files": folder_learner.get_failed_files()
+        }
+    except Exception as e:
+        logger.error(f"获取失败文件失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/folder/recent")
+async def get_recent_learned():
+    """获取最近学习的文件"""
+    try:
+        from core.folder_learner import folder_learner
+        
+        return {
+            "success": True,
+            "recent_files": folder_learner.get_recent_learned()
+        }
+    except Exception as e:
+        logger.error(f"获取最近学习失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/folder/relearn")
+async def relearn_file(request: dict):
+    """重新学习指定文件"""
+    file_pattern = request.get("pattern", "")
+    
+    try:
+        from core.folder_learner import folder_learner
+        
+        if not folder_learner.root_path:
+            return {
+                "success": False,
+                "error": "请先设置学习根目录"
+            }
+        
+        found = False
+        for file_path in folder_learner.root_path.rglob("*"):
+            if file_path.is_file() and file_pattern in str(file_path):
+                result = folder_learner.learn_single_file(file_path, force=True)
+                found = True
+                
+                return {
+                    "success": True,
+                    "result": result,
+                    "file": str(file_path)
+                }
+        
+        if not found:
+            return {
+                "success": False,
+                "error": f"未找到匹配 '{file_pattern}' 的文件"
+            }
+    except Exception as e:
+        logger.error(f"重新学习失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/folder/monitor/start")
+async def start_monitor(request: dict):
+    """启动后台监控"""
+    interval = request.get("interval", 300)
+    
+    try:
+        from core.folder_learner import folder_learner
+        
+        folder_learner.start_background_monitor(interval_seconds=interval)
+        
+        return {
+            "success": True,
+            "message": f"已启动后台监控，间隔{interval}秒"
+        }
+    except Exception as e:
+        logger.error(f"启动监控失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/folder/monitor/stop")
+async def stop_monitor():
+    """停止后台监控"""
+    try:
+        from core.folder_learner import folder_learner
+        
+        folder_learner.stop_monitor()
+        
+        return {
+            "success": True,
+            "message": "已停止后台监控"
+        }
+    except Exception as e:
+        logger.error(f"停止监控失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/learning/status")
+async def get_learning_status():
+    """获取学习系统状态"""
+    try:
+        from core.learning_engine import learning_engine
+        from core.file_monitor import file_monitor
+        
+        return {
+            "success": True,
+            "engine": learning_engine.get_stats(),
+            "monitor": file_monitor.get_status()
+        }
+    except Exception as e:
+        logger.error(f"获取学习状态失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/learning/mode")
+async def set_learning_mode(request: dict):
+    """设置学习模式"""
+    mode = request.get("mode", "smart")
+    
+    try:
+        from core.learning_engine import learning_engine
+        
+        result = learning_engine.set_mode(mode)
+        
+        return result
+    except Exception as e:
+        logger.error(f"设置学习模式失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/learning/add")
+async def add_learning_path(request: dict):
+    """添加学习路径"""
+    path = request.get("path", "")
+    priority = request.get("priority", "normal")
+    
+    try:
+        from core.file_monitor import file_monitor
+        from core.learning_engine import learning_engine
+        from pathlib import Path
+        
+        monitor_result = file_monitor.add_watch_path(path, priority=priority)
+        
+        if not monitor_result['success']:
+            return monitor_result
+        
+        watch_path = Path(path).resolve()
+        
+        supported_extensions = {
+            '.py', '.md', '.txt', '.json', '.yaml', '.yml',
+            '.csv', '.rst', '.js', '.ts', '.html', '.css'
+        }
+        
+        added_count = 0
+        for file_path in watch_path.rglob("*"):
+            if file_path.is_file() and file_path.suffix.lower() in supported_extensions:
+                result = learning_engine.add_task(str(file_path), event_type="scan")
+                if result['success']:
+                    added_count += 1
+        
+        return {
+            "success": True,
+            "path": monitor_result['path'],
+            "files_count": monitor_result['files_count'],
+            "tasks_added": added_count
+        }
+    except Exception as e:
+        logger.error(f"添加学习路径失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/learning/remove")
+async def remove_learning_path(request: dict):
+    """移除学习路径"""
+    path = request.get("path", "")
+    
+    try:
+        from core.file_monitor import file_monitor
+        
+        result = file_monitor.remove_watch_path(path)
+        
+        return result
+    except Exception as e:
+        logger.error(f"移除学习路径失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/learning/force")
+async def force_learn_file(request: dict):
+    """强制学习文件"""
+    file_path = request.get("path", "")
+    
+    try:
+        from core.learning_engine import learning_engine
+        
+        result = learning_engine.force_learn(file_path)
+        
+        return result
+    except Exception as e:
+        logger.error(f"强制学习失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/learning/pause")
+async def pause_learning():
+    """暂停学习"""
+    try:
+        from core.learning_engine import learning_engine
+        from core.file_monitor import file_monitor
+        
+        learning_engine.stop()
+        file_monitor.pause()
+        
+        return {
+            "success": True,
+            "message": "学习系统已暂停"
+        }
+    except Exception as e:
+        logger.error(f"暂停学习失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/learning/resume")
+async def resume_learning():
+    """恢复学习"""
+    try:
+        from core.learning_engine import learning_engine
+        from core.file_monitor import file_monitor
+        
+        learning_engine.start()
+        file_monitor.resume()
+        
+        return {
+            "success": True,
+            "message": "学习系统已恢复"
+        }
+    except Exception as e:
+        logger.error(f"恢复学习失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/learning/tasks")
+async def get_learning_tasks(limit: int = 20):
+    """获取学习任务列表"""
+    try:
+        from core.learning_engine import learning_engine
+        
+        tasks = learning_engine.get_recent_tasks(limit)
+        
+        return {
+            "success": True,
+            "tasks": tasks
+        }
+    except Exception as e:
+        logger.error(f"获取学习任务失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/learning/knowledge")
+async def get_learning_knowledge(limit: int = 50):
+    """获取知识库列表"""
+    try:
+        import sqlite3
+        
+        with sqlite3.connect('data/knowledge_store.db') as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute('''
+                SELECT question, answer, source, knowledge_type, created_at
+                FROM knowledge_items
+                ORDER BY created_at DESC
+                LIMIT ?
+            ''', (limit,))
+            
+            items = [dict(row) for row in cursor.fetchall()]
+        
+        return {
+            "success": True,
+            "knowledge": items
+        }
+    except Exception as e:
+        logger.error(f"获取知识库失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/learning/tools")
+async def get_learning_tools():
+    """获取自动生成的工具列表"""
+    try:
+        import sqlite3
+        
+        with sqlite3.connect('data/knowledge_store.db') as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute('''
+                SELECT name, description, usage_count, created_at
+                FROM tools
+                ORDER BY usage_count DESC
+            ''')
+            
+            tools = [dict(row) for row in cursor.fetchall()]
+        
+        return {
+            "success": True,
+            "tools": tools
+        }
+    except Exception as e:
+        logger.error(f"获取工具列表失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/scheduler/status")
+async def get_scheduler_status():
+    """获取主动调度器状态"""
+    try:
+        from core.active_scheduler import active_scheduler
+        
+        return {
+            "success": True,
+            "status": active_scheduler.get_status()
+        }
+    except Exception as e:
+        logger.error(f"获取调度器状态失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/scheduler/run")
+async def run_scheduler_once():
+    """手动执行一次优化任务"""
+    try:
+        from core.active_scheduler import active_scheduler
+        
+        active_scheduler.run_once()
+        
+        return {
+            "success": True,
+            "message": "优化任务已执行"
+        }
+    except Exception as e:
+        logger.error(f"执行优化任务失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/knowledge/stats")
+async def get_knowledge_stats():
+    """获取知识库统计"""
+    try:
+        import sqlite3
+        
+        with sqlite3.connect('data/knowledge_store.db') as conn:
+            conn.row_factory = sqlite3.Row
+            
+            stats = {}
+            
+            cursor = conn.execute('SELECT COUNT(*) FROM knowledge_items')
+            stats['total'] = cursor.fetchone()[0]
+            
+            cursor = conn.execute('''
+                SELECT knowledge_type, COUNT(*) as count
+                FROM knowledge_items
+                GROUP BY knowledge_type
+            ''')
+            stats['by_type'] = {row['knowledge_type']: row['count'] for row in cursor.fetchall()}
+            
+            cursor = conn.execute('SELECT COUNT(*) FROM tools')
+            stats['tools'] = cursor.fetchone()[0]
+            
+            cursor = conn.execute('SELECT COUNT(*) FROM learning_rules WHERE status = "active"')
+            stats['rules'] = cursor.fetchone()[0]
+            
+            cursor = conn.execute('''
+                SELECT AVG(quality_score) as avg_quality
+                FROM knowledge_items
+            ''')
+            stats['avg_quality'] = cursor.fetchone()[0] or 0
+        
+        return {
+            "success": True,
+            "stats": stats
+        }
+    except Exception as e:
+        logger.error(f"获取知识统计失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/tools/list")
+async def list_tools():
+    """列出所有工具"""
+    try:
+        from core.tool_manager import tool_manager
+        
+        tools = tool_manager.list_tools()
+        
+        return {
+            "success": True,
+            "tools": tools
+        }
+    except Exception as e:
+        logger.error(f"获取工具列表失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/tools/execute")
+async def execute_tool(request: dict):
+    """执行工具"""
+    name = request.get("name", "")
+    args = request.get("args", [])
+    kwargs = request.get("kwargs", {})
+    
+    try:
+        from core.tool_manager import tool_manager
+        
+        result = tool_manager.execute_tool(name, *args, **kwargs)
+        
+        return {
+            "success": True,
+            "result": str(result)
+        }
+    except Exception as e:
+        logger.error(f"工具执行失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/tools/test")
+async def test_tool(request: dict):
+    """测试工具"""
+    name = request.get("name", "")
+    test_input = request.get("test_input")
+    
+    try:
+        from core.tool_manager import tool_manager
+        
+        result = tool_manager.test_tool(name, test_input)
+        
+        return result
+    except Exception as e:
+        logger.error(f"工具测试失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/vector/sync")
+async def sync_vectors():
+    """同步知识库到向量索引"""
+    try:
+        from core.vector_retriever import vector_retriever
+        
+        vector_retriever.sync_from_knowledge_base()
+        
+        return {
+            "success": True,
+            "message": "向量索引同步完成"
+        }
+    except Exception as e:
+        logger.error(f"向量同步失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/vector/search")
+async def vector_search(request: dict):
+    """向量搜索"""
+    query = request.get("query", "")
+    top_k = request.get("top_k", 5)
+    
+    try:
+        from core.vector_retriever import vector_retriever
+        
+        results = vector_retriever.hybrid_search(query, top_k=top_k)
+        
+        return {
+            "success": True,
+            "results": results
+        }
+    except Exception as e:
+        logger.error(f"向量搜索失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/memory/important")
+async def mark_important(request: dict):
+    """刻骨铭心 - 标记为永久记忆"""
+    question = request.get("question", "")
+    
+    try:
+        from core.learning import enhanced_learner
+        
+        result = enhanced_learner.mark_as_important(question)
+        
+        if result:
+            return {
+                "success": True,
+                "message": "✨ 已标记为刻骨铭心的记忆，永不遗忘"
+            }
+        else:
+            return {
+                "success": False,
+                "error": "未找到该知识"
+            }
+    except Exception as e:
+        logger.error(f"标记失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/memory/review")
+async def get_memory_review():
+    """获取记忆回顾报告"""
+    try:
+        from core.learning import enhanced_learner
+        
+        review = enhanced_learner.get_memory_review()
+        
+        return {
+            "success": True,
+            "review": review
+        }
+    except Exception as e:
+        logger.error(f"获取记忆回顾失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/memory/forgotten")
+async def get_forgotten_memories():
+    """获取最近遗忘的记忆"""
+    try:
+        from core.learning import enhanced_learner
+        
+        forgotten = enhanced_learner.get_recently_forgotten(days=7)
+        
+        return {
+            "success": True,
+            "forgotten": forgotten
+        }
+    except Exception as e:
+        logger.error(f"获取遗忘记忆失败: {e}")
         return {"success": False, "error": str(e)}
 
 def _is_path_allowed(folder: Path) -> bool:
@@ -642,9 +1361,8 @@ async def learn_from_files(request: dict):
     
     try:
         from pathlib import Path
-        from infrastructure.knowledge_injector import KnowledgeInjector
+        from core.learning import enhanced_learner
         
-        knowledge_injector = KnowledgeInjector()
         results = []
         total_knowledge = 0
         
@@ -668,37 +1386,25 @@ async def learn_from_files(request: dict):
                 if len(content) < 50:
                     continue
                 
-                # 提取知识点
-                knowledge_items = _extract_knowledge_from_file(file.name, content)
-                
-                # 保存到知识库
-                for item in knowledge_items:
-                    try:
-                        knowledge_injector.inject_knowledge(
-                            question=item['question'],
-                            answer=item['answer'],
-                            source=f"file:{file.name}",
-                            intent_type="knowledge",
-                            metadata={
-                                'file_path': str(file),
-                                'file_name': file.name,
-                                'type': 'file_learning'
-                            }
-                        )
-                        total_knowledge += 1
-                    except Exception as e:
-                        logger.warning(f"保存知识点失败: {e}")
-                        continue
+                # 使用增强学习器
+                knowledge_count = enhanced_learner.learn_from_file(file.name, content)
+                total_knowledge += knowledge_count
                 
                 results.append({
                     "file": file.name,
-                    "knowledge_count": len(knowledge_items),
+                    "knowledge_count": knowledge_count,
                     "size": file_size
                 })
                 
             except Exception as e:
                 logger.warning(f"学习文件失败 {file}: {e}")
                 continue
+        
+        # 检测模式并生成规则
+        enhanced_learner.detect_and_create_rules()
+        
+        # 自动生成工具
+        enhanced_learner.auto_generate_tools()
         
         summary = f"""学习完成！
 
@@ -710,11 +1416,16 @@ async def learn_from_files(request: dict):
 📚 知识点来源:
 {chr(10).join(f"• {r['file']}: {r['knowledge_count']}条" for r in results[:10])}
 
-💡 这些知识点已保存到知识库，以后可以通过对话查询使用。
-例如：询问"函数xxx的作用是什么？"或"xxx的配置说明" """
+💡 系统已自动：
+- 提取函数、类、代码片段
+- 检测重复模式生成规则
+- 自动生成可复用工具
+
+以后可以通过对话查询这些知识，例如：
+- "函数xxx的作用是什么？"
+- "如何统计模型参数量？" """
         
         logger.info(f"文件学习完成: {total_knowledge}条知识点")
-        
         return {"success": True, "summary": summary, "total_knowledge": total_knowledge}
     except Exception as e:
         logger.error(f"从文件学习失败: {e}")
