@@ -201,6 +201,9 @@
                         <button onclick="sendMessage()" class="btn btn-primary" id="send-btn">
                             发送
                         </button>
+                        <button onclick="openFileBrowser()" class="btn btn-secondary">
+                            📁 浏览文件
+                        </button>
                         <button onclick="clearMessages()" class="btn btn-secondary">
                             清空
                         </button>
@@ -208,6 +211,40 @@
                 </div>
             </section>
         </main>
+
+        <!-- 文件浏览器模态框 -->
+        <div id="file-browser-modal" class="modal" style="display: none;">
+            <div class="modal-content" style="width: 80%; max-width: 900px;">
+                <span class="close" onclick="closeFileBrowser()">&times;</span>
+                <h3>📁 文件浏览器</h3>
+                
+                <div style="margin: 15px 0;">
+                    <input type="text" id="browser-path" placeholder="输入路径或点击目录浏览" style="width: 70%; padding: 8px;">
+                    <button onclick="browsePath()" class="btn btn-secondary" style="padding: 8px 15px;">浏览</button>
+                    <button onclick="goToParent()" class="btn btn-secondary" style="padding: 8px 15px;">⬆ 上级</button>
+                </div>
+                
+                <div style="margin: 10px 0;">
+                    <small>快捷路径：</small>
+                    <button onclick="setBrowserPath('data/workspace')" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">data/workspace</button>
+                    <button onclick="setBrowserPath('.')" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">项目根目录</button>
+                    <button onclick="setBrowserPath('E:/LMTHZlearn')" class="btn btn-secondary" style="font-size: 12px; padding: 4px 8px;">E:/LMTHZlearn</button>
+                </div>
+                
+                <div id="file-list" style="margin-top: 15px; max-height: 400px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; background: #f9f9f9;">
+                    <p style="color: #666;">请输入路径并点击"浏览"</p>
+                </div>
+                
+                <div id="selected-files" style="margin-top: 15px; padding: 10px; background: #e8f5e9; border-radius: 5px; display: none;">
+                    <strong>已选择文件：</strong>
+                    <div id="selected-files-list"></div>
+                    <div style="margin-top: 10px;">
+                        <button onclick="analyzeSelectedFiles()" class="btn btn-primary">分析选中文件</button>
+                        <button onclick="clearSelectedFiles()" class="btn btn-secondary">清空选择</button>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <!-- 底部 -->
         <footer class="footer">

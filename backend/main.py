@@ -467,6 +467,137 @@ async def preview_folder(request: dict):
         logger.error(f"预览文件夹失败: {e}")
         return {"success": False, "error": str(e)}
 
+@app.post("/api/folder/browse")
+async def browse_folder(request: dict):
+    """浏览文件夹内容"""
+    folder_path = request.get("path", "")
+    
+    if not folder_path:
+        return {"success": False, "error": "请提供文件夹路径"}
+    
+    try:
+        from pathlib import Path
+        
+        folder = Path(folder_path).resolve()
+        
+        if not _is_path_allowed(folder):
+            return {"success": False, "error": "路径不在允许范围内"}
+        
+        if not folder.exists():
+            return {"success": False, "error": "路径不存在"}
+        
+        if not folder.is_dir():
+            return {"success": False, "error": "路径不是文件夹"}
+        
+        items = []
+        for item in folder.iterdir():
+            if item.is_symlink():
+                continue
+            
+            try:
+                stat = item.stat()
+                items.append({
+                    "name": item.name,
+                    "path": str(item),
+                    "is_dir": item.is_dir(),
+                    "size": stat.st_size if item.is_file() else 0,
+                    "modified": stat.st_mtime
+                })
+            except:
+                continue
+        
+        # 排序：文件夹优先，然后按名称
+        items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
+        
+        return {"success": True, "items": items, "path": str(folder)}
+    except Exception as e:
+        logger.error(f"浏览文件夹失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/file/preview")
+async def preview_file(request: dict):
+    """预览文件内容"""
+    file_path = request.get("path", "")
+    
+    if not file_path:
+        return {"success": False, "error": "请提供文件路径"}
+    
+    try:
+        from pathlib import Path
+        
+        file = Path(file_path).resolve()
+        
+        if not _is_path_allowed(file):
+            return {"success": False, "error": "路径不在允许范围内"}
+        
+        if not file.exists():
+            return {"success": False, "error": "文件不存在"}
+        
+        if not file.is_file():
+            return {"success": False, "error": "路径不是文件"}
+        
+        file_size = file.stat().st_size
+        if file_size > 1024 * 1024:  # 1MB
+            return {"success": False, "error": "文件过大，请选择小于1MB的文件"}
+        
+        with open(file, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        
+        return {"success": True, "content": content, "size": file_size}
+    except Exception as e:
+        logger.error(f"预览文件失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/files/analyze")
+async def analyze_files(request: dict):
+    """分析选中的文件"""
+    files = request.get("files", [])
+    
+    if not files:
+        return {"success": False, "error": "请选择要分析的文件"}
+    
+    try:
+        from pathlib import Path
+        
+        results = []
+        total_size = 0
+        
+        for file_path in files:
+            file = Path(file_path).resolve()
+            
+            if not _is_path_allowed(file):
+                continue
+            
+            if not file.exists() or not file.is_file():
+                continue
+            
+            try:
+                stat = file.stat()
+                total_size += stat.st_size
+                
+                results.append({
+                    "name": file.name,
+                    "size": stat.st_size,
+                    "ext": file.suffix,
+                    "path": str(file)
+                })
+            except:
+                continue
+        
+        summary = f"""分析结果：
+- 文件数量: {len(results)}
+- 总大小: {total_size / 1024:.1f} KB
+- 文件类型: {', '.join(set(r['ext'] for r in results if r['ext']))}
+
+文件列表:
+{chr(10).join(f"• {r['name']} ({r['size'] / 1024:.1f} KB)" for r in results[:10])}
+{"..." if len(results) > 10 else ""}"""
+        
+        return {"success": True, "summary": summary, "files": results}
+    except Exception as e:
+        logger.error(f"分析文件失败: {e}")
+        return {"success": False, "error": str(e)}
+
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 @app.post("/api/folder/learn")
