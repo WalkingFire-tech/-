@@ -3,6 +3,8 @@
 不等待离线归纳，立即响应低质量结果
 """
 import time
+import threading
+import json
 from typing import Dict, Optional
 from datetime import datetime
 from loguru import logger
@@ -11,11 +13,18 @@ from loguru import logger
 class OnlineReflector:
     """在线反思器"""
     
+    ALLOWED_INTENTS = {
+        'code', 'question', 'chat', 'memory', 
+        'calculation', 'feedback', 'meta', 'document',
+        'translation', 'analysis', 'creative', 'planning'
+    }
+    
     def __init__(self):
-        self.quality_threshold = 40  # 质量分阈值
-        self.cooldown_seconds = 600  # 冷却时间（10分钟）
+        self.quality_threshold = 40
+        self.cooldown_seconds = 600
         self.last_reflection_time = 0
         self.reflection_count = 0
+        self._lock = threading.Lock()
         
         logger.info("在线反思器已初始化")
     
@@ -54,27 +63,28 @@ class OnlineReflector:
         Returns:
             生成的规则（如果有）
         """
+        if intent_type not in self.ALLOWED_INTENTS:
+            logger.warning(f"无效的intent_type: {intent_type}")
+            return None
+        
         if not self.should_reflect(quality_score):
             return None
         
         try:
             logger.info(f"触发在线反思: {intent_type}, 质量={quality_score}, 模型={model_name}")
             
-            # 分析失败原因
             failure_analysis = self._analyze_failure(
                 intent_type, raw_input, model_name, quality_score, response, error
             )
             
-            # 生成规则
             rule = self._generate_rule_from_analysis(failure_analysis)
             
             if rule:
-                # 保存规则
                 self._save_rule(rule)
                 
-                # 更新状态
-                self.last_reflection_time = time.time()
-                self.reflection_count += 1
+                with self._lock:
+                    self.last_reflection_time = time.time()
+                    self.reflection_count += 1
                 
                 logger.info(f"在线反思完成，生成规则: {rule['condition'][:50]}...")
                 
@@ -146,14 +156,15 @@ class OnlineReflector:
         if not action_type:
             return None
         
-        # 构建规则
-        condition = f"intent_type == '{intent_type}'"
+        condition_data = json.dumps({
+            "type": "intent_equals",
+            "intent_type": intent_type
+        }, ensure_ascii=False)
         
         if action_type == "avoid_model":
             action = f"avoid_model:{model_name}"
             confidence = 0.7
         elif action_type == "prefer_other_model":
-            # 查询更好的模型
             better_model = self._find_better_model(intent_type, model_name)
             if better_model:
                 action = f"prefer_model:{better_model}"
@@ -168,11 +179,11 @@ class OnlineReflector:
             return None
         
         rule = {
-            "condition": condition,
+            "condition": condition_data,
             "action": action,
             "confidence": confidence,
             "source": "online_reflection",
-            "priority": 7,  # 中等优先级
+            "priority": 7,
             "reason": analysis["reason"],
             "created_at": analysis["timestamp"]
         }
@@ -225,10 +236,14 @@ class OnlineReflector:
     
     def get_stats(self) -> Dict:
         """获取统计信息"""
+        with self._lock:
+            last_time = self.last_reflection_time
+            count = self.reflection_count
+        
         return {
-            "reflection_count": self.reflection_count,
-            "last_reflection": datetime.fromtimestamp(self.last_reflection_time).isoformat() if self.last_reflection_time > 0 else None,
-            "cooldown_remaining": max(0, self.cooldown_seconds - (time.time() - self.last_reflection_time))
+            "reflection_count": count,
+            "last_reflection": datetime.fromtimestamp(last_time).isoformat() if last_time > 0 else None,
+            "cooldown_remaining": max(0, self.cooldown_seconds - (time.time() - last_time))
         }
 
 
