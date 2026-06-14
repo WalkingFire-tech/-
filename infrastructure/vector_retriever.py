@@ -4,9 +4,12 @@
 """
 import os
 import json
+import hashlib
+import threading
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
+from pathlib import Path
 from loguru import logger
 from infrastructure.config_manager import config
 
@@ -21,18 +24,35 @@ except ImportError:
 class VectorRetriever:
     """向量检索器"""
     
+    MAX_INDEX_SIZE = 100 * 1024 * 1024  # 100MB
+    BASE_DATA_DIR = Path("data")
+    
     def __init__(self, embedding_dim: int = 384):
         self.embedding_dim = embedding_dim
         self.index = None
         self.id_map: Dict[int, Dict] = {}
         self.current_id = 0
-        self.index_path = config.get("vector.index_path", "data/faiss_index.bin")
+        self._lock = threading.Lock()
+        
+        index_path = config.get("vector.index_path", "data/faiss_index.bin")
+        self.index_path = self._sanitize_path(index_path)
         
         if FAISS_AVAILABLE:
             self.index = faiss.IndexFlatL2(embedding_dim)
             logger.info(f"FAISS索引初始化完成(维度={embedding_dim})")
         else:
             logger.warning("使用内存检索(性能较低)")
+    
+    def _sanitize_path(self, path: str) -> Path:
+        """路径沙盒验证"""
+        resolved = Path(path).resolve()
+        base = self.BASE_DATA_DIR.resolve()
+        
+        if not resolved.is_relative_to(base):
+            logger.warning(f"路径越权，强制使用data目录: {path}")
+            return base / Path(path).name
+        
+        return resolved
     
     def add_experience(self, text: str, metadata: Dict, embedding: np.ndarray = None):
         """添加经验到向量库"""
@@ -45,18 +65,19 @@ class VectorRetriever:
         
         embedding = embedding.reshape(1, -1).astype('float32')
         
-        if FAISS_AVAILABLE and self.index is not None:
-            self.index.add(embedding)
-        
-        self.id_map[self.current_id] = {
-            "text": text,
-            "metadata": metadata,
-            "embedding": embedding.flatten().tolist(),
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        self.current_id += 1
-        logger.debug(f"添加经验: ID={self.current_id-1}, 文本={text[:50]}")
+        with self._lock:
+            if FAISS_AVAILABLE and self.index is not None:
+                self.index.add(embedding)
+            
+            self.id_map[self.current_id] = {
+                "text": text,
+                "metadata": metadata,
+                "embedding": embedding.flatten().tolist(),
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            self.current_id += 1
+            logger.debug(f"添加经验: ID={self.current_id-1}, 文本={text[:50]}")
     
     def search_similar(self, query: str, k: int = 5, 
                       threshold: float = 0.8) -> List[Tuple[Dict, float]]:
@@ -100,19 +121,18 @@ class VectorRetriever:
         """获取文本embedding"""
         try:
             from sentence_transformers import SentenceTransformer
-            import os
-            
-            offline_mode = config.get("embedding.offline_mode", True)
-            if offline_mode:
-                os.environ['HF_HUB_OFFLINE'] = '1'
             
             model_name = config.get("embedding.model", "paraphrase-multilingual-MiniLM-L12-v2")
             
             if not hasattr(self, '_embedding_model'):
                 try:
-                    self._embedding_model = SentenceTransformer(model_name)
+                    cache_folder = config.get("embedding.cache_folder", None)
+                    self._embedding_model = SentenceTransformer(
+                        model_name,
+                        cache_folder=cache_folder
+                    )
                 except Exception as e:
-                    logger.warning(f"无法加载embedding模型(离线模式): {e}")
+                    logger.warning(f"无法加载embedding模型: {e}")
                     logger.info("使用简单hash embedding作为降级方案")
                     self._embedding_model = None
             
@@ -138,7 +158,7 @@ class VectorRetriever:
             embedding[i] = ord(char) / 255.0
         
         if len(text) < self.embedding_dim:
-            text_hash = hash(text)
+            text_hash = int(hashlib.md5(text.encode()).hexdigest()[:8], 16)
             embedding[-1] = (text_hash % 1000) / 1000.0
         
         return embedding
@@ -213,36 +233,48 @@ class VectorRetriever:
         
         return None
     
-    def save_index(self, path: str = "data/vector_index.faiss"):
+    def save_index(self, path: str = None):
         """保存索引到磁盘"""
-        if FAISS_AVAILABLE and self.index is not None:
-            import os
-            os.makedirs(os.path.dirname(path), exist_ok=True)
+        if not FAISS_AVAILABLE or self.index is None:
+            return
+        
+        save_path = self._sanitize_path(path) if path else self.index_path
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with self._lock:
+            faiss.write_index(self.index, str(save_path))
             
-            faiss.write_index(self.index, path)
-            
-            id_map_path = path.replace(".faiss", "_id_map.json")
+            id_map_path = save_path.with_suffix('.json')
             with open(id_map_path, 'w', encoding='utf-8') as f:
                 json.dump({
                     "id_map": self.id_map,
                     "current_id": self.current_id
                 }, f, ensure_ascii=False, indent=2)
-            
-            logger.info(f"向量索引已保存: {path}")
+        
+        logger.info(f"向量索引已保存: {save_path}")
     
-    def load_index(self, path: str = "data/vector_index.faiss"):
+    def load_index(self, path: str = None):
         """从磁盘加载索引"""
-        if FAISS_AVAILABLE and os.path.exists(path):
-            self.index = faiss.read_index(path)
+        load_path = self._sanitize_path(path) if path else self.index_path
+        
+        if not FAISS_AVAILABLE or not load_path.exists():
+            return
+        
+        if load_path.stat().st_size > self.MAX_INDEX_SIZE:
+            logger.error(f"索引文件过大: {load_path} ({load_path.stat().st_size} bytes)")
+            return
+        
+        with self._lock:
+            self.index = faiss.read_index(str(load_path))
             
-            id_map_path = path.replace(".faiss", "_id_map.json")
-            if os.path.exists(id_map_path):
+            id_map_path = load_path.with_suffix('.json')
+            if id_map_path.exists():
                 with open(id_map_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     self.id_map = {int(k): v for k, v in data["id_map"].items()}
                     self.current_id = data["current_id"]
-            
-            logger.info(f"向量索引已加载: {path} ({self.index.ntotal}个向量)")
+        
+        logger.info(f"向量索引已加载: {load_path} ({self.index.ntotal}个向量)")
 
 
 vector_retriever = VectorRetriever()
