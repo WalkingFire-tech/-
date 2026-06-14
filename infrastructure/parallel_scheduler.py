@@ -20,21 +20,20 @@ class ParallelScheduler:
         self._init_db()
         
         self.max_concurrent = 3
-        self.timeout_seconds = 30  # 降低超时时间，避免长时间阻塞
+        self.timeout_seconds = 30
         self.retry_count = 2
         
-        # 模型性能阈值（秒）
         self.performance_thresholds = {
-            'fast': 5.0,      # 快速模型阈值
-            'normal': 15.0,   # 正常模型阈值
-            'slow': 30.0      # 慢速模型阈值
+            'fast': 5.0,
+            'normal': 15.0,
+            'slow': 30.0
         }
         
-        # 模型黑名单（失败后暂时禁用）
-        self.model_blacklist = {}  # {model_name: until_timestamp}
+        self.model_blacklist = {}
+        self.model_performance = {}
         
-        # 模型性能记录（用于动态调整）
-        self.model_performance = {}  # {model_name: avg_duration}
+        self._lock = asyncio.Lock()
+        self._load_blacklist()
         
         logger.info("并行调度器已初始化（超时30秒，性能监控启用）")
     
@@ -66,34 +65,74 @@ class ParallelScheduler:
                     created_at TEXT
                 )
             ''')
-            conn.commit()
+            
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS model_blacklist (
+                    model_name TEXT PRIMARY KEY,
+                    until_timestamp REAL,
+                    reason TEXT,
+                    created_at TEXT
+                )
+            ''')
     
-    def _is_blacklisted(self, model_name: str) -> bool:
+    def _load_blacklist(self):
+        """从数据库加载黑名单"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute('''
+                    SELECT model_name, until_timestamp
+                    FROM model_blacklist
+                    WHERE until_timestamp > ?
+                ''', (time.time(),))
+                
+                for row in cursor.fetchall():
+                    self.model_blacklist[row[0]] = row[1]
+        except Exception as e:
+            logger.debug(f"加载黑名单失败: {e}")
+    
+    def _save_blacklist(self, model_name: str, until_timestamp: float, reason: str = ""):
+        """保存黑名单到数据库"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    INSERT OR REPLACE INTO model_blacklist
+                    (model_name, until_timestamp, reason, created_at)
+                    VALUES (?, ?, ?, ?)
+                ''', (model_name, until_timestamp, reason, datetime.now().isoformat()))
+        except Exception as e:
+            logger.debug(f"保存黑名单失败: {e}")
+    
+    async def _is_blacklisted(self, model_name: str) -> bool:
         """检查模型是否在黑名单中"""
-        if model_name in self.model_blacklist:
-            if time.time() < self.model_blacklist[model_name]:
-                return True
-            else:
-                # 黑名单过期，移除
-                del self.model_blacklist[model_name]
+        async with self._lock:
+            if model_name in self.model_blacklist:
+                if time.time() < self.model_blacklist[model_name]:
+                    return True
+                else:
+                    del self.model_blacklist[model_name]
         return False
     
-    def _mark_failed(self, model_name: str, duration: int = 300):
+    async def _mark_failed(self, model_name: str, duration: int = 300, reason: str = ""):
         """将失败模型加入黑名单
         
         Args:
             model_name: 模型名称
             duration: 禁用时长（秒），默认5分钟
+            reason: 失败原因
         """
-        self.model_blacklist[model_name] = time.time() + duration
+        until = time.time() + duration
+        async with self._lock:
+            self.model_blacklist[model_name] = until
+        
+        self._save_blacklist(model_name, until, reason)
         logger.warning(f"模型 {model_name} 已加入黑名单（{duration}秒）")
     
-    def _get_available_models(self, models: List[Any]) -> List[Any]:
+    async def _get_available_models(self, models: List[Any]) -> List[Any]:
         """过滤黑名单模型"""
         available = []
         for model in models:
             model_name = getattr(model, 'model_name', str(model))
-            if not self._is_blacklisted(model_name):
+            if not await self._is_blacklisted(model_name):
                 available.append(model)
         return available
     
@@ -114,8 +153,7 @@ class ParallelScheduler:
         task_id = f"{task_type}_{int(time.time()*1000)}"
         start_time = time.time()
         
-        # 过滤黑名单模型
-        available_models = self._get_available_models(models)
+        available_models = await self._get_available_models(models)
         if not available_models:
             logger.warning("所有模型都在黑名单中")
             return {'error': 'all_models_blacklisted', 'best': None}
@@ -125,9 +163,8 @@ class ParallelScheduler:
         async def call_with_semaphore(model_adapter, model_name):
             async with semaphore:
                 result = await self._safe_call(model_adapter, model_name, prompt, task_id)
-                # 如果失败，加入黑名单
                 if not result or not result.get('success'):
-                    self._mark_failed(model_name)
+                    await self._mark_failed(model_name, reason=result.get('error', 'unknown'))
                 return result
         
         tasks = []
@@ -173,23 +210,19 @@ class ParallelScheduler:
     async def _safe_call(self, model_adapter, model_name: str, 
                         prompt: str, task_id: str) -> Optional[Dict]:
         """安全调用单个模型 - 智能重试和动态超时"""
-        # 可重试的错误类型
         RETRYABLE_ERRORS = (asyncio.TimeoutError, ConnectionError, ConnectionResetError)
-        
-        # 永久性错误（不重试）
         PERMANENT_ERRORS = (FileNotFoundError, PermissionError)
         
         last_error = None
         
-        # 动态调整超时时间
         dynamic_timeout = self.timeout_seconds
-        if model_name in self.model_performance:
-            avg_duration = self.model_performance[model_name]
-            # 根据历史性能动态调整超时
-            if avg_duration > 20:
-                dynamic_timeout = min(60, avg_duration * 1.5)  # 慢模型给更多时间
-            elif avg_duration < 5:
-                dynamic_timeout = 10  # 快模型减少超时
+        async with self._lock:
+            if model_name in self.model_performance:
+                avg_duration = self.model_performance[model_name]
+                if avg_duration > 20:
+                    dynamic_timeout = min(60, avg_duration * 1.5)
+                elif avg_duration < 5:
+                    dynamic_timeout = 10
         
         for attempt in range(self.retry_count):
             try:
@@ -208,16 +241,14 @@ class ParallelScheduler:
                 
                 duration = time.time() - start
                 
-                # 更新模型性能记录
-                if model_name not in self.model_performance:
-                    self.model_performance[model_name] = duration
-                else:
-                    # 指数移动平均
-                    self.model_performance[model_name] = 0.7 * self.model_performance[model_name] + 0.3 * duration
+                async with self._lock:
+                    if model_name not in self.model_performance:
+                        self.model_performance[model_name] = duration
+                    else:
+                        self.model_performance[model_name] = 0.7 * self.model_performance[model_name] + 0.3 * duration
                 
                 result_text = response if isinstance(response, str) else str(response)
                 
-                # 记录成功
                 try:
                     from infrastructure.model_health_checker import model_health_checker
                     model_health_checker.record_success(model_name, duration)
@@ -235,11 +266,9 @@ class ParallelScheduler:
                 }
                 
             except PERMANENT_ERRORS as e:
-                # 永久性错误，不重试
                 logger.error(f"模型 {model_name} 永久性错误: {e}")
                 last_error = str(e)
                 
-                # 记录失败
                 try:
                     from infrastructure.model_health_checker import model_health_checker
                     model_health_checker.record_failure(model_name, "permanent_error", str(e))
@@ -249,25 +278,20 @@ class ParallelScheduler:
                 break
             
             except RETRYABLE_ERRORS as e:
-                # 可重试错误
                 logger.warning(f"模型 {model_name} 可重试错误 ({attempt+1}/{self.retry_count}): {e}")
                 last_error = str(e)
                 
-                # 指数退避
                 if attempt < self.retry_count - 1:
                     await asyncio.sleep(2 ** attempt)
                     continue
             
             except Exception as e:
-                # 未知错误
                 logger.error(f"模型 {model_name} 未知错误: {e}")
                 last_error = str(e)
                 
-                # 只重试一次
                 if attempt == 0:
                     continue
         
-        # 记录失败
         try:
             from infrastructure.model_health_checker import model_health_checker
             model_health_checker.record_failure(model_name, "call_failed", last_error)
@@ -417,10 +441,17 @@ class ParallelScheduler:
         """
         from infrastructure.model_capability import model_capability
         
+        for model_name, adapter in adapters.items():
+            if not hasattr(adapter, 'generate'):
+                logger.warning(f"适配器 {model_name} 缺少generate方法，跳过")
+                continue
+            if not callable(getattr(adapter, 'generate', None)):
+                logger.warning(f"适配器 {model_name} 的generate不可调用，跳过")
+                continue
+        
         model_names = list(adapters.keys())
         ranked = model_capability.rank_models_for_task(task_type, model_names)
         
-        # 动态调整top_k
         if top_k == 0:
             top_k = self._dynamic_top_k(prompt, task_type, ranked)
         
@@ -428,7 +459,6 @@ class ParallelScheduler:
         for model_name, score in ranked[:top_k]:
             if model_name in adapters:
                 adapter = adapters[model_name]
-                # 不要设置model_name（只读属性），直接添加
                 selected_models.append((adapter, model_name))
         
         if not selected_models:
@@ -441,7 +471,6 @@ class ParallelScheduler:
         
         logger.info(f"联邦调度: 任务={task_type}, top_k={top_k}, 模型={[m[1] for m in selected_models]}")
         
-        # 转换为parallel_call期望的格式
         models_with_names = []
         for adapter, name in selected_models:
             models_with_names.append(adapter)
