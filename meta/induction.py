@@ -308,6 +308,7 @@ class InductionScheduler:
         if not patterns:
             return {
                 "success": False,
+                "error": "未发现显著模式",
                 "message": "未发现显著模式",
                 "patterns": 0,
                 "rules": 0
@@ -353,7 +354,7 @@ class InductionScheduler:
         """激活待定规则"""
         try:
             import sqlite3
-            with sqlite3.connect("learning_rules.db") as conn:
+            with sqlite3.connect("data/learning_rules.db") as conn:
                 cur = conn.execute('''
                     UPDATE learning_rules
                     SET status = 'active'
