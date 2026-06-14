@@ -7,6 +7,8 @@ import math
 from typing import Dict, Any, Optional
 from loguru import logger
 
+MAX_EXPRESSION_LENGTH = 10000
+MAX_PI_DIGITS = 10000
 
 SAFE_FUNCTIONS = {
     "abs": abs, "round": round, "min": min, "max": max,
@@ -17,7 +19,6 @@ SAFE_FUNCTIONS = {
     "sqrt": math.sqrt, "pi": math.pi, "e": math.e,
     "degrees": math.degrees, "radians": math.radians,
     "factorial": math.factorial, "ceil": math.ceil, "floor": math.floor,
-    "pow": pow
 }
 
 
@@ -60,6 +61,10 @@ class CalculationHandler:
     @staticmethod
     def calculate_pi(digits: int = 100) -> str:
         """计算π的前N位 - 使用工具系统"""
+        if digits > MAX_PI_DIGITS:
+            logger.warning(f"π位数{digits}超过上限{MAX_PI_DIGITS}，已限制")
+            digits = MAX_PI_DIGITS
+        
         try:
             from tools.math_calculator import math_calculator
             result = math_calculator.get_constant('pi', digits)
@@ -79,6 +84,9 @@ class CalculationHandler:
     @staticmethod
     def evaluate_expression(expression: str) -> str:
         """安全计算数学表达式 - 使用工具系统"""
+        if len(expression) > MAX_EXPRESSION_LENGTH:
+            raise ValueError(f"表达式过长（最大{MAX_EXPRESSION_LENGTH}字符）")
+        
         try:
             from tools.math_calculator import math_calculator
             result = math_calculator.calculate(expression)
@@ -86,11 +94,23 @@ class CalculationHandler:
                 logger.info(f"使用数学计算器计算表达式")
                 return str(result['result'])
         except Exception as e:
-            logger.warning(f"数学计算器失败，降级到基础方法: {e}")
+            logger.warning(f"数学计算器失败，降级到numexpr: {e}")
         
         clean_expr = re.sub(r'[^a-zA-Z0-9+\-*/%().,\s]', '', expression)
         
         try:
+            import numexpr
+            result = numexpr.evaluate(clean_expr)
+            
+            if isinstance(result, float):
+                result = round(result, 15)
+                if result.is_integer():
+                    result = int(result)
+            
+            return str(result)
+        
+        except ImportError:
+            logger.warning("numexpr未安装，使用受限eval")
             namespace = {"__builtins__": None, **SAFE_FUNCTIONS}
             result = eval(clean_expr, namespace)
             
