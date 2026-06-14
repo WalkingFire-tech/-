@@ -401,7 +401,11 @@ def _is_path_allowed(folder: Path) -> bool:
         allowed_bases = [
             Path.cwd().resolve(),
             Path.home().resolve(),
+            Path("E:/LMTHZlearn").resolve() if Path("E:/LMTHZlearn").exists() else None,
         ]
+        # 过滤掉None
+        allowed_bases = [b for b in allowed_bases if b is not None]
+        
         return any(
             resolved.is_relative_to(base)
             for base in allowed_bases
