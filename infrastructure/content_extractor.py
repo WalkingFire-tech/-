@@ -5,15 +5,24 @@
 import os
 import re
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Callable
 from datetime import datetime
 from loguru import logger
+
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_PREVIEW_SIZE = 1 * 1024 * 1024  # 1MB预览
+ALLOWED_EXTENSIONS = {
+    '.txt', '.md', '.py', '.js', '.ts', '.java', '.cpp', '.c', '.go', '.rs',
+    '.html', '.css', '.json', '.xml', '.yaml', '.yml', '.csv', '.tsv',
+    '.sh', '.bat', '.ps1', '.sql', '.r', '.m', '.swift', '.kt', '.scala'
+}
 
 
 class ContentExtractor:
     """内容提取器"""
     
-    def __init__(self):
+    def __init__(self, allowed_base_dir: Optional[Path] = None):
+        self.allowed_base_dir = allowed_base_dir or Path.cwd()
         self.extractors = {
             '.txt': self._extract_text,
             '.md': self._extract_text,
@@ -35,28 +44,58 @@ class ContentExtractor:
             '.tsv': self._extract_csv,
         }
         
-        logger.info(f"内容提取器初始化,支持{len(self.extractors)}种格式")
+        logger.info(f"内容提取器初始化,支持{len(self.extractors)}种格式,沙盒目录: {self.allowed_base_dir}")
+    
+    def _validate_path(self, path: Path) -> Path:
+        """验证路径安全性"""
+        resolved = path.resolve()
+        
+        if not resolved.is_relative_to(self.allowed_base_dir.resolve()):
+            raise PermissionError(f"路径越权: {path} 不在沙盒目录 {self.allowed_base_dir} 内")
+        
+        if resolved.is_symlink():
+            raise PermissionError(f"禁止符号链接: {path}")
+        
+        if not resolved.exists():
+            raise FileNotFoundError(f"文件不存在: {path}")
+        
+        if not resolved.is_file():
+            raise ValueError(f"不是文件: {path}")
+        
+        file_size = resolved.stat().st_size
+        if file_size > MAX_FILE_SIZE:
+            raise ValueError(f"文件过大: {file_size}字节，超过限制 {MAX_FILE_SIZE}字节")
+        
+        return resolved
     
     def extract(self, file_path: str) -> Tuple[str, Dict]:
         """提取文件内容"""
         path = Path(file_path)
-        ext = path.suffix.lower()
         
-        # 获取基础元数据
-        metadata = self._get_basic_metadata(path)
+        try:
+            validated_path = self._validate_path(path)
+        except Exception as e:
+            logger.error(f"路径验证失败: {e}")
+            return "", {"error": str(e), "filename": path.name}
         
-        # 选择提取器
+        ext = validated_path.suffix.lower()
+        
+        if ext not in ALLOWED_EXTENSIONS:
+            logger.warning(f"不支持的扩展名: {ext}")
+            return "", {"error": f"不支持的文件类型: {ext}", "filename": validated_path.name}
+        
+        metadata = self._get_basic_metadata(validated_path)
+        
         if ext in self.extractors:
             try:
-                content, extra_meta = self.extractors[ext](path)
+                content, extra_meta = self.extractors[ext](validated_path)
                 metadata.update(extra_meta)
                 return content, metadata
             except Exception as e:
                 logger.error(f"提取失败: {e}")
                 return f"[提取失败: {str(e)}]", metadata
         else:
-            # 默认文本提取
-            return self._extract_text(path)
+            return self._extract_text(validated_path)
     
     def _get_basic_metadata(self, path: Path) -> Dict:
         """获取基础元数据"""
@@ -71,18 +110,24 @@ class ContentExtractor:
     
     def _extract_text(self, path: Path) -> Tuple[str, Dict]:
         """提取纯文本"""
-        # 尝试多种编码
+        file_size = path.stat().st_size
+        
         for encoding in ['utf-8', 'gbk', 'gb2312', 'latin1']:
             try:
                 with open(path, 'r', encoding=encoding) as f:
-                    content = f.read()
+                    if file_size > MAX_PREVIEW_SIZE:
+                        content = f.read(MAX_PREVIEW_SIZE)
+                        logger.warning(f"文件过大，仅读取前{MAX_PREVIEW_SIZE}字节")
+                    else:
+                        content = f.read()
                 
                 lines = content.split('\n')
                 return content, {
                     "encoding": encoding,
                     "lines": len(lines),
                     "chars": len(content),
-                    "words": len(content.split())
+                    "words": len(content.split()),
+                    "truncated": file_size > MAX_PREVIEW_SIZE
                 }
             except UnicodeDecodeError:
                 continue
@@ -207,8 +252,29 @@ class ContentExtractor:
         
         return content, meta
     
-    def register_extractor(self, extension: str, extractor_func):
-        """注册自定义提取器"""
+    def register_extractor(self, extension: str, extractor_func: Callable, allow_override: bool = False):
+        """注册自定义提取器
+        
+        Args:
+            extension: 文件扩展名
+            extractor_func: 提取函数
+            allow_override: 是否允许覆盖已存在的提取器
+        """
+        import inspect
+        
+        if not extension.startswith('.'):
+            raise ValueError(f"扩展名必须以点开头: {extension}")
+        
+        if not callable(extractor_func):
+            raise TypeError("extractor_func必须是可调用对象")
+        
+        if extension in self.extractors and not allow_override:
+            raise ValueError(f"提取器已存在: {extension}，使用allow_override=True覆盖")
+        
+        sig = inspect.signature(extractor_func)
+        if len(sig.parameters) < 1:
+            raise TypeError("extractor_func必须接受至少一个参数（Path对象）")
+        
         self.extractors[extension] = extractor_func
         logger.info(f"注册提取器: {extension}")
     
@@ -216,6 +282,5 @@ class ContentExtractor:
         """获取支持的扩展名"""
         return list(self.extractors.keys())
 
-
-# 全局实例
-content_extractor = ContentExtractor()
+# 全局实例（使用当前工作目录作为沙盒）
+content_extractor = ContentExtractor(allowed_base_dir=Path.cwd())
