@@ -284,9 +284,11 @@ class SubTaskExecutor:
     
     def _topological_sort(self, tasks: List[SubTask]) -> List[SubTask]:
         """
-        拓扑排序 - Kahn算法
+        拓扑排序 - Kahn算法（使用deque优化）
         确保依赖任务先执行
         """
+        from collections import deque
+        
         if not tasks:
             return []
         
@@ -300,24 +302,29 @@ class SubTaskExecutor:
                 if dep_id in in_degree:
                     in_degree[task.task_id] += 1
         
-        # 找到所有入度为0的任务
-        queue = [t for t in tasks if in_degree[t.task_id] == 0]
-        # 按优先级排序
-        queue.sort(key=lambda t: t.priority)
+        # 找到所有入度为0的任务，使用deque
+        initial_tasks = [t for t in tasks if in_degree[t.task_id] == 0]
+        initial_tasks.sort(key=lambda t: t.priority)
+        queue = deque(initial_tasks)
         
         result = []
         while queue:
-            # 取出优先级最高的任务
-            task = queue.pop(0)
+            # 使用popleft() O(1)操作
+            task = queue.popleft()
             result.append(task)
             
             # 更新依赖此任务的其他任务入度
+            new_ready = []
             for other in tasks:
                 if task.task_id in other.dependencies:
                     in_degree[other.task_id] -= 1
                     if in_degree[other.task_id] == 0:
-                        queue.append(other)
-                        queue.sort(key=lambda t: t.priority)
+                        new_ready.append(other)
+            
+            # 按优先级排序后加入队列
+            if new_ready:
+                new_ready.sort(key=lambda t: t.priority)
+                queue.extend(new_ready)
         
         # 如果有环，添加剩余任务
         if len(result) < len(tasks):
