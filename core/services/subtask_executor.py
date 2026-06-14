@@ -9,6 +9,15 @@ from loguru import logger
 from infrastructure.event_bus import bus
 from core.services.problem_decomposer import SubTask
 
+# 检查numexpr是否安装（生产环境必须）
+try:
+    import numexpr
+    NUMEXPR_AVAILABLE = True
+except ImportError:
+    NUMEXPR_AVAILABLE = False
+    logger.warning("⚠️ numexpr未安装，计算器将使用eval降级模式（安全性较低）")
+    logger.warning("生产环境强烈建议安装: pip install numexpr")
+
 
 class SubTaskExecutor:
     """子任务执行器"""
@@ -18,6 +27,10 @@ class SubTaskExecutor:
         self.tools = tools or {}
         self.results: Dict[str, Any] = {}
         self.execution_trace: List[Dict] = []
+        
+        # 启动时检查numexpr
+        if not NUMEXPR_AVAILABLE:
+            logger.warning("⚠️ 子任务执行器初始化: numexpr未安装，计算器安全性降低")
     
     def execute(self, subtasks: List[SubTask], context: Dict = None) -> Dict[str, Any]:
         """顺序执行子任务(按优先级和依赖)"""
