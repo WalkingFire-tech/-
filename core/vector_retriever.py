@@ -3,6 +3,7 @@
 """
 import sqlite3
 import hashlib
+import os
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 from loguru import logger
@@ -12,18 +13,24 @@ CHROMA_AVAILABLE = False
 SentenceTransformer = None
 chromadb = None
 
-try:
-    from sentence_transformers import SentenceTransformer
-    EMBEDDING_AVAILABLE = True
-except Exception as e:
-    logger.warning(f"sentence-transformers不可用: {e}")
+# 检查是否启用离线模式
+OFFLINE_MODE = os.getenv("OFFLINE_MODE", "false").lower() == "true"
 
-try:
-    import chromadb
-    from chromadb.config import Settings
-    CHROMA_AVAILABLE = True
-except Exception as e:
-    logger.warning(f"chromadb不可用: {e}")
+if not OFFLINE_MODE:
+    try:
+        from sentence_transformers import SentenceTransformer
+        EMBEDDING_AVAILABLE = True
+    except Exception as e:
+        logger.warning(f"sentence-transformers不可用: {e}")
+    
+    try:
+        import chromadb
+        from chromadb.config import Settings
+        CHROMA_AVAILABLE = True
+    except Exception as e:
+        logger.warning(f"chromadb不可用: {e}")
+else:
+    logger.info("离线模式启用，跳过向量依赖检查")
 
 
 class VectorRetriever:
@@ -39,16 +46,26 @@ class VectorRetriever:
         
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         
+        # 尝试加载本地缓存的模型（离线模式）
         if EMBEDDING_AVAILABLE:
             try:
                 logger.info("加载句子编码模型...")
-                self.model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-                logger.info("句子编码模型已加载")
+                
+                # 优先使用本地缓存
+                cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
+                model_name = 'paraphrase-multilingual-MiniLM-L12-v2'
+                
+                # 设置离线环境变量
+                os.environ['HF_HUB_OFFLINE'] = '1'
+                os.environ['TRANSFORMERS_OFFLINE'] = '1'
+                
+                self.model = SentenceTransformer(model_name)
+                logger.info("句子编码模型已加载（离线模式）")
             except Exception as e:
-                logger.error(f"加载编码模型失败: {e}")
+                logger.warning(f"加载编码模型失败，将使用关键词检索: {e}")
                 self.model = None
         
-        if CHROMA_AVAILABLE:
+        if CHROMA_AVAILABLE and self.model:
             try:
                 self.client = chromadb.Client(Settings(
                     chroma_db_impl="duckdb+parquet",

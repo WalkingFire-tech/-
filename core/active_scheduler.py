@@ -92,6 +92,11 @@ class ActiveScheduler:
             self._run_genome_evolution()
         except Exception as e:
             logger.error(f"基因演化失败: {e}")
+        
+        try:
+            self._run_auto_learning()
+        except Exception as e:
+            logger.error(f"自动学习触发失败: {e}")
     
     def _decay_quality_scores(self):
         """知识质量衰减（长期未访问的知识质量下降）"""
@@ -303,6 +308,34 @@ class ActiveScheduler:
                 "external_reduction": 0,
                 "efficiency": 0.5
             }
+    
+    def _run_auto_learning(self):
+        """运行自动学习触发"""
+        try:
+            from core.auto_learning_trigger import auto_learning_trigger
+            
+            # 获取学习状态
+            status = auto_learning_trigger.get_learning_status()
+            
+            if status.get('pending_count', 0) > 0:
+                logger.info(f"自动学习: {status['pending_count']}个目标待学习")
+                
+                # 检查并触发学习
+                auto_learning_trigger._check_and_trigger_learning()
+                
+                notification = {
+                    "type": "auto_learning",
+                    "message": f"📚 自动学习触发：{status['pending_count']}个目标待学习",
+                    "status": status,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                self.pending_notifications.append(notification)
+            else:
+                logger.info("所有学习目标已完成")
+                
+        except Exception as e:
+            logger.error(f"自动学习触发失败: {e}")
     
     def run_evolution_sandbox(self, num_agents: int = 8, generations: int = 20) -> Dict:
         """
