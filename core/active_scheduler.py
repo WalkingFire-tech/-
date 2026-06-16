@@ -81,6 +81,16 @@ class ActiveScheduler:
             self._weekly_memory_review()
         except Exception as e:
             logger.error(f"周回顾失败: {e}")
+        
+        try:
+            self._run_cognitive_transformation()
+        except Exception as e:
+            logger.error(f"认知转化失败: {e}")
+        
+        try:
+            self._run_genome_evolution()
+        except Exception as e:
+            logger.error(f"基因演化失败: {e}")
     
     def _decay_quality_scores(self):
         """知识质量衰减（长期未访问的知识质量下降）"""
@@ -176,6 +186,122 @@ class ActiveScheduler:
                     self.last_sunday = today
                 except Exception as e:
                     logger.error(f"周回顾执行失败: {e}")
+    
+    def _run_cognitive_transformation(self):
+        """运行认知转化（每周一次）"""
+        today = datetime.now()
+        
+        # 每周日执行认知转化
+        if today.weekday() == 6:
+            try:
+                from core.cognitive_transformer import cognitive_transformer
+                
+                results = cognitive_transformer.transform_all()
+                
+                total = sum([
+                    results.get('situations_to_skills', 0),
+                    results.get('skills_to_reflexes', 0),
+                    results.get('situations_to_abstractions', 0)
+                ])
+                
+                if total > 0:
+                    notification = {
+                        "type": "cognitive_transformation",
+                        "message": f"🧠 认知转化完成：情景→技能({results['situations_to_skills']}), 技能→反射({results['skills_to_reflexes']}), 情景→抽象({results['situations_to_abstractions']})",
+                        "results": results,
+                        "timestamp": today.isoformat()
+                    }
+                    
+                    self.pending_notifications.append(notification)
+                    logger.info(f"认知转化: {results}")
+            except Exception as e:
+                logger.error(f"认知转化失败: {e}")
+    
+    def _run_genome_evolution(self):
+        """运行基因演化（每两周一次）"""
+        today = datetime.now()
+        
+        # 每14天执行一次基因演化
+        if not hasattr(self, 'last_evolution'):
+            self.last_evolution = None
+        
+        if self.last_evolution is None or (today - self.last_evolution).days >= 14:
+            try:
+                from core.genome_evolver import genome_evolver
+                
+                # 计算当前适应度
+                stats = self._collect_fitness_stats()
+                fitness = genome_evolver.evaluate_fitness(stats)
+                
+                # 执行进化
+                child_ids = genome_evolver.evolve(fitness)
+                
+                if child_ids:
+                    notification = {
+                        "type": "genome_evolution",
+                        "message": f"🧬 基因演化完成：当前适应度={fitness:.3f}，产生{len(child_ids)}个候选基因组",
+                        "fitness": fitness,
+                        "child_ids": child_ids,
+                        "timestamp": today.isoformat()
+                    }
+                    
+                    self.pending_notifications.append(notification)
+                    logger.info(f"基因演化: fitness={fitness:.3f}, children={child_ids}")
+                
+                self.last_evolution = today
+            except Exception as e:
+                logger.error(f"基因演化失败: {e}")
+    
+    def _collect_fitness_stats(self) -> Dict:
+        """收集适应度统计"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                
+                # 用户点赞率（简化：使用访问次数作为代理）
+                cur = conn.execute('''
+                    SELECT 
+                        AVG(CASE WHEN access_count > 1 THEN 1.0 ELSE 0.5 END) as like_rate
+                    FROM knowledge_items
+                    WHERE knowledge_type = 'qa'
+                ''')
+                like_rate = cur.fetchone()['like_rate'] or 0.5
+                
+                # 知识库命中率
+                cur = conn.execute('''
+                    SELECT 
+                        COUNT(CASE WHEN quality_score >= 60 THEN 1 END) as hits,
+                        COUNT(*) as total
+                    FROM knowledge_items
+                    WHERE knowledge_type = 'qa'
+                ''')
+                row = cur.fetchone()
+                hit_rate = (row['hits'] / row['total']) if row['total'] > 0 else 0.5
+                
+                # 效率（简化：使用平均质量分数）
+                cur = conn.execute('''
+                    SELECT AVG(quality_score) as avg_quality
+                    FROM knowledge_items
+                    WHERE knowledge_type = 'qa'
+                ''')
+                efficiency = (cur.fetchone()['avg_quality'] or 50) / 100.0
+                
+                return {
+                    "like_rate": like_rate,
+                    "hit_rate": hit_rate,
+                    "dialog_reduction": 0.1,  # 默认值
+                    "external_reduction": 0.05,  # 默认值
+                    "efficiency": efficiency
+                }
+        except Exception as e:
+            logger.error(f"收集适应度统计失败: {e}")
+            return {
+                "like_rate": 0.5,
+                "hit_rate": 0.5,
+                "dialog_reduction": 0,
+                "external_reduction": 0,
+                "efficiency": 0.5
+            }
     
     def start(self):
         """启动调度器"""

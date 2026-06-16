@@ -1206,6 +1206,85 @@ async def get_last_qa(limit: int = 1):
         logger.error(f"获取最近问答失败: {e}")
         return {"success": False, "error": str(e)}
 
+@app.get("/api/genome/stats")
+async def get_genome_stats():
+    """获取基因演化统计"""
+    try:
+        from core.genome_evolver import genome_evolver
+        
+        stats = genome_evolver.get_evolution_stats()
+        genes = genome_evolver.get_all_gene_values()
+        
+        return {
+            "success": True,
+            "stats": stats,
+            "genes": genes
+        }
+    except Exception as e:
+        logger.error(f"获取基因统计失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/genome/evolve")
+async def trigger_evolution():
+    """手动触发基因演化"""
+    try:
+        from core.genome_evolver import genome_evolver
+        
+        # 收集适应度统计
+        stats = {
+            "like_rate": 0.7,
+            "hit_rate": 0.65,
+            "dialog_reduction": 0.1,
+            "external_reduction": 0.05,
+            "efficiency": 0.6
+        }
+        
+        fitness = genome_evolver.evaluate_fitness(stats)
+        child_ids = genome_evolver.evolve(fitness)
+        
+        return {
+            "success": True,
+            "fitness": fitness,
+            "child_ids": child_ids,
+            "message": f"演化完成，产生{len(child_ids)}个候选基因组"
+        }
+    except Exception as e:
+        logger.error(f"基因演化失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/cognitive/stats")
+async def get_cognitive_stats():
+    """获取认知转化统计"""
+    try:
+        from core.cognitive_transformer import cognitive_transformer
+        
+        stats = cognitive_transformer.get_transformation_stats()
+        
+        return {
+            "success": True,
+            "stats": stats
+        }
+    except Exception as e:
+        logger.error(f"获取认知统计失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/cognitive/transform")
+async def trigger_transformation():
+    """手动触发认知转化"""
+    try:
+        from core.cognitive_transformer import cognitive_transformer
+        
+        results = cognitive_transformer.transform_all()
+        
+        return {
+            "success": True,
+            "results": results,
+            "message": f"转化完成：情景→技能({results['situations_to_skills']}), 技能→反射({results['skills_to_reflexes']}), 情景→抽象({results['situations_to_abstractions']})"
+        }
+    except Exception as e:
+        logger.error(f"认知转化失败: {e}")
+        return {"success": False, "error": str(e)}
+
 def _is_path_allowed(folder: Path) -> bool:
     """检查路径是否在允许范围内（防路径遍历）"""
     try:
