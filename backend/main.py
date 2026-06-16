@@ -701,7 +701,11 @@ async def chat(request: dict):
             except Exception as e:
                 logger.error(f"文件夹学习对话处理失败: {e}")
             
-            result = {"response": response, "intent": intent.type}
+            # 确保response不为空
+            if not response:
+                response = "抱歉，我暂时无法回答这个问题。请稍后再试或换一种方式提问。"
+            
+            result = {"response": str(response), "intent": intent.type}
             
             # 缓存响应（仅缓存高质量响应）
             if len(response_text) > 50:
