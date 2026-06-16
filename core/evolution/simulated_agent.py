@@ -268,6 +268,47 @@ class SimulatedAgent:
         self.fitness += score
         return score
     
+    def learn_from_experience(self):
+        """从情景记忆抽象出技能（认知转化：L3情景→L2技能）"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            
+            # 获取高频问题（出现≥3次）
+            cur = conn.execute('''
+                SELECT question, answer, COUNT(*) as cnt
+                FROM knowledge
+                GROUP BY question
+                HAVING cnt >= 3
+                ORDER BY cnt DESC
+                LIMIT 5
+            ''')
+            
+            patterns = cur.fetchall()
+            
+            for row in patterns:
+                question = row['question']
+                answer = row['answer']
+                cnt = row['cnt']
+                
+                # 检查是否已有对应技能
+                cur2 = conn.execute('''
+                    SELECT 1 FROM skills
+                    WHERE trigger LIKE ?
+                ''', (f'%{question[:20]}%',))
+                
+                if not cur2.fetchone():
+                    # 生成技能
+                    skill_name = f"auto_skill_{len(self.skills) + 1}"
+                    skill = {
+                        'name': skill_name,
+                        'code': f"# 自动从{cnt}次经验生成\n# 问题: {question[:50]}\n# 答案: {answer[:100]}",
+                        'trigger': question[:30]
+                    }
+                    
+                    self._add_skill(skill)
+                    self.skills.append(skill)
+                    logger.debug(f"智能体{self.id}从经验中生成技能: {skill_name} (来自{cnt}次经验)")
+    
     def cleanup(self):
         """清理临时数据库"""
         try:

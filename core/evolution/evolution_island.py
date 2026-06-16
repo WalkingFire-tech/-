@@ -99,6 +99,9 @@ class EvolutionIsland:
         for agent in self.agents:
             self.evaluate_agent(agent, tasks)
             agent.age += 1
+            
+            # 认知转化：从情景中抽象技能
+            agent.learn_from_experience()
         
         # 按适应度排序
         self.agents.sort(key=lambda a: a.fitness, reverse=True)
@@ -224,6 +227,21 @@ class EvolutionIsland:
             json.dump(result, f, ensure_ascii=False, indent=2)
         
         logger.info(f"结果已导出: {output_path}")
+    
+    def get_best_genome(self) -> Optional[Dict]:
+        """获取最佳基因组"""
+        best = self.get_best_agent()
+        if best:
+            return best.genome.to_dict()
+        return None
+    
+    def cleanup(self):
+        """清理所有智能体的临时文件"""
+        for agent in self.agents:
+            try:
+                agent.cleanup()
+            except Exception as e:
+                logger.warning(f"清理智能体{agent.id}失败: {e}")
 
 
 def run_evolution_sandbox(main_db_path: str = "data/knowledge_store.db",
