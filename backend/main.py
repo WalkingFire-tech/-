@@ -725,6 +725,121 @@ async def chat(request: dict):
         logger.error(f"处理请求失败: {e}")
         return {"error": str(e)}
 
+@app.get("/api/config/external")
+async def get_external_config():
+    """获取外部模型配置状态"""
+    try:
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+        
+        return {
+            "success": True,
+            "openai_key": os.getenv("OPENAI_API_KEY", ""),
+            "deepseek_key": os.getenv("DEEPSEEK_API_KEY", "")
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/config/external")
+async def save_external_config(request: dict):
+    """保存外部模型配置"""
+    try:
+        openai_key = request.get("openai_api_key", "")
+        deepseek_key = request.get("deepseek_api_key", "")
+        
+        # 读取现有.env文件
+        env_path = Path(".env")
+        env_content = ""
+        
+        if env_path.exists():
+            with open(env_path, 'r', encoding='utf-8') as f:
+                env_content = f.read()
+        
+        # 更新配置
+        lines = env_content.split('\n')
+        updated_lines = []
+        openai_updated = False
+        deepseek_updated = False
+        
+        for line in lines:
+            if line.startswith("OPENAI_API_KEY="):
+                if openai_key:
+                    updated_lines.append(f"OPENAI_API_KEY={openai_key}")
+                    openai_updated = True
+                else:
+                    updated_lines.append(line)
+            elif line.startswith("DEEPSEEK_API_KEY="):
+                if deepseek_key:
+                    updated_lines.append(f"DEEPSEEK_API_KEY={deepseek_key}")
+                    deepseek_updated = True
+                else:
+                    updated_lines.append(line)
+            else:
+                updated_lines.append(line)
+        
+        # 添加新配置
+        if openai_key and not openai_updated:
+            updated_lines.append(f"OPENAI_API_KEY={openai_key}")
+        if deepseek_key and not deepseek_updated:
+            updated_lines.append(f"DEEPSEEK_API_KEY={deepseek_key}")
+        
+        # 保存.env文件
+        with open(env_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(updated_lines))
+        
+        logger.info("外部模型配置已保存")
+        return {"success": True, "message": "配置已保存，请重启服务生效"}
+        
+    except Exception as e:
+        logger.error(f"保存配置失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/models/test")
+async def test_models():
+    """测试模型连接"""
+    results = {}
+    
+    # 测试Ollama
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        if response.status_code == 200:
+            results["Ollama"] = {"success": True, "message": "连接正常"}
+        else:
+            results["Ollama"] = {"success": False, "message": f"状态码: {response.status_code}"}
+    except Exception as e:
+        results["Ollama"] = {"success": False, "message": str(e)}
+    
+    # 测试OpenAI
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+    
+    if os.getenv("OPENAI_API_KEY"):
+        try:
+            from openai import OpenAI
+            client = OpenAI()
+            client.models.list()
+            results["OpenAI"] = {"success": True, "message": "API Key有效"}
+        except Exception as e:
+            results["OpenAI"] = {"success": False, "message": str(e)}
+    
+    # 测试DeepSeek
+    if os.getenv("DEEPSEEK_API_KEY"):
+        try:
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=os.getenv("DEEPSEEK_API_KEY"),
+                base_url="https://api.deepseek.com/v1"
+            )
+            client.models.list()
+            results["DeepSeek"] = {"success": True, "message": "API Key有效"}
+        except Exception as e:
+            results["DeepSeek"] = {"success": False, "message": str(e)}
+    
+    return {"success": True, "results": results}
+
 @app.post("/api/optimize")
 async def run_optimize(request: dict):
     """运行贝叶斯优化"""

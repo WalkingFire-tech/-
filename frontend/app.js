@@ -839,6 +839,104 @@ async function learnFromFiles() {
     selectedFiles = [];
 }
 
+// ==================== 外部模型配置 ====================
+function showExternalModelConfig() {
+    const modal = document.getElementById('external-model-modal');
+    if (modal) modal.style.display = 'block';
+    
+    // 加载当前配置
+    loadExternalModelConfig();
+}
+
+function closeExternalModelConfig() {
+    const modal = document.getElementById('external-model-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function loadExternalModelConfig() {
+    try {
+        const response = await fetch(`${API_BASE}/api/config/external`);
+        const data = await response.json();
+        
+        if (data.success) {
+            const openaiKey = document.getElementById('openai-key');
+            const deepseekKey = document.getElementById('deepseek-key');
+            
+            if (openaiKey && data.openai_key) {
+                openaiKey.value = data.openai_key.substring(0, 10) + '...';
+            }
+            if (deepseekKey && data.deepseek_key) {
+                deepseekKey.value = data.deepseek_key.substring(0, 10) + '...';
+            }
+        }
+    } catch (error) {
+        console.error('加载配置失败:', error);
+    }
+}
+
+async function saveExternalModelConfig() {
+    const openaiKey = document.getElementById('openai-key').value.trim();
+    const deepseekKey = document.getElementById('deepseek-key').value.trim();
+    const statusDiv = document.getElementById('external-model-status');
+    
+    if (!openaiKey && !deepseekKey) {
+        if (statusDiv) statusDiv.innerHTML = '<p style="color: red;">请至少输入一个API Key</p>';
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/config/external`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                openai_api_key: openaiKey,
+                deepseek_api_key: deepseekKey
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            if (statusDiv) statusDiv.innerHTML = '<p style="color: green;">✅ 配置已保存，请重启服务生效</p>';
+            setTimeout(() => {
+                closeExternalModelConfig();
+                loadModels();
+            }, 2000);
+        } else {
+            if (statusDiv) statusDiv.innerHTML = `<p style="color: red;">❌ 保存失败: ${data.error}</p>`;
+        }
+    } catch (error) {
+        if (statusDiv) statusDiv.innerHTML = `<p style="color: red;">❌ 请求失败: ${error.message}</p>`;
+    }
+}
+
+async function testExternalModel() {
+    const statusDiv = document.getElementById('external-model-status');
+    if (statusDiv) statusDiv.innerHTML = '<p style="color: blue;">⏳ 测试连接中...</p>';
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/models/test`);
+        const data = await response.json();
+        
+        if (data.success) {
+            const results = data.results || {};
+            let html = '<p style="color: green;">✅ 测试结果:</p><ul>';
+            
+            for (const [model, result] of Object.entries(results)) {
+                const status = result.success ? '✅' : '❌';
+                html += `<li>${status} ${model}: ${result.message || 'OK'}</li>`;
+            }
+            
+            html += '</ul>';
+            if (statusDiv) statusDiv.innerHTML = html;
+        } else {
+            if (statusDiv) statusDiv.innerHTML = `<p style="color: red;">❌ 测试失败: ${data.error}</p>`;
+        }
+    } catch (error) {
+        if (statusDiv) statusDiv.innerHTML = `<p style="color: red;">❌ 测试失败: ${error.message}</p>`;
+    }
+}
+
 // ==================== 初始化（DOMContentLoaded） ====================
 document.addEventListener('DOMContentLoaded', () => {
     // 绑定添加模型表单提交事件
