@@ -303,6 +303,126 @@ class ActiveScheduler:
                 "efficiency": 0.5
             }
     
+    def run_evolution_sandbox(self, num_agents: int = 8, generations: int = 20) -> Dict:
+        """
+        运行进化沙盒
+        
+        Args:
+            num_agents: 智能体数量
+            generations: 进化代数
+        
+        Returns:
+            进化结果
+        """
+        try:
+            from core.evolution.evolution_island import EvolutionIsland
+            
+            logger.info(f"启动进化沙盒: {num_agents}个智能体, {generations}代")
+            
+            island = EvolutionIsland(
+                main_db_path=self.db_path,
+                num_agents=num_agents,
+                generations=generations,
+                tasks_per_gen=30
+            )
+            
+            result = island.run()
+            
+            # 更新主系统基因
+            if result.get('best_genome'):
+                self._apply_evolved_genome(result['best_genome'])
+            
+            # 导入新技能
+            if result.get('best_skills'):
+                self._import_evolved_skills(result['best_skills'])
+            
+            # 添加通知
+            notification = {
+                "type": "evolution_sandbox",
+                "message": f"🏝️ 进化沙盒完成：最优适应度={result['stats']['final_best_fitness']:.3f}",
+                "stats": result['stats'],
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            self.pending_notifications.append(notification)
+            
+            logger.info(f"进化沙盒完成: {result['stats']}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"进化沙盒失败: {e}")
+            return {"error": str(e)}
+    
+    def _apply_evolved_genome(self, genome: Dict):
+        """应用进化后的基因组"""
+        try:
+            from core.genome_evolver import genome_evolver
+            
+            # 更新基因值
+            with sqlite3.connect(genome_evolver.db_path) as conn:
+                # 获取当前活跃基因组
+                cur = conn.execute("SELECT gene_values FROM genomes WHERE id = ?", 
+                                 (genome_evolver.active_genome_id,))
+                row = cur.fetchone()
+                
+                if row:
+                    current_values = json.loads(row[0])
+                    
+                    # 更新值
+                    if 'retrieval_threshold' in genome:
+                        current_values['G002'] = str(genome['retrieval_threshold'])
+                    if 'external_threshold' in genome:
+                        current_values['G007'] = str(genome['external_threshold'])
+                    if 'memory_decay' in genome:
+                        current_values['G008'] = str(genome['memory_decay'])
+                    if 'exploration' in genome:
+                        current_values['G010'] = str(genome['exploration'])
+                    if 'social' in genome:
+                        current_values['G009'] = str(genome['social'])
+                    if 'answer_style' in genome:
+                        current_values['G006'] = str(genome['answer_style'])
+                    
+                    # 保存
+                    conn.execute("UPDATE genomes SET gene_values = ? WHERE id = ?",
+                               (json.dumps(current_values), genome_evolver.active_genome_id))
+                    conn.commit()
+                    
+                    logger.info(f"已应用进化基因组: {genome}")
+        except Exception as e:
+            logger.error(f"应用进化基因组失败: {e}")
+    
+    def _import_evolved_skills(self, skills: List[Dict]):
+        """导入进化后的技能"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                for skill in skills:
+                    name = skill.get('name', f"evolved_skill_{hash(str(skill)) % 10000}")
+                    code = skill.get('code', '')
+                    trigger = skill.get('trigger', '')
+                    
+                    # 检查是否已存在
+                    cur = conn.execute("SELECT 1 FROM tools WHERE name = ?", (name,))
+                    if cur.fetchone():
+                        continue
+                    
+                    # 注册工具
+                    conn.execute('''
+                        INSERT INTO tools (name, code, description, triggers, usage_count, created_at)
+                        VALUES (?, ?, ?, ?, 0, ?)
+                    ''', (
+                        name,
+                        code,
+                        f"进化产生的技能",
+                        json.dumps([trigger]),
+                        datetime.now().isoformat()
+                    ))
+                
+                conn.commit()
+                logger.info(f"已导入{len(skills)}个进化技能")
+        except Exception as e:
+            logger.error(f"导入进化技能失败: {e}")
+    
     def start(self):
         """启动调度器"""
         if self.running:
