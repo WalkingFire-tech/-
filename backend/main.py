@@ -148,17 +148,14 @@ async def lifespan(app: FastAPI):
     if not adapters:
         from adapters.llm.mock_adapter import MockAdapter
         adapters["mock"] = MockAdapter()
-        logger.warning("所有模型不可用，使用Mock适配器作为降级方案")
-        
-        # 自动启动无模型进化模式
-        try:
-            from core.model_free_evolution import model_free_evolution
-            model_free_evolution.start()
-            logger.info("🧬 已自动启动无模型进化模式（降级方案）")
-        except Exception as e:
-            logger.warning(f"启动无模型进化失败: {e}")
+        logger.warning("⚠️  所有模型不可用，使用Mock适配器作为降级方案")
+        logger.warning("⚠️  建议：启动Ollama或配置外脑API以获得完整功能")
+        logger.info("💡 提示：系统仍可通过外部搜索进行学习（无模型进化模式）")
     else:
-        logger.info(f"已加载 {len(adapters)} 个模型适配器: {list(adapters.keys())}")
+        logger.info(f"✅ 已加载 {len(adapters)} 个模型适配器: {list(adapters.keys())}")
+    
+    # 无论是否有模型，都启动主动调度器（包含进化任务）
+    logger.info("启动主动调度器（进化任务）...")
     
     planner = Planner(adapters, adapters_lock=adapters_lock)
     
@@ -601,23 +598,23 @@ async def chat(request: dict):
             # 等待模型响应（主要延迟）
             response = await model_task
             
-            # 取消其他任务（如果模型已返回）
+            # 等待其他任务完成（最多等待1秒）
             knowledge_result = None
             vector_result = None
             env_hint = None
             
             try:
-                knowledge_result = knowledge_task.result()
+                knowledge_result = await asyncio.wait_for(knowledge_task, timeout=1.0)
             except:
                 pass
             
             try:
-                vector_result = vector_task.result()
+                vector_result = await asyncio.wait_for(vector_task, timeout=1.0)
             except:
                 pass
             
             try:
-                env_hint = env_task.result()
+                env_hint = await asyncio.wait_for(env_task, timeout=1.0)
             except:
                 pass
             
