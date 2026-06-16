@@ -1,0 +1,161 @@
+# 学习目标配置
+# 定义系统需要主动学习的主题和技能
+
+learning_targets:
+  # 主题学习列表
+  topics:
+    - name: "Python异步编程"
+      description: "掌握Python异步编程核心概念和实践"
+      keywords:
+        - "asyncio"
+        - "async await"
+        - "coroutine"
+        - "事件循环"
+        - "并发控制"
+      priority: 5  # 1-5，5最高
+      min_knowledge: 10  # 最少需要掌握的知识条数
+      sources:
+        - "https://docs.python.org/zh-cn/3/library/asyncio.html"
+        - "Python官方文档"
+      status: "pending"  # pending, in_progress, completed
+      progress: 0  # 当前进度（知识条数）
+    
+    - name: "FastAPI框架"
+      description: "深入理解FastAPI框架原理和最佳实践"
+      keywords:
+        - "FastAPI"
+        - "依赖注入"
+        - "路径操作"
+        - "中间件"
+        - "后台任务"
+      priority: 4
+      min_knowledge: 15
+      sources:
+        - "https://fastapi.tiangolo.com/zh/"
+      status: "pending"
+      progress: 0
+    
+    - name: "向量检索"
+      description: "掌握向量检索和语义搜索技术"
+      keywords:
+        - "向量检索"
+        - "embedding"
+        - "FAISS"
+        - "ChromaDB"
+        - "语义相似度"
+      priority: 4
+      min_knowledge: 12
+      status: "pending"
+      progress: 0
+    
+    - name: "遗传算法"
+      description: "理解遗传算法在优化中的应用"
+      keywords:
+        - "遗传算法"
+        - "适应度函数"
+        - "交叉变异"
+        - "种群进化"
+      priority: 3
+      min_knowledge: 8
+      status: "pending"
+      progress: 0
+    
+    - name: "认知架构"
+      description: "理解多层认知架构设计原理"
+      keywords:
+        - "认知架构"
+        - "记忆层次"
+        - "技能固化"
+        - "反射机制"
+      priority: 3
+      min_knowledge: 10
+      status: "pending"
+      progress: 0
+
+  # 技能学习列表
+  skills:
+    - name: "代码生成"
+      description: "生成高质量、符合规范的代码"
+      indicators:
+        - "语法正确率"
+        - "逻辑完整性"
+        - "代码风格"
+      priority: 5
+      min_success_rate: 0.85  # 最低成功率
+      min_samples: 50  # 最少样本数
+      status: "in_progress"
+      success_count: 0
+      total_count: 0
+    
+    - name: "错误诊断"
+      description: "准确诊断和解释错误原因"
+      indicators:
+        - "根因定位准确率"
+        - "解决方案有效性"
+        - "解释清晰度"
+      priority: 4
+      min_success_rate: 0.80
+      min_samples: 30
+      status: "pending"
+      success_count: 0
+      total_count: 0
+    
+    - name: "知识检索"
+      description: "快速准确检索相关知识"
+      indicators:
+        - "检索命中率"
+        - "相关性评分"
+        - "响应速度"
+      priority: 4
+      min_success_rate: 0.75
+      min_samples: 100
+      status: "in_progress"
+      success_count: 0
+      total_count: 0
+    
+    - name: "意图理解"
+      description: "准确理解用户意图"
+      indicators:
+        - "意图分类准确率"
+        - "参数提取准确率"
+        - "上下文理解"
+      priority: 5
+      min_success_rate: 0.90
+      min_samples: 200
+      status: "in_progress"
+      success_count: 0
+      total_count: 0
+
+# 自动学习配置
+auto_learning:
+  enabled: true
+  check_interval: 3600  # 检查间隔（秒）
+  max_parallel: 3  # 同时学习的最大目标数
+  trigger_threshold: 0.5  # 完成度低于此值触发学习
+  
+  # 学习策略
+  strategy:
+    prioritize_by: "priority"  # priority, progress, random
+    balance_topics_skills: true  # 平衡主题和技能学习
+    respect_sources: true  # 优先从指定来源学习
+  
+  # 触发条件
+  triggers:
+    low_progress: true  # 进度过低时触发
+    skill_degradation: true  # 技能退化时触发
+    new_topic_added: true  # 新增主题时触发
+    periodic_refresh: true  # 定期刷新
+  
+  # 学习限制
+  limits:
+    max_daily_learning: 50  # 每天最多学习50条知识
+    max_hourly_learning: 10  # 每小时最多学习10条知识
+    cooldown_after_success: 300  # 成功后冷却时间（秒）
+    retry_after_failure: 600  # 失败后重试间隔（秒）
+
+# 学习历史记录
+history:
+  enabled: true
+  max_records: 1000
+  track_sources: true
+  track_quality: true

@@ -10,9 +10,48 @@ from fastapi.responses import FileResponse
 import asyncio
 import json
 from loguru import logger
+from functools import lru_cache
+import hashlib
 
 ROOT_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT_DIR))
+
+# 响应缓存（简单LRU）
+_response_cache = {}
+_cache_lock = threading.Lock()
+CACHE_MAX_SIZE = 100
+CACHE_TTL = 300  # 5分钟
+
+def _get_cache_key(user_input: str) -> str:
+    """生成缓存键"""
+    return hashlib.md5(user_input.encode()).hexdigest()
+
+def _get_cached_response(cache_key: str) -> dict:
+    """获取缓存响应"""
+    with _cache_lock:
+        cached = _response_cache.get(cache_key)
+        if cached:
+            import time
+            if time.time() - cached['timestamp'] < CACHE_TTL:
+                return cached['data']
+            else:
+                del _response_cache[cache_key]
+    return None
+
+def _set_cached_response(cache_key: str, data: dict):
+    """设置缓存响应"""
+    import time
+    with _cache_lock:
+        if len(_response_cache) >= CACHE_MAX_SIZE:
+            # 删除最旧的缓存
+            oldest_key = min(_response_cache.keys(), 
+                           key=lambda k: _response_cache[k]['timestamp'])
+            del _response_cache[oldest_key]
+        
+        _response_cache[cache_key] = {
+            'data': data,
+            'timestamp': time.time()
+        }
 
 from infrastructure.event_bus import bus
 from core.services.intent_parser import IntentParser
@@ -65,24 +104,28 @@ async def lifespan(app: FastAPI):
     
     # 只有当Ollama可用时才加载本地模型
     if ollama_available:
-        # 尝试加载Ollama模型（只加载实际存在的模型）
-        try:
-            adapters["mindchat"] = OllamaAdapter(model_name="mindchat")
-            logger.info("✅ 已加载 MindChat")
-        except Exception as e:
-            logger.warning(f"MindChat不可用: {e}")
+        # 动态加载Ollama中实际存在的模型
+        for model_name in available_models:
+            try:
+                adapter_key = model_name.replace(":", "_").replace(".", "_")
+                adapters[adapter_key] = OllamaAdapter(model_name=model_name)
+                logger.info(f"✅ 已加载模型: {model_name}")
+            except Exception as e:
+                logger.warning(f"模型 {model_name} 加载失败: {e}")
         
-        try:
-            adapters["code_light"] = OllamaAdapter(model_name="qwen2.5-coder:1.5b")
-            logger.info("✅ 已加载 code_light (qwen2.5-coder:1.5b)")
-        except Exception as e:
-            logger.warning(f"Code light model不可用: {e}")
-        
-        try:
-            adapters["deepcoder"] = OllamaAdapter(model_name="deepcoder")
-            logger.info("✅ 已加载 DeepCoder")
-        except Exception as e:
-            logger.warning(f"DeepCoder不可用: {e}")
+        # 为常用模型设置别名（如果存在）
+        model_aliases = {
+            "qwen2.5-coder:1.5b": "code_light",
+            "qwen2.5-coder:7b": "deepcoder",
+            "qwen2.5:7b": "mindchat"
+        }
+        for model_name, alias in model_aliases.items():
+            if model_name in available_models and alias not in adapters:
+                try:
+                    adapters[alias] = OllamaAdapter(model_name=model_name)
+                    logger.info(f"✅ 已加载模型别名: {alias} -> {model_name}")
+                except Exception as e:
+                    logger.warning(f"模型别名 {alias} 加载失败: {e}")
     else:
         logger.info("Ollama服务未启动，跳过本地模型加载")
     
@@ -106,6 +149,14 @@ async def lifespan(app: FastAPI):
         from adapters.llm.mock_adapter import MockAdapter
         adapters["mock"] = MockAdapter()
         logger.warning("所有模型不可用，使用Mock适配器作为降级方案")
+        
+        # 自动启动无模型进化模式
+        try:
+            from core.model_free_evolution import model_free_evolution
+            model_free_evolution.start()
+            logger.info("🧬 已自动启动无模型进化模式（降级方案）")
+        except Exception as e:
+            logger.warning(f"启动无模型进化失败: {e}")
     else:
         logger.info(f"已加载 {len(adapters)} 个模型适配器: {list(adapters.keys())}")
     
@@ -376,9 +427,99 @@ async def reload_models():
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+async def _trigger_external_learning(user_input: str, intent_type: str, response_text: str):
+    """异步触发外部学习（不阻塞响应）"""
+    try:
+        from core.learning import enhanced_learner
+        enhanced_learner.learn_with_external(
+            user_input=user_input,
+            context=json.dumps({"intent": intent_type}),
+            response_text=response_text,
+            confidence=0.8,
+            auto_trigger=True
+        )
+    except Exception as e:
+        logger.error(f"外部学习失败: {e}")
+
+async def _trigger_learning_from_chat(user_input: str, intent_type: str):
+    """从聊天内容触发学习（无LLM降级方案）"""
+    try:
+        import sqlite3
+        from datetime import datetime
+        
+        # 1. 存储对话经验
+        with sqlite3.connect("data/knowledge_store.db") as conn:
+            conn.execute('''
+                INSERT INTO experiences 
+                (timestamp, intent_type, success, quality_score, context)
+                VALUES (?, ?, 1, 50.0, ?)
+            ''', (datetime.now().isoformat(), intent_type, user_input[:200]))
+            conn.commit()
+        
+        # 2. 检查是否需要外部学习（无高质量匹配时）
+        from core.learning import enhanced_learner
+        result = enhanced_learner.retrieve_knowledge(user_input)
+        
+        if not result or result.get('confidence', 0) < 0.5:
+            # 触发外部搜索学习
+            logger.info(f"触发外部学习: {user_input[:50]}...")
+            
+            try:
+                from duckduckgo_search import DDGS
+                
+                with DDGS() as ddgs:
+                    search_results = list(ddgs.text(user_input, max_results=3))
+                
+                if search_results:
+                    with sqlite3.connect("data/knowledge_store.db") as conn:
+                        for sr in search_results:
+                            question = user_input
+                            answer = f"{sr.get('title', '')}\n\n{sr.get('body', '')}"
+                            source = sr.get('href', 'chat_triggered')
+                            
+                            conn.execute('''
+                                INSERT INTO knowledge_items 
+                                (question, answer, source, knowledge_type, quality_score, created_at)
+                                VALUES (?, ?, ?, 'chat_learned', 40.0, ?)
+                            ''', (question, answer, source, datetime.now().isoformat()))
+                        
+                        conn.commit()
+                    
+                    logger.info(f"从对话学习: 新增{len(search_results)}条知识")
+                    
+            except Exception as e:
+                logger.warning(f"外部搜索失败: {e}")
+        
+        # 3. 检查是否匹配学习目标关键词
+        try:
+            from core.auto_learning_trigger import auto_learning_trigger
+            
+            targets = auto_learning_trigger.learning_targets.get('topics', [])
+            user_lower = user_input.lower()
+            
+            for target in targets:
+                keywords = target.get('keywords', [])
+                
+                # 如果用户输入包含目标关键词，记录进度
+                if any(kw.lower() in user_lower for kw in keywords):
+                    logger.info(f"匹配学习目标: {target['name']}")
+                    
+                    # 触发该目标的深度学习
+                    auto_learning_trigger.force_learn_target(
+                        target['name'], 
+                        'topic'
+                    )
+                    break
+                    
+        except Exception as e:
+            logger.warning(f"学习目标匹配失败: {e}")
+            
+    except Exception as e:
+        logger.error(f"聊天触发学习失败: {e}")
+
 @app.post("/api/chat")
 async def chat(request: dict):
-    """聊天端点"""
+    """聊天端点 - 优化版（并行检索+缓存）"""
     user_input = request.get("message", "")
     current_file = request.get("current_file", None)
     current_topic = request.get("current_topic", None)
@@ -386,22 +527,19 @@ async def chat(request: dict):
     if not user_input:
         return {"error": "Empty message"}
     
+    # 检查缓存
+    cache_key = _get_cache_key(user_input)
+    cached = _get_cached_response(cache_key)
+    if cached:
+        logger.info(f"缓存命中: {user_input[:50]}...")
+        cached['cached'] = True
+        return cached
+    
     try:
         intent = intent_parser.parse(user_input)
         
         if campfire:
             campfire.log_user(user_input)
-        
-        # 环境触发器匹配
-        env_hint = None
-        try:
-            from core.learning import enhanced_learner
-            env_matches = enhanced_learner.match_environmental_triggers(current_file, current_topic)
-            if env_matches:
-                env_hint = f"💡 看到你在{current_file or '这个话题'}，我突然想起：{env_matches[0][0][:100]}... 需要我详细说说吗？"
-                logger.info(f"环境触发器命中: {current_file or current_topic}")
-        except Exception as e:
-            logger.error(f"环境触发器匹配失败: {e}")
         
         response_queue = asyncio.Queue()
         
@@ -412,83 +550,111 @@ async def chat(request: dict):
         
         try:
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, planner.plan, intent)
             
-            try:
-                response = await asyncio.wait_for(response_queue.get(), timeout=60.0)
-                
-                if campfire and response:
-                    campfire.log_assistant(str(response)[:1000])
-                
-                response_text = str(response) if response else ""
-                
-                # 检索知识（支持回忆语气）
-                knowledge_result = None
+            # 并行执行：模型推理 + 知识检索 + 向量检索
+            async def run_model():
+                await loop.run_in_executor(None, planner.plan, intent)
+                try:
+                    return await asyncio.wait_for(response_queue.get(), timeout=30.0)
+                except:
+                    return None
+            
+            async def run_knowledge_retrieval():
                 try:
                     from core.learning import enhanced_learner
-                    knowledge_result = enhanced_learner.retrieve_knowledge(user_input)
-                    
-                    if knowledge_result and knowledge_result.get('confidence', 0) > 0.6:
-                        answer = knowledge_result['answer']
-                        
-                        # 回忆语气
-                        if knowledge_result.get('reconstructed'):
-                            answer = "🤔 让我努力回想一下……（记忆有些模糊）\n\n" + answer
-                        
-                        # 环境提示
-                        if env_hint:
-                            answer = env_hint + "\n\n" + answer
-                        
-                        logger.info(f"知识检索命中: {knowledge_result['source']} ({knowledge_result['confidence']:.2f})")
-                except Exception as e:
-                    logger.error(f"知识检索失败: {e}")
-                
+                    result = enhanced_learner.retrieve_knowledge(user_input)
+                    if result and result.get('confidence', 0) > 0.6:
+                        return result
+                except:
+                    pass
+                return None
+            
+            async def run_vector_retrieval():
                 try:
                     from core.vector_retriever import vector_retriever
-                    
-                    vector_results = vector_retriever.hybrid_search(
-                        query=user_input,
-                        top_k=3
-                    )
-                    
-                    if vector_results:
-                        best_match = vector_results[0]
-                        if best_match.get('final_score', 0) > 0.6:
-                            logger.info(f"向量检索命中: {best_match['final_score']:.2f}")
-                except Exception as e:
-                    logger.error(f"向量检索失败: {e}")
-                
+                    results = vector_retriever.hybrid_search(query=user_input, top_k=3)
+                    if results and results[0].get('final_score', 0) > 0.6:
+                        return results[0]
+                except:
+                    pass
+                return None
+            
+            async def run_env_trigger():
                 try:
                     from core.learning import enhanced_learner
-                    external_result = enhanced_learner.learn_with_external(
-                        user_input=user_input,
-                        context=json.dumps({"intent": intent.type}),
-                        response_text=response_text,
-                        confidence=0.8,
-                        auto_trigger=True
-                    )
-                    
-                    if external_result.get("external_triggered"):
-                        logger.info(f"外部学习触发: {external_result.get('reason')}")
-                        
-                        if external_result.get("new_knowledge_count") > 0:
-                            external_knowledge = external_result.get("items", [])
-                            for item in external_knowledge:
-                                if item.get("knowledge_type") == "meta":
-                                    response_text += f"\n\n[外部学习] {item.get('question', '')}"
-                except Exception as e:
-                    logger.error(f"外部学习失败: {e}")
+                    matches = enhanced_learner.match_environmental_triggers(current_file, current_topic)
+                    if matches:
+                        return f"💡 看到你在{current_file or '这个话题'}，我突然想起：{matches[0][0][:100]}..."
+                except:
+                    pass
+                return None
+            
+            # 并行执行所有检索
+            model_task = asyncio.create_task(run_model())
+            knowledge_task = asyncio.create_task(run_knowledge_retrieval())
+            vector_task = asyncio.create_task(run_vector_retrieval())
+            env_task = asyncio.create_task(run_env_trigger())
+            
+            # 异步触发学习（不阻塞响应）
+            asyncio.create_task(_trigger_learning_from_chat(user_input, intent.type))
+            
+            # 等待模型响应（主要延迟）
+            response = await model_task
+            
+            # 取消其他任务（如果模型已返回）
+            knowledge_result = None
+            vector_result = None
+            env_hint = None
+            
+            try:
+                knowledge_result = knowledge_task.result()
+            except:
+                pass
+            
+            try:
+                vector_result = vector_task.result()
+            except:
+                pass
+            
+            try:
+                env_hint = env_task.result()
+            except:
+                pass
+            
+            if campfire and response:
+                campfire.log_assistant(str(response)[:1000])
+            
+            response_text = str(response) if response else ""
+            
+            # 优先使用高质量检索结果
+            if knowledge_result and knowledge_result.get('confidence', 0) > 0.7:
+                answer = knowledge_result['answer']
+                if knowledge_result.get('reconstructed'):
+                    answer = "🤔 让我努力回想一下……\n\n" + answer
+                if env_hint:
+                    answer = env_hint + "\n\n" + answer
+                return {
+                    "response": answer,
+                    "intent": intent.type,
+                    "source": knowledge_result['source'],
+                    "cached": True
+                }
+            
+            # 异步触发外部学习（不阻塞响应）
+            if len(response_text) > 50:
+                asyncio.create_task(_trigger_external_learning(user_input, intent.type, response_text))
+            
+            # 处理文件夹学习相关查询
+            try:
+                from core.folder_learner import folder_learner
                 
-                try:
-                    from core.folder_learner import folder_learner
+                user_lower = user_input.lower()
+                
+                if any(phrase in user_lower for phrase in ["学习进度", "文件夹学习", "学了多少", "学习状态"]):
+                    summary = folder_learner.get_summary()
+                    status = folder_learner.get_status()
                     
-                    user_lower = user_input.lower()
-                    
-                    if any(phrase in user_lower for phrase in ["学习进度", "文件夹学习", "学了多少", "学习状态"]):
-                        summary = folder_learner.get_summary()
-                        status = folder_learner.get_status()
-                        
-                        folder_response = f"""📚 文件夹学习进度报告：
+                    folder_response = f"""📚 文件夹学习进度报告：
 - 学习根目录: {summary.get('root_path', '未设置')}
 - 已扫描文件: {summary.get('total_files', 0)} 个
 - 成功学习: {summary.get('successful', 0)} 个
@@ -496,61 +662,58 @@ async def chat(request: dict):
 - 提取知识: {summary.get('total_knowledge', 0)} 条
 - 最后扫描: {summary.get('last_scan', '从未')}
 - 后台监控: {'运行中' if status.get('running') else '已停止'}"""
-                        
-                        return {"response": folder_response, "intent": "folder_learning_status"}
                     
-                    elif "显示失败" in user_lower or "失败文件" in user_lower:
-                        failed_files = folder_learner.get_failed_files()
-                        
-                        if not failed_files:
-                            return {"response": "✅ 没有学习失败的文件", "intent": "folder_learning_failed"}
-                        
-                        failed_response = "❌ 学习失败的文件：\n"
-                        for f in failed_files[:10]:
-                            failed_response += f"- {f['relative_path']}: {f['error_msg']}\n"
-                        
-                        return {"response": failed_response, "intent": "folder_learning_failed"}
-                    
-                    elif "最近学习" in user_lower or "学习历史" in user_lower:
-                        recent_files = folder_learner.get_recent_learned()
-                        
-                        if not recent_files:
-                            return {"response": "暂无学习记录", "intent": "folder_learning_recent"}
-                        
-                        recent_response = "📖 最近学习的文件：\n"
-                        for f in recent_files:
-                            status_icon = "✅" if f['status'] == 'success' else "❌"
-                            recent_response += f"{status_icon} {f['relative_path']} ({f['knowledge_count']}条知识)\n"
-                        
-                        return {"response": recent_response, "intent": "folder_learning_recent"}
-                    
-                    notifications = folder_learner.pop_notifications()
-                    if notifications:
-                        notif = notifications[-1]
-                        notification_msg = f"\n\n✨ [自动学习通知] 我刚学习了 {notif['new']} 个新文件，更新了 {notif['updated']} 个文件"
-                        if notif['failed'] > 0:
-                            notification_msg += f"，{notif['failed']} 个失败"
-                        
-                        if isinstance(response, str):
-                            response = response + notification_msg
-                        else:
-                            response = str(response) + notification_msg
-                except Exception as e:
-                    logger.error(f"文件夹学习对话处理失败: {e}")
+                    return {"response": folder_response, "intent": "folder_learning_status"}
                 
-                # 如果有高质量检索结果，优先使用
-                if knowledge_result and knowledge_result.get('confidence', 0) > 0.7:
-                    return {
-                        "response": knowledge_result['answer'],
-                        "intent": intent.type,
-                        "source": knowledge_result['source'],
-                        "reconstructed": knowledge_result.get('reconstructed', False)
-                    }
+                elif "显示失败" in user_lower or "失败文件" in user_lower:
+                    failed_files = folder_learner.get_failed_files()
+                    
+                    if not failed_files:
+                        return {"response": "✅ 没有学习失败的文件", "intent": "folder_learning_failed"}
+                    
+                    failed_response = "❌ 学习失败的文件：\n"
+                    for f in failed_files[:10]:
+                        failed_response += f"- {f['relative_path']}: {f['error_msg']}\n"
+                    
+                    return {"response": failed_response, "intent": "folder_learning_failed"}
                 
-                return {"response": response, "intent": intent.type}
-            except asyncio.TimeoutError:
-                logger.error("请求超时")
-                return {"error": "Timeout", "intent": intent.type}
+                elif "最近学习" in user_lower or "学习历史" in user_lower:
+                    recent_files = folder_learner.get_recent_learned()
+                    
+                    if not recent_files:
+                        return {"response": "暂无学习记录", "intent": "folder_learning_recent"}
+                    
+                    recent_response = "📖 最近学习的文件：\n"
+                    for f in recent_files:
+                        status_icon = "✅" if f['status'] == 'success' else "❌"
+                        recent_response += f"{status_icon} {f['relative_path']} ({f['knowledge_count']}条知识)\n"
+                    
+                    return {"response": recent_response, "intent": "folder_learning_recent"}
+                
+                notifications = folder_learner.pop_notifications()
+                if notifications:
+                    notif = notifications[-1]
+                    notification_msg = f"\n\n✨ [自动学习通知] 我刚学习了 {notif['new']} 个新文件，更新了 {notif['updated']} 个文件"
+                    if notif['failed'] > 0:
+                        notification_msg += f"，{notif['failed']} 个失败"
+                    
+                    if isinstance(response, str):
+                        response = response + notification_msg
+                    else:
+                        response = str(response) + notification_msg
+            except Exception as e:
+                logger.error(f"文件夹学习对话处理失败: {e}")
+            
+            result = {"response": response, "intent": intent.type}
+            
+            # 缓存响应（仅缓存高质量响应）
+            if len(response_text) > 50:
+                _set_cached_response(cache_key, result)
+            
+            return result
+        except asyncio.TimeoutError:
+            logger.error("请求超时")
+            return {"error": "Timeout", "intent": intent.type}
         finally:
             try:
                 bus.unsubscribe("plan_executed", on_response)
@@ -1344,6 +1507,107 @@ async def trigger_evolution():
         }
     except Exception as e:
         logger.error(f"基因演化失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/learning/targets")
+async def get_learning_targets():
+    """获取学习目标状态"""
+    try:
+        from core.auto_learning_trigger import auto_learning_trigger
+        
+        status = auto_learning_trigger.get_learning_status()
+        
+        return {
+            "success": True,
+            "status": status
+        }
+    except Exception as e:
+        logger.error(f"获取学习目标失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/learning/targets/trigger")
+async def trigger_target_learning(request: dict):
+    """手动触发指定目标学习"""
+    target_name = request.get("target_name", "")
+    target_type = request.get("target_type", "topic")
+    
+    if not target_name:
+        return {"success": False, "error": "缺少目标名称"}
+    
+    try:
+        from core.auto_learning_trigger import auto_learning_trigger
+        
+        result = auto_learning_trigger.force_learn_target(target_name, target_type)
+        
+        return result
+    except Exception as e:
+        logger.error(f"触发学习失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/learning/targets/reload")
+async def reload_learning_targets():
+    """重新加载学习目标配置"""
+    try:
+        from core.auto_learning_trigger import auto_learning_trigger
+        
+        auto_learning_trigger._load_config()
+        
+        return {
+            "success": True,
+            "message": "学习目标配置已重新加载",
+            "topics": len(auto_learning_trigger.learning_targets.get('topics', [])),
+            "skills": len(auto_learning_trigger.learning_targets.get('skills', []))
+        }
+    except Exception as e:
+        logger.error(f"重新加载配置失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/evolution/status")
+async def get_evolution_status():
+    """获取无模型进化状态"""
+    try:
+        from core.model_free_evolution import model_free_evolution
+        
+        status = model_free_evolution.get_status()
+        
+        return {
+            "success": True,
+            "status": status
+        }
+    except Exception as e:
+        logger.error(f"获取进化状态失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/evolution/start")
+async def start_evolution():
+    """启动无模型进化"""
+    try:
+        from core.model_free_evolution import model_free_evolution
+        
+        model_free_evolution.start()
+        
+        return {
+            "success": True,
+            "message": "无模型进化系统已启动"
+        }
+    except Exception as e:
+        logger.error(f"启动进化失败: {e}")
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/evolution/stop")
+async def stop_evolution():
+    """停止无模型进化"""
+    try:
+        from core.model_free_evolution import model_free_evolution
+        
+        model_free_evolution.stop()
+        
+        return {
+            "success": True,
+            "message": "无模型进化系统已停止"
+        }
+    except Exception as e:
+        logger.error(f"停止进化失败: {e}")
         return {"success": False, "error": str(e)}
 
 @app.get("/api/cognitive/stats")
