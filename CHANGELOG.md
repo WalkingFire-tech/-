@@ -1,5 +1,80 @@
 # 联盟拓荒者 - 更新日志
 
+## [v4.0] - 2026-06-16
+
+### 新增功能
+
+#### 进化系统
+- **基因演化引擎** (`core/genome_evolver.py`)
+  - 10个可演化基因参数（检索阈值、学习频率、情感权重等）
+  - 适应度评估（点赞率、命中率、效率等）
+  - 变异、交叉、选择操作
+  - 影子模式验证
+
+- **认知转化器** (`core/cognitive_transformer.py`)
+  - 五层认知架构：L0基因→L1反射→L2技能→L3记忆→L4抽象
+  - 情景→技能转化（重复经历≥3次）
+  - 技能→反射转化（成功调用≥3次）
+  - 情景→抽象转化（归纳总结）
+
+- **进化岛沙盒** (`core/evolution/`)
+  - 多智能体进化模拟
+  - 独立临时数据库隔离
+  - 任务池从主库构建
+  - 基因杂交和变异
+  - 精英选择和后代产生
+
+#### 记忆体验增强
+- **刻骨铭心** - 手动标记永久记忆
+- **环境触发器** - 基于当前文件/话题主动提示
+- **回忆语气** - 情境重构带情感前缀
+- **周回顾推送** - 遗忘可见化
+
+### 新增API
+
+```
+GET  /api/genome/stats          # 基因演化统计
+POST /api/genome/evolve         # 手动触发演化
+GET  /api/cognitive/stats       # 认知转化统计
+POST /api/cognitive/transform   # 手动触发转化
+POST /api/evolution/run         # 运行进化沙盒
+GET  /api/memory/review         # 记忆回顾
+POST /api/memory/important      # 刻骨铭心标记
+GET  /api/memory/last_qa        # 获取最近问答
+GET  /api/memory/forgotten      # 获取遗忘记忆
+```
+
+### 新增CLI命令
+
+```
+:important [问题]    # 标记为永久记忆
+:recall <问题>       # 情境重构回忆
+```
+
+### 修复问题
+
+#### 高优先级
+- ✅ 修复`knowledge_items`表缺少记忆字段问题
+  - 添加`memory_layer`、`salience`、`emotional_valence`、`context_snapshot`、`environmental_triggers`字段
+  - 在`core/learning.py`的`_init_db`方法中自动添加
+
+- ✅ 修复空except块导致异常信息丢失
+  - 将`except:`改为`except Exception:`并添加注释
+
+#### 中优先级
+- ✅ 修复进化沙盒临时文件清理不及时
+  - 在`simulated_agent.py`的`cleanup`方法中添加显式关闭
+
+### 测试
+
+- 基因演化引擎：5/5测试通过 (100%)
+- 认知转化器：3/3测试通过 (100%)
+- 进化岛沙盒：6/6测试通过 (100%)
+- 记忆体验增强：12/12测试通过 (100%)
+- **总计：26/26测试通过 (100%)**
+
+---
+
 ## [v3.1] - 2026-06-07
 
 ### 新增功能

@@ -79,6 +79,34 @@ class EnhancedLearner:
             
             conn.execute('CREATE INDEX IF NOT EXISTS idx_question_hash ON knowledge_items(question_hash)')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_knowledge_type ON knowledge_items(knowledge_type)')
+            
+            # 添加缺失的记忆字段（如果不存在）
+            try:
+                conn.execute('ALTER TABLE knowledge_items ADD COLUMN memory_layer INTEGER DEFAULT 2')
+            except Exception:
+                pass  # 字段已存在
+            
+            try:
+                conn.execute('ALTER TABLE knowledge_items ADD COLUMN salience REAL DEFAULT 0.5')
+            except Exception:
+                pass
+            
+            try:
+                conn.execute('ALTER TABLE knowledge_items ADD COLUMN emotional_valence REAL DEFAULT 0.0')
+            except Exception:
+                pass
+            
+            try:
+                conn.execute('ALTER TABLE knowledge_items ADD COLUMN context_snapshot TEXT')
+            except Exception:
+                pass
+            
+            try:
+                conn.execute('ALTER TABLE knowledge_items ADD COLUMN environmental_triggers TEXT')
+            except Exception:
+                pass
+            
+            conn.commit()
     
     def learn_from_file(self, filename: str, content: str, context: Dict = None, environmental_triggers: str = None) -> int:
         """从文件学习 - 提取结构化知识"""

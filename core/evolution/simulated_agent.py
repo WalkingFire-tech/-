@@ -271,10 +271,18 @@ class SimulatedAgent:
     def cleanup(self):
         """清理临时数据库"""
         try:
-            if os.path.exists(self.db_path):
+            # 先关闭文件句柄
+            if hasattr(self, 'temp_db') and self.temp_db:
+                try:
+                    self.temp_db.close()
+                except:
+                    pass
+            
+            # 删除临时文件
+            if hasattr(self, 'db_path') and self.db_path and os.path.exists(self.db_path):
                 os.unlink(self.db_path)
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"清理临时文件失败: {e}")
     
     def __del__(self):
         self.cleanup()
