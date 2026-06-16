@@ -1285,6 +1285,32 @@ async def trigger_transformation():
         logger.error(f"认知转化失败: {e}")
         return {"success": False, "error": str(e)}
 
+@app.post("/api/evolution/run")
+async def run_evolution_sandbox(request: dict):
+    """运行进化沙盒"""
+    try:
+        from core.active_scheduler import ActiveScheduler
+        
+        num_agents = request.get("num_agents", 8)
+        generations = request.get("generations", 20)
+        
+        scheduler = ActiveScheduler(interval_seconds=300)
+        result = scheduler.run_evolution_sandbox(num_agents=num_agents, generations=generations)
+        
+        if "error" in result:
+            return {"success": False, "error": result["error"]}
+        
+        return {
+            "success": True,
+            "stats": result.get("stats", {}),
+            "best_genome": result.get("best_genome", {}),
+            "best_skills": result.get("best_skills", []),
+            "message": f"进化完成：最优适应度={result['stats']['final_best_fitness']:.3f}"
+        }
+    except Exception as e:
+        logger.error(f"进化沙盒失败: {e}")
+        return {"success": False, "error": str(e)}
+
 def _is_path_allowed(folder: Path) -> bool:
     """检查路径是否在允许范围内（防路径遍历）"""
     try:
