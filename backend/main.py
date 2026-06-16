@@ -45,24 +45,46 @@ async def lifespan(app: FastAPI):
     # 加载模型适配器
     adapters = {}
     
-    # 尝试加载Ollama模型
+    # 先检查Ollama服务是否可用
+    ollama_available = False
     try:
-        adapters["mindchat"] = OllamaAdapter(model_name="mindchat")
-        logger.info("Loaded MindChat")
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        if response.status_code == 200:
+            ollama_available = True
+            logger.info("Ollama服务可用，开始扫描本地模型...")
+            
+            # 获取Ollama中实际存在的模型列表
+            models_data = response.json()
+            available_models = [m['name'] for m in models_data.get('models', [])]
+            logger.info(f"Ollama中的模型: {available_models}")
+        else:
+            logger.warning(f"Ollama服务响应异常: {response.status_code}")
     except Exception as e:
-        logger.warning(f"MindChat unavailable: {e}")
+        logger.warning(f"Ollama服务不可用: {e}")
     
-    try:
-        adapters["code_light"] = OllamaAdapter(model_name="qwen2.5-coder:1.5b")
-        logger.info("Loaded code_light (qwen2.5-coder:1.5b)")
-    except Exception as e:
-        logger.warning(f"Code light model unavailable: {e}")
-    
-    try:
-        adapters["deepcoder"] = OllamaAdapter(model_name="deepcoder")
-        logger.info("Loaded DeepCoder")
-    except Exception as e:
-        logger.warning(f"DeepCoder unavailable: {e}")
+    # 只有当Ollama可用时才加载本地模型
+    if ollama_available:
+        # 尝试加载Ollama模型（只加载实际存在的模型）
+        try:
+            adapters["mindchat"] = OllamaAdapter(model_name="mindchat")
+            logger.info("✅ 已加载 MindChat")
+        except Exception as e:
+            logger.warning(f"MindChat不可用: {e}")
+        
+        try:
+            adapters["code_light"] = OllamaAdapter(model_name="qwen2.5-coder:1.5b")
+            logger.info("✅ 已加载 code_light (qwen2.5-coder:1.5b)")
+        except Exception as e:
+            logger.warning(f"Code light model不可用: {e}")
+        
+        try:
+            adapters["deepcoder"] = OllamaAdapter(model_name="deepcoder")
+            logger.info("✅ 已加载 DeepCoder")
+        except Exception as e:
+            logger.warning(f"DeepCoder不可用: {e}")
+    else:
+        logger.info("Ollama服务未启动，跳过本地模型加载")
     
     # 尝试加载远程模型
     try:
@@ -281,6 +303,78 @@ async def get_models():
             for name, adapter in adapters.items()
         ]
     return {"models": models_list}
+
+@app.get("/api/models/scan")
+async def scan_ollama_models():
+    """扫描Ollama服务中的可用模型"""
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=3)
+        
+        if response.status_code == 200:
+            models_data = response.json()
+            models = models_data.get('models', [])
+            
+            return {
+                "success": True,
+                "ollama_available": True,
+                "models": [
+                    {
+                        "name": m['name'],
+                        "size": m.get('size', 0),
+                        "modified_at": m.get('modified_at', '')
+                    }
+                    for m in models
+                ],
+                "count": len(models)
+            }
+        else:
+            return {
+                "success": False,
+                "ollama_available": False,
+                "error": f"Ollama响应异常: {response.status_code}"
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "ollama_available": False,
+            "error": f"无法连接Ollama服务: {str(e)}"
+        }
+
+@app.post("/api/models/reload")
+async def reload_models():
+    """重新加载模型（动态添加Ollama模型）"""
+    global adapters
+    
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=3)
+        
+        if response.status_code != 200:
+            return {"success": False, "error": "Ollama服务不可用"}
+        
+        models_data = response.json()
+        ollama_models = [m['name'] for m in models_data.get('models', [])]
+        
+        added = []
+        with adapters_lock:
+            for model_name in ollama_models:
+                if model_name not in adapters:
+                    try:
+                        adapters[model_name] = OllamaAdapter(model_name=model_name)
+                        added.append(model_name)
+                        logger.info(f"✅ 动态加载模型: {model_name}")
+                    except Exception as e:
+                        logger.warning(f"加载模型失败 {model_name}: {e}")
+        
+        return {
+            "success": True,
+            "added": added,
+            "total": len(adapters),
+            "message": f"成功加载{len(added)}个新模型"
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 @app.post("/api/chat")
 async def chat(request: dict):
