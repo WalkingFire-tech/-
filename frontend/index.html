@@ -66,9 +66,7 @@
                     <button onclick="runInduction()" class="btn btn-secondary">
                         📚 归纳总结
                     </button>
-                    <button onclick="showExternalModelConfig()" class="btn btn-secondary">
-                        ⚙️ 外脑配置
-                    </button>
+
                     <button onclick="showFolderLearn()" class="btn btn-secondary">
                         📁 文件夹学习
                     </button>
@@ -123,61 +121,6 @@
                 </div>
             </aside>
 
-            <!-- 外脑配置模态框 -->
-            <div id="external-model-modal" class="modal" style="display: none;">
-                <div class="modal-content">
-                    <span class="close" onclick="closeExternalModelConfig()">&times;</span>
-                    <h3>⚙️ 外部模型配置（外脑）</h3>
-                    
-                    <div class="warning-box">
-                        <p>⚠️ <strong>保护您的API密钥</strong></p>
-                        <p>• 您的密钥会被加密存储，但请勿与他人共享您的计算机。</p>
-                        <p>• 建议为每个API密钥设置<strong>每日消费上限</strong>。</p>
-                        <p>• 使用本软件产生的API费用由您自行承担。</p>
-                    </div>
-                    
-                    <div id="external-models-list" class="models-list">
-                        <!-- 模型列表将动态填充 -->
-                    </div>
-                    
-                    <button onclick="showAddModelForm()" class="btn btn-primary">
-                        + 添加新模型
-                    </button>
-                </div>
-            </div>
-            
-            <!-- 添加模型表单模态框 -->
-            <div id="add-model-modal" class="modal" style="display: none;">
-                <div class="modal-content">
-                    <span class="close" onclick="closeAddModelForm()">&times;</span>
-                    <h3>添加外部模型</h3>
-                    
-                    <form id="add-model-form">
-                        <div class="form-group">
-                            <label>模型名称:</label>
-                            <input type="text" id="model-name" placeholder="如: OpenAI GPT-4" required>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label>API地址:</label>
-                            <input type="text" id="model-api-url" placeholder="如: https://api.openai.com" required>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label>API密钥:</label>
-                            <input type="password" id="model-api-key" placeholder="sk-..." required>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label>每日配额:</label>
-                            <input type="number" id="model-daily-limit" value="1000" min="1">
-                        </div>
-                        
-                        <button type="submit" class="btn btn-primary">保存</button>
-                        <button type="button" onclick="closeAddModelForm()" class="btn btn-secondary">取消</button>
-                    </form>
-                </div>
-            </div>
 
             <!-- 聊天区域 -->
             <section class="chat-area">
