@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>创新思维引擎</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .title {
+            font-size: 32px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        
+        .tab {
+            padding: 10px 20px;
+            border: none;
+            background: #f5f5f5;
+            border-radius: 8px 8px 0 0;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        
+        .tab.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .tab:hover:not(.active) {
+            background: #e0e0e0;
+        }
+        
+        .panel {
+            display: none;
+        }
+        
+        .panel.active {
+            display: block;
+        }
+        
+        .input-group {
+            margin-bottom: 20px;
+        }
+        
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .input-group input,
+        .input-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        .input-group input:focus,
+        .input-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .input-group textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #333;
+        }
+        
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+        
+        .result-box {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .result-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .result-content {
+            color: #555;
+            line-height: 1.6;
+        }
+        
+        .thought-card {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #e0e0e0;
+            transition: all 0.3s;
+        }
+        
+        .thought-card:hover {
+            border-color: #667eea;
+            box-shadow: 0 3px 10px rgba(102, 126, 234, 0.2);
+        }
+        
+        .thought-domain {
+            display: inline-block;
+            padding: 4px 8px;
+            background: #e3f2fd;
+            color: #1976d2;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+        
+        .thought-content {
+            color: #333;
+            margin-bottom: 8px;
+        }
+        
+        .thought-score {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .score-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .score-label {
+            font-size: 14px;
+            font-weight: 600;
+            min-width: 80px;
+        }
+        
+        .score-track {
+            flex: 1;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .score-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 class="title">🧠 创新思维引擎</h1>
+            <p class="subtitle">发散思维 · 收敛思维 · 反绎推理 · 远距离联想</p>
+        </div>
+        
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('diverge')">🌱 发散思维</button>
+            <button class="tab" onclick="switchTab('abductive')">🔍 反绎推理</button>
+            <button class="tab" onclick="switchTab('associate')">🔗 远距离联想</button>
+            <button class="tab" onclick="switchTab('innovate')">🚀 完整创新</button>
+        </div>
+        
+        <!-- 发散思维面板 -->
+        <div id="diverge-panel" class="panel active">
+            <div class="input-group">
+                <label>种子想法</label>
+                <textarea id="diverge-seed" placeholder="输入一个种子想法，引擎将生成多个不同的新想法...">多个AI智能体如何更有效地协作</textarea>
+            </div>
+            <div class="input-group">
+                <label>生成数量</label>
+                <input type="number" id="diverge-num" value="5" min="1" max="10">
+            </div>
+            <button class="btn btn-primary" onclick="runDiverge()">开始发散</button>
+            <div id="diverge-result" class="result-box" style="display: none;"></div>
+        </div>
+        
+        <!-- 反绎推理面板 -->
+        <div id="abductive-panel" class="panel">
+            <div class="input-group">
+                <label>观察到的现象</label>
+                <textarea id="abductive-observation" placeholder="描述一个观察到的现象，引擎将反向推导可能的解释...">蚁群通过信息素进行高效的路径优化</textarea>
+            </div>
+            <button class="btn btn-primary" onclick="runAbductive()">开始推理</button>
+            <div id="abductive-result" class="result-box" style="display: none;"></div>
+        </div>
+        
+        <!-- 远距离联想面板 -->
+        <div id="associate-panel" class="panel">
+            <div class="input-group">
+                <label>概念A</label>
+                <input type="text" id="associate-concept-a" placeholder="第一个概念" value="区块链技术">
+            </div>
+            <div class="input-group">
+                <label>概念B</label>
+                <input type="text" id="associate-concept-b" placeholder="第二个概念" value="生物进化">
+            </div>
+            <button class="btn btn-primary" onclick="runAssociate()">开始联想</button>
+            <div id="associate-result" class="result-box" style="display: none;"></div>
+        </div>
+        
+        <!-- 完整创新面板 -->
+        <div id="innovate-panel" class="panel">
+            <div class="input-group">
+                <label>种子想法</label>
+                <textarea id="innovate-seed" placeholder="输入种子想法...">如何让AI系统具备自我进化能力</textarea>
+            </div>
+            <div class="input-group">
+                <label>外部观察（可选）</label>
+                <textarea id="innovate-observation" placeholder="输入观察到的现象（可选）...">生物进化通过自然选择实现适应性</textarea>
+            </div>
+            <button class="btn btn-primary" onclick="runInnovate()">启动创新流程</button>
+            <div id="innovate-result" class="result-box" style="display: none;"></div>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.panel').forEach(panel => panel.classList.remove('active'));
+            
+            document.querySelector(`[onclick="switchTab('${tabName}')"]`).classList.add('active');
+            document.getElementById(`${tabName}-panel`).classList.add('active');
+        }
+        
+        function showLoading(elementId) {
+            const element = document.getElementById(elementId);
+            element.style.display = 'block';
+            element.innerHTML = '<div class="loading"><span class="spinner"></span>思考中...</div>';
+        }
+        
+        function showError(elementId, error) {
+            const element = document.getElementById(elementId);
+            element.style.display = 'block';
+            element.innerHTML = `<div class="result-content" style="color: #f44336;">❌ 错误: ${error}</div>`;
+        }
+        
+        async function runDiverge() {
+            const seed = document.getElementById('diverge-seed').value;
+            const num = parseInt(document.getElementById('diverge-num').value);
+            
+            showLoading('diverge-result');
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/innovation/diverge`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ seed_idea: seed, num_ideas: num })
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    let html = '<div class="result-title">发散结果</div>';
+                    data.thoughts.forEach((thought, i) => {
+                        html += `
+                            <div class="thought-card">
+                                <span class="thought-domain">${thought.domain}</span>
+                                <div class="thought-content">${thought.content}</div>
+                                <div class="thought-score">得分: ${thought.score.toFixed(2)}</div>
+                            </div>
+                        `;
+                    });
+                    document.getElementById('diverge-result').innerHTML = html;
+                } else {
+                    showError('diverge-result', data.error);
+                }
+            } catch (error) {
+                showError('diverge-result', error.message);
+            }
+        }
+        
+        async function runAbductive() {
+            const observation = document.getElementById('abductive-observation').value;
+            
+            showLoading('abductive-result');
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/innovation/abductive`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ observation })
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    let html = '<div class="result-title">可能的解释</div>';
+                    data.explanations.forEach((exp, i) => {
+                        html += `
+                            <div class="thought-card">
+                                <span class="thought-domain">${exp.domain}</span>
+                                <div class="thought-content">${exp.content}</div>
+                                <div class="thought-score">置信度: ${exp.score.toFixed(2)}</div>
+                            </div>
+                        `;
+                    });
+                    document.getElementById('abductive-result').innerHTML = html;
+                } else {
+                    showError('abductive-result', data.error);
+                }
+            } catch (error) {
+                showError('abductive-result', error.message);
+            }
+        }
+        
+        async function runAssociate() {
+            const conceptA = document.getElementById('associate-concept-a').value;
+            const conceptB = document.getElementById('associate-concept-b').value;
+            
+            showLoading('associate-result');
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/innovation/associate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ concept_a: conceptA, concept_b: conceptB })
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    const result = data.result;
+                    let html = `
+                        <div class="result-title">联想结果</div>
+                        <div class="thought-card">
+                            <div class="thought-content">${result.content}</div>
+                            <div class="score-bar">
+                                <span class="score-label">综合得分</span>
+                                <div class="score-track"><div class="score-fill" style="width: ${result.score * 100}%"></div></div>
+                                <span>${result.score.toFixed(2)}</span>
+                            </div>
+                            <div class="score-bar">
+                                <span class="score-label">新颖性</span>
+                                <div class="score-track"><div class="score-fill" style="width: ${result.novelty * 100}%"></div></div>
+                                <span>${result.novelty.toFixed(2)}</span>
+                            </div>
+                            <div class="score-bar">
+                                <span class="score-label">可行性</span>
+                                <div class="score-track"><div class="score-fill" style="width: ${result.feasibility * 100}%"></div></div>
+                                <span>${result.feasibility.toFixed(2)}</span>
+                            </div>
+                        </div>
+                    `;
+                    document.getElementById('associate-result').innerHTML = html;
+                } else {
+                    showError('associate-result', data.error);
+                }
+            } catch (error) {
+                showError('associate-result', error.message);
+            }
+        }
+        
+        async function runInnovate() {
+            const seed = document.getElementById('innovate-seed').value;
+            const observation = document.getElementById('innovate-observation').value;
+            
+            showLoading('innovate-result');
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/innovation/innovate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ seed_idea: seed, observation: observation || null })
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    const result = data.result;
+                    let html = `
+                        <div class="result-title">✨ 创新成果</div>
+                        <div class="thought-card" style="border-left: 4px solid #764ba2;">
+                            <div class="thought-content" style="font-size: 16px; font-weight: 600;">${result.content}</div>
+                            <div class="score-bar">
+                                <span class="score-label">综合得分</span>
+                                <div class="score-track"><div class="score-fill" style="width: ${result.score * 100}%"></div></div>
+                                <span>${result.score.toFixed(2)}</span>
+                            </div>
+                            <div class="score-bar">
+                                <span class="score-label">新颖性</span>
+                                <div class="score-track"><div class="score-fill" style="width: ${result.novelty * 100}%"></div></div>
+                                <span>${result.novelty.toFixed(2)}</span>
+                            </div>
+                            <div class="score-bar">
+                                <span class="score-label">可行性</span>
+                                <div class="score-track"><div class="score-fill" style="width: ${result.feasibility * 100}%"></div></div>
+                                <span>${result.feasibility.toFixed(2)}</span>
+                            </div>
+                        </div>
+                        <div class="result-title" style="margin-top: 20px;">🧠 思维轨迹</div>
+                    `;
+                    
+                    data.history.forEach((thought, i) => {
+                        html += `
+                            <div class="thought-card">
+                                <span class="thought-domain">${thought.domain}</span>
+                                <div class="thought-content">${thought.content}</div>
+                            </div>
+                        `;
+                    });
+                    
+                    document.getElementById('innovate-result').innerHTML = html;
+                } else {
+                    showError('innovate-result', data.error);
+                }
+            } catch (error) {
+                showError('innovate-result', error.message);
+            }
+        }
+    </script>
+</body>
+</html>
