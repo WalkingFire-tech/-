@@ -358,6 +358,17 @@ async def bagua_knowledge():
         return HTMLResponse(content=html_content)
     return {"error": "Bagua knowledge not found"}
 
+@app.get("/innovation")
+async def innovation_page():
+    """创新思维引擎页面"""
+    innovation_file = FRONTEND_DIR / "innovation.html"
+    if innovation_file.exists():
+        from fastapi.responses import HTMLResponse
+        with open(innovation_file, 'r', encoding='utf-8') as f:
+            html_content = f.read()
+        return HTMLResponse(content=html_content)
+    return {"error": "Innovation page not found"}
+
 @app.get("/api/health")
 async def health():
     """健康检查端点"""
@@ -3215,6 +3226,132 @@ async def get_knowledge_health():
         }
     except Exception as e:
         logger.error(f"获取知识健康度失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/innovation/diverge")
+async def api_diverge(request: Request):
+    """发散思维API"""
+    try:
+        data = await request.json()
+        seed_idea = data.get("seed_idea", "")
+        num_ideas = data.get("num_ideas", 5)
+        
+        from core.innovation_engine import InnovationEngine
+        engine = InnovationEngine(
+            knowledge_retriever=planner.vector_retriever if planner else None,
+            llm_adapter=list(adapters.values())[0] if adapters else None
+        )
+        
+        thoughts = await engine.diverge(seed_idea, num_ideas)
+        
+        return {
+            "success": True,
+            "thoughts": [
+                {
+                    "content": t.content,
+                    "score": t.score,
+                    "domain": t.domain
+                }
+                for t in thoughts
+            ]
+        }
+    except Exception as e:
+        logger.error(f"发散思维失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/innovation/abductive")
+async def api_abductive(request: Request):
+    """反绎推理API"""
+    try:
+        data = await request.json()
+        observation = data.get("observation", "")
+        
+        from core.innovation_engine import InnovationEngine
+        engine = InnovationEngine(
+            knowledge_retriever=planner.vector_retriever if planner else None,
+            llm_adapter=list(adapters.values())[0] if adapters else None
+        )
+        
+        explanations = await engine.abductive_reason(observation)
+        
+        return {
+            "success": True,
+            "explanations": [
+                {
+                    "content": e.content,
+                    "domain": e.domain,
+                    "score": e.score
+                }
+                for e in explanations
+            ]
+        }
+    except Exception as e:
+        logger.error(f"反绎推理失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/innovation/associate")
+async def api_associate(request: Request):
+    """远距离联想API"""
+    try:
+        data = await request.json()
+        concept_a = data.get("concept_a", "")
+        concept_b = data.get("concept_b", "")
+        
+        from core.innovation_engine import InnovationEngine
+        engine = InnovationEngine(
+            knowledge_retriever=planner.vector_retriever if planner else None,
+            llm_adapter=list(adapters.values())[0] if adapters else None
+        )
+        
+        thought = await engine.remote_associate(concept_a, concept_b)
+        
+        return {
+            "success": True,
+            "result": {
+                "content": thought.content,
+                "score": thought.score,
+                "novelty": thought.novelty,
+                "feasibility": thought.feasibility
+            }
+        }
+    except Exception as e:
+        logger.error(f"远距离联想失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/innovation/innovate")
+async def api_innovate(request: Request):
+    """完整创新流程API"""
+    try:
+        data = await request.json()
+        seed_idea = data.get("seed_idea", "")
+        observation = data.get("observation", None)
+        
+        from core.innovation_engine import InnovationEngine
+        engine = InnovationEngine(
+            knowledge_retriever=planner.vector_retriever if planner else None,
+            llm_adapter=list(adapters.values())[0] if adapters else None,
+            experience_pool=planner.experience_pool if planner else None
+        )
+        
+        final_thought = await engine.innovate(seed_idea, observation)
+        
+        return {
+            "success": True,
+            "result": {
+                "content": final_thought.content,
+                "score": final_thought.score,
+                "novelty": final_thought.novelty,
+                "feasibility": final_thought.feasibility,
+                "domain": final_thought.domain
+            },
+            "history": engine.get_thought_history(10)
+        }
+    except Exception as e:
+        logger.error(f"创新流程失败: {e}")
         return {"success": False, "error": str(e)}
 
 

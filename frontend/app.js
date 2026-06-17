@@ -8,8 +8,8 @@ let selectedModel = 'auto';
 function renderMarkdown(text) {
     if (!text) return text;
     text = text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    text = text.replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
-    text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+    text = text.replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre style="overflow-x: auto; white-space: pre-wrap; word-wrap: break-word;"><code>$2</code></pre>');
+    text = text.replace(/`([^`]+)`/g, '<code style="overflow-x: auto;">$1</code>');
     text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
     text = text.replace(/\n/g, '<br>');
