@@ -207,12 +207,22 @@ body {
     background: rgba(255, 255, 255, 0.7);
     backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
-    border-right: 1px solid rgba(255, 255, 255, 0.5);
     padding: 1rem;
     overflow-y: auto;
+}
+
+.sidebar-left {
+    border-right: 1px solid rgba(255, 255, 255, 0.5);
     box-shadow: 
         inset -1px 0 0 rgba(255, 255, 255, 0.5),
         4px 0 20px rgba(0, 0, 0, 0.03);
+}
+
+.sidebar-right {
+    border-left: 1px solid rgba(255, 255, 255, 0.5);
+    box-shadow: 
+        inset 1px 0 0 rgba(255, 255, 255, 0.5),
+        -4px 0 20px rgba(0, 0, 0, 0.03);
 }
 
 .panel {
@@ -850,6 +860,107 @@ body {
 }
 
 .btn-small:hover {
+
+/* ========== 右侧知识面板样式 ========== */
+.knowledge-score {
+    text-align: center;
+    margin: 1rem 0;
+}
+
+.score-circle {
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary-sky) 0%, var(--accent-lavender) 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto;
+    box-shadow: 0 4px 20px rgba(125, 211, 252, 0.3);
+}
+
+.score-value {
+    font-size: 2rem;
+    font-weight: bold;
+    color: white;
+}
+
+.score-label {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.knowledge-details {
+    margin-top: 1rem;
+}
+
+.detail-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5rem;
+    background: rgba(167, 243, 208, 0.1);
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+}
+
+.detail-label {
+    font-size: 0.875rem;
+    color: var(--text-soft);
+}
+
+.detail-value {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--primary-sky-deep);
+}
+
+.vitality-chart {
+    margin-top: 0.5rem;
+}
+
+.vitality-bar {
+    margin-bottom: 0.75rem;
+}
+
+.bar-label {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-soft);
+    margin-bottom: 0.25rem;
+}
+
+.bar-track {
+    height: 8px;
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-sky) 0%, var(--accent-mint) 100%);
+    border-radius: 4px;
+    transition: width 0.5s ease;
+}
+
+.recent-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.recent-item {
+    padding: 0.5rem;
+    background: rgba(196, 181, 253, 0.1);
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+    font-size: 0.875rem;
+}
+
+.recent-item .time {
+    font-size: 0.75rem;
+    color: var(--text-light);
+}
     background: rgba(125, 211, 252, 0.4);
 }
 

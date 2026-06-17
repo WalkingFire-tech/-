@@ -103,29 +103,13 @@ class ParallelScheduler:
             logger.debug(f"保存黑名单失败: {e}")
     
     async def _is_blacklisted(self, model_name: str) -> bool:
-        """检查模型是否在黑名单中"""
-        async with self._lock:
-            if model_name in self.model_blacklist:
-                if time.time() < self.model_blacklist[model_name]:
-                    return True
-                else:
-                    del self.model_blacklist[model_name]
-        return False
+        """检查模型是否在黑名单中 - 已禁用"""
+        return False  # 永不将模型加入黑名单
     
     async def _mark_failed(self, model_name: str, duration: int = 300, reason: str = ""):
-        """将失败模型加入黑名单
-        
-        Args:
-            model_name: 模型名称
-            duration: 禁用时长（秒），默认5分钟
-            reason: 失败原因
-        """
-        until = time.time() + duration
-        async with self._lock:
-            self.model_blacklist[model_name] = until
-        
-        self._save_blacklist(model_name, until, reason)
-        logger.warning(f"模型 {model_name} 已加入黑名单（{duration}秒）")
+        """将失败模型加入黑名单 - 已禁用"""
+        logger.warning(f"模型 {model_name} 调用失败: {reason}")
+        # 不将模型加入黑名单，始终可用
     
     async def _get_available_models(self, models: List[Any]) -> List[Any]:
         """过滤黑名单模型"""

@@ -272,9 +272,39 @@ async function loadStats() {
         document.getElementById('stat-active-rules').textContent = data.active_rules || 0;
         document.getElementById('stat-pending-rules').textContent = data.pending_rules || 0;
         document.getElementById('stat-models').textContent = data.models || 0;
+        
+        loadKnowledgeHealth();
     } catch (error) {
         console.error('加载统计失败:', error);
     }
+}
+
+async function loadKnowledgeHealth() {
+    try {
+        const response = await fetch(`${API_BASE}/api/knowledge/health`);
+        const data = await response.json();
+        
+        if (data.success && data.summary) {
+            document.querySelector('.score-value').textContent = Math.round(data.summary.score);
+            document.getElementById('knowledge-total').textContent = data.summary.total_knowledge || 0;
+            document.getElementById('knowledge-skills').textContent = data.summary.skills || 0;
+            document.getElementById('knowledge-rules').textContent = data.summary.rules || 0;
+            
+            if (data.report && data.report.score) {
+                const score = data.report.score;
+                document.getElementById('bar-coverage').style.width = `${score.coverage}%`;
+                document.getElementById('bar-quality').style.width = `${score.quality}%`;
+                document.getElementById('bar-memory').style.width = `${score.memory}%`;
+                document.getElementById('bar-skills').style.width = `${score.skills}%`;
+            }
+        }
+    } catch (error) {
+        console.error('加载知识健康度失败:', error);
+    }
+}
+
+function openBaguaKnowledge() {
+    window.open(`${API_BASE}/bagua-knowledge`, '_blank');
 }
 
 async function loadModels() {

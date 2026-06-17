@@ -115,7 +115,7 @@ class SubTaskExecutor:
     
     def _handle_code_model(self, task: SubTask, context: Dict) -> str:
         """处理代码模型任务"""
-        model_names = ["qwen2.5-coder:1.5b", "deepseek-coder", "code_light"]
+        model_names = ["qwen2.5-coder:7b", "deepcoder"]
         
         for model_name in model_names:
             if model_name in self.adapters:
@@ -131,7 +131,7 @@ class SubTaskExecutor:
     
     def _handle_chat_model(self, task: SubTask, context: Dict) -> str:
         """处理对话模型任务"""
-        model_names = ["mindchat", "deepseek-chat", "gpt-4o-mini"]
+        model_names = ["qwen2.5-coder:7b", "deepcoder"]
         
         for model_name in model_names:
             if model_name in self.adapters:

@@ -295,7 +295,7 @@ class DataDrivenPlanner:
                     results.append(result if result else "")
             
             # 3. 融合结果
-            summary_model = self.adapters.get('remote_gpt4') or self.adapters.get('mindchat')
+            summary_model = self.adapters.get('qwen2.5-coder:7b') or self.adapters.get('deepcoder')
             fused_result = self.result_fusion.fuse(
                 subtasks=subtasks,
                 results=results,
@@ -455,6 +455,156 @@ class DataDrivenPlanner:
             return (w_quality, w_speed, w_cost)
     
     def _select_model(self, intent: Intent):
+        """选择最佳模型 - 语义路由驱动"""
+        
+        # 1. 尝试语义路由
+        try:
+            from infrastructure.semantic_router import semantic_router
+            
+            # 获取情绪分数
+            emotion_score = 0.0
+            if hasattr(intent, 'metadata') and intent.metadata:
+                emotion_score = intent.metadata.get('emotion_score', 0.0)
+            
+            # 语义路由
+            routed_skills = semantic_router.route(
+                user_message=intent.raw_text,
+                emotion_score=emotion_score,
+                dialogue_round=len(self.context_buffer),
+                recent_context=" ".join(list(self.context_buffer)[-3:]),
+                top_k=1
+            )
+            
+            if routed_skills:
+                skill_name, confidence, prompt = routed_skills[0]
+                logger.info(f"🎯 语义路由: {skill_name} (置信度: {confidence:.2f})")
+                
+                # 根据技能选择模型
+                model_name = self._skill_to_model(skill_name, intent.type)
+                if model_name and model_name in self.adapters:
+                    return self.adapters[model_name]
+        
+        except Exception as e:
+            logger.debug(f"语义路由失败，降级到数据驱动: {e}")
+        
+        # 2. 降级到数据驱动路由
+        return self._data_driven_select(intent)
+    
+    def _skill_to_model(self, skill_name: str, intent_type: str) -> Optional[str]:
+        """将技能映射到最佳模型"""
+        
+        # 技能到模型的映射规则
+        skill_model_mapping = {
+            "empathy": ["qwen2.5-coder:7b", "deepcoder"],  # 共情需要高质量模型
+            "socratic": ["qwen2.5-coder:7b", "deepcoder"],
+            "boundary": ["qwen2.5-coder:7b", "deepcoder"],  # 边界需要可靠模型
+            "factual": ["qwen2.5-coder:7b", "deepcoder"],
+            "creative": ["deepcoder", "qwen2.5-coder:7b"],  # 创意用代码模型
+            "teaching": ["qwen2.5-coder:7b", "deepcoder"],
+            "problem_solving": ["deepcoder", "qwen2.5-coder:7b"],
+            "chitchat": ["qwen2.5-coder:7b", "deepcoder"]
+        }
+        
+        # 获取候选模型列表
+        candidates = skill_model_mapping.get(skill_name, [])
+        
+        # 选择第一个可用的模型
+        for model_name in candidates:
+            if model_name in self.adapters:
+                return model_name
+        
+        # 降级到意图类型映射
+        intent_model_mapping = {
+            "code": "deepcoder",
+            "question": "qwen2.5-coder:7b",
+            "chat": "qwen2.5-coder:7b",
+            "calculation": "qwen2.5-coder:7b"
+        }
+        
+        return intent_model_mapping.get(intent_type, "qwen2.5-coder:7b")
+    
+    def _data_driven_select(self, intent: Intent):
+        """数据驱动的模型选择（降级方案）"""
+        intent_type = intent.type
+        
+        # 0. 检查学习规则设置的临时优先模型
+        if hasattr(self, '_temp_preferred_model') and self._temp_preferred_model:
+            preferred = self._temp_preferred_model
+            if preferred in self.adapters:
+                logger.info(f"✓ 学习规则优先模型: {preferred}")
+                self._temp_preferred_model = None
+                return self.adapters[preferred]
+        
+        # 0.5. 情绪感知权重调整
+        emotion_info = self._infer_emotion(intent)
+        urgency = emotion_info.get('urgency', 'normal')
+        
+        # 1. 从统计库获取最佳模型
+        w_quality, w_speed, w_cost = self._get_user_preference_weights(urgency)
+        
+        weights = {
+            "quality": w_quality,
+            "speed": w_speed,
+            "cost": w_cost,
+            "success": 0.1
+        }
+        
+        # 记录情绪影响
+        if urgency == 'urgent':
+            logger.info(f"⚡ 检测到紧急情绪，优先选择快速模型")
+        
+        best_model_name = self.stats.get_best_model_for_task(
+            task_type=intent_type,
+            weights=weights
+        )
+        
+        # 健康检查
+        if best_model_name and best_model_name in self.adapters:
+            if self.health_checker and not self.health_checker.is_available(best_model_name):
+                logger.warning(f"模型 {best_model_name} 不可用，选择备选")
+                best_model_name = None
+        
+        if best_model_name and best_model_name in self.adapters:
+            logger.info(f"✓ 数据驱动选择: {best_model_name} for {intent_type}")
+            return self.adapters[best_model_name]
+        
+        # 2. 降级:使用配置fallback
+        fallback_order = config.get(
+            f"fallback.task_model_order.{intent_type}",
+            []
+        )
+        
+        if not fallback_order:
+            fallback_order = config.get("fallback.default_order", [])
+        
+        # 过滤不可用模型
+        if self.health_checker:
+            fallback_order = [
+                m for m in fallback_order 
+                if self.health_checker.is_available(m)
+            ]
+        
+        for model_name in fallback_order:
+            if model_name in self.adapters:
+                logger.warning(f"⚠ 使用fallback: {model_name}")
+                return self.adapters[model_name]
+        
+        # 3. 最终降级:第一个可用模型
+        if self.adapters:
+            available_models = list(self.adapters.keys())
+            if self.health_checker:
+                available_models = [
+                    m for m in available_models
+                    if self.health_checker.is_available(m)
+                ]
+            
+            if available_models:
+                fallback_model = available_models[0]
+                fallback = self.adapters[fallback_model]
+                logger.warning(f"⚠ 无匹配模型,使用默认: {fallback.model_name}")
+                return fallback
+        
+        raise RuntimeError("No model available")
         """完全数据驱动的模型选择（增强版：情绪感知）"""
         intent_type = intent.type
         
@@ -1079,11 +1229,11 @@ _共显示最近10轮对话_"""
         # 4. 是否有匹配规则
         has_rule = self._match_learning_rule(intent) is not None
         
-        # 加权计算
+        # 加权计算（意图置信度优先）
         confidence = (
-            0.4 * intent_conf +
-            0.3 * success_rate +
-            0.2 * (1 - complexity) +
+            0.6 * intent_conf +
+            0.2 * success_rate +
+            0.1 * (1 - complexity) +
             0.1 * (1.0 if has_rule else 0.0)
         )
         
@@ -1193,26 +1343,11 @@ _共显示最近10轮对话_"""
         
         logger.info(f"外脑协作专家: {expert.model_name}")
         
-        # 构建分析请求
-        prompt = f"""用户问题：{intent.raw_text}
-
-当前系统理解：
-- 意图类型：{intent.type}（置信度{confidence:.2f}）
-- 系统整体置信度：{confidence:.2f}
-
-【系统内部思考 - 不展示给用户】
-请分析这个问题并给出建议：
-1. 用户的真实意图是什么？
-2. 这个问题可能存在哪些歧义？
-3. 系统应该如何处理？
-
-【输出要求】
-直接给出答案，不要展示分析过程。
-不要问用户更多问题，直接基于当前信息回答。
-如果不确定，给出最可能的答案并说明可能的其他理解。"""
+        # 直接回答用户问题
+        prompt = intent.raw_text
         
         try:
-            response = expert.generate(prompt, task_type="analysis")
+            response = expert.generate(prompt, task_type=intent.type)
             
             if isinstance(response, tuple):
                 response, _ = response
@@ -1555,10 +1690,11 @@ _共显示最近10轮对话_"""
         self._single_model_fallback(intent)
     
     def _try_expert_collaboration(self, intent: Intent) -> Optional[str]:
-        """尝试外脑协作（低置信度时）"""
+        """尝试外脑协作（仅当置信度极低时）"""
         confidence = self._estimate_self_confidence(intent)
         
-        if confidence < 0.6:
+        # 提高阈值，减少不必要的外脑协作
+        if confidence < 0.4:
             logger.info(f"自我置信度低({confidence:.2f})，启用外脑协作模式")
             response = self._expert_collaboration(intent, confidence)
             bus.publish("plan_executed", response)
@@ -1674,6 +1810,7 @@ _共显示最近10轮对话_"""
         except Exception as e:
             logger.warning(f"经验记录失败: {e}")
         
+
         # 2. 在线反思（低质量时）
         if quality < 40:
             try:
@@ -1688,7 +1825,27 @@ _共显示最近10轮对话_"""
             except Exception:
                 pass
         
-        # 3. 统计记录
+        # 3. 检查是否需要学习 - 即使成功也要检查！
+        try:
+            from core.learning_loop import check_and_learn
+            
+            # 如果质量不高，触发学习
+            if quality < 70:
+                learning_result = check_and_learn(
+                    question=intent.raw_text,
+                    answer=response,
+                    confidence=intent.confidence,
+                    quality_score=quality,
+                    error=None
+                )
+                
+                if learning_result.get("success"):
+                    logger.info(f"📚 质量不足({quality}分)，触发学习: 获得{learning_result['knowledge_gained']}条知识")
+                    
+        except Exception as e:
+            logger.debug(f"学习检查失败: {e}")
+        
+        # 4. 统计记录
         try:
             input_tokens = len(full_prompt.split())
             output_tokens = len(response.split())
@@ -1915,61 +2072,83 @@ _共显示最近10轮对话_"""
     
     def _trigger_failure_learning(self, intent: Intent, error: str):
         """【第5层防御】失败学习机制
-        
         记录失败案例，触发归纳总结，生成学习规则。
+        
+        这才是真正的学习：
+        1. 检测到失败 -> 搜索学习
+        2. 分析对比搜索结果
+        3. 存储高质量知识
+        4. 生成学习规则
+        5. 下次遇到类似问题就能回答了
         """
         try:
-            from infrastructure.knowledge_injector import knowledge_injector
+            # 1. 记录失败（质量分为0）
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute('''
+                    INSERT INTO experiences 
+                    (intent_type, model_used, success, quality_score, response, context)
+                    VALUES (?, ?, 0, 0, ?, ?)
+                ''', (
+                    intent.intent_type if intent else 'unknown',
+                    'none',
+                    f"[失败] {error}",
+                    json.dumps({'question': intent.raw_text if intent else ''}, ensure_ascii=False)
+                ))
+                conn.commit()
             
-            # 记录失败（质量分为0）
-            knowledge_injector.inject_knowledge(
-                question=intent.raw_text,
-                answer=f"[失败] {error}",
-                source="failure_record",
-                intent_type=intent.type,
-                metadata={"error": error, "timestamp": datetime.now().isoformat()}
-            )
+            logger.info(f"【第5层防御】失败已记录")
             
-            logger.info(f"【第5层防御】失败已记录，等待学习")
-            
-            # 触发归纳总结（如果有归纳器）
+            # 2. 触发学习闭环 - 这才是关键！
             try:
-                from meta.induction import induction_scheduler
-                induction_scheduler.trigger_induction()
+                from core.learning_loop import check_and_learn
+                
+                question = intent.raw_text if intent else "未知问题"
+                
+                learning_result = check_and_learn(
+                    question=question,
+                    answer=None,
+                    confidence=0.0,
+                    quality_score=0.0,
+                    error=str(error)
+                )
+                
+                if learning_result.get("success"):
+                    logger.info(f"✅ 学习闭环完成: 获得{learning_result['knowledge_gained']}条知识")
+                    
+                    # 如果学习成功，尝试用新知识回答
+                    if learning_result['knowledge_gained'] > 0:
+                        # 重新检索知识库
+                        knowledge_result = self._try_knowledge_retrieval(intent)
+                        if knowledge_result and knowledge_result.get('confidence', 0) > 0.5:
+                            logger.info("🎯 用刚学到的知识回答问题！")
+                            return knowledge_result['answer']
+                
+            except Exception as learn_error:
+                logger.warning(f"学习闭环触发失败: {learn_error}")
+            
+            # 3. 触发归纳总结
+            try:
+                if self.induction_summarizer:
+                    self.induction_summarizer.run_induction()
+                    logger.info("失败后触发归纳总结")
             except:
                 pass
             
-            # 【新增】触发主动学习器
+            # 4. 触发主动学习器
             try:
-                from infrastructure.active_learner import active_learner
-                active_learner.record_event("intent_failure", {
-                    "intent": intent.type,
-                    "query": intent.raw_text,
-                    "error": error
-                })
+                from core.active_scheduler import active_scheduler
+                active_scheduler._run_optimization_tasks()
             except Exception as al_error:
                 logger.debug(f"主动学习器触发失败: {al_error}")
             
-            # 【新增】工具自生成闭环
-            if TOOL_GENERATOR_AVAILABLE:
-                try:
-                    import time
-                    key = intent.type
-                    failures = self.failure_history.get(key, [])
-                    recent_failures = [t for t in failures if time.time() - t < 300]
-                    
-                    if len(recent_failures) >= 3:
-                        new_tool = self.tool_generator.generate_and_register_tool({
-                            "task_type": intent.type,
-                            "user_input": intent.raw_text,
-                            "failure_reason": error,
-                            "model": "unknown"
-                        }, auto_register=True)
-                        
-                        if new_tool:
-                            logger.info(f"【工具生成】自动生成新工具: {new_tool.name}")
-                except Exception as tool_error:
-                    logger.debug(f"自动工具生成失败: {tool_error}")
+            # 5. 自动工具生成
+            try:
+                if self.tool_generator:
+                    self.tool_generator.auto_generate_tools()
+            except Exception as tool_error:
+                logger.debug(f"自动工具生成失败: {tool_error}")
+            
+            logger.info(f"【第5层防御】学习机制已触发")
             
         except Exception as e:
             logger.debug(f"失败学习触发失败: {e}")

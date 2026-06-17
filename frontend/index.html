@@ -23,7 +23,7 @@
         <!-- 主内容区 -->
         <main class="main">
             <!-- 左侧面板 -->
-            <aside class="sidebar">
+            <aside class="sidebar sidebar-left">
                 <div class="panel">
                     <h3>📊 系统状态</h3>
                     <div id="stats" class="stats-grid">
@@ -196,6 +196,73 @@
                     </div>
                 </div>
             </section>
+            
+            <!-- 右侧面板 - 知识水平 -->
+            <aside class="sidebar sidebar-right">
+                <div class="panel">
+                    <h3>🎯 知识水平</h3>
+                    <div id="knowledge-score" class="knowledge-score">
+                        <div class="score-circle">
+                            <span class="score-value">--</span>
+                            <span class="score-label">/100</span>
+                        </div>
+                    </div>
+                    <div id="knowledge-details" class="knowledge-details">
+                        <div class="detail-item">
+                            <span class="detail-label">知识库</span>
+                            <span class="detail-value" id="knowledge-total">--</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">工具技能</span>
+                            <span class="detail-value" id="knowledge-skills">--</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">学习规则</span>
+                            <span class="detail-value" id="knowledge-rules">--</span>
+                        </div>
+                    </div>
+                    <button onclick="openBaguaKnowledge()" class="btn btn-secondary" style="width: 100%; margin-top: 10px;">
+                        📊 八卦图谱
+                    </button>
+                </div>
+                
+                <div class="panel">
+                    <h3>📈 学习活力</h3>
+                    <div id="learning-vitality" class="vitality-chart">
+                        <div class="vitality-bar">
+                            <span class="bar-label">知识覆盖</span>
+                            <div class="bar-track">
+                                <div class="bar-fill" id="bar-coverage" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="vitality-bar">
+                            <span class="bar-label">质量评分</span>
+                            <div class="bar-track">
+                                <div class="bar-fill" id="bar-quality" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="vitality-bar">
+                            <span class="bar-label">记忆结构</span>
+                            <div class="bar-track">
+                                <div class="bar-fill" id="bar-memory" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="vitality-bar">
+                            <span class="bar-label">技能应用</span>
+                            <div class="bar-track">
+                                <div class="bar-fill" id="bar-skills" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="panel">
+                    <h3>🔥 最近学习</h3>
+                    <div id="recent-learning" class="recent-list">
+                        <p style="color: #666; font-size: 12px;">暂无学习记录</p>
+                    </div>
+                </div>
+            </aside>
         </main>
 
         <!-- 文件浏览器模态框 -->
