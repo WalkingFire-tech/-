@@ -1,9 +1,10 @@
 import sys
 import os
 import threading
+import time
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -12,9 +13,13 @@ import json
 from loguru import logger
 from functools import lru_cache
 import hashlib
+import uuid
 
 ROOT_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT_DIR))
+
+# 异步学习任务存储
+learning_tasks = {}
 
 # 响应缓存（简单LRU）
 _response_cache = {}
@@ -331,6 +336,28 @@ async def learning_dashboard():
         return HTMLResponse(content=html_content)
     return {"error": "Learning dashboard not found"}
 
+@app.get("/knowledge-panel")
+async def knowledge_panel():
+    """知识水平面板页面"""
+    panel_file = FRONTEND_DIR / "knowledge_panel.html"
+    if panel_file.exists():
+        from fastapi.responses import HTMLResponse
+        with open(panel_file, 'r', encoding='utf-8') as f:
+            html_content = f.read()
+        return HTMLResponse(content=html_content)
+    return {"error": "Knowledge panel not found"}
+
+@app.get("/bagua-knowledge")
+async def bagua_knowledge():
+    """八卦知识图谱页面"""
+    bagua_file = FRONTEND_DIR / "bagua_knowledge.html"
+    if bagua_file.exists():
+        from fastapi.responses import HTMLResponse
+        with open(bagua_file, 'r', encoding='utf-8') as f:
+            html_content = f.read()
+        return HTMLResponse(content=html_content)
+    return {"error": "Bagua knowledge not found"}
+
 @app.get("/api/health")
 async def health():
     """健康检查端点"""
@@ -516,7 +543,7 @@ async def _trigger_learning_from_chat(user_input: str, intent_type: str):
 
 @app.post("/api/chat")
 async def chat(request: dict):
-    """聊天端点 - 优化版（并行检索+缓存）"""
+    """聊天端点 - 快速响应版（目标<5秒）"""
     user_input = request.get("message", "")
     current_file = request.get("current_file", None)
     current_topic = request.get("current_topic", None)
@@ -524,7 +551,8 @@ async def chat(request: dict):
     if not user_input:
         return {"error": "Empty message"}
     
-    # 检查缓存
+    start_time = time.time()
+    
     cache_key = _get_cache_key(user_input)
     cached = _get_cached_response(cache_key)
     if cached:
@@ -548,12 +576,13 @@ async def chat(request: dict):
         try:
             loop = asyncio.get_event_loop()
             
-            # 并行执行：模型推理 + 知识检索 + 向量检索
             async def run_model():
-                await loop.run_in_executor(None, planner.plan, intent)
                 try:
-                    return await asyncio.wait_for(response_queue.get(), timeout=30.0)
-                except:
+                    # 不限制超时，让模型充分思考
+                    await loop.run_in_executor(None, planner.plan, intent)
+                    return await response_queue.get()
+                except Exception as e:
+                    logger.error(f"模型推理失败: {e}")
                     return None
             
             async def run_knowledge_retrieval():
@@ -703,9 +732,18 @@ async def chat(request: dict):
             
             # 确保response不为空
             if not response:
-                response = "抱歉，我暂时无法回答这个问题。请稍后再试或换一种方式提问。"
+                # 快速降级响应
+                elapsed = time.time() - start_time
+                if elapsed < 3.0:
+                    response = "我正在思考中，请稍等..."
+                else:
+                    response = "抱歉，我暂时无法回答这个问题。请稍后再试或换一种方式提问。"
             
             result = {"response": str(response), "intent": intent.type}
+            
+            # 记录响应时间
+            total_time = time.time() - start_time
+            logger.info(f"聊天响应完成，总耗时: {total_time:.2f}s")
             
             # 缓存响应（仅缓存高质量响应）
             if len(response_text) > 50:
@@ -2994,6 +3032,191 @@ async def recurrent_reason(request: dict):
     except Exception as e:
         logger.error(f"循环推理失败: {e}")
         return {"success": False, "error": str(e)}
+
+
+# ========== 异步文件夹学习API ==========
+
+def _run_folder_learning_task(task_id: str, folder_path: str):
+    """后台执行文件夹学习任务"""
+    try:
+        from core.folder_learner import folder_learner
+        from core.learning import enhanced_learner
+        from core.document_parser import get_supported_extensions
+        from datetime import datetime
+        
+        # 更新支持的扩展名
+        folder_learner.SUPPORTED_EXTENSIONS = get_supported_extensions()
+        
+        # 设置根目录
+        folder_learner.set_root_path(folder_path)
+        
+        # 进度回调
+        def progress_callback(file_path, outcome):
+            task = learning_tasks.get(task_id)
+            if task:
+                task["processed"] = task.get("processed", 0) + 1
+                if outcome.get("status") == "success":
+                    task["knowledge"] = task.get("knowledge", 0) + outcome.get("knowledge_count", 0)
+                task["current_file"] = str(file_path.name)
+                if task.get("total_files", 0) > 0:
+                    task["progress"] = int((task["processed"] / task["total_files"]) * 100)
+        
+        # 扫描文件
+        learning_tasks[task_id]["status"] = "scanning"
+        learning_tasks[task_id]["message"] = "正在扫描文件..."
+        
+        files = []
+        for ext in get_supported_extensions():
+            files.extend(Path(folder_path).rglob(f"*{ext}"))
+        
+        learning_tasks[task_id]["total_files"] = len(files)
+        learning_tasks[task_id]["status"] = "learning"
+        learning_tasks[task_id]["message"] = f"发现 {len(files)} 个文件，开始学习..."
+        
+        # 执行学习
+        result = folder_learner.scan_and_learn(progress_callback=progress_callback)
+        
+        # 自动生成规则和工具
+        learning_tasks[task_id]["message"] = "正在生成学习规则..."
+        try:
+            rules_count = enhanced_learner.detect_and_create_rules()
+            learning_tasks[task_id]["rules"] = rules_count
+        except:
+            pass
+        
+        learning_tasks[task_id]["message"] = "正在生成工具..."
+        try:
+            tools_count = enhanced_learner.auto_generate_tools()
+            learning_tasks[task_id]["tools"] = tools_count
+        except:
+            pass
+        
+        # 完成
+        learning_tasks[task_id]["status"] = "completed"
+        learning_tasks[task_id]["progress"] = 100
+        learning_tasks[task_id]["message"] = f"✅ 学习完成！处理 {result.get('new', 0) + result.get('updated', 0)} 个文件"
+        learning_tasks[task_id]["result"] = result
+        
+        # 推送通知
+        try:
+            from core.active_scheduler import active_scheduler
+            active_scheduler.pending_notifications.append({
+                "type": "folder_learning",
+                "message": f"📚 文件夹学习完成：{result.get('new', 0) + result.get('updated', 0)} 个文件",
+                "timestamp": datetime.now().isoformat()
+            })
+        except:
+            pass
+        
+        logger.info(f"任务 {task_id} 完成: {result}")
+        
+    except Exception as e:
+        learning_tasks[task_id]["status"] = "failed"
+        learning_tasks[task_id]["message"] = str(e)
+        logger.error(f"任务 {task_id} 失败: {e}")
+
+
+@app.post("/api/folder/learn_async")
+async def learn_folder_async(request: dict, background_tasks: BackgroundTasks):
+    """异步学习文件夹"""
+    from datetime import datetime
+    
+    folder_path = request.get("path")
+    if not folder_path:
+        return {"success": False, "error": "请提供文件夹路径"}
+    
+    folder = Path(folder_path).resolve()
+    
+    # 安全检查
+    if not folder.exists():
+        return {"success": False, "error": "文件夹不存在"}
+    if not folder.is_dir():
+        return {"success": False, "error": "不是文件夹"}
+    
+    # 创建任务
+    task_id = str(uuid.uuid4())
+    learning_tasks[task_id] = {
+        "status": "pending",
+        "progress": 0,
+        "total_files": 0,
+        "processed": 0,
+        "knowledge": 0,
+        "rules": 0,
+        "tools": 0,
+        "current_file": "",
+        "message": "任务已创建",
+        "folder": str(folder),
+        "created_at": datetime.now().isoformat()
+    }
+    
+    # 后台执行
+    background_tasks.add_task(_run_folder_learning_task, task_id, str(folder))
+    
+    logger.info(f"创建学习任务: {task_id} - {folder}")
+    
+    return {"success": True, "task_id": task_id}
+
+
+@app.get("/api/folder/learn_status/{task_id}")
+async def get_learn_status(task_id: str):
+    """查询学习任务进度"""
+    task = learning_tasks.get(task_id)
+    if not task:
+        return {"success": False, "error": "任务不存在"}
+    return {"success": True, **task}
+
+
+@app.get("/api/folder/learn_tasks")
+async def list_learning_tasks(limit: int = 10):
+    """列出最近的学习任务"""
+    tasks = []
+    for tid, task in list(learning_tasks.items())[-limit:]:
+        tasks.append({
+            "task_id": tid,
+            "status": task.get("status"),
+            "progress": task.get("progress"),
+            "message": task.get("message"),
+            "folder": task.get("folder"),
+            "created_at": task.get("created_at")
+        })
+    return {"tasks": tasks}
+
+
+@app.get("/api/knowledge/health")
+async def get_knowledge_health():
+    """获取知识健康度报告"""
+    try:
+        from core.knowledge_health import knowledge_health
+        report = knowledge_health.check()
+        
+        # 确定等级
+        score = report['score']['total']
+        if score >= 80:
+            level = "🌟 优秀"
+        elif score >= 60:
+            level = "👍 良好"
+        elif score >= 40:
+            level = "📈 发展中"
+        elif score >= 20:
+            level = "🌱 起步"
+        else:
+            level = "⬜ 未初始化"
+        
+        return {
+            "success": True,
+            "report": report,
+            "summary": {
+                "score": score,
+                "level": level,
+                "total_knowledge": report['knowledge']['total'],
+                "skills": report['skills']['total'],
+                "rules": report['rules']['active']
+            }
+        }
+    except Exception as e:
+        logger.error(f"获取知识健康度失败: {e}")
+        return {"success": False, "error": str(e)}
+
 
 if __name__ == "__main__":
     import uvicorn

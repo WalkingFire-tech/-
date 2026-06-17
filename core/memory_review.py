@@ -81,6 +81,10 @@ class MemoryReview:
         
         return result
     
+    def get_weekly_review(self) -> Dict:
+        """获取周回顾数据（兼容接口）"""
+        return self.weekly_summary()
+    
     def get_memory_stats(self) -> Dict:
         """获取记忆统计信息"""
         with sqlite3.connect(self.db_path) as conn:

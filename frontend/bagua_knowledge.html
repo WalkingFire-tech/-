@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>联盟拓荒者 - 八卦知识图谱</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            overflow-x: hidden;
+        }
+        
+        .container {
+            width: 100%;
+            max-width: 900px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 30px;
+            padding: 40px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .title {
+            font-size: 32px;
+            font-weight: bold;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 14px;
+        }
+        
+        /* 八卦图容器 */
+        .bagua-container {
+            position: relative;
+            width: 600px;
+            height: 600px;
+            margin: 0 auto;
+        }
+        
+        /* 八卦图SVG */
+        .bagua-chart {
+            width: 100%;
+            height: 100%;
+        }
+        
+        /* 中心太极 */
+        .taiji-center {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            box-shadow: 0 10px 40px rgba(102, 126, 234, 0.5);
+            z-index: 10;
+        }
+        
+        .taiji-score {
+            font-size: 36px;
+            font-weight: bold;
+            color: white;
+        }
+        
+        .taiji-label {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.8);
+            margin-top: 5px;
+        }
+        
+        /* 层级标签 */
+        .layer-labels {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        
+        .layer-label {
+            position: absolute;
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.9);
+            font-weight: bold;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+            white-space: nowrap;
+        }
+        
+        /* 图例 */
+        .legend {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-top: 30px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            transition: all 0.3s;
+        }
+        
+        .legend-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+            transform: translateY(-2px);
+        }
+        
+        .legend-color {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        
+        .legend-text {
+            flex: 1;
+        }
+        
+        .legend-name {
+            font-size: 14px;
+            color: white;
+            font-weight: bold;
+        }
+        
+        .legend-value {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.6);
+            margin-top: 2px;
+        }
+        
+        /* 控制按钮 */
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 25px;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
+        }
+        
+        /* 提示信息 */
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 13px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 100;
+            max-width: 200px;
+        }
+        
+        .tooltip.show {
+            opacity: 1;
+        }
+        
+        /* 动画 */
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-50%, -50%) scale(1.05); }
+        }
+        
+        .taiji-center {
+            animation: pulse 3s ease-in-out infinite;
+        }
+        
+        /* 最后更新时间 */
+        .last-update {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.4);
+        }
+        
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .bagua-container {
+                width: 400px;
+                height: 400px;
+            }
+            
+            .taiji-center {
+                width: 80px;
+                height: 80px;
+            }
+            
+            .taiji-score {
+                font-size: 24px;
+            }
+            
+            .legend {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="title">☯️ 八卦知识图谱</div>
+            <div class="subtitle">多层知识能力可视化 · 实时进化追踪</div>
+        </div>
+        
+        <!-- 八卦图容器 -->
+        <div class="bagua-container">
+            <svg class="bagua-chart" viewBox="0 0 600 600" id="baguaChart">
+                <!-- 背景圆环 -->
+                <circle cx="300" cy="300" r="280" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+                <circle cx="300" cy="300" r="220" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+                <circle cx="300" cy="300" r="160" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+                
+                <!-- 分割线 -->
+                <line x1="300" y1="20" x2="300" y2="580" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+                <line x1="20" y1="300" x2="580" y2="300" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+                <line x1="102" y1="102" x2="498" y2="498" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+                <line x1="498" y1="102" x2="102" y2="498" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+                
+                <!-- 动态扇形区域将由JS生成 -->
+                <g id="sectors"></g>
+            </svg>
+            
+            <!-- 层级标签 -->
+            <div class="layer-labels" id="layerLabels"></div>
+            
+            <!-- 中心太极 -->
+            <div class="taiji-center">
+                <div class="taiji-score" id="centerScore">--</div>
+                <div class="taiji-label">综合评分</div>
+            </div>
+        </div>
+        
+        <!-- 图例 -->
+        <div class="legend" id="legend"></div>
+        
+        <!-- 控制按钮 -->
+        <div class="controls">
+            <button class="btn btn-primary" onclick="refreshData()">
+                <span>🔄</span> 刷新数据
+            </button>
+            <button class="btn btn-secondary" onclick="toggleAnimation()">
+                <span>✨</span> 切换动画
+            </button>
+        </div>
+        
+        <!-- 最后更新时间 -->
+        <div class="last-update" id="lastUpdate">等待数据加载...</div>
+    </div>
+    
+    <!-- 提示框 -->
+    <div class="tooltip" id="tooltip"></div>
+    
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        let currentData = null;
+        let animationEnabled = true;
+        
+        // 八卦维度配置
+        const dimensions = [
+            { name: '知识覆盖', key: 'coverage', max: 20, color: '#667eea', icon: '📚' },
+            { name: '知识质量', key: 'quality', max: 20, color: '#f093fb', icon: '⭐' },
+            { name: '记忆结构', key: 'memory', max: 15, color: '#4facfe', icon: '🧠' },
+            { name: '技能数量', key: 'skills', max: 15, color: '#43e97b', icon: '🛠️' },
+            { name: '学习规则', key: 'rules', max: 15, color: '#fa709a', icon: '📋' },
+            { name: '学习活力', key: 'activity', max: 15, color: '#fee140', icon: '📈' }
+        ];
+        
+        // 页面加载
+        window.addEventListener('load', () => {
+            refreshData();
+            setInterval(refreshData, 30000);
+        });
+        
+        // 刷新数据
+        async function refreshData() {
+            try {
+                const response = await fetch(`${API_BASE}/api/knowledge/health`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentData = data;
+                    renderBaguaChart(data);
+                    renderLegend(data);
+                    updateLastUpdate();
+                }
+            } catch (error) {
+                console.error('获取数据失败:', error);
+            }
+        }
+        
+        // 渲染八卦图
+        function renderBaguaChart(data) {
+            const scores = data.report.score;
+            const svg = document.getElementById('sectors');
+            svg.innerHTML = '';
+            
+            const centerX = 300;
+            const centerY = 300;
+            const layers = [160, 220, 280]; // 三层半径
+            
+            // 为每个维度创建扇形
+            dimensions.forEach((dim, i) => {
+                const value = scores[dim.key];
+                const percentage = value / dim.max;
+                const angle = (360 / dimensions.length) * i - 90;
+                const nextAngle = angle + (360 / dimensions.length);
+                
+                // 三层扇形
+                layers.forEach((radius, layerIndex) => {
+                    const innerRadius = layerIndex === 0 ? 60 : layers[layerIndex - 1];
+                    const layerPercentage = percentage * (1 - layerIndex * 0.2); // 外层略淡
+                    
+                    // 创建扇形路径
+                    const path = createSectorPath(
+                        centerX, centerY,
+                        innerRadius, radius,
+                        angle, nextAngle,
+                        dim.color,
+                        layerPercentage,
+                        layerIndex
+                    );
+                    
+                    svg.appendChild(path);
+                });
+                
+                // 添加标签
+                addLayerLabel(dim, i, angle + (360 / dimensions.length) / 2, value);
+            });
+            
+            // 更新中心分数
+            document.getElementById('centerScore').textContent = scores.total;
+        }
+        
+        // 创建扇形路径
+        function createSectorPath(cx, cy, innerR, outerR, startAngle, endAngle, color, percentage, layer) {
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            
+            const startRad = (startAngle * Math.PI) / 180;
+            const endRad = (endAngle * Math.PI) / 180;
+            
+            const x1 = cx + innerR * Math.cos(startRad);
+            const y1 = cy + innerR * Math.sin(startRad);
+            const x2 = cx + outerR * Math.cos(startRad);
+            const y2 = cy + outerR * Math.sin(startRad);
+            const x3 = cx + outerR * Math.cos(endRad);
+            const y3 = cy + outerR * Math.sin(endRad);
+            const x4 = cx + innerR * Math.cos(endRad);
+            const y4 = cy + innerR * Math.sin(endRad);
+            
+            const d = `M ${x1} ${y1} L ${x2} ${y2} A ${outerR} ${outerR} 0 0 1 ${x3} ${y3} L ${x4} ${y4} A ${innerR} ${innerR} 0 0 0 ${x1} ${y1} Z`;
+            
+            path.setAttribute('d', d);
+            path.setAttribute('fill', color);
+            path.setAttribute('opacity', percentage * (0.3 + layer * 0.2));
+            path.setAttribute('stroke', 'rgba(255,255,255,0.2)');
+            path.setAttribute('stroke-width', '1');
+            
+            // 添加动画
+            if (animationEnabled) {
+                path.style.transition = 'opacity 0.5s ease';
+            }
+            
+            return path;
+        }
+        
+        // 添加层级标签
+        function addLayerLabel(dim, index, angle, value) {
+            const container = document.getElementById('layerLabels');
+            const rad = (angle * Math.PI) / 180;
+            const radius = 310;
+            
+            const x = 300 + radius * Math.cos(rad);
+            const y = 300 + radius * Math.sin(rad);
+            
+            const label = document.createElement('div');
+            label.className = 'layer-label';
+            label.style.left = `${x}px`;
+            label.style.top = `${y}px`;
+            label.style.transform = 'translate(-50%, -50%)';
+            label.innerHTML = `${dim.icon} ${dim.name}<br><strong>${value}/${dim.max}</strong>`;
+            
+            container.appendChild(label);
+        }
+        
+        // 渲染图例
+        function renderLegend(data) {
+            const scores = data.report.score;
+            const legend = document.getElementById('legend');
+            legend.innerHTML = '';
+            
+            dimensions.forEach(dim => {
+                const value = scores[dim.key];
+                const percentage = (value / dim.max * 100).toFixed(0);
+                
+                const item = document.createElement('div');
+                item.className = 'legend-item';
+                item.innerHTML = `
+                    <div class="legend-color" style="background: ${dim.color}"></div>
+                    <div class="legend-text">
+                        <div class="legend-name">${dim.icon} ${dim.name}</div>
+                        <div class="legend-value">${value}/${dim.max} (${percentage}%)</div>
+                    </div>
+                `;
+                
+                legend.appendChild(item);
+            });
+        }
+        
+        // 更新最后更新时间
+        function updateLastUpdate() {
+            const now = new Date();
+            document.getElementById('lastUpdate').textContent = 
+                `最后更新: ${now.toLocaleString('zh-CN')}`;
+        }
+        
+        // 切换动画
+        function toggleAnimation() {
+            animationEnabled = !animationEnabled;
+            if (currentData) {
+                renderBaguaChart(currentData);
+            }
+        }
+    </script>
+</body>
+</html>

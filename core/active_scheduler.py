@@ -93,10 +93,11 @@ class ActiveScheduler:
         except Exception as e:
             logger.error(f"基因演化失败: {e}")
         
-        try:
-            self._run_auto_learning()
-        except Exception as e:
-            logger.error(f"自动学习触发失败: {e}")
+        # 暂时禁用自动学习触发，避免内存问题
+        # try:
+        #     self._run_auto_learning()
+        # except Exception as e:
+        #     logger.error(f"自动学习触发失败: {e}")
     
     def _decay_quality_scores(self):
         """知识质量衰减（长期未访问的知识质量下降）"""

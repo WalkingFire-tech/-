@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>联盟拓荒者 - 知识水平面板</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: flex-end;
+            padding: 20px;
+        }
+        
+        /* 右侧面板 */
+        .knowledge-panel {
+            width: 380px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 25px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .panel-header {
+            text-align: center;
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        
+        .panel-title {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .score-circle {
+            width: 120px;
+            height: 120px;
+            margin: 20px auto;
+            position: relative;
+        }
+        
+        .score-circle svg {
+            transform: rotate(-90deg);
+        }
+        
+        .score-circle .circle-bg {
+            fill: none;
+            stroke: #e0e0e0;
+            stroke-width: 8;
+        }
+        
+        .score-circle .circle-progress {
+            fill: none;
+            stroke: #4CAF50;
+            stroke-width: 8;
+            stroke-linecap: round;
+            transition: stroke-dashoffset 0.5s ease;
+        }
+        
+        .score-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+        
+        .score-number {
+            font-size: 32px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .score-label {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .level-badge {
+            display: inline-block;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+        
+        .level-excellent { background: #4CAF50; color: white; }
+        .level-good { background: #2196F3; color: white; }
+        .level-developing { background: #FF9800; color: white; }
+        .level-starting { background: #9C27B0; color: white; }
+        .level-empty { background: #9E9E9E; color: white; }
+        
+        /* 统计卡片 */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 12px;
+            padding: 15px;
+            text-align: center;
+            transition: transform 0.2s;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-3px);
+        }
+        
+        .stat-icon {
+            font-size: 28px;
+            margin-bottom: 8px;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-top: 4px;
+        }
+        
+        /* 进度条 */
+        .progress-section {
+            margin-bottom: 20px;
+        }
+        
+        .progress-item {
+            margin-bottom: 15px;
+        }
+        
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 6px;
+            font-size: 13px;
+        }
+        
+        .progress-bar {
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+        
+        .progress-knowledge { background: linear-gradient(90deg, #667eea, #764ba2); }
+        .progress-quality { background: linear-gradient(90deg, #f093fb, #f5576c); }
+        .progress-memory { background: linear-gradient(90deg, #4facfe, #00f2fe); }
+        .progress-skills { background: linear-gradient(90deg, #43e97b, #38f9d7); }
+        .progress-rules { background: linear-gradient(90deg, #fa709a, #fee140); }
+        
+        /* 趋势图 */
+        .trend-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 12px;
+        }
+        
+        .trend-title {
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .trend-stats {
+            display: flex;
+            justify-content: space-around;
+        }
+        
+        .trend-stat {
+            text-align: center;
+        }
+        
+        .trend-value {
+            font-size: 20px;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        
+        .trend-label {
+            font-size: 11px;
+            color: #666;
+        }
+        
+        /* 刷新按钮 */
+        .refresh-btn {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .refresh-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .refresh-btn:active {
+            transform: translateY(0);
+        }
+        
+        /* 加载动画 */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #e0e0e0;
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* 最后更新时间 */
+        .last-update {
+            text-align: center;
+            font-size: 11px;
+            color: #999;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+    <!-- 知识水平面板 -->
+    <div class="knowledge-panel">
+        <div class="panel-header">
+            <div class="panel-title">📊 知识水平面板</div>
+            <div class="score-circle">
+                <svg width="120" height="120">
+                    <circle class="circle-bg" cx="60" cy="60" r="52"></circle>
+                    <circle class="circle-progress" cx="60" cy="60" r="52" 
+                            stroke-dasharray="326.73" 
+                            stroke-dashoffset="326.73"
+                            id="scoreCircle"></circle>
+                </svg>
+                <div class="score-text">
+                    <div class="score-number" id="scoreNumber">--</div>
+                    <div class="score-label">综合评分</div>
+                </div>
+            </div>
+            <div class="level-badge level-empty" id="levelBadge">加载中...</div>
+        </div>
+        
+        <!-- 统计卡片 -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon">📚</div>
+                <div class="stat-value" id="knowledgeCount">--</div>
+                <div class="stat-label">知识总量</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">🛠️</div>
+                <div class="stat-value" id="skillsCount">--</div>
+                <div class="stat-label">工具函数</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">📋</div>
+                <div class="stat-value" id="rulesCount">--</div>
+                <div class="stat-label">学习规则</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">⭐</div>
+                <div class="stat-value" id="qualityScore">--</div>
+                <div class="stat-label">平均质量</div>
+            </div>
+        </div>
+        
+        <!-- 详细进度 -->
+        <div class="progress-section">
+            <div class="progress-item">
+                <div class="progress-header">
+                    <span>知识覆盖度</span>
+                    <span id="coverageScore">0/20</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill progress-knowledge" id="coverageBar" style="width: 0%"></div>
+                </div>
+            </div>
+            
+            <div class="progress-item">
+                <div class="progress-header">
+                    <span>知识质量</span>
+                    <span id="qualityProgress">0/20</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill progress-quality" id="qualityBar" style="width: 0%"></div>
+                </div>
+            </div>
+            
+            <div class="progress-item">
+                <div class="progress-header">
+                    <span>记忆结构</span>
+                    <span id="memoryScore">0/15</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill progress-memory" id="memoryBar" style="width: 0%"></div>
+                </div>
+            </div>
+            
+            <div class="progress-item">
+                <div class="progress-header">
+                    <span>技能数量</span>
+                    <span id="skillsScore">0/15</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill progress-skills" id="skillsBar" style="width: 0%"></div>
+                </div>
+            </div>
+            
+            <div class="progress-item">
+                <div class="progress-header">
+                    <span>学习活力</span>
+                    <span id="activityScore">0/15</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill progress-rules" id="activityBar" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 学习趋势 -->
+        <div class="trend-section">
+            <div class="trend-title">📈 学习趋势</div>
+            <div class="trend-stats">
+                <div class="trend-stat">
+                    <div class="trend-value" id="weekGrowth">--</div>
+                    <div class="trend-label">7天增长</div>
+                </div>
+                <div class="trend-stat">
+                    <div class="trend-value" id="monthGrowth">--</div>
+                    <div class="trend-label">30天增长</div>
+                </div>
+                <div class="trend-stat">
+                    <div class="trend-value" id="fadingCount">--</div>
+                    <div class="trend-label">遗忘中</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 刷新按钮 -->
+        <button class="refresh-btn" onclick="refreshData()">🔄 刷新数据</button>
+        
+        <!-- 最后更新时间 -->
+        <div class="last-update" id="lastUpdate">--</div>
+    </div>
+    
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        let refreshInterval;
+        
+        // 页面加载时获取数据
+        window.addEventListener('load', () => {
+            refreshData();
+            // 每30秒自动刷新
+            refreshInterval = setInterval(refreshData, 30000);
+        });
+        
+        async function refreshData() {
+            try {
+                const response = await fetch(`${API_BASE}/api/knowledge/health`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    updateUI(data);
+                } else {
+                    console.error('获取数据失败:', data.error);
+                }
+            } catch (error) {
+                console.error('请求失败:', error);
+            }
+        }
+        
+        function updateUI(data) {
+            const report = data.report;
+            const summary = data.summary;
+            
+            // 更新评分圆环
+            const score = summary.score;
+            const circumference = 326.73;
+            const offset = circumference - (score / 100) * circumference;
+            
+            document.getElementById('scoreCircle').style.strokeDashoffset = offset;
+            document.getElementById('scoreNumber').textContent = score;
+            
+            // 更新等级徽章
+            const levelBadge = document.getElementById('levelBadge');
+            levelBadge.textContent = summary.level;
+            levelBadge.className = 'level-badge';
+            
+            if (score >= 80) levelBadge.classList.add('level-excellent');
+            else if (score >= 60) levelBadge.classList.add('level-good');
+            else if (score >= 40) levelBadge.classList.add('level-developing');
+            else if (score >= 20) levelBadge.classList.add('level-starting');
+            else levelBadge.classList.add('level-empty');
+            
+            // 更新统计卡片
+            document.getElementById('knowledgeCount').textContent = summary.total_knowledge;
+            document.getElementById('skillsCount').textContent = summary.skills;
+            document.getElementById('rulesCount').textContent = summary.rules;
+            document.getElementById('qualityScore').textContent = 
+                report.quality.avg_quality.toFixed(0);
+            
+            // 更新进度条
+            const scores = report.score;
+            
+            updateProgress('coverage', scores.coverage, 20);
+            updateProgress('quality', scores.quality, 20);
+            updateProgress('memory', scores.memory, 15);
+            updateProgress('skills', scores.skills, 15);
+            updateProgress('activity', scores.activity, 15);
+            
+            // 更新趋势
+            document.getElementById('weekGrowth').textContent = report.trend.week_growth;
+            document.getElementById('monthGrowth').textContent = report.trend.month_growth;
+            document.getElementById('fadingCount').textContent = report.trend.fading_count;
+            
+            // 更新时间
+            const now = new Date();
+            document.getElementById('lastUpdate').textContent = 
+                `最后更新: ${now.toLocaleTimeString()}`;
+        }
+        
+        function updateProgress(name, value, max) {
+            const percentage = (value / max) * 100;
+            document.getElementById(`${name}Bar`).style.width = `${percentage}%`;
+            document.getElementById(`${name}Score`).textContent = `${value}/${max}`;
+        }
+    </script>
+</body>
+</html>

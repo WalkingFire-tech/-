@@ -35,7 +35,12 @@ echo 后端地址: http://localhost:8000
 echo API文档: http://localhost:8000/docs
 echo.
 
-start "联盟拓荒者后端" cmd /k "python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
+REM 设置离线模式（避免HuggingFace下载）
+set HF_HUB_OFFLINE=1
+set TRANSFORMERS_OFFLINE=1
+set HF_DATASETS_OFFLINE=1
+
+start "联盟拓荒者后端" cmd /k "set HF_HUB_OFFLINE=1 && set TRANSFORMERS_OFFLINE=1 && python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
 
 echo 等待后端启动（5秒）...
 ping 127.0.0.1 -n 6 >nul

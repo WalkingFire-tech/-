@@ -30,27 +30,8 @@ class ModelHealthChecker:
         logger.info(f"模型健康检查器已初始化 (失败阈值: {failure_threshold}, 冷却: {cooldown_seconds}s)")
     
     def is_blacklisted(self, model_name: str) -> bool:
-        """检查模型是否在黑名单中
-        
-        Args:
-            model_name: 模型名称
-        
-        Returns:
-            是否在黑名单中
-        """
-        if model_name not in self.blacklist:
-            return False
-        
-        ban_time = self.blacklist[model_name]
-        elapsed = time.time() - ban_time
-        
-        if elapsed >= self.cooldown_seconds:
-            del self.blacklist[model_name]
-            self.failure_counts[model_name] = 0
-            logger.info(f"模型 {model_name} 已从黑名单移除")
-            return False
-        
-        return True
+        """检查模型是否在黑名单中 - 已禁用"""
+        return False  # 永不将模型加入黑名单
     
     def is_available(self, model_name: str) -> bool:
         """检查模型是否可用
@@ -86,21 +67,12 @@ class ModelHealthChecker:
         error_type: str = "unknown",
         error_message: str = None
     ):
-        """记录失败调用
-        
-        Args:
-            model_name: 模型名称
-            error_type: 错误类型
-            error_message: 错误信息
-        """
+        """记录失败调用 - 不加入黑名单"""
         self.failure_counts[model_name] += 1
         failures = self.failure_counts[model_name]
         
         logger.warning(f"模型 {model_name} 调用失败 (连续失败: {failures}) - {error_type}")
-        
-        # 检查是否需要加入黑名单
-        if failures >= self.failure_threshold:
-            self._add_to_blacklist(model_name, error_type, error_message)
+        # 不将模型加入黑名单，始终可用
     
     def _add_to_blacklist(
         self,

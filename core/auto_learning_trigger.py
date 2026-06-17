@@ -198,7 +198,7 @@ class AutoLearningTrigger:
                 count = cursor.fetchone()[0]
                 return count
         except Exception as e:
-            logger.error(f"获取主题进度失败: {e}")
+            logger.error(f"获取主题进度失败: {topic_name}, 错误: {str(e)}")
             return 0
     
     def _get_skill_success_rate(self, skill_name: str) -> float:
@@ -225,7 +225,7 @@ class AutoLearningTrigger:
                 
                 return success_count / total_count
         except Exception as e:
-            logger.error(f"获取技能成功率失败: {e}")
+            logger.error(f"获取技能成功率失败: {skill_name}, 错误: {str(e)}")
             return 0.0
     
     def _trigger_target_learning(self, target: Dict):

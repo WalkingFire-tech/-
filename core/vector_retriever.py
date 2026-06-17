@@ -46,24 +46,35 @@ class VectorRetriever:
         
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        # 尝试加载本地缓存的模型（离线模式）
+        # 加载句子编码模型（严格离线模式）
         if EMBEDDING_AVAILABLE:
             try:
-                logger.info("加载句子编码模型...")
+                logger.info("检查向量检索模型...")
                 
-                # 优先使用本地缓存
-                cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
-                model_name = 'paraphrase-multilingual-MiniLM-L12-v2'
-                
-                # 设置离线环境变量
+                # 严格离线模式：在导入前设置环境变量
                 os.environ['HF_HUB_OFFLINE'] = '1'
                 os.environ['TRANSFORMERS_OFFLINE'] = '1'
+                os.environ['HF_DATASETS_OFFLINE'] = '1'
                 
-                self.model = SentenceTransformer(model_name)
-                logger.info("句子编码模型已加载（离线模式）")
+                # 检查本地缓存是否存在
+                from pathlib import Path
+                cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
+                model_cache = cache_dir / "models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2"
+                
+                if not model_cache.exists():
+                    logger.warning("本地模型缓存不存在，跳过向量检索")
+                    self.model = None
+                else:
+                    logger.info("加载本地缓存的句子编码模型...")
+                    model_name = 'paraphrase-multilingual-MiniLM-L12-v2'
+                    self.model = SentenceTransformer(model_name)
+                    logger.info("句子编码模型已加载（离线模式）")
             except Exception as e:
                 logger.warning(f"加载编码模型失败，将使用关键词检索: {e}")
                 self.model = None
+        else:
+            logger.info("向量检索不可用，使用关键词检索")
+            self.model = None
         
         if CHROMA_AVAILABLE and self.model:
             try:
