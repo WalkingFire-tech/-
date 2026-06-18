@@ -4,7 +4,7 @@ import threading
 import time
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi import FastAPI, Request, BackgroundTasks, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -3352,6 +3352,86 @@ async def api_innovate(request: Request):
         }
     except Exception as e:
         logger.error(f"创新流程失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """
+    文件上传API
+    支持PDF、Word、Excel、TXT等格式
+    """
+    try:
+        UPLOAD_DIR = ROOT_DIR / "data" / "uploads"
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        
+        file_path = UPLOAD_DIR / file.filename
+        
+        with open(file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        
+        logger.info(f"文件上传成功: {file.filename} ({len(content)} bytes)")
+        
+        return {
+            "success": True,
+            "filename": file.filename,
+            "path": str(file_path),
+            "size": len(content),
+            "message": f"文件已保存到 {file_path}"
+        }
+    except Exception as e:
+        logger.error(f"文件上传失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/analyze/pdf")
+async def analyze_pdf(request: Request):
+    """
+    PDF分析API
+    提取文本内容并返回
+    """
+    try:
+        data = await request.json()
+        pdf_path = data.get("path", "")
+        
+        if not pdf_path or not Path(pdf_path).exists():
+            return {"success": False, "error": "文件不存在"}
+        
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(pdf_path)
+            
+            text_content = []
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                text = page.get_text()
+                text_content.append({
+                    "page": page_num + 1,
+                    "text": text
+                })
+            
+            doc.close()
+            
+            full_text = "\n".join([p["text"] for p in text_content])
+            
+            return {
+                "success": True,
+                "filename": Path(pdf_path).name,
+                "total_pages": len(text_content),
+                "pages": text_content[:5],
+                "full_text": full_text[:10000],
+                "char_count": len(full_text)
+            }
+            
+        except ImportError:
+            return {
+                "success": False,
+                "error": "PyMuPDF未安装，请运行: pip install pymupdf"
+            }
+            
+    except Exception as e:
+        logger.error(f"PDF分析失败: {e}")
         return {"success": False, "error": str(e)}
 
 
