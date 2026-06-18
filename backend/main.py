@@ -2200,7 +2200,7 @@ async def learn_from_folder(request: dict):
         
         extensions = {
             "code": [".py", ".js", ".java", ".cpp", ".c", ".go", ".rs", ".ts"],
-            "doc": [".md", ".txt", ".rst"],
+            "doc": [".md", ".txt", ".rst", ".pdf"],
             "config": [".yaml", ".yml", ".json", ".toml"],
             "all": []
         }
@@ -2231,6 +2231,56 @@ async def learn_from_folder(request: dict):
                     logger.warning(f"跳过大文件 {file_path}: {file_size} bytes")
                     continue
                 
+                # 处理PDF文件
+                if file_path.suffix.lower() == '.pdf':
+                    try:
+                        import fitz  # PyMuPDF
+                        doc = fitz.open(str(file_path))
+                        pdf_text = []
+                        for page_num in range(min(len(doc), 50)):  # 最多处理50页
+                            page = doc[page_num]
+                            pdf_text.append(page.get_text())
+                        doc.close()
+                        
+                        content = '\n'.join(pdf_text)
+                        logger.info(f"PDF解析成功: {file_path.name} ({len(content)} 字符)")
+                        
+                        # 提取知识点并存储
+                        if len(content) > 100:
+                            # 分段存储到知识库
+                            chunks = [content[i:i+5000] for i in range(0, len(content), 5000)]
+                            for i, chunk in enumerate(chunks[:10]):  # 最多10段
+                                # 存储到知识库
+                                try:
+                                    with sqlite3.connect('data/knowledge_store.db') as conn:
+                                        conn.execute('''
+                                            INSERT INTO knowledge (content, source, type, quality, created_at)
+                                            VALUES (?, ?, ?, ?, ?)
+                                        ''', (
+                                            chunk,
+                                            f"pdf:{file_path.name}:page{i+1}",
+                                            "pdf_content",
+                                            80.0,
+                                            datetime.now().isoformat()
+                                        ))
+                                        conn.commit()
+                                except:
+                                    pass
+                                knowledge_count += 1
+                            summaries.append(f"{file_path.name}: PDF {len(doc)}页, {len(content)}字符, 提取{len(chunks[:10])}段")
+                        processed += 1
+                        continue
+                        
+                    except ImportError:
+                        logger.warning("PyMuPDF未安装，跳过PDF文件")
+                        summaries.append(f"{file_path.name}: PyMuPDF未安装，无法处理PDF")
+                        continue
+                    except Exception as e:
+                        logger.warning(f"PDF解析失败 {file_path}: {e}")
+                        summaries.append(f"{file_path.name}: PDF解析失败 - {str(e)[:50]}")
+                        continue
+                
+                # 处理文本文件
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
                 
