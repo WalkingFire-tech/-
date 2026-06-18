@@ -2187,6 +2187,17 @@ async def learn_from_files(request: dict):
         success_files = [r for r in results if r.get('knowledge_count', 0) > 0]
         failed_files = [r for r in results if r.get('knowledge_count', 0) == 0]
         
+        # 构建知识点来源列表
+        sources = []
+        for r in success_files[:10]:
+            sources.append(f"• {r['file']}: {r['knowledge_count']}条 ({r.get('type', 'text')})")
+        
+        # 构建失败文件列表
+        failures = []
+        if failed_files:
+            for r in failed_files[:5]:
+                failures.append(f"• {r['file']}: {r.get('error', '未知错误')}")
+        
         summary = f"""学习完成！
 
 📊 学习统计：
@@ -2195,8 +2206,8 @@ async def learn_from_files(request: dict):
 - 总大小: {sum(r['size'] for r in success_files) / 1024 / 1024:.2f} MB
 
 📚 知识点来源:
-{chr(10).join(f"• {r['file']}: {r['knowledge_count']}条 ({r.get('type', 'text')})" for r in success_files[:10])}
-{f"\n\n❌ 失败文件:\n{chr(10).join(f'• {r[\"file\"]}: {r.get(\"error\", \"未知错误\")}' for r in failed_files[:5])}" if failed_files else ""}
+{chr(10).join(sources)}
+{chr(10) + chr(10) + '❌ 失败文件:' + chr(10) + chr(10).join(failures) if failures else ""}
 
 💡 系统已自动：
 - 提取函数、类、代码片段
