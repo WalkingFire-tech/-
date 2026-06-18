@@ -2049,6 +2049,8 @@ async def learn_from_files(request: dict):
     try:
         from pathlib import Path
         from core.learning import enhanced_learner
+        import sqlite3
+        from datetime import datetime
         
         results = []
         total_knowledge = 0
@@ -2057,14 +2059,96 @@ async def learn_from_files(request: dict):
             file = Path(file_path).resolve()
             
             if not _is_path_allowed(file):
+                logger.warning(f"路径不允许: {file}")
                 continue
             
             if not file.exists() or not file.is_file():
+                logger.warning(f"文件不存在: {file}")
                 continue
             
             try:
                 file_size = file.stat().st_size
-                if file_size > 1024 * 1024:  # 限制1MB
+                logger.info(f"处理文件: {file.name} ({file_size / 1024 / 1024:.2f} MB)")
+                
+                # 处理PDF文件
+                if file.suffix.lower() == '.pdf':
+                    try:
+                        import fitz  # PyMuPDF
+                        doc = fitz.open(str(file))
+                        pdf_text = []
+                        
+                        # 最多处理100页
+                        max_pages = min(len(doc), 100)
+                        for page_num in range(max_pages):
+                            page = doc[page_num]
+                            text = page.get_text()
+                            if text.strip():
+                                pdf_text.append(text)
+                        
+                        doc.close()
+                        
+                        if not pdf_text:
+                            logger.warning(f"PDF无文本内容: {file.name}")
+                            continue
+                        
+                        content = '\n\n'.join(pdf_text)
+                        logger.info(f"PDF解析成功: {file.name} ({len(content)} 字符)")
+                        
+                        # 分段存储到知识库
+                        chunk_size = 3000
+                        chunks = [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
+                        knowledge_count = 0
+                        
+                        with sqlite3.connect('data/knowledge_store.db') as conn:
+                            for i, chunk in enumerate(chunks[:20]):  # 最多20段
+                                if len(chunk.strip()) > 100:
+                                    conn.execute('''
+                                        INSERT INTO knowledge (content, source, type, quality, created_at)
+                                        VALUES (?, ?, ?, ?, ?)
+                                    ''', (
+                                        chunk,
+                                        f"pdf:{file.name}:chunk{i+1}",
+                                        "pdf_content",
+                                        85.0,
+                                        datetime.now().isoformat()
+                                    ))
+                                    knowledge_count += 1
+                            conn.commit()
+                        
+                        total_knowledge += knowledge_count
+                        results.append({
+                            "file": file.name,
+                            "knowledge_count": knowledge_count,
+                            "size": file_size,
+                            "type": "PDF"
+                        })
+                        logger.info(f"PDF学习完成: {file.name} -> {knowledge_count}条知识点")
+                        continue
+                        
+                    except ImportError:
+                        logger.error("PyMuPDF未安装")
+                        results.append({
+                            "file": file.name,
+                            "knowledge_count": 0,
+                            "size": file_size,
+                            "type": "PDF",
+                            "error": "PyMuPDF未安装"
+                        })
+                        continue
+                    except Exception as e:
+                        logger.error(f"PDF解析失败: {e}")
+                        results.append({
+                            "file": file.name,
+                            "knowledge_count": 0,
+                            "size": file_size,
+                            "type": "PDF",
+                            "error": str(e)[:100]
+                        })
+                        continue
+                
+                # 处理文本文件
+                if file_size > 10 * 1024 * 1024:  # 文本文件限制10MB
+                    logger.warning(f"文本文件过大: {file.name}")
                     continue
                 
                 with open(file, 'r', encoding='utf-8', errors='ignore') as f:
@@ -2080,28 +2164,39 @@ async def learn_from_files(request: dict):
                 results.append({
                     "file": file.name,
                     "knowledge_count": knowledge_count,
-                    "size": file_size
+                    "size": file_size,
+                    "type": "text"
                 })
                 
             except Exception as e:
-                logger.warning(f"学习文件失败 {file}: {e}")
+                logger.error(f"学习文件失败 {file}: {e}")
+                results.append({
+                    "file": file.name,
+                    "knowledge_count": 0,
+                    "size": 0,
+                    "error": str(e)[:100]
+                })
                 continue
         
         # 检测模式并生成规则
-        enhanced_learner.detect_and_create_rules()
+        if total_knowledge > 0:
+            enhanced_learner.detect_and_create_rules()
+            enhanced_learner.auto_generate_tools()
         
-        # 自动生成工具
-        enhanced_learner.auto_generate_tools()
+        # 生成详细的摘要
+        success_files = [r for r in results if r.get('knowledge_count', 0) > 0]
+        failed_files = [r for r in results if r.get('knowledge_count', 0) == 0]
         
         summary = f"""学习完成！
 
 📊 学习统计：
-- 处理文件: {len(results)}个
+- 处理文件: {len(success_files)}个成功, {len(failed_files)}个失败
 - 提取知识点: {total_knowledge}条
-- 总大小: {sum(r['size'] for r in results) / 1024:.1f} KB
+- 总大小: {sum(r['size'] for r in success_files) / 1024 / 1024:.2f} MB
 
 📚 知识点来源:
-{chr(10).join(f"• {r['file']}: {r['knowledge_count']}条" for r in results[:10])}
+{chr(10).join(f"• {r['file']}: {r['knowledge_count']}条 ({r.get('type', 'text')})" for r in success_files[:10])}
+{f"\n\n❌ 失败文件:\n{chr(10).join(f'• {r[\"file\"]}: {r.get(\"error\", \"未知错误\")}' for r in failed_files[:5])}" if failed_files else ""}
 
 💡 系统已自动：
 - 提取函数、类、代码片段
@@ -2112,10 +2207,12 @@ async def learn_from_files(request: dict):
 - "函数xxx的作用是什么？"
 - "如何统计模型参数量？" """
         
-        logger.info(f"文件学习完成: {total_knowledge}条知识点")
+        logger.info(f"文件学习完成: {len(success_files)}个文件, {total_knowledge}条知识点")
         return {"success": True, "summary": summary, "total_knowledge": total_knowledge}
     except Exception as e:
         logger.error(f"从文件学习失败: {e}")
+        import traceback
+        traceback.print_exc()
         return {"success": False, "error": str(e)}
 
 def _extract_knowledge_from_file(filename: str, content: str) -> list:
