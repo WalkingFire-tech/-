@@ -75,7 +75,7 @@ class VectorRetriever:
                 # 大模型：paraphrase-multilingual-MiniLM-L12-v2 (400MB)
                 model_name = os.getenv(
                     "EMBEDDING_MODEL", 
-                    "paraphrase-MiniLM-L3-v2"  # 默认使用小模型
+                    "paraphrase-multilingual-MiniLM-L12-v2"  # 默认使用已下载的大模型
                 )
                 logger.info(f"模型: {model_name}")
                 
