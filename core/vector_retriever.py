@@ -46,29 +46,29 @@ class VectorRetriever:
         
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        # 加载句子编码模型（严格离线模式）
+        # 加载句子编码模型
         if EMBEDDING_AVAILABLE:
             try:
-                logger.info("检查向量检索模型...")
+                logger.info("加载向量检索模型...")
                 
-                # 严格离线模式：在导入前设置环境变量
-                os.environ['HF_HUB_OFFLINE'] = '1'
-                os.environ['TRANSFORMERS_OFFLINE'] = '1'
-                os.environ['HF_DATASETS_OFFLINE'] = '1'
+                # 检查是否启用严格离线模式
+                strict_offline = os.getenv("STRICT_OFFLINE", "false").lower() == "true"
                 
-                # 检查本地缓存是否存在
-                from pathlib import Path
-                cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
-                model_cache = cache_dir / "models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2"
-                
-                if not model_cache.exists():
-                    logger.warning("本地模型缓存不存在，跳过向量检索")
-                    self.model = None
+                if strict_offline:
+                    # 严格离线模式：不尝试下载
+                    os.environ['HF_HUB_OFFLINE'] = '1'
+                    os.environ['TRANSFORMERS_OFFLINE'] = '1'
+                    os.environ['HF_DATASETS_OFFLINE'] = '1'
+                    logger.info("严格离线模式：仅使用本地缓存")
                 else:
-                    logger.info("加载本地缓存的句子编码模型...")
-                    model_name = 'paraphrase-multilingual-MiniLM-L12-v2'
-                    self.model = SentenceTransformer(model_name)
-                    logger.info("句子编码模型已加载（离线模式）")
+                    # 允许在线下载
+                    logger.info("允许在线下载模型（首次使用需要下载约400MB）")
+                
+                # 加载模型
+                model_name = 'paraphrase-multilingual-MiniLM-L12-v2'
+                self.model = SentenceTransformer(model_name)
+                logger.info("✓ 向量检索模型已加载")
+                
             except Exception as e:
                 logger.warning(f"加载编码模型失败，将使用关键词检索: {e}")
                 self.model = None
