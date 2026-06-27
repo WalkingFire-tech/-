@@ -210,6 +210,10 @@ class CognitiveDispatcher:
         注意：QuickReflexEngine作为T0层已前置拦截简单问题
         此处专注于slow/learning路径决策
         """
+        # 简单意图走fast路径
+        if intent_type in ["greeting", "confirmation", "simple_query"]:
+            return "fast"
+        
         learning_threshold = self.route_thresholds.get("learning_confidence", 0.5)
         
         if intent_type == "learning_trigger" or confidence < learning_threshold:
