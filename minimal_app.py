@@ -10,8 +10,17 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from loguru import logger
 
-ROOT_DIR = Path(__file__).parent.parent
+# 确保ROOT_DIR是项目根目录
+ROOT_DIR = Path(__file__).parent.resolve()
+os.chdir(ROOT_DIR)
 sys.path.insert(0, str(ROOT_DIR))
+
+# 前端目录
+FRONTEND_DIR = ROOT_DIR / "frontend"
+
+logger.info(f"ROOT_DIR: {ROOT_DIR}")
+logger.info(f"FRONTEND_DIR: {FRONTEND_DIR}")
+logger.info(f"frontend/index.html存在: {(FRONTEND_DIR / 'index.html').exists()}")
 
 app = FastAPI(
     title="联盟拓荒者 API",
@@ -37,10 +46,16 @@ if FRONTEND_DIR.exists():
 async def root():
     """根路径返回前端页面"""
     frontend_index = FRONTEND_DIR / "index.html"
+    logger.info(f"查找前端文件: {frontend_index}")
+    logger.info(f"文件存在: {frontend_index.exists()}")
+    
     if frontend_index.exists():
         with open(frontend_index, 'r', encoding='utf-8') as f:
             html_content = f.read()
+        logger.info(f"返回前端页面: {len(html_content)} 字节")
         return HTMLResponse(content=html_content)
+    
+    logger.warning(f"前端文件不存在，返回API信息")
     return {"message": "联盟拓荒者 API", "docs": "/docs"}
 
 @app.get("/api/health")
