@@ -22,6 +22,36 @@ logger.info(f"ROOT_DIR: {ROOT_DIR}")
 logger.info(f"FRONTEND_DIR: {FRONTEND_DIR}")
 logger.info(f"frontend/index.html存在: {(FRONTEND_DIR / 'index.html').exists()}")
 
+# 全局模型列表
+AVAILABLE_MODELS = []
+
+def scan_ollama_models():
+    """扫描Ollama模型"""
+    global AVAILABLE_MODELS
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=3)
+        
+        if response.status_code == 200:
+            models_data = response.json()
+            models = models_data.get('models', [])
+            AVAILABLE_MODELS = [
+                {"name": m['name'], "type": "OllamaAdapter"}
+                for m in models
+            ]
+            logger.info(f"扫描到 {len(AVAILABLE_MODELS)} 个Ollama模型")
+            return True
+        else:
+            logger.warning(f"Ollama响应异常: {response.status_code}")
+            return False
+    except Exception as e:
+        logger.warning(f"无法连接Ollama: {e}")
+        AVAILABLE_MODELS = [{"name": "mock", "type": "MockAdapter"}]
+        return False
+
+# 启动时扫描模型
+scan_ollama_models()
+
 app = FastAPI(
     title="联盟拓荒者 API",
     description="生产级自我进化智能体系统 API",
@@ -119,11 +149,15 @@ async def get_stats():
 @app.get("/api/models")
 async def get_models():
     """获取可用模型列表"""
+    global AVAILABLE_MODELS
+    
+    # 如果没有模型，尝试重新扫描
+    if not AVAILABLE_MODELS:
+        scan_ollama_models()
+    
     return {
-        "models": [
-            {"name": "mock", "type": "MockAdapter"}
-        ],
-        "message": "使用minimal_app.py，模型功能受限"
+        "models": AVAILABLE_MODELS,
+        "count": len(AVAILABLE_MODELS)
     }
 
 @app.get("/api/models/scan")
@@ -167,33 +201,23 @@ async def scan_ollama_models():
 @app.post("/api/models/reload")
 async def reload_models():
     """重新加载模型"""
-    try:
-        import requests
-        response = requests.get("http://localhost:11434/api/tags", timeout=3)
-        
-        if response.status_code == 200:
-            models_data = response.json()
-            models = [m['name'] for m in models_data.get('models', [])]
-            
-            return {
-                "success": True,
-                "added": models,
-                "total": len(models),
-                "message": f"发现{len(models)}个Ollama模型"
-            }
-        else:
-            return {
-                "success": False,
-                "added": [],
-                "total": 0,
-                "message": "Ollama服务响应异常"
-            }
-    except Exception as e:
+    global AVAILABLE_MODELS
+    
+    success = scan_ollama_models()
+    
+    if success:
+        return {
+            "success": True,
+            "added": [m['name'] for m in AVAILABLE_MODELS],
+            "total": len(AVAILABLE_MODELS),
+            "message": f"发现{len(AVAILABLE_MODELS)}个Ollama模型"
+        }
+    else:
         return {
             "success": False,
             "added": [],
             "total": 0,
-            "message": f"无法连接Ollama: {str(e)}",
+            "message": "无法连接Ollama服务",
             "hint": "请启动Ollama服务: ollama serve"
         }
 
