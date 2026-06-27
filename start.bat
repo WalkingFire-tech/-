@@ -47,6 +47,6 @@ echo.
 REM 启动服务并自动打开浏览器
 start "" http://localhost:8000/
 
-python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn backend.main_fast:app --host 0.0.0.0 --port 8000 --reload
 
 pause
