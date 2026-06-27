@@ -175,6 +175,49 @@ async def models_reload():
         pass
     return {"success": False, "added": [], "total": 0}
 
+@app.get("/api/config/external")
+async def get_external_config():
+    """获取外置API配置"""
+    import json
+    config_file = ROOT_DIR / "config" / "external_api.json"
+    if config_file.exists():
+        with open(config_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {"apis": [], "message": "未配置外置API"}
+
+@app.post("/api/config/external")
+async def save_external_config(config: dict):
+    """保存外置API配置"""
+    import json
+    config_dir = ROOT_DIR / "config"
+    config_dir.mkdir(exist_ok=True)
+    config_file = config_dir / "external_api.json"
+    
+    with open(config_file, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+    
+    return {"success": True, "message": "配置已保存"}
+
+@app.get("/api/models/test")
+async def test_model_connection(model_name: str = None):
+    """测试模型连接"""
+    if not model_name:
+        return {"success": False, "message": "请提供模型名称"}
+    
+    try:
+        import requests
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={"model": model_name, "prompt": "test", "stream": False},
+            timeout=5
+        )
+        if response.status_code == 200:
+            return {"success": True, "message": f"模型 {model_name} 连接正常"}
+        else:
+            return {"success": False, "message": f"连接失败: {response.status_code}"}
+    except Exception as e:
+        return {"success": False, "message": f"连接错误: {str(e)}"}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
