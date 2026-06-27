@@ -121,6 +121,19 @@ async def chat(request: dict):
     user_input = request.get("message", "")
     return {"success": True, "response": f"收到: {user_input}", "model": "auto"}
 
+@app.post("/api/models/reload")
+async def models_reload():
+    """重新加载模型"""
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        if response.status_code == 200:
+            models = response.json().get('models', [])
+            return {"success": True, "added": [m['name'] for m in models], "total": len(models)}
+    except:
+        pass
+    return {"success": False, "added": [], "total": 0}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
