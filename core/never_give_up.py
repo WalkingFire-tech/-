@@ -351,7 +351,7 @@ def specialized_tool():
         successful = [a for a in attempts if a[1]]
         failed = [a for a in attempts if not a[1]]
         
-        response = f"关于"{question}"，我尝试了{len(attempts)}种方法：\n\n"
+        response = f"关于'{question}'，我尝试了{len(attempts)}种方法：\n\n"
         
         if successful:
             response += f"✅ 成功方法：{', '.join([a[0] for a in successful])}\n"
