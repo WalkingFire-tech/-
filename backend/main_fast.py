@@ -125,8 +125,13 @@ async def chat(request: dict):
     try:
         from core.cognitive_dispatcher import CognitiveDispatcher
         
+        # 异步执行同步的dispatch方法
+        loop = asyncio.get_event_loop()
         dispatcher = CognitiveDispatcher()
-        dispatch_result = dispatcher.dispatch(user_query=user_input, context=request)
+        dispatch_result = await loop.run_in_executor(
+            None,
+            lambda: dispatcher.dispatch(user_query=user_input, context=request)
+        )
         
         route = dispatch_result.get("route", "slow")
         intent_type = dispatch_result.get("intent_type", "unknown")
