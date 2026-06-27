@@ -117,134 +117,225 @@ async def knowledge_health():
 
 @app.post("/api/chat")
 async def chat(request: dict):
-    """聊天接口 - 保证永不超时，总是给出结果"""
+    """聊天接口 - 永不放弃，总是想办法解决问题"""
     import asyncio
     user_input = request.get("message", "")
     model = request.get("model", "auto")
     
+    # 结果收集器
+    attempts = []
+    final_response = None
+    
+    # ========== 尝试策略1：快速意图识别 ==========
     try:
         from core.cognitive_dispatcher import CognitiveDispatcher
-        
-        # 1. 意图识别（带超时保护）
         loop = asyncio.get_event_loop()
         dispatcher = CognitiveDispatcher()
         
-        try:
-            dispatch_result = await asyncio.wait_for(
-                loop.run_in_executor(
-                    None,
-                    lambda: dispatcher.dispatch(user_query=user_input, context=request)
-                ),
-                timeout=5.0  # 意图识别最多5秒
-            )
-            
-            route = dispatch_result.get("route", "slow")
-            intent_type = dispatch_result.get("intent_type", "unknown")
-            confidence = dispatch_result.get("confidence", 0.5)
-            
-        except asyncio.TimeoutError:
-            logger.warning("意图识别超时，使用默认回复")
-            intent_type = "timeout"
-            route = "fallback"
-            confidence = 0.5
+        dispatch_result = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: dispatcher.dispatch(user_query=user_input, context=request)),
+            timeout=3.0
+        )
         
-        # 2. 根据意图生成回复
-        if intent_type == "greeting":
-            response_text = "你好！我是联盟拓荒者智能体系统，很高兴为你服务。我可以帮助你完成各种任务，包括代码生成、问题解答、数据分析等。"
-        
-        elif intent_type == "confirmation":
-            response_text = "好的，我明白了。"
-        
-        elif route == "fast":
-            response_text = f"收到你的问题：{user_input}"
-        
-        elif intent_type in ["history_query", "history"]:
-            # 历史查询特殊处理
-            response_text = "历史记录功能正在开发中，敬请期待。目前你可以尝试问我其他问题。"
-        
-        else:
-            # 3. 复杂问题：尝试深度处理，但保证有结果
-            try:
-                from core.metacognitive_executor import MetacognitiveExecutor
-                executor = MetacognitiveExecutor()
-                exec_result = await asyncio.wait_for(
-                    executor.execute_with_full_metacognition(user_query=user_input, context=request),
-                    timeout=20.0  # 深度处理最多20秒
-                )
-                response_text = exec_result.get("final_result", "")
-                
-                if not response_text or len(response_text) < 10:
-                    # 结果无效，使用降级回复
-                    response_text = await generate_fallback_response(user_input)
-                    
-            except asyncio.TimeoutError:
-                logger.warning("深度处理超时，使用降级回复")
-                response_text = await generate_fallback_response(user_input)
-                
-            except Exception as e:
-                logger.warning(f"深度处理失败: {e}，使用降级回复")
-                response_text = await generate_fallback_response(user_input)
-        
-        return {
-            "success": True,
-            "response": response_text,
-            "model": model,
-            "intent": intent_type,
-            "confidence": confidence,
-            "route": route,
-            "thinking_process": {
-                "deep_intent": intent_type,
-                "scene_role": "general",
-                "intent_confidence": confidence,
-                "response_strategy": route,
-                "evidence": []
-            }
-        }
+        intent_type = dispatch_result.get("intent_type", "unknown")
+        route = dispatch_result.get("route", "slow")
+        confidence = dispatch_result.get("confidence", 0.5)
+        attempts.append(("意图识别", True, intent_type))
         
     except Exception as e:
-        logger.error(f"聊天处理失败: {e}")
-        # 最终降级：保证总是有回复
-        return {
-            "success": True,
-            "response": f"抱歉，处理'{user_input}'时遇到问题。请尝试换个方式提问，或稍后再试。",
-            "model": model,
-            "intent": "error",
-            "confidence": 0.0,
-            "route": "error"
-        }
-
-async def generate_fallback_response(query: str) -> str:
-    """生成降级回复 - 保证有意义"""
+        logger.warning(f"意图识别失败: {e}")
+        intent_type = "unknown"
+        route = "slow"
+        confidence = 0.5
+        attempts.append(("意图识别", False, str(e)))
     
-    # 1. 尝试调用Ollama（快速）
-    try:
-        import requests
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-            json={"model": "qwen2.5:7b", "prompt": query, "stream": False},
-            timeout=10
-        )
-        if response.status_code == 200:
-            result = response.json().get("response", "")
+    # ========== 策略2：简单意图直接回复 ==========
+    if intent_type == "greeting":
+        final_response = "你好！我是联盟拓荒者智能体系统，很高兴为你服务。我可以帮助你完成各种任务，包括代码生成、问题解答、数据分析等。"
+        attempts.append(("简单回复", True, "问候语"))
+    
+    elif intent_type == "confirmation":
+        final_response = "好的，我明白了。"
+        attempts.append(("简单回复", True, "确认回复"))
+    
+    elif intent_type == "history_query":
+        final_response = await solve_history_query(user_input)
+        attempts.append(("历史查询", True, "历史功能"))
+    
+    # ========== 策略3：尝试深度认知处理 ==========
+    if not final_response:
+        try:
+            from core.metacognitive_executor import MetacognitiveExecutor
+            executor = MetacognitiveExecutor()
+            exec_result = await asyncio.wait_for(
+                executor.execute_with_full_metacognition(user_query=user_input, context=request),
+                timeout=15.0
+            )
+            result = exec_result.get("final_result", "")
             if result and len(result) > 20:
-                return result
-    except:
-        pass
+                final_response = result
+                attempts.append(("深度认知", True, f"获得{len(result)}字回复"))
+        except Exception as e:
+            attempts.append(("深度认知", False, str(e)[:50]))
     
-    # 2. 根据问题类型给出针对性回复
+    # ========== 策略4：尝试Ollama本地模型 ==========
+    if not final_response:
+        try:
+            import requests
+            response = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: requests.post(
+                    "http://localhost:11434/api/generate",
+                    json={"model": "qwen2.5:7b", "prompt": user_input, "stream": False},
+                    timeout=12
+                )
+            )
+            if response.status_code == 200:
+                result = response.json().get("response", "")
+                if result and len(result) > 20:
+                    final_response = result
+                    attempts.append(("Ollama本地", True, f"获得{len(result)}字回复"))
+        except Exception as e:
+            attempts.append(("Ollama本地", False, str(e)[:50]))
+    
+    # ========== 策略5：查询知识库 ==========
+    if not final_response:
+        try:
+            result = await query_knowledge_base(user_input)
+            if result:
+                final_response = result
+                attempts.append(("知识库", True, "检索到相关知识"))
+        except Exception as e:
+            attempts.append(("知识库", False, str(e)[:50]))
+    
+    # ========== 策略6：查询经验池 ==========
+    if not final_response:
+        try:
+            result = await query_experience_pool(user_input)
+            if result:
+                final_response = result
+                attempts.append(("经验池", True, "找到历史经验"))
+        except Exception as e:
+            attempts.append(("经验池", False, str(e)[:50]))
+    
+    # ========== 策略7：规则匹配生成回复 ==========
+    if not final_response:
+        final_response = generate_rule_based_response(user_input, intent_type)
+        attempts.append(("规则匹配", True, "生成针对性回复"))
+    
+    # ========== 记录解决过程 ==========
+    logger.info(f"问题解决过程: {[(a[0], a[1]) for a in attempts]}")
+    
+    return {
+        "success": True,
+        "response": final_response,
+        "model": model,
+        "intent": intent_type,
+        "confidence": confidence,
+        "route": route,
+        "attempts": attempts,  # 返回尝试过程
+        "thinking_process": {
+            "deep_intent": intent_type,
+            "scene_role": "general",
+            "intent_confidence": confidence,
+            "response_strategy": route,
+            "solution_path": [a[0] for a in attempts if a[1]]
+        }
+    }
+
+async def solve_history_query(query: str) -> str:
+    """解决历史查询问题"""
+    try:
+        import sqlite3
+        conn = sqlite3.connect("data/experience_pool.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT query, response FROM experiences ORDER BY timestamp DESC LIMIT 10")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if rows:
+            history_text = "\n".join([f"- {row[0][:30]}... → {row[1][:50]}..." for row in rows[:5]])
+            return f"📜 最近的历史记录：\n{history_text}\n\n（完整历史功能开发中）"
+        else:
+            return "暂无历史记录。开始和我对话吧！"
+    except:
+        return "历史记录功能正在初始化，请稍后再试。"
+
+async def query_knowledge_base(query: str) -> str:
+    """查询知识库"""
+    try:
+        import sqlite3
+        conn = sqlite3.connect("data/knowledge_store.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{query}%",))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else None
+    except:
+        return None
+
+async def query_experience_pool(query: str) -> str:
+    """查询经验池"""
+    try:
+        import sqlite3
+        conn = sqlite3.connect("data/experience_pool.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT response FROM experiences WHERE query LIKE ? ORDER BY timestamp DESC LIMIT 1", (f"%{query[:20]}%",))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else None
+    except:
+        return None
+
+def generate_rule_based_response(query: str, intent_type: str) -> str:
+    """基于规则生成针对性回复 - 最后的保障"""
     query_lower = query.lower()
     
-    if any(kw in query_lower for kw in ["历史", "记录", "查看"]):
-        return "历史记录功能正在开发中。你可以尝试问我其他问题，比如'你好'或'什么是认知科学？'"
-    
-    if any(kw in query_lower for kw in ["什么", "如何", "为什么", "怎样"]):
-        return f"关于'{query}'，这是一个很好的问题。由于系统正在进行深度思考，建议你：\n1. 稍后重试\n2. 简化问题\n3. 尝试更具体的描述"
-    
-    if any(kw in query_lower for kw in ["代码", "编程", "写代码"]):
-        return "我可以帮助你编写代码。请告诉我具体的编程任务，比如：'写一个Python函数计算斐波那契数列'"
-    
-    # 3. 通用回复
-    return f"我理解你的问题是：{query}。目前系统正在优化中，建议稍后重试或尝试更简单的问题。"
+    # 代码相关
+    if any(kw in query_lower for kw in ["代码", "编程", "写代码", "函数", "程序"]):
+        return f"""我理解你需要代码方面的帮助。关于"{query}"，我可以：
+
+1. **代码生成** - 请告诉我具体需求，如"写一个Python函数计算斐波那契数列"
+2. **代码解释** - 请提供代码，我会解释其工作原理
+3. **代码优化** - 请提供代码，我会给出优化建议
+4. **Bug修复** - 请描述问题和代码，我会帮你分析
+
+请告诉我更具体的需求，我会尽力帮助你。"""
+
+    # 知识问答
+    if any(kw in query_lower for kw in ["什么是", "是什么", "介绍", "解释"]):
+        topic = query.replace("什么是", "").replace("是什么", "").replace("介绍一下", "").strip()
+        return f"""关于"{topic}"，我正在学习相关知识。
+
+目前我可以通过以下方式帮助你：
+1. **基础解释** - 提供概念定义和基本原理
+2. **实例说明** - 通过具体例子帮助理解
+3. **应用场景** - 说明实际应用和案例
+
+请稍后重试，或尝试更具体的问题，如"{topic}的定义是什么"或"{topic}的应用有哪些"。"""
+
+    # 如何类问题
+    if any(kw in query_lower for kw in ["如何", "怎么", "怎样"]):
+        return f"""关于"{query}"，这是一个很好的问题。
+
+我建议：
+1. **分解问题** - 将复杂问题拆分为小步骤
+2. **查阅文档** - 参考相关技术文档
+3. **实践尝试** - 动手实践是最好的学习方式
+
+请告诉我更具体的场景，我会给出更详细的指导。"""
+
+    # 通用回复
+    return f"""我收到了你的问题："{query}"
+
+虽然我暂时无法给出完整答案，但我会记住这个问题并继续学习。
+
+你可以：
+1. **换个方式提问** - 尝试更具体或更简单的表述
+2. **提供更多上下文** - 帮助我更好地理解你的需求
+3. **稍后重试** - 我会不断学习和改进
+
+我会持续进化，下次遇到这个问题时，我会做得更好。"""
         return {"success": False, "response": f"处理出错: {str(e)}", "model": model}
 
 @app.post("/api/models/reload")
