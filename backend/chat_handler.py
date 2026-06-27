@@ -182,9 +182,9 @@ def _generate_smart_reply(query: str, intent_type: str) -> str:
     
     if any(kw in query_lower for kw in ["什么是", "是什么", "介绍"]):
         topic = query.replace("什么是", "").replace("是什么", "").strip()
-        return f"关于"{topic}"，我正在学习相关知识。请稍后重试，或尝试更具体的问题。"
+        return f"关于'{topic}'，我正在学习相关知识。请稍后重试，或尝试更具体的问题。"
     
     if any(kw in query_lower for kw in ["如何", "怎么", "怎样"]):
-        return f"关于"{query}"，这是一个很好的问题。请告诉我更具体的场景，我会给出详细指导。"
+        return f"关于'{query}'，这是一个很好的问题。请告诉我更具体的场景，我会给出详细指导。"
     
-    return f"我收到了你的问题："{query}"。虽然暂时无法给出完整答案，但我会记住并继续学习。请尝试换个方式提问，或稍后重试。"
+    return f"我收到了你的问题：'{query}'。虽然暂时无法给出完整答案，但我会记住并继续学习。请尝试换个方式提问，或稍后重试。"
