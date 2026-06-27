@@ -143,19 +143,24 @@ class MetacognitiveExecutor:
         except Exception as e:
             logger.debug(f"工具扫描失败: {e}")
         
-        # 2. 扫描模型适配器
+        # 2. 扫描模型适配器（异步）
         models = []
         try:
+            import asyncio
+            loop = asyncio.get_event_loop()
             import requests
-            response = requests.get("http://localhost:11434/api/tags", timeout=2)
+            response = await loop.run_in_executor(
+                None,
+                lambda: requests.get("http://localhost:11434/api/tags", timeout=2)
+            )
             if response.status_code == 200:
                 for model in response.json().get("models", []):
                     models.append({
                         "name": model["name"],
                         "available": True
                     })
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"模型扫描失败: {e}")
         
         # 3. 扫描知识库
         knowledge_bases = []
@@ -263,7 +268,13 @@ class MetacognitiveExecutor:
                 base_url="https://api.deepseek.com/v1"
             )
             
-            plan_text = adapter.generate(planning_prompt, temperature=0.3)
+            # 异步执行同步的generate调用
+            import asyncio
+            loop = asyncio.get_event_loop()
+            plan_text = await loop.run_in_executor(
+                None,
+                lambda: adapter.generate(planning_prompt, temperature=0.3)
+            )
             
             # 解析JSON
             import re
@@ -400,7 +411,12 @@ class MetacognitiveExecutor:
         """执行工具"""
         try:
             from tools.registry import registry
-            result = registry.execute(tool_name, query=query)
+            import asyncio
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: registry.execute(tool_name, query=query)
+            )
             if hasattr(result, 'output'):
                 return result.output
             return result
@@ -431,7 +447,9 @@ class MetacognitiveExecutor:
                 model="deepseek-chat",
                 base_url="https://api.deepseek.com/v1"
             )
-            return adapter.generate(query)
+            import asyncio
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, lambda: adapter.generate(query))
         except:
             return None
     
