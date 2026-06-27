@@ -117,9 +117,50 @@ async def knowledge_health():
 
 @app.post("/api/chat")
 async def chat(request: dict):
-    """聊天接口"""
+    """聊天接口 - 调用认知调度器和元认知执行器"""
     user_input = request.get("message", "")
-    return {"success": True, "response": f"收到: {user_input}", "model": "auto"}
+    model = request.get("model", "auto")
+    
+    try:
+        from core.cognitive_dispatcher import CognitiveDispatcher
+        from core.metacognitive_executor import MetacognitiveExecutor
+        
+        dispatcher = CognitiveDispatcher()
+        dispatch_result = dispatcher.dispatch(user_query=user_input, context=request)
+        
+        route = dispatch_result.get("route", "slow")
+        intent_type = dispatch_result.get("intent_type", "unknown")
+        confidence = dispatch_result.get("confidence", 0.5)
+        
+        if route == "fast":
+            response_text = f"[快速回复] {user_input}"
+        else:
+            executor = MetacognitiveExecutor()
+            exec_result = await executor.execute_with_full_metacognition(
+                user_query=user_input,
+                context=request
+            )
+            response_text = exec_result.get("final_result", "处理完成")
+            confidence = exec_result.get("confidence", confidence)
+        
+        return {
+            "success": True,
+            "response": response_text,
+            "model": model,
+            "intent": intent_type,
+            "confidence": confidence,
+            "route": route,
+            "thinking_process": {
+                "deep_intent": intent_type,
+                "scene_role": "general",
+                "intent_confidence": confidence,
+                "response_strategy": route,
+                "evidence": [dispatch_result.get("reasoning", "")]
+            }
+        }
+    except Exception as e:
+        logger.error(f"聊天处理失败: {e}")
+        return {"success": False, "response": f"处理出错: {str(e)}", "model": model}
 
 @app.post("/api/models/reload")
 async def models_reload():

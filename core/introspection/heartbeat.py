@@ -196,6 +196,10 @@ class HeartbeatManager:
         status = self.get_layer_status(layer_name)
         return status in (HeartbeatStatus.ALIVE, HeartbeatStatus.DEGRADED)
     
+    def start(self):
+        """启动心跳服务（兼容性接口）"""
+        self.start_background()
+    
     def start_background(self):
         """启动背景心跳线程（每5秒发送一次心跳）"""
         if self._running:
