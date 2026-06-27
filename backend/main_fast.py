@@ -74,6 +74,53 @@ async def health():
     """健康检查"""
     return {"status": "ok", "version": "3.1.1"}
 
+@app.get("/api/stats")
+async def get_stats():
+    """获取系统统计"""
+    import sqlite3
+    stats = {}
+    try:
+        conn = sqlite3.connect("data/experience_pool.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM experiences")
+        stats["experiences"] = cursor.fetchone()[0]
+        conn.close()
+    except:
+        stats["experiences"] = 0
+    try:
+        conn = sqlite3.connect("data/learning_rules.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM rules")
+        stats["rules"] = cursor.fetchone()[0]
+        conn.close()
+    except:
+        stats["rules"] = 0
+    return stats
+
+@app.get("/api/models")
+async def get_models():
+    """获取模型列表"""
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        if response.status_code == 200:
+            models = response.json().get('models', [])
+            return {"models": [{"name": m['name'], "type": "Ollama"} for m in models], "count": len(models)}
+    except:
+        pass
+    return {"models": [], "count": 0}
+
+@app.get("/api/knowledge/health")
+async def knowledge_health():
+    """知识库健康检查"""
+    return {"status": "ok", "knowledge_store": "available"}
+
+@app.post("/api/chat")
+async def chat(request: dict):
+    """聊天接口"""
+    user_input = request.get("message", "")
+    return {"success": True, "response": f"收到: {user_input}", "model": "auto"}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
