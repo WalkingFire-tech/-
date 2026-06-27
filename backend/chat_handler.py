@@ -65,21 +65,32 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
     
     # ========== 策略3：深度认知处理（原来的逻辑） ==========
     if not final_response and route == "slow":
+        logger.info(f"🔄 开始深度认知处理: route={route}, intent={intent_type}")
         try:
             from core.metacognitive_executor import MetacognitiveExecutor
+            logger.info("✓ MetacognitiveExecutor导入成功")
             executor = MetacognitiveExecutor()
+            logger.info("✓ MetacognitiveExecutor初始化成功")
             
             exec_result = await asyncio.wait_for(
                 executor.execute_with_full_metacognition(user_query=user_input, context=context),
                 timeout=15.0
             )
             
+            logger.info(f"✓ 深度认知执行完成: {len(exec_result)}个字段")
             result = exec_result.get("final_result", "")
             if result and len(result) > 20:
                 final_response = result
                 attempts.append(("深度认知", True, f"{len(result)}字"))
+                logger.info(f"✅ 深度认知成功: {len(result)}字")
         except Exception as e:
+            logger.error(f"❌ 深度认知失败: {e}")
             attempts.append(("深度认知", False, str(e)[:50]))
+    else:
+        if final_response:
+            logger.info(f"⚡ 跳过深度认知: 已有回复")
+        elif route != "slow":
+            logger.info(f"⚡ 跳过深度认知: route={route} (非slow)")
     
     # ========== 策略4：Ollama本地模型 ==========
     if not final_response:
