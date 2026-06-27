@@ -1,6 +1,29 @@
 """
 真正的永不放弃引擎 - Never Give Up Engine
 穷尽所有可能性，直到找到答案
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║                          永不放弃精神宣言                                    ║
+╠════════════════════════════════════════════════════════════════════════════╣
+║  百折不挠，跌倒了再爬起来，永不言败，没有做不到只有想不到                    ║
+║                                                                            ║
+║  这些都是能力：                                                            ║
+║  ✅ 有好的思路去解决问题 - 这是能力                                         ║
+║  ✅ 有好的习惯 - 这是能力                                                   ║
+║  ✅ 有好的方法或创造方法的方法 - 这是能力                                    ║
+║  ✅ 有熟练的技能去调用工具 - 这是能力                                        ║
+║  ✅ 能够自我反思、自我学习、自我进化 - 这是能力                              ║
+║  ✅ 不停追求合理且真实的精神 - 这是能力                                      ║
+║  ✅ 即使失败也给出有意义的回复 - 这是能力                                    ║
+║                                                                            ║
+║  核心原则：                                                                ║
+║  1. 所有的回答都是合理且逻辑清晰有理有据并且能够自洽的                      ║
+║  2. 即使所有方法都失败，也给出处理问题的方向或者方法                        ║
+║  3. 永不放弃是一种元能力，刻进系统底层                                      ║
+║  4. 无论框架如何改动，这种对待问题的态度永不改变                            ║
+║                                                                            ║
+║  警告：修改此文件时，请保留以上精神内核！                                   ║
+╚════════════════════════════════════════════════════════════════════════════╝
 """
 import asyncio
 import time
@@ -347,25 +370,123 @@ def specialized_tool():
         return await self._try_model_inference(enhanced_prompt)
     
     def _generate_meaningful_response(self, question: str, attempts: List) -> str:
-        """即使失败也生成有意义的回复"""
+        """
+        即使失败也生成有意义的回复
+        
+        核心原则：
+        1. 所有的回答都是合理且逻辑清晰有理有据并且能够自洽的
+        2. 即使所有方法都失败，也给出处理问题的方向或者方法
+        3. 给用户希望和方向，而不是敷衍
+        """
         successful = [a for a in attempts if a[1]]
         failed = [a for a in attempts if not a[1]]
         
-        response = f"关于'{question}'，我尝试了{len(attempts)}种方法：\n\n"
+        # ========== 分析问题类型 ==========
+        question_type = self._analyze_question_type(question)
         
+        # ========== 构建有意义的回复 ==========
+        response_parts = []
+        
+        # Part 1: 诚实告知尝试过程
+        response_parts.append(f"🔍 关于「{question}」，我已穷尽{len(attempts)}种方法：")
         if successful:
-            response += f"✅ 成功方法：{', '.join([a[0] for a in successful])}\n"
-        
+            response_parts.append(f"   ✅ 成功：{', '.join([a[0] for a in successful])}")
         if failed:
-            response += f"❌ 失败方法：{', '.join([a[0] for a in failed])}\n"
+            response_parts.append(f"   ❌ 失败：{', '.join([a[0] for a in failed])}")
         
-        response += "\n虽然暂时无法给出完整答案，但我会：\n"
-        response += "1. 记住这个问题，持续学习\n"
-        response += "2. 改进失败的方法\n"
-        response += "3. 下次遇到时做得更好\n"
-        response += "\n请尝试换个方式提问，或稍后重试。"
+        # Part 2: 给出处理方向（基于问题类型）
+        response_parts.append("\n💡 建议的处理方向：")
+        directions = self._suggest_directions(question, question_type, failed)
+        for i, direction in enumerate(directions, 1):
+            response_parts.append(f"   {i}. {direction}")
         
-        return response
+        # Part 3: 自我承诺（永不放弃精神）
+        response_parts.append("\n🌟 我的承诺：")
+        response_parts.append("   • 这个问题已记入我的学习清单")
+        response_parts.append("   • 我会分析失败原因，改进方法")
+        response_parts.append("   • 下次遇到时，我会做得更好")
+        response_parts.append("   • 因为永不放弃是我的核心能力")
+        
+        # Part 4: 替代方案
+        response_parts.append("\n🔄 您也可以尝试：")
+        alternatives = self._suggest_alternatives(question_type)
+        for alt in alternatives:
+            response_parts.append(f"   • {alt}")
+        
+        return "\n".join(response_parts)
+    
+    def _analyze_question_type(self, question: str) -> str:
+        """分析问题类型"""
+        question_lower = question.lower()
+        
+        if any(kw in question_lower for kw in ["是什么", "什么是", "概念", "定义"]):
+            return "概念解释"
+        elif any(kw in question_lower for kw in ["为什么", "原因", "为什么"]):
+            return "原因分析"
+        elif any(kw in question_lower for kw in ["怎么", "如何", "方法"]):
+            return "方法指导"
+        elif any(kw in question_lower for kw in ["代码", "编程", "实现"]):
+            return "技术实现"
+        elif any(kw in question_lower for kw in ["计算", "数学", "等于"]):
+            return "数学计算"
+        else:
+            return "综合问题"
+    
+    def _suggest_directions(self, question: str, question_type: str, failed: List) -> List[str]:
+        """基于问题类型和失败原因，建议处理方向"""
+        directions = []
+        
+        # 基于问题类型
+        if question_type == "概念解释":
+            directions.append("查阅权威资料或教科书")
+            directions.append("寻找该领域的专家解释")
+            directions.append("从具体例子入手理解概念")
+        elif question_type == "原因分析":
+            directions.append("从因果关系角度分析")
+            directions.append("考虑多方面因素的综合影响")
+            directions.append("寻找历史案例或数据支撑")
+        elif question_type == "方法指导":
+            directions.append("分解为更小的步骤")
+            directions.append("寻找类似的已解决问题")
+            directions.append("尝试不同的解决路径")
+        elif question_type == "技术实现":
+            directions.append("查阅官方文档和示例")
+            directions.append("参考开源项目的实现")
+            directions.append("从简单版本开始逐步完善")
+        elif question_type == "数学计算":
+            directions.append("检查公式是否正确")
+            directions.append("使用专业计算工具验证")
+            directions.append("分步骤计算避免错误")
+        else:
+            directions.append("将问题分解为更具体的子问题")
+            directions.append("从不同角度重新审视问题")
+            directions.append("寻找相关背景知识补充")
+        
+        # 基于失败原因补充建议
+        failed_methods = [a[0] for a in failed]
+        if "知识检索" in failed_methods:
+            directions.append("可能需要先补充相关知识库")
+        if "模型推理" in failed_methods:
+            directions.append("可能需要更精确的问题描述")
+        if "深度认知" in failed_methods:
+            directions.append("问题可能需要更深层的思考")
+        
+        return directions[:5]  # 最多5个建议
+    
+    def _suggest_alternatives(self, question_type: str) -> List[str]:
+        """建议替代方案"""
+        alternatives = [
+            "换个方式提问（更具体或更简单）",
+            "稍后重试（我可能正在学习新知识）",
+            "提供更多背景信息帮助我理解"
+        ]
+        
+        if question_type == "技术实现":
+            alternatives.append("提供代码片段或错误信息")
+        elif question_type == "概念解释":
+            alternatives.append("提供你已知的部分理解")
+        
+        return alternatives
 
 
 # 全局引擎
