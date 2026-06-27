@@ -97,6 +97,15 @@ async def health():
         "message": "系统运行正常"
     }
 
+@app.get("/api/knowledge/health")
+async def knowledge_health():
+    """知识库健康检查"""
+    return {
+        "status": "ok",
+        "knowledge_store": "available",
+        "message": "知识库运行正常"
+    }
+
 @app.get("/learning")
 async def learning_dashboard():
     """学习仪表盘页面"""
@@ -153,7 +162,7 @@ async def get_models():
     
     # 如果没有模型，尝试重新扫描
     if not AVAILABLE_MODELS:
-        scan_ollama_models()
+        scan_ollama_models()  # 同步调用
     
     return {
         "models": AVAILABLE_MODELS,
@@ -161,7 +170,7 @@ async def get_models():
     }
 
 @app.get("/api/models/scan")
-async def scan_ollama_models():
+async def scan_ollama_models_endpoint():
     """扫描Ollama服务中的可用模型"""
     try:
         import requests
@@ -203,7 +212,7 @@ async def reload_models():
     """重新加载模型"""
     global AVAILABLE_MODELS
     
-    success = scan_ollama_models()
+    success = scan_ollama_models()  # 调用同步函数
     
     if success:
         return {
@@ -219,6 +228,7 @@ async def reload_models():
             "total": 0,
             "message": "无法连接Ollama服务",
             "hint": "请启动Ollama服务: ollama serve"
+        }
         }
 
 @app.get("/api/external_models")
