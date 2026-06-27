@@ -118,12 +118,12 @@ async def knowledge_health():
 @app.post("/api/chat")
 async def chat(request: dict):
     """聊天接口 - 调用认知调度器和元认知执行器"""
+    import asyncio
     user_input = request.get("message", "")
     model = request.get("model", "auto")
     
     try:
         from core.cognitive_dispatcher import CognitiveDispatcher
-        from core.metacognitive_executor import MetacognitiveExecutor
         
         dispatcher = CognitiveDispatcher()
         dispatch_result = dispatcher.dispatch(user_query=user_input, context=request)
@@ -132,16 +132,26 @@ async def chat(request: dict):
         intent_type = dispatch_result.get("intent_type", "unknown")
         confidence = dispatch_result.get("confidence", 0.5)
         
-        if route == "fast":
+        if intent_type == "greeting":
+            response_text = "你好！我是联盟拓荒者智能体系统，很高兴为你服务。我可以帮助你完成各种任务，包括代码生成、问题解答、数据分析等。"
+        elif route == "fast":
             response_text = f"[快速回复] {user_input}"
         else:
-            executor = MetacognitiveExecutor()
-            exec_result = await executor.execute_with_full_metacognition(
-                user_query=user_input,
-                context=request
-            )
-            response_text = exec_result.get("final_result", "处理完成")
-            confidence = exec_result.get("confidence", confidence)
+            try:
+                from core.metacognitive_executor import MetacognitiveExecutor
+                executor = MetacognitiveExecutor()
+                exec_result = await asyncio.wait_for(
+                    executor.execute_with_full_metacognition(user_query=user_input, context=request),
+                    timeout=25.0
+                )
+                response_text = exec_result.get("final_result", "处理完成")
+                confidence = exec_result.get("confidence", confidence)
+            except asyncio.TimeoutError:
+                logger.warning("元认知执行超时，使用简化回复")
+                response_text = f"关于'{user_input}'的问题，我正在思考中。由于处理时间较长，建议简化问题或稍后重试。"
+            except Exception as e:
+                logger.warning(f"元认知执行失败: {e}，使用简化回复")
+                response_text = f"我理解你的问题是关于'{user_input}'。让我为你分析一下..."
         
         return {
             "success": True,
