@@ -6,6 +6,9 @@
 检查所有关键模块和文件是否存在
 """
 import sys
+import os
+os.chdir(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, ".")
 from pathlib import Path
 
 print("=" * 70)

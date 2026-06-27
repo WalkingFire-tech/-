@@ -2,6 +2,9 @@
 端到端测试 - 前端功能
 """
 import sys
+import os
+os.chdir(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, ".")
 import requests
 import time
 
