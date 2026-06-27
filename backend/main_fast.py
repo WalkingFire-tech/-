@@ -223,6 +223,27 @@ async def chat(request: dict):
         final_response = generate_rule_based_response(user_input, intent_type)
         attempts.append(("规则匹配", True, "生成针对性回复"))
     
+    # ========== 策略8：转后台永不放弃处理 ==========
+    if not final_response or len(final_response) < 20:
+        try:
+            from core.persistent_tasks import persistent_task_system
+            task_id = await persistent_task_system.submit(user_input, request)
+            
+            final_response = f"""我收到了你的问题："{user_input}"
+
+🔄 我已经启动后台任务（ID: {task_id[:8]}），正在尝试所有可能的方法来解决。
+
+你可以：
+- **等待完成** - 我会持续尝试直到成功
+- **查询进度** - 访问 /api/tasks/{task_id[:8]} 查看处理状态
+- **继续对话** - 我会在后台继续处理这个问题
+
+**我永不放弃，直到找到答案。**"""
+            
+            attempts.append(("后台任务", True, task_id[:8]))
+        except Exception as e:
+            attempts.append(("后台任务", False, str(e)[:50]))
+    
     # ========== 记录解决过程 ==========
     logger.info(f"问题解决过程: {[(a[0], a[1]) for a in attempts]}")
     
@@ -242,6 +263,16 @@ async def chat(request: dict):
             "solution_path": [a[0] for a in attempts if a[1]]
         }
     }
+
+@app.get("/api/tasks/{task_id}")
+async def get_task_status(task_id: str):
+    """查询后台任务状态"""
+    try:
+        from core.persistent_tasks import persistent_task_system
+        status = await persistent_task_system.get_task_status(task_id)
+        return status
+    except Exception as e:
+        return {"error": str(e)}
 
 async def solve_history_query(query: str) -> str:
     """解决历史查询问题"""
