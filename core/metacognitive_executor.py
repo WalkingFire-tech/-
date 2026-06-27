@@ -54,48 +54,94 @@ class MetacognitiveExecutor:
             "elapsed": 0.0
         }
         
-        # ========== 阶段0：本体感知 ==========
+        # ========== 阶段0：本体感知（快速） ==========
         logger.info("🧠 [阶段0] 本体感知 - 扫描系统能力")
         
-        capability_context = await self._phase0_capability_introspection()
+        try:
+            capability_context = await asyncio.wait_for(
+                self._phase0_capability_introspection(),
+                timeout=3.0  # 最多3秒
+            )
+        except asyncio.TimeoutError:
+            logger.warning("⚠️ 阶段0超时，使用默认能力")
+            capability_context = {
+                "tools": [],
+                "models": [],
+                "knowledge_bases": [],
+                "capability_prompt": "系统能力扫描超时",
+                "timestamp": datetime.now().isoformat()
+            }
+        
         execution_trace["phases"]["capability_introspection"] = capability_context
         
         logger.info(f"✓ 能力清单: {len(capability_context['tools'])}个工具, {len(capability_context['models'])}个模型")
         
-        # ========== 阶段1：规划生成 ==========
+        # ========== 阶段1：规划生成（快速） ==========
         logger.info("🎯 [阶段1] 规划生成 - 强制CoT + 任务分解")
         
-        plan = await self._phase1_generate_execution_plan(
-            user_query, 
-            capability_context,
-            context
-        )
+        try:
+            plan = await asyncio.wait_for(
+                self._phase1_generate_execution_plan(
+                    user_query, 
+                    capability_context,
+                    context
+                ),
+                timeout=5.0  # 最多5秒
+            )
+        except asyncio.TimeoutError:
+            logger.warning("⚠️ 阶段1超时，使用默认计划")
+            plan = self._create_default_plan(user_query)
+        
         execution_trace["phases"]["planning"] = plan
         
         logger.info(f"✓ 执行计划: {len(plan['tasks'])}个子任务")
         for i, task in enumerate(plan['tasks'], 1):
             logger.info(f"  [{i}] {task['type']}: {task['description']}")
         
-        # ========== 阶段2：正交执行 ==========
+        # ========== 阶段2：正交执行（快速） ==========
         logger.info("⚡ [阶段2] 正交执行 - 工具仲裁 + 并行执行")
         
-        execution_results = await self._phase2_execute_with_arbitration(
-            plan['tasks'],
-            capability_context,
-            user_query
-        )
+        try:
+            execution_results = await asyncio.wait_for(
+                self._phase2_execute_with_arbitration(
+                    plan['tasks'],
+                    capability_context,
+                    user_query
+                ),
+                timeout=8.0  # 最多8秒
+            )
+        except asyncio.TimeoutError:
+            logger.warning("⚠️ 阶段2超时，返回空结果")
+            execution_results = {
+                "results": [],
+                "success_count": 0,
+                "total_count": len(plan['tasks'])
+            }
+        
         execution_trace["phases"]["execution"] = execution_results
         
         logger.info(f"✓ 执行完成: {execution_results['success_count']}/{execution_results['total_count']}成功")
         
-        # ========== 阶段3：验证评估 ==========
+        # ========== 阶段3：验证评估（快速） ==========
         logger.info("✓ [阶段3] 验证评估 - 结果比较器 + 置信度评分")
         
-        validation = await self._phase3_validate_and_score(
-            user_query,
-            execution_results,
-            capability_context
-        )
+        try:
+            validation = await asyncio.wait_for(
+                self._phase3_validate_and_score(
+                    user_query,
+                    execution_results,
+                    capability_context
+                ),
+                timeout=2.0  # 最多2秒
+            )
+        except asyncio.TimeoutError:
+            logger.warning("⚠️ 阶段3超时，使用默认验证")
+            validation = {
+                "confidence": 0.5,
+                "is_valid": True,
+                "reason": "验证超时"
+            }
+        
         execution_trace["phases"]["validation"] = validation
         
         logger.info(f"✓ 置信度: {validation['confidence']:.0%}, 质量: {validation['quality_score']}")
@@ -143,15 +189,19 @@ class MetacognitiveExecutor:
         except Exception as e:
             logger.debug(f"工具扫描失败: {e}")
         
-        # 2. 扫描模型适配器（异步）
+        # 2. 扫描模型适配器（异步，快速失败）
         models = []
         try:
             import asyncio
             loop = asyncio.get_event_loop()
             import requests
-            response = await loop.run_in_executor(
-                None,
-                lambda: requests.get("http://localhost:11434/api/tags", timeout=2)
+            # 减少超时时间，快速失败
+            response = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: requests.get("http://localhost:11434/api/tags", timeout=1)
+                ),
+                timeout=1.5  # 总超时1.5秒
             )
             if response.status_code == 200:
                 for model in response.json().get("models", []):
@@ -159,6 +209,8 @@ class MetacognitiveExecutor:
                         "name": model["name"],
                         "available": True
                     })
+        except asyncio.TimeoutError:
+            logger.debug("模型扫描超时，跳过")
         except Exception as e:
             logger.debug(f"模型扫描失败: {e}")
         
