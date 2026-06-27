@@ -229,7 +229,7 @@ async def reload_models():
             "message": "无法连接Ollama服务",
             "hint": "请启动Ollama服务: ollama serve"
         }
-        }
+
 
 @app.get("/api/external_models")
 async def get_external_models():
