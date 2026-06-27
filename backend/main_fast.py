@@ -246,7 +246,7 @@ def generate_rule_based_response(query: str, intent_type: str) -> str:
 3. **稍后重试** - 我会不断学习和改进
 
 我会持续进化，下次遇到这个问题时，我会做得更好。"""
-        return {"success": False, "response": f"处理出错: {str(e)}", "model": model}
+
 
 @app.post("/api/models/reload")
 async def models_reload():
