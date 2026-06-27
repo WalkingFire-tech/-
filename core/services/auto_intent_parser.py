@@ -146,18 +146,17 @@ class AutoIntentParser:
         return Intent(type=best_type, raw_text=text, entities=entities, confidence=best_conf, source="rule")
     
     def _calculate_rule_confidence(self, text: str, intent_type: str) -> float:
-        """计算规则匹配置信度"""
+        """计算规则匹配置信度（优化版：使用匹配字符覆盖率）"""
         pattern = self.rules[intent_type]
         matches = pattern.findall(text)
         
         if not matches:
             return 0.0
         
-        # 基础置信度
-        match_ratio = len(matches) / max(len(text.split()), 1)
-        base_confidence = min(0.6 + match_ratio * 2, 0.95)
+        matched_chars = sum(len(m) if isinstance(m, str) else len(str(m)) for m in matches)
+        match_ratio = min(1.0, matched_chars / max(len(text), 1))
+        base_confidence = min(0.6 + match_ratio * 0.35, 0.95)
         
-        # 关键词加成
         keyword_boost = {
             "code": ["代码", "写", "生成", "算法", "函数"],
             "question": ["什么", "为什么", "怎么", "如何", "解释"],
@@ -190,7 +189,7 @@ class AutoIntentParser:
         return None
     
     def _llm_based_parse(self, text: str) -> Optional[Intent]:
-        """基于LLM的语义理解"""
+        """基于LLM的语义理解（修复asyncio环境兼容性）"""
         if not self.llm_adapter:
             return None
         
@@ -211,16 +210,45 @@ class AutoIntentParser:
 
 只返回JSON,不要其他内容。"""
 
+            response = None
+            
             try:
                 if asyncio.iscoroutinefunction(self.llm_adapter.generate):
-                    response = asyncio.run(asyncio.wait_for(
-                        self.llm_adapter.generate(prompt, task_type="intent_classification"),
-                        timeout=10.0
-                    ))
+                    try:
+                        loop = asyncio.get_running_loop()
+                        future = asyncio.ensure_future(
+                            asyncio.wait_for(
+                                self.llm_adapter.generate(prompt, task_type="intent_classification"),
+                                timeout=10.0
+                            )
+                        )
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            response = executor.submit(
+                                lambda: asyncio.run(
+                                    asyncio.wait_for(
+                                        self.llm_adapter.generate(prompt, task_type="intent_classification"),
+                                        timeout=10.0
+                                    )
+                                )
+                            ).result(timeout=15.0)
+                    except RuntimeError:
+                        response = asyncio.run(
+                            asyncio.wait_for(
+                                self.llm_adapter.generate(prompt, task_type="intent_classification"),
+                                timeout=10.0
+                            )
+                        )
                 else:
                     response = self.llm_adapter.generate(prompt, task_type="intent_classification")
             except asyncio.TimeoutError:
                 logger.warning("LLM意图识别超时")
+                return None
+            except Exception as e:
+                logger.warning(f"LLM调用失败: {e}")
+                return None
+            
+            if not response:
                 return None
             
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
@@ -321,10 +349,10 @@ class AutoIntentParser:
                 logger.info(f"已收集{self.correction_count}次修正,可进行模型微调")
     
     def _extract_keywords(self, text: str) -> List[str]:
-        """提取关键词"""
-        # 简单实现:提取中文词组
-        keywords = re.findall(r'[\u4e00-\u9fa5]{2,}', text)
-        return keywords[:5]  # 最多5个关键词
+        """提取关键词（支持中英文）"""
+        chinese = re.findall(r'[\u4e00-\u9fa5]{2,}', text)
+        english = re.findall(r'[a-zA-Z]{3,}', text)
+        return (chinese + english)[:5]
     
     def get_statistics(self) -> Dict:
         """获取学习统计"""

@@ -3,6 +3,7 @@
 不再硬编码固定值，而是通过工具调用实现
 """
 import math
+from datetime import datetime
 from typing import Dict, Any, Optional
 from loguru import logger
 
@@ -33,6 +34,8 @@ class MathCalculator:
         # 其他
         'abs', 'round', 'floor', 'ceil',
         'factorial', 'gamma',
+        # 统计函数
+        'max', 'min', 'sum',
     }
     
     CONSTANTS = {
@@ -129,8 +132,8 @@ class MathCalculator:
             if const in expression:
                 expression = expression.replace(const, name)
         
-        # 提取纯数学表达式
-        math_expr = re.findall(r'[\d\+\-\*\/\(\)\.\s\w]+', expression)
+        # 提取纯数学表达式（支持逗号，用于函数参数）
+        math_expr = re.findall(r'[\d\+\-\*\/\(\)\.\s\w,]+', expression)
         if math_expr:
             expression = ''.join(math_expr)
         
@@ -156,6 +159,13 @@ class MathCalculator:
             for func in self.ALLOWED_FUNCTIONS:
                 if hasattr(math, func):
                     safe_dict[func] = getattr(math, func)
+        
+        # 添加内置函数（max, min, sum等）
+        safe_dict['max'] = max
+        safe_dict['min'] = min
+        safe_dict['sum'] = sum
+        safe_dict['abs'] = abs
+        safe_dict['round'] = round
         
         # 尝试使用numexpr（更快更安全）
         if NUMEXPR_AVAILABLE:
@@ -275,16 +285,84 @@ math_calculator = MathCalculator()
 
 
 # 工具接口（供tool_registry调用）
-class MathCalculatorTool:
-    """数学计算器工具（工具系统接口）"""
+try:
+    from tools.base import Tool, ToolCategory, Parameter, ToolResult
     
-    name = "math_calculator"
-    description = "计算数学表达式、常量、函数值"
-    category = "calculation"
+    class MathCalculatorTool(Tool):
+        """数学计算器工具（工具系统接口）"""
+        
+        @property
+        def name(self) -> str:
+            return "math_calculator"
+        
+        @property
+        def description(self) -> str:
+            return "计算数学表达式、常量、函数值（支持高精度计算）"
+        
+        @property
+        def category(self) -> ToolCategory:
+            return ToolCategory.CALCULATION
+        
+        @property
+        def parameters(self):
+            return [
+                Parameter(
+                    name="expression",
+                    type="str",
+                    description="数学表达式（如 'π的前100位', '25*4+18/3', 'sin(pi/2)'）",
+                    required=True
+                )
+            ]
+        
+        def execute(self, **kwargs) -> ToolResult:
+            """执行计算"""
+            expression = kwargs.get("expression", "")
+            if not expression:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error="缺少表达式参数"
+                )
+            
+            result = math_calculator.calculate(expression)
+            
+            if result.get('success'):
+                return ToolResult(
+                    success=True,
+                    output=result.get('result'),
+                    metadata={
+                        'expression': expression,
+                        'processed': result.get('processed'),
+                        'method': result.get('method')
+                    }
+                )
+            else:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=result.get('error', '计算失败')
+                )
     
-    def execute(self, expression: str) -> Dict:
-        """执行计算"""
-        return math_calculator.calculate(expression)
+    math_calculator_tool = MathCalculatorTool()
 
-
-math_calculator_tool = MathCalculatorTool()
+except ImportError:
+    logger.warning("Tool基类未找到，使用简化版")
+    
+    class MathCalculatorTool:
+        """数学计算器工具（简化版）"""
+        
+        name = "math_calculator"
+        description = "计算数学表达式、常量、函数值"
+        
+        def execute(self, expression: str):
+            """执行计算"""
+            return math_calculator.calculate(expression)
+        
+        def to_dict(self):
+            return {
+                "name": self.name,
+                "description": self.description,
+                "category": "calculation"
+            }
+    
+    math_calculator_tool = MathCalculatorTool()

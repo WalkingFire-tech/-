@@ -86,6 +86,14 @@ if not adapters:
     except Exception as e:
         logger.warning(f"DeepSeek Coder unavailable: {e}")
 
+    # 加载LoRA微调模型
+    try:
+        from adapters.llm.lora_adapter import create_lora_adapter
+        adapters["closed_loop_lora"] = create_lora_adapter()
+        logger.success("✓ LoRA微调模型已加载 (闭环进化能力)")
+    except Exception as e:
+        logger.warning(f"LoRA模型不可用: {e}")
+
     if not adapters:
         from adapters.llm.mock_adapter import MockAdapter
         adapters["default"] = MockAdapter()

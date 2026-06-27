@@ -1,0 +1,24 @@
+"""
+适应度评估配置
+"""
+fitness:
+  # 客观分权重（事实性问题）
+  objective_weight: 0.6
+  
+  # 主观分权重（事实性问题）
+  subjective_weight: 0.4
+  
+  # 客观分阈值（低于此值触发知识注入）
+  objective_threshold: 30.0
+  
+  # 总分阈值（低于此值触发知识注入，建议50避免过早淘汰）
+  total_threshold: 50.0
+  
+  # 是否使用旧版适应度函数（回滚开关）
+  use_legacy: false
+  
+  # 是否启用影子模式（新旧同时运行）
+  enable_shadow: true
+  
+  # 冷启动默认分
+  default_score: 50.0

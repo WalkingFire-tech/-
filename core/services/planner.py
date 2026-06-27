@@ -60,6 +60,13 @@ except Exception as e:
     COGNITIVE_AVAILABLE = False
     logger.warning(f"认知层加载失败: {e}")
 
+try:
+    from infrastructure.cognitive_evolution_adapter import cognitive_evolution_adapter
+    EVOLUTION_AVAILABLE = True
+except Exception as e:
+    EVOLUTION_AVAILABLE = False
+    logger.warning(f"v2.0认知进化架构加载失败: {e}")
+
 
 class DataDrivenPlanner:
     """完全数据驱动的规划器"""
@@ -70,6 +77,7 @@ class DataDrivenPlanner:
         self.logger = CampfireLogger()
         self.stats = ModelStats()
         self.experience_pool = ExperiencePool()
+        self.db_path = "data/experience_pool.db"
         self.last_call_info = {
             "model": None,
             "task_type": None,
@@ -164,6 +172,29 @@ class DataDrivenPlanner:
             logger.warning(f"联邦调度模块加载失败: {e}")
             self.parallel_scheduler = None
             self.capability = None
+        
+        # 第二阶段组件：深化感知与记忆
+        try:
+            from core.layers.l1_perception_enhanced import get_emotion_detector
+            from core.memory.stereo_memory import get_stereo_memory
+            from core.relationship.model import get_relationship_model
+            from core.presence.self_review import get_self_review_engine
+            from core.presence.active_perception import get_active_perception_engine
+            
+            self.emotion_detector = get_emotion_detector()
+            self.stereo_memory = get_stereo_memory()
+            self.relationship_model = get_relationship_model()
+            self.self_review_engine = get_self_review_engine()
+            self.active_perception = get_active_perception_engine()
+            
+            logger.info("第二阶段组件已激活：情绪感知、立体记忆、关系模型、自我评估、主动感知")
+        except Exception as e:
+            logger.warning(f"第二阶段组件加载失败: {e}")
+            self.emotion_detector = None
+            self.stereo_memory = None
+            self.relationship_model = None
+            self.self_review_engine = None
+            self.active_perception = None
     
     def get_last_call_info(self):
         return self.last_call_info
@@ -259,6 +290,11 @@ class DataDrivenPlanner:
             融合后的结果
         """
         try:
+            # 检查任务分解器是否可用
+            if not hasattr(self, 'task_decomposer') or self.task_decomposer is None:
+                logger.warning("任务分解器不可用，使用联邦调度")
+                return self._parallel_schedule(intent)
+            
             # 1. 分解任务
             llm_adapter = self.adapters.get('code_light') or next(iter(self.adapters.values()))
             subtasks = self.task_decomposer.decompose_with_llm(
@@ -745,10 +781,11 @@ class DataDrivenPlanner:
         if not recent:
             return ""
         
-        context = "Recent conversation history:\n"
+        # 改进：更清晰的上下文格式
+        context = "=== 对话历史 ===\n"
         for entry in recent:
             context += entry + "\n"
-        context += "\nCurrent question: "
+        context += "=== 当前问题 ===\n"
         return context
     
     def _load_context_from_file(self):
@@ -770,15 +807,36 @@ class DataDrivenPlanner:
     
     def _build_prompt(self, intent: Intent) -> str:
         """构建提示词"""
+        has_context = len(self.context_buffer) > 0
+        
         if intent.type == "code":
             return f"Output code only, no extra explanation. User request: {intent.raw_text}"
         elif intent.type == "question":
+            if has_context:
+                return f"[上下文对话] 根据之前的对话历史，回答用户的问题。如果用户在追问或要求补充，请继续之前的话题。\n\n问题: {intent.raw_text}"
             return f"Answer the following question in detail: {intent.raw_text}"
         elif intent.type == "memory":
             return f"Based on the conversation history, answer the user's question. If history does not contain info, say you don't know. Question: {intent.raw_text}"
         elif intent.type == "document":
             return f"Analyze and summarize the following document:\n\n{intent.raw_text}"
+        elif intent.type == "verification":
+            # challenge场景：验证上一回答的正确性
+            if has_context:
+                recent = list(self.context_buffer)[-2:]  # 获取最近的问答
+                last_response = ""
+                for entry in recent:
+                    if entry.startswith("拓荒者:"):
+                        last_response = entry.replace("拓荒者:", "").strip()
+                        break
+                
+                if last_response:
+                    return f"[质疑验证] 用户在质疑上一条回答的正确性。\n\n上一条回答: {last_response}\n\n用户质疑: {intent.raw_text}\n\n请检查上一条回答是否正确，如果有错误请指出并纠正，如果正确请解释原因。"
+                else:
+                    return f"[质疑验证] 用户在质疑，但没有找到上一条回答。请回应用户的质疑: {intent.raw_text}"
+            return f"用户在质疑或验证。请认真回应: {intent.raw_text}"
         else:
+            if has_context:
+                return f"[上下文对话] {intent.raw_text}"
             return intent.raw_text
     
     def _on_learning_opportunity(self, opportunity: Dict):
@@ -796,17 +854,91 @@ class DataDrivenPlanner:
         elif action == 'consider_clarification':
             logger.debug("语义漂移已记录，等待后续处理")
     
-    def _handle_meta_question(self, user_question: str) -> str:
+    def _handle_meta_value_question(self, user_question: str) -> str:
+        """
+        处理价值性问题（进入对话模式）
+        
+        这类问题没有标准答案，需要与用户共同探讨。
+        例如："什么是最优结果？"、"什么样的回答才算好？"
+        
+        Args:
+            user_question: 用户关于价值标准的问题
+        
+        Returns:
+            引导对话的回答（而非直接给出标准答案）
+        """
+        logger.info("进入对话模式：价值性问题")
+        
+        # 提取用户问题中的关键词
+        if "最优" in user_question or "最好" in user_question or "最佳" in user_question:
+            return """你问的这个问题很有意思——"最优结果"没有一个固定的定义，它取决于你希望满足什么。
+
+让我先分享我的理解，然后听听你的想法：
+
+**从我的角度看，一个"最优结果"可能需要平衡多个维度：**
+
+1. **准确性** - 信息是否正确、是否有误导
+2. **相关性** - 是否回答了你真正关心的问题（而非我理解的问题）
+3. **可操作性** - 你能否直接使用这个回答
+4. **启发价值** - 是否帮你打开了新的思路
+
+但这里有个关键问题：**不同场景下，这些维度的权重不同**。
+
+- 如果你问"如何写代码"，可能"可操作性"权重最高
+- 如果你问"为什么这样设计"，可能"启发价值"权重最高
+- 如果你问"这个方案对不对"，可能"准确性"权重最高
+
+**所以我想问你**：在你刚才的那个场景中，你更看重哪个维度？或者说，你希望我刚才的回答在哪个方面做得更好？
+
+这样我能更准确地理解你的期望，下次才能给出更"最优"的回答。"""
+
+        elif "标准" in user_question or "判断" in user_question:
+            return """关于"标准"的问题，我觉得没有绝对的标准，但有相对的共识。
+
+**我想先了解**：你是在问什么样的标准？
+
+- 评价回答质量的标准？
+- 判断系统是否理解你的标准？
+- 还是其他？
+
+不同场景下的"好标准"可能完全不同。比如：
+
+- 技术问答：准确、完整、有代码示例
+- 概念解释：清晰、有类比、有边界说明
+- 问题诊断：找到根因、给出方案、解释原理
+
+**你能具体说说**：你刚才希望我达到什么样的标准？这样我能更好地调整自己的回答方式。"""
+
+        else:
+            # 通用价值性问题
+            return f"""这是一个很有深度的问题。"{user_question}"——这其实是在探讨价值的定义。
+
+我注意到，这类问题通常没有标准答案，而是需要根据具体场景来讨论。
+
+**我想先理解你的语境**：
+- 你是在反思刚才的对话吗？
+- 还是在探讨一个更普遍的问题？
+
+如果是关于刚才的对话，**你觉得哪里没有达到你的期望**？这样我能更具体地改进。
+
+如果是普遍性的探讨，我很乐意和你一起深入讨论这个话题。"""
+    
+    def _handle_meta_question(self, user_question: str, meta_type: str = "meta") -> str:
         """
         处理元认知问题（关于系统自身的问题）
         
         Args:
             user_question: 用户关于系统的问题
+            meta_type: 元认知问题类型 (meta_value/meta_mechanism/meta_capability/meta)
         
         Returns:
             系统的自我反思回答
         """
         import sqlite3
+        
+        # 特殊处理：价值性问题（进入对话模式）
+        if meta_type == "meta_value":
+            return self._handle_meta_value_question(user_question)
         
         # 特殊处理：学习能力相关问题（直接回答，不反问）
         q_lower = user_question.lower()
@@ -960,43 +1092,56 @@ class DataDrivenPlanner:
 你觉得我在哪方面最需要改进？"""
     
     def _handle_memory_query(self, intent: Intent) -> str:
-        """处理记忆查询意图
+        """处理记忆查询意图 - 真正的反思，不是形式主义
         
         Args:
             intent: 记忆意图
         
         Returns:
-            历史对话内容
+            历史对话内容（带深度反思）
         """
         user_question = intent.raw_text.lower()
         
         # 检查是否是回顾历史对话
         if any(kw in user_question for kw in ["回顾历史", "历史对话", "历史问题", "回顾对话", "之前的对话"]):
             try:
-                # 从campfire_log.txt读取最近20条对话
+                # 获取历史对话
                 if hasattr(self, 'campfire') and self.campfire:
                     context = self.campfire.get_recent_context(rounds=10)
-                    if not context:
-                        return "暂无历史对话记录。"
+                else:
+                    from infrastructure.logger import CampfireLogger
+                    temp_logger = CampfireLogger()
+                    context = temp_logger.get_recent_context(rounds=10)
+                
+                if not context:
+                    return "暂无历史对话记录。"
+                
+                # 真正的深度反思
+                try:
+                    from core.honest_learning_system import honest_system
                     
+                    # 解析历史对话
+                    history = self._parse_history(context)
+                    
+                    # 深度反思（不是简单罗列）
+                    reflection = honest_system.deep_reflection(user_question, history)
+                    
+                    return reflection
+                    
+                except Exception as e:
+                    logger.warning(f"深度反思失败: {e}")
+                    # 降级：返回历史 + 承认反思不足
                     return f"""以下是最近的对话历史：
 
 {context}
 
 ---
-_共显示最近10轮对话_"""
-                
-                # 如果campfire未初始化，临时创建
-                from infrastructure.logger import CampfireLogger
-                temp_logger = CampfireLogger()
-                context = temp_logger.get_recent_context(rounds=10)
-                
-                if not context:
-                    return "暂无历史对话记录。"
-                
-                return f"""以下是最近的对话历史：
 
-{context}
+**反思声明**
+
+我必须承认：我目前只是罗列了历史，没有进行真正的反思。
+
+这是我的不足，我会改进。
 
 ---
 _共显示最近10轮对话_"""
@@ -1005,8 +1150,98 @@ _共显示最近10轮对话_"""
                 logger.error(f"读取历史对话失败: {e}")
                 return "抱歉，无法读取历史对话记录。"
         
-        # 其他记忆查询（记住、忘记等）
+        # 检查是否是质疑之前回答
+        if any(kw in user_question for kw in ["之前", "刚才", "刚才你", "你刚才", "不对", "错误"]):
+            try:
+                from core.honest_learning_system import honest_system
+                from core.requirement_validator import requirement_validator
+                
+                # 获取最近的对话
+                if hasattr(self, 'campfire') and self.campfire:
+                    context = self.campfire.get_recent_context(rounds=2)
+                else:
+                    from infrastructure.logger import CampfireLogger
+                    temp_logger = CampfireLogger()
+                    context = temp_logger.get_recent_context(rounds=2)
+                
+                if not context:
+                    return "让我回顾一下刚才的对话..."
+                
+                # 解析并验证
+                history = self._parse_history(context)
+                
+                if history:
+                    last = history[-1]
+                    user_msg = last.get('user', '')
+                    assistant_msg = last.get('assistant', '')
+                    
+                    # 验证之前的回答
+                    req = requirement_validator.extract_core_requirement(user_msg)
+                    is_valid, issues = requirement_validator.validate_response_against_requirement(
+                        req, assistant_msg
+                    )
+                    
+                    if not is_valid:
+                        # 承认错误
+                        return f"""
+【承认错误】
+
+您说得对，我刚才的回答有问题。
+
+**用户需求**: {user_msg[:100]}
+**我的回答**: {assistant_msg[:100]}
+
+**问题所在**:
+{chr(10).join(f'- {issue}' for issue in issues)}
+
+**自我批评**:
+我没有仔细验证就给出了答案，这是不负责任的表现。
+
+**纠正**:
+让我重新认真回答您的问题...
+
+---
+
+_感谢您的质疑，这帮助我发现了错误。_
+"""
+                
+                return "让我认真反思刚才的回答..."
+                
+            except Exception as e:
+                logger.warning(f"历史纠正失败: {e}")
+                return "我正在反思刚才的回答..."
+        
+        # 其他记忆查询
         return "我目前只能记住当前对话中的内容。如果需要回顾历史对话，请说'回顾历史对话'。"
+    
+    def _parse_history(self, context: str) -> list:
+        """解析历史对话文本"""
+        
+        history = []
+        lines = context.split('\n')
+        
+        current_user = ""
+        current_assistant = ""
+        
+        for line in lines:
+            if line.startswith('用户:') or line.startswith('User:'):
+                if current_user and current_assistant:
+                    history.append({
+                        'user': current_user,
+                        'assistant': current_assistant
+                    })
+                current_user = line.split(':', 1)[1].strip()
+                current_assistant = ""
+            elif line.startswith('拓荒者:') or line.startswith('Assistant:'):
+                current_assistant = line.split(':', 1)[1].strip()
+        
+        if current_user and current_assistant:
+            history.append({
+                'user': current_user,
+                'assistant': current_assistant
+            })
+        
+        return history
     
     def _report_capability_boundary(self) -> str:
         """报告能力边界"""
@@ -1531,11 +1766,32 @@ _共显示最近10轮对话_"""
         return None
     
     def _infer_emotion(self, intent: Intent) -> Dict:
-        """【情绪推断】理解用户状态
+        """【情绪推断】理解用户状态 - 使用第二阶段增强感知
         
         Returns:
             情绪推断结果
         """
+        # 优先使用第二阶段情绪感知
+        if hasattr(self, 'emotion_detector') and self.emotion_detector:
+            try:
+                emotion_result = self.emotion_detector.detect(intent.raw_text)
+                
+                result = {
+                    "emotion": emotion_result.primary_emotion,
+                    "intensity": emotion_result.intensity,
+                    "confidence": emotion_result.confidence,
+                    "patience": 1.0 - emotion_result.intensity * 0.3,
+
+                    "should_simplify": emotion_result.intensity > 0.7
+                }
+                
+                logger.debug(f"情绪感知: {result['emotion']} (强度: {result['intensity']:.2f}, 置信度: {result['confidence']:.2f})")
+                return result
+                
+            except Exception as e:
+                logger.debug(f"第二阶段情绪感知失败: {e}")
+        
+        # 降级到原有情绪推断
         try:
             from infrastructure.emotion_inferencer import emotion_inferencer
             
@@ -1639,9 +1895,9 @@ _共显示最近10轮对话_"""
         self._check_periodic_induction()
         
         # 5. 意图路由
-        if intent.type == "meta":
-            logger.info("处理元认知问题")
-            response = self._handle_meta_question(intent.raw_text)
+        if intent.type in ["meta_value", "meta_mechanism", "meta_capability", "meta"]:
+            logger.info(f"处理元认知问题: {intent.type}")
+            response = self._handle_meta_question(intent.raw_text, meta_type=intent.type)
             bus.publish("plan_executed", response)
             return
         
@@ -1670,24 +1926,232 @@ _共显示最近10轮对话_"""
     def _handle_normal_flow(self, intent: Intent, emotion: Dict):
         """【正常流程】常规处理逻辑 - 已拆分为子流程"""
         
+        # 0. 所有问题类型都尝试搜索增强（扩展）
+        if intent.type in ["question", "verification", "chat"]:
+            logger.info(f"🔍 尝试搜索增强: intent.type={intent.type}, query={intent.raw_text[:50]}")
+            if response := self._try_search_enhanced_answer(intent):
+                self._update_phase2_components(intent, emotion, response)
+                return
+            else:
+                logger.warning("⚠️ 搜索增强返回None，继续常规流程")
+        
         # 1. 置信度评估与外脑协作
         if response := self._try_expert_collaboration(intent):
+            self._update_phase2_components(intent, emotion, response)
             return
         
         # 2. 联邦调度流程
         if response := self._try_federation_flow(intent):
+            self._update_phase2_components(intent, emotion, response)
             return
         
         # 3. 向量检索复用
         if response := self._try_vector_reuse(intent):
+            self._update_phase2_components(intent, emotion, response)
             return
         
         # 4. 学习规则路由
         if response := self._try_rule_based_routing(intent):
+            self._update_phase2_components(intent, emotion, response)
             return
         
         # 5. 单模型降级
-        self._single_model_fallback(intent)
+        response = self._single_model_fallback(intent)
+        self._update_phase2_components(intent, emotion, response)
+    
+    def _try_search_enhanced_answer(self, intent: Intent) -> Optional[str]:
+        """搜索增强回答（事实性问题）- 多源搜索"""
+        search_results = None
+        search_source = None
+        
+        # 搜索源1: Bing（最稳定）
+        try:
+            search_results = self._search_bing(intent.raw_text, max_results=5)
+            if search_results:
+                search_source = "Bing"
+                logger.info(f"✅ Bing搜索成功: {len(search_results)}条")
+        except Exception as e:
+            logger.debug(f"Bing搜索失败: {e}")
+        
+        # 搜索源2: DDGS（备用）
+        if not search_results:
+            try:
+                from ddgs import DDGS
+                import threading
+                
+                def search_task():
+                    nonlocal search_results
+                    try:
+                        with DDGS() as ddgs:
+                            search_results = list(ddgs.text(intent.raw_text, max_results=5))
+                    except:
+                        pass
+                
+                thread = threading.Thread(target=search_task, daemon=True)
+                thread.start()
+                thread.join(timeout=15)
+                
+                if not thread.is_alive() and search_results:
+                    search_source = "DDGS"
+                    logger.info(f"✅ DDGS搜索成功: {len(search_results)}条")
+            except Exception as e:
+                logger.debug(f"DDGS搜索失败: {e}")
+        
+        # 搜索源3: Wikipedia（备用）
+        if not search_results:
+            try:
+                search_results = self._search_wikipedia(intent.raw_text, max_results=5)
+                if search_results:
+                    search_source = "Wikipedia"
+                    logger.info(f"✅ Wikipedia搜索成功: {len(search_results)}条")
+            except Exception as e:
+                logger.debug(f"Wikipedia搜索失败: {e}")
+        
+        # 无搜索结果
+        if not search_results:
+            logger.warning("⚠️ 所有搜索源均失败")
+            return None
+        
+        # 尝试用模型组织回答
+        try:
+            # 构建增强prompt
+            context = f"=== 外部知识（来源：{search_source}） ===\n"
+            for i, sr in enumerate(search_results, 1):
+                title = sr.get('title', '')
+                body = sr.get('body', '')[:200]
+                context += f"{i}. {title}\n   {body}\n"
+            context += "===\n\n"
+            
+            # 获取对话历史
+            history = self._get_recent_context()
+            
+            # 构建完整prompt
+            if intent.type == "verification":
+                base_prompt = self._build_prompt(intent)
+                full_prompt = f"{history}\n{context}{base_prompt}" if history else f"{context}{base_prompt}"
+            else:
+                full_prompt = f"{history}\n{context}请基于以上外部知识，回答用户的问题：{intent.raw_text}" if history else f"{context}请基于以上外部知识，回答用户的问题：{intent.raw_text}"
+            
+            # 选择模型生成
+            model = self._select_model(intent)
+            response = model.generate(full_prompt, task_type=intent.type)
+            
+            if isinstance(response, tuple):
+                response, _ = response
+            
+            logger.info(f"✅ 搜索增强回答: {search_source} + 模型")
+            bus.publish("plan_executed", response)
+            return response
+            
+        except Exception as e:
+            logger.debug(f"模型组织失败: {e}")
+            
+            # 降级：纯搜索模式
+            if search_results:
+                response = f"📚 根据{search_source}搜索结果，关于「{intent.raw_text}」：\n\n"
+                for i, sr in enumerate(search_results, 1):
+                    title = sr.get('title', '')
+                    body = sr.get('body', '')[:300]
+                    response += f"**{i}. {title}**\n{body}\n\n"
+                
+                logger.info(f"✅ 纯搜索模式回答: {search_source} {len(search_results)}条")
+                bus.publish("plan_executed", response)
+                return response
+            
+            return None
+    
+    def _search_bing(self, query: str, max_results: int = 5) -> Optional[List[Dict]]:
+        """Bing搜索（绕过反爬）"""
+        import requests
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        }
+        
+        url = f"https://www.bing.com/search?q={requests.utils.quote(query)}"
+        
+        try:
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                return None
+            
+            # 简单解析（不用BeautifulSoup，减少依赖）
+            import re
+            results = []
+            
+            # 提取搜索结果
+            pattern = r'<li class="b_algo"[^>]*>.*?<h2><a href="([^"]*)"[^>]*>(.*?)</a></h2>.*?<div class="b_caption".*?<p>(.*?)</p>'
+            matches = re.findall(pattern, resp.text, re.DOTALL)
+            
+            for href, title, body in matches[:max_results]:
+                # 清理HTML标签
+                title = re.sub(r'<[^>]+>', '', title).strip()
+                body = re.sub(r'<[^>]+>', '', body).strip()
+                
+                results.append({
+                    "title": title,
+                    "href": href,
+                    "body": body[:300]
+                })
+            
+            return results if results else None
+            
+        except Exception as e:
+            logger.debug(f"Bing搜索异常: {e}")
+            return None
+    
+    def _search_wikipedia(self, query: str, max_results: int = 5) -> Optional[List[Dict]]:
+        """Wikipedia搜索 - 已禁用（网络不可用）"""
+        logger.debug("Wikipedia搜索已禁用（网络不可用）")
+        return None
+
+    
+    def _update_phase2_components(self, intent: Intent, emotion: Dict, response: str):
+        """更新第二阶段组件：关系模型、立体记忆、自我评估"""
+        if not response:
+            return
+        
+        # 1. 更新关系模型
+        if hasattr(self, 'relationship_model') and self.relationship_model:
+            try:
+                self.relationship_model.update_from_conversation({
+                    "user_satisfaction": 0.7,
+                    "emotional_intensity": emotion.get("intensity", 0.5),
+                    "duration_minutes": 2,
+                    "system_helpfulness": 0.8,
+                    "user_input": intent.raw_text,
+                    "system_response": response
+                })
+            except Exception as e:
+                logger.debug(f"关系模型更新失败: {e}")
+        
+        # 2. 存储到立体记忆
+        if hasattr(self, 'stereo_memory') and self.stereo_memory:
+            try:
+                from core.memory.stereo_memory import MemoryType
+                self.stereo_memory.save({
+                    "user_content": intent.raw_text,
+                    "memory_type": MemoryType.CONVERSATION,
+                    "context": {"emotion": emotion.get("emotion", "neutral")},
+                    "metadata": {"response": response[:200]}
+                })
+            except Exception as e:
+                logger.debug(f"立体记忆存储失败: {e}")
+        
+        # 3. 自我评估
+        if hasattr(self, 'self_review_engine') and self.self_review_engine:
+            try:
+                self.self_review_engine.review({
+                    "conversation_id": str(id(intent)),
+                    "user_input": intent.raw_text,
+                    "system_response": response,
+                    "perception_result": emotion,
+                    "validation_result": {"status": "pass"}
+                })
+            except Exception as e:
+                logger.debug(f"自我评估失败: {e}")
     
     def _try_expert_collaboration(self, intent: Intent) -> Optional[str]:
         """尝试外脑协作（仅当置信度极低时）"""
@@ -1863,19 +2327,25 @@ _共显示最近10轮对话_"""
         
         # 4. 反事实模拟（异步）
         try:
-            import asyncio
             from infrastructure.counterfactual_simulator import counterfactual_simulator
             task_id = f"{intent.type}_{int(time.time())}"
-            asyncio.create_task(
-                counterfactual_simulator.simulate_alternatives(
-                    task_id=task_id,
-                    actual_model=model.model_name,
-                    actual_score=quality,
-                    task_input=intent.raw_text,
-                    task_type=intent.type,
-                    adapters=self.adapters
-                )
-            )
+            
+            async def run_simulation():
+                try:
+                    await counterfactual_simulator.simulate_alternatives(
+                        task_id=task_id,
+                        actual_model=model.model_name,
+                        actual_score=quality,
+                        task_input=intent.raw_text,
+                        task_type=intent.type,
+                        adapters=self.adapters
+                    )
+                except Exception as e:
+                    logger.debug(f"反事实模拟失败: {e}")
+            
+            import asyncio
+            if asyncio.get_event_loop().is_running():
+                asyncio.create_task(run_simulation())
         except Exception:
             pass
         
@@ -2128,11 +2598,12 @@ _共显示最近10轮对话_"""
             
             # 3. 触发归纳总结
             try:
-                if self.induction_summarizer:
-                    self.induction_summarizer.run_induction()
+                if INDUCTION_AVAILABLE:
+                    from meta.induction import induction_scheduler
+                    induction_scheduler.run_induction()
                     logger.info("失败后触发归纳总结")
-            except:
-                pass
+            except Exception as induction_error:
+                logger.debug(f"归纳总结触发失败: {induction_error}")
             
             # 4. 触发主动学习器
             try:
@@ -2162,7 +2633,7 @@ _共显示最近10轮对话_"""
             fallback_order = config.get("fallback.default_order", [])
         
         current_model = self.last_call_info.get("model")
-        if current_model in fallback_order:
+        if current_model and current_model in fallback_order:
             fallback_order = [m for m in fallback_order if m != current_model]
         
         for model_name in fallback_order:
@@ -2320,9 +2791,43 @@ _共显示最近10轮对话_"""
         核心价值：
         - 即使没有模型，也能提供有价值的分析框架
         - 输出问题分解、因果链、执行计划
+        - v2.0增强：六层认知进化架构
         """
         logger.info("进入认知模式")
         
+        # 尝试使用v2.0进化架构
+        if EVOLUTION_AVAILABLE and cognitive_evolution_adapter.should_use_evolution(intent.raw_text):
+            logger.info("使用v2.0认知进化架构")
+            
+            try:
+                result = cognitive_evolution_adapter.process_standalone(intent.raw_text)
+                
+                if result.get('is_valid'):
+                    # v2.0处理成功
+                    output = result.get('user_friendly_output', '')
+                    
+                    # 添加思考链摘要
+                    thinking_chain = result.get('thinking_chain', [])
+                    if thinking_chain:
+                        output += "\n\n**思考过程**:"
+                        for layer in thinking_chain[:3]:  # 只显示前3层
+                            layer_name = layer.get('layer', '')
+                            declaration = layer.get('declaration', '')
+                            if declaration:
+                                output += f"\n- [{layer_name}] {declaration[:80]}"
+                    
+                    return output
+                else:
+                    # v2.0检测到问题
+                    output = result.get('user_friendly_output', '')
+                    output += "\n\n⚠️ 系统检测到潜在问题，建议人工确认或提供更多信息。"
+                    return output
+                    
+            except Exception as e:
+                logger.error(f"v2.0认知进化架构失败: {e}")
+                # 降级到现有认知层
+        
+        # 使用现有认知层
         if not COGNITIVE_AVAILABLE:
             return "认知层不可用，无法提供逻辑分析。"
         

@@ -1,73 +1,97 @@
 @echo off
 chcp 65001 >nul
-title 联盟拓荒者 - 启动器
+title 联盟拓荒者 - 启动菜单
 cd /d "%~dp0"
 
+:menu
+cls
 echo ====================================================================
-echo 联盟拓荒者 - 启动器
+echo 联盟拓荒者 - 启动菜单
 echo ====================================================================
 echo.
-
-REM 步骤1: 检查Python
-echo [1/5] 检查Python...
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo [错误] 未找到Python，请安装Python 3.8+
-    pause
-    exit /b 1
-)
-echo  ✓ Python 就绪
+echo 请选择启动模式:
 echo.
-
-REM 步骤2: 检查并安装依赖
-echo [2/5] 检查依赖...
-pip show fastapi >nul 2>&1
-if errorlevel 1 (
-    echo 正在安装依赖...
-    pip install -r requirements.txt
-)
-echo  ✓ 依赖就绪
+echo   [1] 命令行交互模式 (推荐)
+echo       - 直接与系统对话
+echo       - 查看决策链、反思报告
+echo       - 适合测试和体验
 echo.
+echo   [2] Web服务模式
+echo       - 启动Web后端服务
+echo       - 提供API接口
+echo       - 适合集成开发
+echo.
+echo   [3] 运行端到端测试
+echo       - 验证所有功能
+echo       - 检查系统状态
+echo.
+echo   [4] 退出
+echo.
+echo ====================================================================
+set /p choice="请输入选项 [1-4]: "
 
-REM 步骤3: 启动后端服务
-echo [3/5] 启动后端服务...
+if "%choice%"=="1" goto cli_mode
+if "%choice%"=="2" goto web_mode
+if "%choice%"=="3" goto test_mode
+if "%choice%"=="4" goto end
+
+echo.
+echo [错误] 无效选项，请重新选择
+timeout /t 2 >nul
+goto menu
+
+:cli_mode
+cls
+echo ====================================================================
+echo 启动命令行交互模式
+echo ====================================================================
+echo.
+python main_integrated.py
+pause
+goto menu
+
+:web_mode
+cls
+echo ====================================================================
+echo 启动Web服务模式
+echo ====================================================================
+echo.
+echo 启动后端服务...
 echo 后端地址: http://localhost:8000
 echo API文档: http://localhost:8000/docs
 echo.
 
-REM 设置离线模式（避免HuggingFace下载）
-set HF_HUB_OFFLINE=1
-set TRANSFORMERS_OFFLINE=1
-set HF_DATASETS_OFFLINE=1
+set HF_ENDPOINT=https://hf-mirror.com
+set HUGGINGFACE_HUB_CACHE=%USERPROFILE%\.cache\huggingface\hub
+set HF_HUB_DISABLE_TELEMETRY=1
+set TRANSFORMERS_VERBOSITY=error
 
-start "联盟拓荒者后端" cmd /k "set HF_HUB_OFFLINE=1 && set TRANSFORMERS_OFFLINE=1 && python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
+start "联盟拓荒者后端" cmd /k "set HF_ENDPOINT=https://hf-mirror.com && python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
 
-echo 等待后端启动（5秒）...
-ping 127.0.0.1 -n 6 >nul
+echo 等待后端启动...
+timeout /t 5 >nul
 
-REM 步骤4: 健康检查
-echo [4/5] 健康检查...
-curl -s http://localhost:8000/health >nul 2>&1
-if errorlevel 1 (
-    echo [警告] 后端可能未完全启动，请稍后手动访问 http://localhost:8000
-) else (
-    echo  ✓ 后端已就绪
-)
-echo.
-
-REM 步骤5: 打开浏览器
-echo [5/5] 打开前端...
 start http://localhost:8000
-echo.
 
+echo.
+echo Web服务已启动，按任意键返回菜单...
+pause >nul
+goto menu
+
+:test_mode
+cls
 echo ====================================================================
-echo 启动完成！
+echo 运行端到端测试
 echo ====================================================================
 echo.
-echo 访问地址:
-echo   前端: http://localhost:8000
-echo   接口文档: http://localhost:8000/docs
+python tests/test_e2e_full.py
 echo.
-echo 后端运行在独立的命令行窗口中，关闭该窗口即可停止服务。
-echo ====================================================================
-pause
+echo 测试完成，按任意键返回菜单...
+pause >nul
+goto menu
+
+:end
+echo.
+echo 感谢使用联盟拓荒者！
+timeout /t 1 >nul
+exit /b 0

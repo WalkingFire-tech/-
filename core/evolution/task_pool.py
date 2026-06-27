@@ -58,19 +58,15 @@ def build_task_pool(main_db_path: str,
                 if not question or not answer:
                     continue
                 
-                # 提取关键词
                 keywords = []
                 if include_keywords:
-                    # 从答案中提取关键词
-                    words = re.findall(r'\w+', answer.lower())
-                    keywords = [w for w in words if len(w) > 3][:5]
+                    keywords = self._extract_keywords_advanced(answer, question)
                 
-                # 计算难度（基于长度和复杂度）
-                difficulty = min(1.0, len(answer) / 500.0)
+                difficulty = self._calculate_difficulty_advanced(question, answer)
                 
                 tasks.append({
                     'question': question,
-                    'expected_answer': answer[:300],  # 截取前300字符
+                    'expected_answer': answer[:300],
                     'keywords': keywords,
                     'difficulty': difficulty,
                     'original_salience': row['salience'] or 0.5
@@ -177,3 +173,136 @@ def create_sample_tasks() -> List[Dict]:
             'difficulty': 0.4
         }
     ]
+    
+    def _extract_keywords_advanced(self, answer: str, question: str = "") -> List[str]:
+        """
+        高级关键词提取
+        
+        使用多策略提取：
+        1. TF-IDF风格的重要词提取
+        2. 领域特定词识别
+        3. 问题-答案关联词提取
+        """
+        import re
+        from collections import Counter
+        
+        stopwords = {
+            '的', '是', '在', '有', '和', '了', '不', '这', '那', '就', '也',
+            '都', '会', '能', '要', '可以', '应该', '需要', '一个', '这个',
+            'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
+            'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
+            'could', 'should', 'may', 'might', 'must', 'can', 'to', 'of',
+            'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as'
+        }
+        
+        domain_keywords = {
+            '系统', '架构', '模块', '组件', '接口', '配置', '参数',
+            '函数', '方法', '类', '对象', '变量', '类型',
+            '数据', '存储', '缓存', '队列', '栈', '堆',
+            '算法', '优化', '性能', '效率', '复杂度',
+            '学习', '训练', '模型', '特征', '预测', '推理',
+            '记忆', '知识', '经验', '规则', '策略',
+            '层', '级', '维度', '向量', '矩阵'
+        }
+        
+        text = f"{question} {answer}"
+        words = re.findall(r'\w+', text.lower())
+        
+        word_freq = Counter(w for w in words if len(w) > 2 and w not in stopwords)
+        
+        scored_words = []
+        for word, freq in word_freq.items():
+            score = freq
+            
+            if word in domain_keywords:
+                score *= 2.0
+            
+            if word in answer and word in question:
+                score *= 1.5
+            
+            if re.match(r'^[A-Z]{2,}$', word.upper()):
+                score *= 1.3
+            
+            if re.match(r'.*化$', word):
+                score *= 1.2
+            
+            scored_words.append((word, score))
+        
+        scored_words.sort(key=lambda x: x[1], reverse=True)
+        
+        keywords = [word for word, score in scored_words[:8]]
+        
+        return keywords
+    
+    def _calculate_difficulty_advanced(self, question: str, answer: str) -> float:
+        """
+        高级难度计算
+        
+        多维度难度评估：
+        1. 内容长度和复杂度
+        2. 概念密度
+        3. 抽象程度
+        4. 逻辑复杂度
+        5. 领域专业度
+        """
+        difficulty = 0.0
+        
+        length = len(answer)
+        if length < 100:
+            difficulty += 0.2
+        elif length < 300:
+            difficulty += 0.3
+        elif length < 600:
+            difficulty += 0.5
+        elif length < 1000:
+            difficulty += 0.7
+        else:
+            difficulty += 0.9
+        
+        import re
+        sentences = re.split(r'[。！？\n]', answer)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        
+        if len(sentences) > 5:
+            difficulty += 0.1
+        if len(sentences) > 10:
+            difficulty += 0.1
+        
+        technical_patterns = [
+            r'\w+系统', r'\w+架构', r'\w+层', r'\w+模块',
+            r'\w+机制', r'\w+算法', r'\w+模型',
+            r'L\d+', r'\d+维度', r'\d+个'
+        ]
+        
+        tech_count = sum(
+            1 for pattern in technical_patterns
+            if re.search(pattern, answer)
+        )
+        difficulty += min(0.2, tech_count * 0.05)
+        
+        abstract_indicators = [
+            '抽象', '泛化', '归纳', '推理', '推断',
+            '原理', '本质', '机制', '规律', '模式'
+        ]
+        if any(ind in answer for ind in abstract_indicators):
+            difficulty += 0.15
+        
+        logic_indicators = [
+            '如果', '那么', '因此', '因为', '所以',
+            '首先', '然后', '最后', '步骤', '流程'
+        ]
+        logic_count = sum(1 for ind in logic_indicators if ind in answer)
+        difficulty += min(0.15, logic_count * 0.03)
+        
+        code_indicators = ['```', 'def ', 'class ', 'import ', 'return ']
+        if any(ind in answer for ind in code_indicators):
+            difficulty += 0.2
+        
+        math_indicators = [r'\d+\.\d+', r'\d+%', r'=', r'\+', r'-', r'\*', r'/']
+        math_count = sum(
+            1 for pattern in math_indicators
+            if re.search(pattern, answer)
+        )
+        difficulty += min(0.1, math_count * 0.02)
+        
+        return min(1.0, difficulty)

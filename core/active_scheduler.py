@@ -46,18 +46,20 @@ class ActiveScheduler:
         """运行所有优化任务"""
         
         try:
-            from core.learning import enhanced_learner
-            
-            rules_count = enhanced_learner.detect_and_create_rules()
+            from meta.induction import induction_scheduler
+            result = induction_scheduler.run_induction()
+            rules_count = result.get('rules_generated', 0) if isinstance(result, dict) else result
             if rules_count > 0:
                 logger.info(f"生成 {rules_count} 条新规则")
         except Exception as e:
             logger.error(f"规则生成失败: {e}")
         
         try:
-            from core.learning import enhanced_learner
-            
-            tools_count = enhanced_learner.auto_generate_tools()
+            from tools.generator import ToolGenerator
+            from adapters.llm.ollama_adapter import OllamaAdapter
+            primary_model = OllamaAdapter(model_name="qwen2.5-coder:7b")
+            tool_gen = ToolGenerator(llm_adapter=primary_model)
+            tools_count = tool_gen.scan_and_generate() if hasattr(tool_gen, 'scan_and_generate') else 0
             if tools_count > 0:
                 logger.info(f"生成 {tools_count} 个新工具")
         except Exception as e:
@@ -140,9 +142,16 @@ class ActiveScheduler:
     def _generate_memory_review(self):
         """生成记忆回顾报告"""
         try:
-            from core.learning import enhanced_learner
+            from core.memory.stereo_memory import get_stereo_memory
             
-            review = enhanced_learner.get_memory_review()
+            store = get_stereo_memory()
+            stats = store.get_stats()
+            
+            review = {
+                'l1_core': stats.get('by_type', {}).get('knowledge', 0),
+                'l2_framework': stats.get('by_type', {}).get('conversation', 0),
+                'l3_fading': stats.get('total_memories', 0) - stats.get('by_type', {}).get('knowledge', 0) - stats.get('by_type', {}).get('conversation', 0)
+            }
             
             if review['l3_fading'] > 0:
                 notification = {

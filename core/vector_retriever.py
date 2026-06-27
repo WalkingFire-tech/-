@@ -8,6 +8,20 @@ from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 from loguru import logger
 
+# 在导入sentence_transformers之前强制设置镜像（关键！）
+# 先导入镜像补丁
+try:
+    from core.hf_mirror_patch import *
+except:
+    pass
+
+# 再次确保环境变量设置
+hf_endpoint = os.getenv("HF_ENDPOINT", "https://hf-mirror.com")
+os.environ['HF_ENDPOINT'] = hf_endpoint
+os.environ['HUGGINGFACE_HUB_CACHE'] = os.path.expanduser('~/.cache/huggingface/hub')
+os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
+os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
+
 EMBEDDING_AVAILABLE = False
 CHROMA_AVAILABLE = False
 SentenceTransformer = None
@@ -46,45 +60,15 @@ class VectorRetriever:
         
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        # 加载句子编码模型
+        # 加载句子编码模型 - 使用共享模型
         if EMBEDDING_AVAILABLE:
             try:
-                logger.info("加载向量检索模型...")
-                
-                # 配置镜像站点（解决连接问题）
-                hf_endpoint = os.getenv("HF_ENDPOINT", "https://hf-mirror.com")
-                os.environ['HF_ENDPOINT'] = hf_endpoint
-                logger.info(f"使用镜像站点: {hf_endpoint}")
-                
-                # 检查是否启用严格离线模式
-                strict_offline = os.getenv("STRICT_OFFLINE", "false").lower() == "true"
-                
-                if strict_offline:
-                    # 严格离线模式：不尝试下载
-                    os.environ['HF_HUB_OFFLINE'] = '1'
-                    os.environ['TRANSFORMERS_OFFLINE'] = '1'
-                    os.environ['HF_DATASETS_OFFLINE'] = '1'
-                    logger.info("严格离线模式：仅使用本地缓存")
-                else:
-                    # 允许在线下载
-                    logger.info("允许在线下载模型")
-                
-                # 选择模型（可通过环境变量配置）
-                # 小模型：paraphrase-MiniLM-L3-v2 (60MB)
-                # 中模型：all-MiniLM-L6-v2 (80MB)
-                # 大模型：paraphrase-multilingual-MiniLM-L12-v2 (400MB)
-                model_name = os.getenv(
-                    "EMBEDDING_MODEL", 
-                    "paraphrase-multilingual-MiniLM-L12-v2"  # 默认使用已下载的大模型
-                )
-                logger.info(f"模型: {model_name}")
-                
-                self.model = SentenceTransformer(model_name)
-                logger.info("✓ 向量检索模型已加载")
-                
+                from core.shared_embedding import get_embedding_model
+                self.model = get_embedding_model()
+                if self.model:
+                    logger.info("✓ 向量检索模型已加载（共享实例）")
             except Exception as e:
                 logger.warning(f"加载编码模型失败，将使用关键词检索: {e}")
-                logger.info("提示: 设置环境变量 HF_ENDPOINT=https://hf-mirror.com 使用镜像站点")
                 self.model = None
         else:
             logger.info("向量检索不可用，使用关键词检索")
@@ -92,10 +76,7 @@ class VectorRetriever:
         
         if CHROMA_AVAILABLE and self.model:
             try:
-                self.client = chromadb.Client(Settings(
-                    chroma_db_impl="duckdb+parquet",
-                    persist_directory="data/chroma"
-                ))
+                self.client = chromadb.PersistentClient(path="data/chroma")
                 self.collection = self.client.get_or_create_collection(collection_name)
                 logger.info(f"ChromaDB集合已创建: {collection_name}")
             except Exception as e:

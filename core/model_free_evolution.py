@@ -114,7 +114,7 @@ class ModelFreeEvolution:
         for keyword in keywords:
             try:
                 # 使用DuckDuckGo搜索（无需API密钥）
-                from duckduckgo_search import DDGS
+                from ddgs import DDGS
                 
                 with DDGS() as ddgs:
                     results = list(ddgs.text(f"{target_name} {keyword}", max_results=3))

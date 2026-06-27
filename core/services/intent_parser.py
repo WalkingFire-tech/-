@@ -26,7 +26,36 @@ class IntentParser:
     def _load_rules(self) -> dict:
         """从配置文件加载规则"""
         default_rules = {
-            # 元认知意图 - 关于系统自身的问题（最高优先级，收紧规则）
+            # 元认知意图 - 价值性问题（最高优先级）
+            "meta_value": re.compile(
+                r"最优|最好|最佳|理想|完美|标准|判断.*标准|应该.*如何|"
+                r"什么样.*算.*好|什么.*才算|评价.*标准|好坏|优劣|"
+                r"贴切|恰当|合适|满意|期望|希望.*达到",
+                re.IGNORECASE
+            ),
+            # 元认知意图 - 机制性问题
+            "meta_mechanism": re.compile(
+                r"你.*如何.*理解|你怎么.*知道|你觉得自己|你.*改进|你.*学习|"
+                r"你.*自我.*进化|你的.*能力|如何.*让你.*更.*好|"
+                r"你.*理解.*需求|你.*思考|你的.*理解|你.*优化|"
+                r"系统.*如何|系统.*改进|如何.*提升.*理解|"
+                r"你.*处理.*不了|你明白我.*意思|我讲的是你|你.*反思|"
+                r"你.*分析.*意图|你.*进化|你.*自我|你.*成长|"
+                r"你.*能力.*边界|能力边界.*在哪|你的.*边界|"
+                r"自我.*评估|评估.*体系|你.*决策|你.*如何.*认识|"
+                r"完善.*你|给出.*评价|能力边界|自我评估|决策机制|"
+                r"怎么认识自己|评估体系|知道自己.*?|你的.*能力|"
+                r"你.*如何.*决策|你.*学习.*方式|你.*改进.*自己|你.*反思|"
+                r"你.*优点|你.*缺点|能力的理解|你的.*学习.*能力|系统的.*学习",
+                re.IGNORECASE
+            ),
+            # 元认知意图 - 能力边界问题
+            "meta_capability": re.compile(
+                r"你能.*做什么|你.*能力.*范围|你.*限制|你.*边界|"
+                r"你.*不会|你.*不能|你.*擅长|你.*不擅长",
+                re.IGNORECASE
+            ),
+            # 兼容旧版meta意图
             "meta": re.compile(
                 r"你.*如何.*理解|你怎么.*知道|你觉得自己|你.*改进|你.*学习|"
                 r"你.*自我.*进化|你的.*能力|如何.*让你.*更.*好|"
@@ -51,7 +80,9 @@ class IntentParser:
             ),
             # 问题意图
             "question": re.compile(
-                r"什么是|为什么|怎么|如何|哪|谁|多少|解释|介绍|说明|讲解|分析",
+                r"什么是|为什么|怎么|如何|哪|谁|多少|解释|介绍|说明|讲解|分析|"
+                r"是什么|有哪些|怎样|何时|哪里|哪种|谁的|多长|多大|多重|"
+                r"有没有|是否|能否|可以.*吗|会.*吗|应该.*吗",
                 re.IGNORECASE
             ),
             # 记忆意图
@@ -75,6 +106,12 @@ class IntentParser:
                 r"^##|^\*|^- |项目状态|已实现|核心框架|^\d+\.|能力|功能|特性",
                 re.IGNORECASE
             ),
+            # 验证/质疑意图
+            "verification": re.compile(
+                r"对么|对吗|正确吗|是这样吗|对不对|是不是|有问题|不对吧|错了吧|这不对|有问题吧|"
+                r"质疑|怀疑|真的吗|确定吗|凭什么|证据|验证|检查.*对|确认.*正确",
+                re.IGNORECASE
+            ),
         }
         
         custom_rules = config.get("intent.custom_rules", {})
@@ -86,7 +123,7 @@ class IntentParser:
         return default_rules
     
     def _calculate_confidence(self, text: str, intent_type: str) -> float:
-        """计算意图识别的置信度"""
+        """计算意图识别的置信度（优化版：使用匹配字符覆盖率）"""
         if intent_type == "chat":
             return 0.5
         
@@ -98,15 +135,17 @@ class IntentParser:
         if not matches:
             return 0.0
         
-        match_ratio = len(matches) / max(len(text.split()), 1)
-        base_confidence = min(0.5 + match_ratio * 2, 1.0)
+        matched_chars = sum(len(m) if isinstance(m, str) else len(str(m)) for m in matches)
+        coverage = min(1.0, matched_chars / max(len(text), 1))
+        base_confidence = 0.5 + coverage * 0.4
         
         keyword_boost = {
             "code": ["代码", "写", "生成", "算法"],
             "question": ["什么", "为什么", "怎么", "如何"],
             "memory": ["刚才", "之前", "聊过", "说过", "回顾", "历史", "对话"],
             "calculation": ["π", "计算", "输出"],
-            "feedback": ["+1", "-1", "点赞"]
+            "feedback": ["+1", "-1", "点赞"],
+            "verification": ["对么", "对吗", "正确", "质疑", "怀疑", "验证"]
         }
         
         boost_keywords = keyword_boost.get(intent_type, [])
@@ -172,13 +211,16 @@ class IntentParser:
             return candidates[0][0]
         
         priority = {
-            "meta": 11,
-            "feedback": 10,
-            "calculation": 9,
-            "document": 8,
-            "code": 7,
-            "memory": 6,
-            "question": 5,
+            "meta_value": 13,
+            "meta_mechanism": 12,
+            "meta_capability": 11,
+            "meta": 10,
+            "feedback": 9,
+            "calculation": 8,
+            "document": 7,
+            "code": 6,
+            "memory": 5,
+            "question": 4,
             "chat": 1
         }
         
@@ -327,11 +369,16 @@ class IntentParser:
                     created_at TEXT
                 )
             ''')
+            # ✅ 修复SQL注入：对text进行转义
+            escaped_text = text.replace("'", "''")
+            condition = f"raw_input LIKE '%{escaped_text}%'"
+            action = f"set_intent:{correct_intent}"
+            
             conn.execute('''
                 INSERT INTO learning_rules 
                 (condition, action, confidence, status, source, created_at)
                 VALUES (?, ?, 0.8, 'pending', 'user_correction', datetime('now'))
-            ''', (f"raw_input LIKE '%{text}%'", f"set_intent:{correct_intent}"))
+            ''', (condition, action))
             conn.commit()
             conn.close()
             

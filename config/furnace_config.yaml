@@ -1,0 +1,54 @@
+# 🔥 渐进式自我进化训练配置
+# 基于PSAA架构 - 适配RX 580 8G显存
+
+# ========== 模型配置 ==========
+# 使用1.5B模型（适配8G显存）
+model_name_or_path: Qwen/Qwen2.5-1.5B-Instruct
+
+# ========== 数据集配置 ==========
+dataset: merged_training_data.jsonl
+dataset_dir: ./data/sft
+
+# ========== LoRA配置 ==========
+finetuning_type: lora
+lora_rank: 8
+lora_alpha: 16
+lora_dropout: 0.05
+lora_target: all
+
+# ========== 训练参数（专为低速进化优化）==========
+# 核心原则：
+# 1. 极低学习率（防止遗忘）
+# 2. 单轮训练（防止过拟合）
+# 3. 小批次（适配显存）
+
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 2
+learning_rate: 1.0e-5  # 极低学习率，确保不破坏旧能力
+num_train_epochs: 1.0  # 只跑一轮
+max_grad_norm: 1.0
+optimizer: adamw_torch
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+
+# ========== 量化配置（适配8G显存）==========
+quantization_bit: 4
+quantization_type: bnb
+
+# ========== 输出配置 ==========
+output_dir: ./models/self_evolved/v{NEXT}
+logging_dir: ./logs/furnace
+logging_steps: 10
+save_steps: 100
+
+# ========== 高级配置 ==========
+# 经验回放：每次训练混合6条旧样本
+# 数据增强：不使用（保持原始纠错语义）
+# 早停：不使用（单轮训练无需早停）
+
+# ========== 注释 ==========
+# 这套配置的核心思想：
+# - 学习率1e-5：比常规训练低100倍，确保只做微调
+# - 单轮训练：避免对新数据过拟合
+# - 4-bit量化：让1.5B模型在8G显存上运行
+# - 经验回放：防止遗忘旧知识

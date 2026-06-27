@@ -171,7 +171,7 @@ class LearningLoop:
         
         # 尝试旧包名
         try:
-            from duckduckgo_search import DDGS
+            from ddgs import DDGS
             
             with DDGS() as ddgs:
                 search_results = list(ddgs.text(question, max_results=5))

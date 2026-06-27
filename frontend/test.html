@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>连接测试</title>
+    <style>
+        body { font-family: Arial; padding: 20px; max-width: 800px; margin: 0 auto; }
+        .success { color: green; }
+        .error { color: red; }
+        .test-item { margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <h1>联盟拓荒者 - 连接测试</h1>
+    <div id="tests"></div>
+    
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        const testsDiv = document.getElementById('tests');
+        
+        async function runTests() {
+            const tests = [
+                { name: '根路径', url: '/' },
+                { name: '健康检查', url: '/api/health' },
+                { name: '模型列表', url: '/api/models' },
+                { name: '系统统计', url: '/api/stats' },
+                { name: '知识健康', url: '/api/knowledge/health' }
+            ];
+            
+            for (const test of tests) {
+                const div = document.createElement('div');
+                div.className = 'test-item';
+                div.innerHTML = `<strong>${test.name}</strong>: 测试中...`;
+                testsDiv.appendChild(div);
+                
+                try {
+                    const start = performance.now();
+                    const resp = await fetch(API_BASE + test.url);
+                    const elapsed = (performance.now() - start).toFixed(0);
+                    
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        div.innerHTML = `<strong>${test.name}</strong>: <span class="success">✅ 成功</span> (${elapsed}ms)<br><pre>${JSON.stringify(data, null, 2).substring(0, 200)}</pre>`;
+                    } else {
+                        div.innerHTML = `<strong>${test.name}</strong>: <span class="error">❌ 失败</span> (状态码: ${resp.status})`;
+                    }
+                } catch (e) {
+                    div.innerHTML = `<strong>${test.name}</strong>: <span class="error">❌ 错误</span> - ${e.message}`;
+                }
+            }
+            
+            // 测试聊天
+            const chatDiv = document.createElement('div');
+            chatDiv.className = 'test-item';
+            chatDiv.innerHTML = `<strong>聊天测试</strong>: 测试中...`;
+            testsDiv.appendChild(chatDiv);
+            
+            try {
+                const start = performance.now();
+                const resp = await fetch(API_BASE + '/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: '你好' })
+                });
+                const elapsed = (performance.now() - start).toFixed(0);
+                
+                if (resp.ok) {
+                    const data = await resp.json();
+                    chatDiv.innerHTML = `<strong>聊天测试</strong>: <span class="success">✅ 成功</span> (${elapsed}ms)<br>回答: ${data.response.substring(0, 100)}...`;
+                } else {
+                    chatDiv.innerHTML = `<strong>聊天测试</strong>: <span class="error">❌ 失败</span> (状态码: ${resp.status})`;
+                }
+            } catch (e) {
+                chatDiv.innerHTML = `<strong>聊天测试</strong>: <span class="error">❌ 错误</span> - ${e.message}`;
+            }
+        }
+        
+        runTests();
+    </script>
+</body>
+</html>
