@@ -4,6 +4,7 @@
 """
 import os
 import threading
+import copy
 from pathlib import Path
 from typing import Any, Dict, Optional
 import yaml
@@ -45,8 +46,8 @@ class ConfigManager:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
                     cls._instance._config = {}
+                    cls._instance._load_config()
                     cls._initialized = True
-            cls._instance._load_config()
         return cls._instance
     
     def _load_config(self):
@@ -163,7 +164,7 @@ class ConfigManager:
     
     def get(self, key: str, default: Any = None) -> Any:
         with self._lock:
-            config_copy = self._config.copy()
+            config_copy = copy.deepcopy(self._config)
         
         keys = key.split('.')
         value = config_copy
@@ -208,12 +209,9 @@ class ConfigManager:
     def reload(self, new_config: Dict[str, Any] = None):
         """重新加载配置"""
         with self._lock:
-            old_config = self._config.copy()
-            
             if new_config:
                 self._config.update(new_config)
             else:
-                temp_config = self._config.copy()
                 self._load_config_unlocked()
             
             logger.info("配置已重新加载")

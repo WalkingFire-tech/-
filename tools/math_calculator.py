@@ -107,17 +107,24 @@ class MathCalculator:
         """预处理表达式"""
         import re
         
-        # 中文数字转换
-        chinese_nums = {
-            '零': '0', '一': '1', '二': '2', '三': '3', '四': '4',
-            '五': '5', '六': '6', '七': '7', '八': '8', '九': '9',
-            '十': '10', '百': '100', '千': '1000', '万': '10000'
+        chinese_num_map = {
+            '零': 0, '一': 1, '二': 2, '三': 3, '四': 4,
+            '五': 5, '六': 6, '七': 7, '八': 8, '九': 9,
+            '十': 10, '百': 100, '千': 1000, '万': 10000
         }
         
-        for cn, num in chinese_nums.items():
-            expression = expression.replace(cn, num)
+        def convert_chinese_num(text: str) -> str:
+            if not any(cn in text for cn in chinese_num_map):
+                return text
+            
+            result = text
+            for cn, num in chinese_num_map.items():
+                result = result.replace(cn, str(num))
+            
+            return result
         
-        # 特殊格式处理："π的前100位" -> "pi"
+        expression = convert_chinese_num(expression)
+        
         pi_pattern = re.search(r'π.*?前.*?(\d+).*?位', expression)
         if pi_pattern:
             digits = int(pi_pattern.group(1))
@@ -127,12 +134,10 @@ class MathCalculator:
             else:
                 return f"math.pi"
         
-        # 常量替换
         for const, name in self.CONSTANTS.items():
             if const in expression:
                 expression = expression.replace(const, name)
         
-        # 提取纯数学表达式（支持逗号，用于函数参数）
         math_expr = re.findall(r'[\d\+\-\*\/\(\)\.\s\w,]+', expression)
         if math_expr:
             expression = ''.join(math_expr)
@@ -141,14 +146,23 @@ class MathCalculator:
     
     def _evaluate(self, expression: str) -> str:
         """求值表达式"""
-        # 构建安全的计算环境
+        import re
+        
+        safe_chars = re.match(r'^[\d\+\-\*\/\(\)\.\s\w,\%\^]+$', expression)
+        if not safe_chars:
+            raise ValueError(f"表达式包含非法字符: {expression}")
+        
+        dangerous_patterns = ['__', 'import', 'exec', 'eval', 'compile', 'open']
+        for pattern in dangerous_patterns:
+            if pattern in expression.lower():
+                raise ValueError(f"表达式包含危险模式: {pattern}")
+        
         safe_dict = {
             'pi': mpmath.pi if MPMATH_AVAILABLE else math.pi,
             'e': mpmath.e if MPMATH_AVAILABLE else math.e,
             'phi': (1 + mpmath.sqrt(5)) / 2 if MPMATH_AVAILABLE else (1 + math.sqrt(5)) / 2,
         }
         
-        # 添加允许的函数
         if MPMATH_AVAILABLE:
             for func in self.ALLOWED_FUNCTIONS:
                 if hasattr(mpmath, func):
@@ -160,14 +174,12 @@ class MathCalculator:
                 if hasattr(math, func):
                     safe_dict[func] = getattr(math, func)
         
-        # 添加内置函数（max, min, sum等）
         safe_dict['max'] = max
         safe_dict['min'] = min
         safe_dict['sum'] = sum
         safe_dict['abs'] = abs
         safe_dict['round'] = round
         
-        # 尝试使用numexpr（更快更安全）
         if NUMEXPR_AVAILABLE:
             try:
                 result = ne.evaluate(expression, local_dict=safe_dict)
@@ -175,14 +187,12 @@ class MathCalculator:
             except:
                 pass
         
-        # 降级到eval（已限制作用域）
         try:
             result = eval(expression, {"__builtins__": {}}, safe_dict)
             return self._format_result(result)
         except:
             pass
         
-        # 最后尝试mpmath直接计算
         if MPMATH_AVAILABLE:
             try:
                 result = mpmath.mpf(expression)

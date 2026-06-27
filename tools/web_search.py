@@ -36,9 +36,15 @@ class WebSearchTool(Tool):
         r"private[_-]?key"
     ]
     
-    def __init__(self):
+    def __init__(self, config: Dict = None):
         super().__init__()
         self._search_engine = None
+        config = config or {}
+        
+        if "search_whitelist" in config:
+            self.SEARCH_WHITELIST = config["search_whitelist"]
+        
+        self._max_body_length = config.get("max_body_length", 500)
     
     @property
     def name(self) -> str:
@@ -117,10 +123,11 @@ class WebSearchTool(Tool):
         sanitized = {
             "title": result.get("title", ""),
             "href": result.get("href", ""),
-            "body": result.get("body", "")[:500]
+            "body": result.get("body", "")[:self._max_body_length]
         }
         
-        if not self._is_safe_content(sanitized["body"]):
+        all_text = f"{sanitized['title']} {sanitized['href']} {sanitized['body']}"
+        if not self._is_safe_content(all_text):
             sanitized["body"] = "[内容已过滤：包含敏感信息]"
             sanitized["filtered"] = True
         
