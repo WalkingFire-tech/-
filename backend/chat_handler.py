@@ -1,9 +1,23 @@
 """
 永不放弃的聊天处理 - 简化版
 保留原来的工作逻辑，但添加降级保护
+
+核心精神：所有回复都必须符合精神内核
+- 合理且逻辑清晰有理有据且自洽
+- 即使失败也给出有意义的回复
+- 永不放弃是元能力
 """
 import asyncio
 from loguru import logger
+
+# 导入精神内核
+try:
+    from core.spirit_core import spirit_core, ensure_spirit_compliance
+    SPIRIT_CORE_AVAILABLE = True
+    logger.info("✅ 精神内核已加载")
+except ImportError as e:
+    logger.warning(f"⚠️ 精神内核未加载: {e}")
+    SPIRIT_CORE_AVAILABLE = False
 
 
 async def chat_never_giveup(user_input: str, context: dict) -> dict:
@@ -139,6 +153,27 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
         final_response = _generate_smart_reply(user_input, intent_type)
         attempts.append(("规则匹配", True, "智能回复"))
     
+    # ========== 策略8：精神内核验证（最后一道防线） ==========
+    if SPIRIT_CORE_AVAILABLE:
+        # 验证回复是否符合精神内核
+        validation = spirit_core.validate_response(final_response)
+        if not validation["valid"]:
+            logger.warning(f"⚠️ 回复不符合精神内核: {validation['issues']}")
+            # 生成符合精神内核的回复
+            final_response = spirit_core.ensure_meaningful_response(
+                user_input,
+                [{"method": a[0], "success": a[1], "error": a[2] if not a[1] else None} for a in attempts],
+                final_response
+            )
+            attempts.append(("精神内核修正", True, "确保回复有意义"))
+        else:
+            attempts.append(("精神内核验证", True, "回复符合精神"))
+    else:
+        # 如果精神内核不可用，使用基础的有意义回复生成
+        if not final_response or len(final_response) < 20:
+            final_response = _generate_meaningful_fallback(user_input, attempts)
+            attempts.append(("降级保护", True, "基础有意义回复"))
+    
     # ========== 记录解决过程 ==========
     logger.info(f"✅ 问题解决: {user_input[:30]} → {[(a[0], a[1]) for a in attempts]}")
     
@@ -147,7 +182,8 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
         "attempts": attempts,
         "intent": intent_type,
         "confidence": confidence,
-        "route": route
+        "route": route,
+        "spirit_compliant": SPIRIT_CORE_AVAILABLE
     }
 
 
@@ -191,3 +227,32 @@ def _generate_smart_reply(query: str, intent_type: str) -> str:
         return f"关于'{query}'，这是一个很好的问题。请告诉我更具体的场景，我会给出详细指导。"
     
     return f"我收到了你的问题：'{query}'。虽然暂时无法给出完整答案，但我会记住并继续学习。请尝试换个方式提问，或稍后重试。"
+
+
+def _generate_meaningful_fallback(query: str, attempts: list) -> str:
+    """
+    降级保护：生成有意义的基础回复
+    
+    即使精神内核不可用，也要确保回复有意义
+    """
+    successful = [a for a in attempts if a[1]]
+    failed = [a for a in attempts if not a[1]]
+    
+    parts = []
+    parts.append(f"🎯 关于「{query}」")
+    parts.append(f"   我已尝试 {len(attempts)} 种方法")
+    
+    if successful:
+        parts.append(f"   ✅ 成功：{', '.join([a[0] for a in successful])}")
+    if failed:
+        parts.append(f"   ❌ 失败：{', '.join([a[0] for a in failed])}")
+    
+    parts.append("\n💡 建议：")
+    parts.append("   1. 换个方式提问（更具体或更简单）")
+    parts.append("   2. 提供更多背景信息")
+    parts.append("   3. 稍后重试")
+    
+    parts.append("\n🌟 永不放弃：")
+    parts.append("   我会记住这个问题，持续学习改进")
+    
+    return "\n".join(parts)
