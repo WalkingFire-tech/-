@@ -118,149 +118,28 @@ async def knowledge_health():
 @app.post("/api/chat")
 async def chat(request: dict):
     """聊天接口 - 永不放弃，总是想办法解决问题"""
-    import asyncio
     user_input = request.get("message", "")
     model = request.get("model", "auto")
     
-    # 结果收集器
-    attempts = []
-    final_response = None
+    # 使用永不放弃的聊天处理器
+    from backend.chat_handler import chat_never_giveup
     
-    # ========== 尝试策略1：快速意图识别 ==========
-    try:
-        from core.cognitive_dispatcher import CognitiveDispatcher
-        loop = asyncio.get_event_loop()
-        dispatcher = CognitiveDispatcher()
-        
-        dispatch_result = await asyncio.wait_for(
-            loop.run_in_executor(None, lambda: dispatcher.dispatch(user_query=user_input, context=request)),
-            timeout=3.0
-        )
-        
-        intent_type = dispatch_result.get("intent_type", "unknown")
-        route = dispatch_result.get("route", "slow")
-        confidence = dispatch_result.get("confidence", 0.5)
-        attempts.append(("意图识别", True, intent_type))
-        
-    except Exception as e:
-        logger.warning(f"意图识别失败: {e}")
-        intent_type = "unknown"
-        route = "slow"
-        confidence = 0.5
-        attempts.append(("意图识别", False, str(e)))
-    
-    # ========== 策略2：简单意图直接回复 ==========
-    if intent_type == "greeting":
-        final_response = "你好！我是联盟拓荒者智能体系统，很高兴为你服务。我可以帮助你完成各种任务，包括代码生成、问题解答、数据分析等。"
-        attempts.append(("简单回复", True, "问候语"))
-    
-    elif intent_type == "confirmation":
-        final_response = "好的，我明白了。"
-        attempts.append(("简单回复", True, "确认回复"))
-    
-    elif intent_type == "history_query":
-        final_response = await solve_history_query(user_input)
-        attempts.append(("历史查询", True, "历史功能"))
-    
-    # ========== 策略3：尝试深度认知处理 ==========
-    if not final_response:
-        try:
-            from core.metacognitive_executor import MetacognitiveExecutor
-            executor = MetacognitiveExecutor()
-            exec_result = await asyncio.wait_for(
-                executor.execute_with_full_metacognition(user_query=user_input, context=request),
-                timeout=15.0
-            )
-            result = exec_result.get("final_result", "")
-            if result and len(result) > 20:
-                final_response = result
-                attempts.append(("深度认知", True, f"获得{len(result)}字回复"))
-        except Exception as e:
-            attempts.append(("深度认知", False, str(e)[:50]))
-    
-    # ========== 策略4：尝试Ollama本地模型 ==========
-    if not final_response:
-        try:
-            import requests
-            response = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: requests.post(
-                    "http://localhost:11434/api/generate",
-                    json={"model": "qwen2.5:7b", "prompt": user_input, "stream": False},
-                    timeout=12
-                )
-            )
-            if response.status_code == 200:
-                result = response.json().get("response", "")
-                if result and len(result) > 20:
-                    final_response = result
-                    attempts.append(("Ollama本地", True, f"获得{len(result)}字回复"))
-        except Exception as e:
-            attempts.append(("Ollama本地", False, str(e)[:50]))
-    
-    # ========== 策略5：查询知识库 ==========
-    if not final_response:
-        try:
-            result = await query_knowledge_base(user_input)
-            if result:
-                final_response = result
-                attempts.append(("知识库", True, "检索到相关知识"))
-        except Exception as e:
-            attempts.append(("知识库", False, str(e)[:50]))
-    
-    # ========== 策略6：查询经验池 ==========
-    if not final_response:
-        try:
-            result = await query_experience_pool(user_input)
-            if result:
-                final_response = result
-                attempts.append(("经验池", True, "找到历史经验"))
-        except Exception as e:
-            attempts.append(("经验池", False, str(e)[:50]))
-    
-    # ========== 策略7：规则匹配生成回复 ==========
-    if not final_response:
-        final_response = generate_rule_based_response(user_input, intent_type)
-        attempts.append(("规则匹配", True, "生成针对性回复"))
-    
-    # ========== 策略8：转后台永不放弃处理 ==========
-    if not final_response or len(final_response) < 20:
-        try:
-            from core.persistent_tasks import persistent_task_system
-            task_id = await persistent_task_system.submit(user_input, request)
-            
-            final_response = f"""我收到了你的问题："{user_input}"
-
-🔄 我已经启动后台任务（ID: {task_id[:8]}），正在尝试所有可能的方法来解决。
-
-你可以：
-- **等待完成** - 我会持续尝试直到成功
-- **查询进度** - 访问 /api/tasks/{task_id[:8]} 查看处理状态
-- **继续对话** - 我会在后台继续处理这个问题
-
-**我永不放弃，直到找到答案。**"""
-            
-            attempts.append(("后台任务", True, task_id[:8]))
-        except Exception as e:
-            attempts.append(("后台任务", False, str(e)[:50]))
-    
-    # ========== 记录解决过程 ==========
-    logger.info(f"问题解决过程: {[(a[0], a[1]) for a in attempts]}")
+    result = await chat_never_giveup(user_input, request)
     
     return {
         "success": True,
-        "response": final_response,
+        "response": result["response"],
         "model": model,
-        "intent": intent_type,
-        "confidence": confidence,
-        "route": route,
-        "attempts": attempts,  # 返回尝试过程
+        "intent": result.get("intent", "unknown"),
+        "confidence": result.get("confidence", 0.5),
+        "route": result.get("route", "slow"),
+        "attempts": result.get("attempts", []),
         "thinking_process": {
-            "deep_intent": intent_type,
+            "deep_intent": result.get("intent", "unknown"),
             "scene_role": "general",
-            "intent_confidence": confidence,
-            "response_strategy": route,
-            "solution_path": [a[0] for a in attempts if a[1]]
+            "intent_confidence": result.get("confidence", 0.5),
+            "response_strategy": result.get("route", "slow"),
+            "solution_path": [a[0] for a in result.get("attempts", []) if a[1]]
         }
     }
 
