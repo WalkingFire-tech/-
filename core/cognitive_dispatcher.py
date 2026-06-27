@@ -130,6 +130,19 @@ class CognitiveDispatcher:
         
         logger.info(f"🔀 路由决策: {route}")
         
+        # ========== 快速路径：立即返回 ==========
+        if route == "fast":
+            return {
+                "route": "fast",
+                "complexity": complexity,
+                "intent_type": intent_type,
+                "confidence": confidence,
+                "capabilities": {"tools": [], "models": [], "knowledge_bases": []},
+                "execution_plan": {"tasks": []},
+                "reasoning": f"简单意图({intent_type})，快速响应",
+                "elapsed_ms": int((time.time() - start_time) * 1000)
+            }
+        
         # ========== 第四步：能力盘点（缓存） ==========
         capabilities = self._scan_capabilities()
         
@@ -247,7 +260,7 @@ class CognitiveDispatcher:
         if self.enable_capability_scan.get("models", True):
             try:
                 import requests
-                response = requests.get("http://localhost:11434/api/tags", timeout=2)
+                response = requests.get("http://localhost:11434/api/tags", timeout=1)
                 if response.status_code == 200:
                     for model in response.json().get("models", []):
                         models.append({
