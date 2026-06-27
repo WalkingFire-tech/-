@@ -1,0 +1,596 @@
+"""
+元认知执行引擎 (Metacognitive Executor Engine)
+基于认知科学、控制论、系统论的完整重构
+
+核心范式转变：
+- 从"提示-回复"转变为"感知→规划→执行→验证→沉淀"
+- 从System 1（快思考）升级为System 2（慢思考）
+- 从开环控制升级为闭环控制
+"""
+import asyncio
+import json
+import time
+from typing import Dict, List, Any, Optional
+from datetime import datetime
+from loguru import logger
+
+class MetacognitiveExecutor:
+    """
+    元认知执行引擎 - 强制闭环的神经反射弧
+    
+    跨学科理论基础：
+    - 认知科学：双重加工理论（System 1 vs System 2）
+    - 控制论：闭环控制（传感器→比较器→执行器→反馈）
+    - 计算机架构：冯·诺依曼瓶颈（程序与数据的分离）
+    - 生物学：本体感觉（Proprioception）
+    """
+    
+    def __init__(self):
+        self.capability_cache = None
+        self.metacognitive_templates = None
+        self.execution_history = []
+        
+    async def execute_with_full_metacognition(
+        self,
+        user_query: str,
+        context: Dict = None
+    ) -> Dict[str, Any]:
+        """
+        完整的元认知执行流程
+        
+        阶段0：本体感知（让系统知道自己有什么）
+        阶段1：规划生成（强制CoT + 任务分解）
+        阶段2：正交执行（工具仲裁 + 并行/串行执行）
+        阶段3：验证评估（结果比较器 + 置信度评分）
+        阶段4：反思沉淀（数据序列化 → 向量存储 → 归纳触发）
+        """
+        
+        start_time = time.time()
+        execution_trace = {
+            "query": user_query,
+            "phases": {},
+            "final_result": None,
+            "confidence": 0.0,
+            "elapsed": 0.0
+        }
+        
+        # ========== 阶段0：本体感知 ==========
+        logger.info("🧠 [阶段0] 本体感知 - 扫描系统能力")
+        
+        capability_context = await self._phase0_capability_introspection()
+        execution_trace["phases"]["capability_introspection"] = capability_context
+        
+        logger.info(f"✓ 能力清单: {len(capability_context['tools'])}个工具, {len(capability_context['models'])}个模型")
+        
+        # ========== 阶段1：规划生成 ==========
+        logger.info("🎯 [阶段1] 规划生成 - 强制CoT + 任务分解")
+        
+        plan = await self._phase1_generate_execution_plan(
+            user_query, 
+            capability_context,
+            context
+        )
+        execution_trace["phases"]["planning"] = plan
+        
+        logger.info(f"✓ 执行计划: {len(plan['tasks'])}个子任务")
+        for i, task in enumerate(plan['tasks'], 1):
+            logger.info(f"  [{i}] {task['type']}: {task['description']}")
+        
+        # ========== 阶段2：正交执行 ==========
+        logger.info("⚡ [阶段2] 正交执行 - 工具仲裁 + 并行执行")
+        
+        execution_results = await self._phase2_execute_with_arbitration(
+            plan['tasks'],
+            capability_context,
+            user_query
+        )
+        execution_trace["phases"]["execution"] = execution_results
+        
+        logger.info(f"✓ 执行完成: {execution_results['success_count']}/{execution_results['total_count']}成功")
+        
+        # ========== 阶段3：验证评估 ==========
+        logger.info("✓ [阶段3] 验证评估 - 结果比较器 + 置信度评分")
+        
+        validation = await self._phase3_validate_and_score(
+            user_query,
+            execution_results,
+            capability_context
+        )
+        execution_trace["phases"]["validation"] = validation
+        
+        logger.info(f"✓ 置信度: {validation['confidence']:.0%}, 质量: {validation['quality_score']}")
+        
+        # ========== 阶段4：反思沉淀（强制闭环） ==========
+        logger.info("🔄 [阶段4] 反思沉淀 - 数据序列化 → 归纳触发")
+        
+        # 异步执行但不阻塞返回
+        asyncio.create_task(
+            self._phase4_force_reflection(
+                user_query,
+                plan,
+                execution_results,
+                validation,
+                execution_trace
+            )
+        )
+        
+        # ========== 综合最终结果 ==========
+        final_answer = self._synthesize_final_answer(execution_results, validation)
+        
+        execution_trace["final_result"] = final_answer
+        execution_trace["confidence"] = validation["confidence"]
+        execution_trace["elapsed"] = time.time() - start_time
+        
+        logger.info(f"✅ 元认知执行完成: {execution_trace['elapsed']:.1f}秒, 置信度{validation['confidence']:.0%}")
+        
+        return execution_trace
+    
+    async def _phase0_capability_introspection(self) -> Dict:
+        """
+        阶段0：本体感知
+        让系统知道自己有什么能力（动态扫描）
+        """
+        
+        # 1. 扫描工具注册表
+        tools = []
+        try:
+            from tools.registry import tool_registry
+            for tool in tool_registry.list_tools():
+                tools.append({
+                    "name": tool["name"],
+                    "type": tool.get("type", "unknown"),
+                    "available": True
+                })
+        except Exception as e:
+            logger.debug(f"工具扫描失败: {e}")
+        
+        # 2. 扫描模型适配器
+        models = []
+        try:
+            import requests
+            response = requests.get("http://localhost:11434/api/tags", timeout=2)
+            if response.status_code == 200:
+                for model in response.json().get("models", []):
+                    models.append({
+                        "name": model["name"],
+                        "available": True
+                    })
+        except:
+            pass
+        
+        # 3. 扫描知识库
+        knowledge_bases = []
+        from pathlib import Path
+        if Path("data/knowledge_store.db").exists():
+            knowledge_bases.append({"name": "主知识库", "available": True})
+        if Path("data/experience_pool.db").exists():
+            knowledge_bases.append({"name": "经验池", "available": True})
+        
+        # 4. 构建能力上下文（注入到LLM）
+        capability_prompt = self._build_capability_prompt(tools, models, knowledge_bases)
+        
+        return {
+            "tools": tools,
+            "models": models,
+            "knowledge_bases": knowledge_bases,
+            "capability_prompt": capability_prompt,
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    def _build_capability_prompt(self, tools: List, models: List, knowledge_bases: List) -> str:
+        """构建能力注入提示（动态System Prompt前缀）"""
+        
+        prompt = "【当前能力清单 - 实时扫描结果】\n\n"
+        
+        # 工具列表
+        if tools:
+            prompt += "可调用的工具：\n"
+            for tool in tools[:10]:  # 限制长度
+                prompt += f"- {tool['name']} ({tool['type']})\n"
+            prompt += "\n"
+        
+        # 模型列表
+        if models:
+            prompt += "可调用的模型：\n"
+            for model in models:
+                prompt += f"- {model['name']}\n"
+            prompt += "\n"
+        
+        # 知识库
+        if knowledge_bases:
+            prompt += "可检索的知识库：\n"
+            for kb in knowledge_bases:
+                prompt += f"- {kb['name']}\n"
+            prompt += "\n"
+        
+        # 执行原则
+        prompt += """【执行原则】
+1. 你必须先输出"元认知计划（JSON格式）"，再执行计划
+2. 置信度低于70%必须承认无知并触发外部学习
+3. 优先使用工具而非纯推理
+4. 每个步骤都要输出置信度评估
+"""
+        
+        return prompt
+    
+    async def _phase1_generate_execution_plan(
+        self,
+        user_query: str,
+        capability_context: Dict,
+        context: Dict
+    ) -> Dict:
+        """
+        阶段1：规划生成
+        利用255条闭环数据做Few-shot，强制生成执行计划
+        """
+        
+        # 1. 检索相关的元认知模板（从255条数据中）
+        metacognitive_examples = await self._retrieve_metacognitive_examples(user_query)
+        
+        # 2. 构建规划提示（强制注入工具列表）
+        planning_prompt = f"""
+{capability_context['capability_prompt']}
+
+【参考范例】
+{metacognitive_examples}
+
+【用户问题】
+{user_query}
+
+【强制要求】
+1. 你必须先分析问题，判断需要使用哪些工具
+2. 如果问题涉及计算，必须使用calculator工具
+3. 如果问题涉及搜索信息，必须使用search工具
+4. 不要仅靠推理，优先使用工具
+5. 输出格式必须是JSON
+
+请输出执行计划（JSON格式）：
+{{
+  "analysis": "问题分析（必须说明为什么选择这些工具）",
+  "tasks": [
+    {{"type": "tool", "name": "工具名", "description": "做什么", "timeout": 3}},
+    {{"type": "knowledge_retrieval", "description": "检索什么"}},
+    {{"type": "llm_reasoning", "description": "推理什么"}}
+  ],
+  "expected_confidence": 0.8
+}}
+"""
+        
+        # 3. 调用LLM生成计划（低温，强制JSON）
+        try:
+            from adapters.llm.remote_adapter import RemoteAdapter
+            adapter = RemoteAdapter(
+                model="deepseek-chat",
+                base_url="https://api.deepseek.com/v1"
+            )
+            
+            plan_text = adapter.generate(planning_prompt, temperature=0.3)
+            
+            # 解析JSON
+            import re
+            json_match = re.search(r'\{[\s\S]*\}', plan_text)
+            if json_match:
+                plan = json.loads(json_match.group())
+            else:
+                plan = self._create_default_plan(user_query)
+                
+        except Exception as e:
+            logger.debug(f"规划生成失败: {e}")
+            plan = self._create_default_plan(user_query)
+        
+        return plan
+    
+    async def _retrieve_metacognitive_examples(self, query: str) -> str:
+        """从255条闭环数据中检索相关范例"""
+        
+        try:
+            # 尝试从向量库检索
+            from core.vector_retriever import vector_retriever
+            results = vector_retriever.hybrid_search(
+                query=f"元认知: {query}",
+                top_k=3
+            )
+            
+            if results:
+                examples = []
+                for r in results[:3]:
+                    if r.get('answer'):
+                        examples.append(r['answer'][:200])
+                return "\n\n".join(examples)
+        except:
+            pass
+        
+        # 降级：返回默认范例
+        return """
+范例1：
+问题："计算圆的面积"
+计划：{"tasks": [{"type": "tool", "name": "calculator"}, {"type": "llm_reasoning"}]}
+
+范例2：
+问题："什么是机器学习？"
+计划：{"tasks": [{"type": "knowledge_retrieval"}, {"type": "llm_reasoning"}]}
+"""
+    
+    def _create_default_plan(self, query: str) -> Dict:
+        """创建默认执行计划"""
+        return {
+            "analysis": f"分析问题: {query}",
+            "tasks": [
+                {"type": "knowledge_retrieval", "description": f"检索关于'{query}'的知识"},
+                {"type": "llm_reasoning", "description": "综合推理生成答案"}
+            ],
+            "expected_confidence": 0.7
+        }
+    
+    async def _phase2_execute_with_arbitration(
+        self,
+        tasks: List[Dict],
+        capability_context: Dict,
+        user_query: str
+    ) -> Dict:
+        """
+        阶段2：正交执行
+        工具仲裁 + 并行探测 + 串行精修
+        """
+        
+        results = []
+        success_count = 0
+        
+        for i, task in enumerate(tasks, 1):
+            task_type = task.get("type")
+            task_desc = task.get("description", "")
+            
+            logger.info(f"  执行任务[{i}]: {task_type} - {task_desc}")
+            
+            result = {
+                "task": task,
+                "success": False,
+                "output": None,
+                "confidence": 0.0,
+                "elapsed": 0.0
+            }
+            
+            start = time.time()
+            
+            try:
+                if task_type == "tool":
+                    # 工具调用（硬超时3秒）
+                    tool_name = task.get("name")
+                    output = await asyncio.wait_for(
+                        self._execute_tool(tool_name, user_query),
+                        timeout=task.get("timeout", 3.0)
+                    )
+                    result["success"] = bool(output)
+                    result["output"] = output
+                    result["confidence"] = 0.8 if output else 0.0
+                    
+                elif task_type == "knowledge_retrieval":
+                    # 知识检索
+                    output = await self._retrieve_knowledge(task_desc)
+                    result["success"] = bool(output)
+                    result["output"] = output
+                    result["confidence"] = output.get("confidence", 0.5) if output else 0.0
+                    
+                elif task_type == "llm_reasoning":
+                    # LLM推理
+                    output = await self._llm_reasoning(user_query, results)
+                    result["success"] = bool(output)
+                    result["output"] = output
+                    result["confidence"] = 0.7
+                    
+            except asyncio.TimeoutError:
+                logger.warning(f"  ⏱️ 任务[{i}]超时")
+                result["error"] = "timeout"
+            except Exception as e:
+                logger.error(f"  ❌ 任务[{i}]失败: {e}")
+                result["error"] = str(e)
+            
+            result["elapsed"] = time.time() - start
+            results.append(result)
+            
+            if result["success"]:
+                success_count += 1
+        
+        return {
+            "results": results,
+            "success_count": success_count,
+            "total_count": len(tasks)
+        }
+    
+    async def _execute_tool(self, tool_name: str, query: str) -> Any:
+        """执行工具"""
+        try:
+            from tools.registry import tool_registry
+            result = tool_registry.execute(tool_name, {"query": query})
+            return result
+        except:
+            return None
+    
+    async def _retrieve_knowledge(self, query: str) -> Any:
+        """检索知识"""
+        try:
+            from core.learning import enhanced_learner
+            return enhanced_learner.retrieve_knowledge(query)
+        except:
+            return None
+    
+    async def _llm_reasoning(self, query: str, previous_results: List) -> str:
+        """LLM推理"""
+        try:
+            from adapters.llm.remote_adapter import RemoteAdapter
+            adapter = RemoteAdapter(
+                model="deepseek-chat",
+                base_url="https://api.deepseek.com/v1"
+            )
+            return adapter.generate(query)
+        except:
+            return None
+    
+    async def _phase3_validate_and_score(
+        self,
+        user_query: str,
+        execution_results: Dict,
+        capability_context: Dict
+    ) -> Dict:
+        """
+        阶段3：验证评估
+        结果比较器 + 置信度评分
+        """
+        
+        # 计算平均置信度
+        confidences = [
+            r["confidence"] 
+            for r in execution_results["results"] 
+            if r["success"]
+        ]
+        
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0.5
+        
+        # 质量评分
+        quality_score = self._calculate_quality_score(
+            user_query,
+            execution_results,
+            avg_confidence
+        )
+        
+        # 检查是否需要外部学习
+        need_external_learning = avg_confidence < 0.7
+        
+        return {
+            "confidence": avg_confidence,
+            "quality_score": quality_score,
+            "need_external_learning": need_external_learning,
+            "success_rate": execution_results["success_count"] / execution_results["total_count"]
+        }
+    
+    def _calculate_quality_score(self, query: str, results: Dict, confidence: float) -> float:
+        """计算质量分数"""
+        score = confidence * 100
+        
+        # 成功率加成
+        success_rate = results["success_count"] / results["total_count"]
+        score += success_rate * 20
+        
+        return min(100, score)
+    
+    async def _phase4_force_reflection(
+        self,
+        user_query: str,
+        plan: Dict,
+        execution_results: Dict,
+        validation: Dict,
+        execution_trace: Dict
+    ):
+        """
+        阶段4：反思沉淀（强制闭环）
+        数据序列化 → 向量存储 → 归纳触发
+        """
+        
+        logger.info("🔄 [后台] 强制反思沉淀...")
+        
+        try:
+            # 1. 序列化经验
+            experience = {
+                "query": user_query,
+                "plan": plan,
+                "results": execution_results,
+                "validation": validation,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            # 2. 存储到经验池
+            await self._store_experience(experience)
+            
+            # 3. 触发元归纳
+            await self._trigger_meta_induction(experience)
+            
+            # 4. 转化为训练数据
+            await self._convert_to_training_data(experience)
+            
+            logger.info("✓ 反思沉淀完成")
+            
+        except Exception as e:
+            logger.error(f"反思沉淀失败: {e}")
+    
+    async def _store_experience(self, experience: Dict):
+        """存储经验"""
+        try:
+            import sqlite3
+            with sqlite3.connect("data/experience_pool.db") as conn:
+                conn.execute('''
+                    INSERT INTO experiences 
+                    (timestamp, query, plan, results, validation)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (
+                    experience["timestamp"],
+                    experience["query"],
+                    json.dumps(experience["plan"], ensure_ascii=False),
+                    json.dumps(experience["results"], ensure_ascii=False),
+                    json.dumps(experience["validation"], ensure_ascii=False)
+                ))
+                conn.commit()
+        except Exception as e:
+            logger.debug(f"经验存储失败: {e}")
+    
+    async def _trigger_meta_induction(self, experience: Dict):
+        """触发元归纳"""
+        try:
+            from meta.induction import run_induction
+            run_induction(days=7)
+            logger.info("✓ 元归纳已触发")
+        except Exception as e:
+            logger.debug(f"元归纳触发失败: {e}")
+    
+    async def _convert_to_training_data(self, experience: Dict):
+        """转化为训练数据"""
+        try:
+            # 构建训练样本
+            if experience["validation"]["confidence"] > 0.6:
+                sample = {
+                    "question": experience["query"],
+                    "answer": self._extract_best_answer(experience["results"]),
+                    "source": "metacognitive_execution"
+                }
+                
+                # 存储为JSONL
+                with open("data/pending_training.jsonl", "a", encoding="utf-8") as f:
+                    f.write(json.dumps(sample, ensure_ascii=False) + "\n")
+                
+                logger.info("✓ 训练数据已生成")
+        except Exception as e:
+            logger.debug(f"训练数据生成失败: {e}")
+    
+    def _extract_best_answer(self, results: Dict) -> str:
+        """提取最佳答案"""
+        for result in results.get("results", []):
+            if result["success"] and result.get("output"):
+                output = result["output"]
+                if isinstance(output, str):
+                    return output
+                elif isinstance(output, dict) and "answer" in output:
+                    return output["answer"]
+        return ""
+    
+    def _synthesize_final_answer(self, results: Dict, validation: Dict) -> str:
+        """综合最终答案"""
+        answer = self._extract_best_answer(results)
+        
+        if not answer:
+            answer = "抱歉，我暂时无法回答这个问题。"
+        
+        # 添加置信度标记
+        if validation["confidence"] < 0.7:
+            answer = f"⚠️ 置信度较低({validation['confidence']:.0%})\n\n{answer}"
+        
+        return answer
+
+
+# 全局实例
+_executor = None
+
+def get_metacognitive_executor() -> MetacognitiveExecutor:
+    """获取元认知执行器"""
+    global _executor
+    if _executor is None:
+        _executor = MetacognitiveExecutor()
+    return _executor

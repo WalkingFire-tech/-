@@ -1,0 +1,500 @@
+"""
+文件夹浏览器前端界面示例
+在浏览器中提供类似Windows资源管理器的体验
+"""
+
+# 前端HTML模板示例
+FOLDER_BROWSER_HTML = """
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文件夹浏览器 - 学习系统</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+        }
+        
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        /* 左侧导航栏 */
+        .sidebar {
+            width: 200px;
+            background: #fff;
+            border-right: 1px solid #ddd;
+            padding: 10px;
+        }
+        
+        .sidebar h3 {
+            padding: 10px;
+            color: #333;
+            font-size: 14px;
+        }
+        
+        .sidebar-item {
+            padding: 8px 10px;
+            cursor: pointer;
+            border-radius: 4px;
+            margin: 2px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .sidebar-item:hover {
+            background: #f0f0f0;
+        }
+        
+        .sidebar-item.active {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        
+        /* 主内容区 */
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* 工具栏 */
+        .toolbar {
+            background: #fff;
+            padding: 10px;
+            border-bottom: 1px solid #ddd;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .toolbar button {
+            padding: 6px 12px;
+            border: 1px solid #ddd;
+            background: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        .toolbar button:hover {
+            background: #f0f0f0;
+        }
+        
+        .toolbar button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .path-bar {
+            flex: 1;
+            padding: 6px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: #f9f9f9;
+        }
+        
+        /* 文件列表 */
+        .file-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+        
+        .file-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 10px;
+        }
+        
+        .file-item {
+            padding: 10px;
+            background: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.2s;
+        }
+        
+        .file-item:hover {
+            background: #f0f0f0;
+            transform: translateY(-2px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .file-item.selected {
+            background: #e3f2fd;
+            border: 1px solid #1976d2;
+        }
+        
+        .file-icon {
+            font-size: 48px;
+            margin-bottom: 8px;
+        }
+        
+        .file-name {
+            font-size: 12px;
+            word-break: break-all;
+        }
+        
+        /* 底部状态栏 */
+        .status-bar {
+            background: #fff;
+            padding: 8px 10px;
+            border-top: 1px solid #ddd;
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #666;
+        }
+        
+        /* 学习面板 */
+        .learning-panel {
+            background: #fff;
+            padding: 15px;
+            border-top: 1px solid #ddd;
+        }
+        
+        .learning-panel h3 {
+            margin-bottom: 10px;
+        }
+        
+        .learning-stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .stat-card {
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 4px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #1976d2;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .learn-button {
+            width: 100%;
+            padding: 12px;
+            background: #1976d2;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        
+        .learn-button:hover {
+            background: #1565c0;
+        }
+        
+        .learn-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 左侧导航 -->
+        <div class="sidebar">
+            <h3>📁 快速访问</h3>
+            <div id="quick-access"></div>
+            
+            <h3>💾 驱动器</h3>
+            <div id="drives"></div>
+        </div>
+        
+        <!-- 主内容 -->
+        <div class="main">
+            <!-- 工具栏 -->
+            <div class="toolbar">
+                <button id="btn-back" title="后退">⬅️</button>
+                <button id="btn-forward" title="前进">➡️</button>
+                <button id="btn-up" title="上级">⬆️</button>
+                <input type="text" class="path-bar" id="path-bar" placeholder="输入路径或点击浏览...">
+                <button id="btn-go">转到</button>
+                <button id="btn-search">🔍 搜索</button>
+            </div>
+            
+            <!-- 文件列表 -->
+            <div class="file-list">
+                <div class="file-grid" id="file-grid"></div>
+            </div>
+            
+            <!-- 学习面板 -->
+            <div class="learning-panel">
+                <h3>📚 学习控制面板</h3>
+                <div class="learning-stats">
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-folders">0</div>
+                        <div class="stat-label">文件夹</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-supported">0</div>
+                        <div class="stat-label">可学习文件</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-learned">0</div>
+                        <div class="stat-label">已学习</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-knowledge">0</div>
+                        <div class="stat-label">知识条数</div>
+                    </div>
+                </div>
+                <button class="learn-button" id="btn-learn" disabled>
+                    选择文件夹后开始学习
+                </button>
+            </div>
+            
+            <!-- 状态栏 -->
+            <div class="status-bar">
+                <span id="status-text">就绪</span>
+                <span id="status-path">-</span>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE = '/api/folder';
+        
+        let currentPath = null;
+        let selectedPath = null;
+        
+        // 初始化
+        async function init() {
+            await loadQuickAccess();
+            await loadDrives();
+        }
+        
+        // 加载快速访问
+        async function loadQuickAccess() {
+            const response = await fetch(`${API_BASE}/quick-access`);
+            const data = await response.json();
+            
+            const container = document.getElementById('quick-access');
+            container.innerHTML = '';
+            
+            data.quick_access.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'sidebar-item';
+                div.innerHTML = `📁 ${item.name}`;
+                div.onclick = () => browse(item.path);
+                container.appendChild(div);
+            });
+        }
+        
+        // 加载驱动器
+        async function loadDrives() {
+            const response = await fetch(`${API_BASE}/drives`);
+            const data = await response.json();
+            
+            const container = document.getElementById('drives');
+            container.innerHTML = '';
+            
+            data.drives.forEach(drive => {
+                const div = document.createElement('div');
+                div.className = 'sidebar-item';
+                div.innerHTML = `💾 ${drive.name}`;
+                div.onclick = () => browse(drive.path);
+                container.appendChild(div);
+            });
+        }
+        
+        // 浏览路径
+        async function browse(path) {
+            const response = await fetch(`${API_BASE}/browse`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({path})
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                currentPath = data.path;
+                document.getElementById('path-bar').value = data.path;
+                document.getElementById('status-path').textContent = data.path;
+                
+                renderFileList(data);
+                updateLearningPanel(data);
+            } else {
+                alert('错误: ' + data.error);
+            }
+        }
+        
+        // 渲染文件列表
+        function renderFileList(data) {
+            const grid = document.getElementById('file-grid');
+            grid.innerHTML = '';
+            
+            // 渲染文件夹
+            data.items.folders.forEach(folder => {
+                const item = createFileItem(folder, '📁', true);
+                grid.appendChild(item);
+            });
+            
+            // 渲染支持的文件
+            data.items.supported_files.forEach(file => {
+                const icon = getFileIcon(file.extension);
+                const item = createFileItem(file, icon, false, true);
+                grid.appendChild(item);
+            });
+            
+            // 渲染不支持的文件
+            data.items.unsupported_files.forEach(file => {
+                const icon = getFileIcon(file.extension);
+                const item = createFileItem(file, icon, false, false);
+                grid.appendChild(item);
+            });
+        }
+        
+        // 创建文件项
+        function createFileItem(item, icon, isFolder, isSupported = false) {
+            const div = document.createElement('div');
+            div.className = 'file-item';
+            if (isSupported) div.classList.add('supported');
+            
+            div.innerHTML = `
+                <div class="file-icon">${icon}</div>
+                <div class="file-name">${item.name}</div>
+            `;
+            
+            div.ondblclick = () => {
+                if (isFolder) {
+                    browse(item.path);
+                }
+            };
+            
+            div.onclick = () => {
+                document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
+                div.classList.add('selected');
+                selectedPath = item.path;
+            };
+            
+            return div;
+        }
+        
+        // 获取文件图标
+        function getFileIcon(ext) {
+            const icons = {
+                '.pdf': '📄',
+                '.doc': '📝', '.docx': '📝',
+                '.xls': '📊', '.xlsx': '📊',
+                '.py': '🐍',
+                '.js': '📜',
+                '.html': '🌐',
+                '.css': '🎨',
+                '.json': '📋',
+                '.md': '📖',
+                '.txt': '📃',
+                '.csv': '📊',
+            };
+            return icons[ext] || '📄';
+        }
+        
+        // 更新学习面板
+        function updateLearningPanel(data) {
+            document.getElementById('stat-folders').textContent = data.stats.total_folders;
+            document.getElementById('stat-supported').textContent = data.stats.supported_files;
+            
+            const btn = document.getElementById('btn-learn');
+            if (data.can_learn) {
+                btn.disabled = false;
+                btn.textContent = `开始学习此文件夹 (${data.stats.supported_files} 个文件)`;
+            } else {
+                btn.disabled = true;
+                btn.textContent = '此文件夹没有可学习的文件';
+            }
+        }
+        
+        // 开始学习
+        document.getElementById('btn-learn').onclick = async () => {
+            if (!currentPath) return;
+            
+            const btn = document.getElementById('btn-learn');
+            btn.disabled = true;
+            btn.textContent = '正在学习...';
+            document.getElementById('status-text').textContent = '正在学习...';
+            
+            // 设置学习文件夹
+            await fetch(`${API_BASE}/set-learning-folder`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({path: currentPath})
+            });
+            
+            // 开始学习
+            const response = await fetch(`${API_BASE}/start-learning`, {
+                method: 'POST'
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                document.getElementById('stat-learned').textContent = 
+                    result.result.new + result.result.updated;
+                document.getElementById('status-text').textContent = 
+                    `学习完成！新增 ${result.result.new}，更新 ${result.result.updated}`;
+                btn.textContent = '学习完成！';
+            } else {
+                document.getElementById('status-text').textContent = '学习失败';
+                btn.textContent = '重试学习';
+                btn.disabled = false;
+            }
+        };
+        
+        // 工具栏按钮
+        document.getElementById('btn-back').onclick = async () => {
+            const response = await fetch(`${API_BASE}/go-back`, {method: 'POST'});
+            const data = await response.json();
+            if (data.success) renderFileList(data);
+        };
+        
+        document.getElementById('btn-forward').onclick = async () => {
+            const response = await fetch(`${API_BASE}/go-forward`, {method: 'POST'});
+            const data = await response.json();
+            if (data.success) renderFileList(data);
+        };
+        
+        document.getElementById('btn-up').onclick = async () => {
+            const response = await fetch(`${API_BASE}/go-up`, {method: 'POST'});
+            const data = await response.json();
+            if (data.success) renderFileList(data);
+        };
+        
+        document.getElementById('btn-go').onclick = () => {
+            const path = document.getElementById('path-bar').value;
+            if (path) browse(path);
+        };
+        
+        // 初始化
+        init();
+    </script>
+</body>
+</html>
+"""
+
+if __name__ == "__main__":
+    print(FOLDER_BROWSER_HTML)

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>前端刷新测试</title>
+</head>
+<body>
+    <h1>测试结果</h1>
+    <pre id="output"></pre>
+    
+    <script>
+        const output = document.getElementById('output');
+        const logs = [];
+        
+        function log(msg) {
+            logs.push(msg);
+            output.textContent = logs.join('\n');
+            console.log(msg);
+        }
+        
+        // 测试1: 检查app.js是否加载
+        log('测试1: 检查app.js是否加载');
+        const script = document.createElement('script');
+        script.src = 'http://localhost:8000/static/app.js';
+        script.onload = () => {
+            log('✓ app.js加载成功');
+            
+            // 测试2: 检查refreshModels函数是否存在
+            log('\n测试2: 检查refreshModels函数');
+            if (typeof refreshModels === 'function') {
+                log('✓ refreshModels函数存在');
+                log(`  函数签名: ${refreshModels.toString().substring(0, 100)}...`);
+            } else {
+                log('✗ refreshModels函数不存在');
+            }
+            
+            // 测试3: 检查loadModels函数是否存在
+            log('\n测试3: 检查loadModels函数');
+            if (typeof loadModels === 'function') {
+                log('✓ loadModels函数存在');
+            } else {
+                log('✗ loadModels函数不存在');
+            }
+            
+            // 测试4: 测试API调用
+            log('\n测试4: 测试API调用');
+            testAPI();
+        };
+        script.onerror = () => {
+            log('✗ app.js加载失败');
+        };
+        document.head.appendChild(script);
+        
+        async function testAPI() {
+            try {
+                log('调用 GET /api/models...');
+                const response = await fetch('http://localhost:8000/api/models');
+                const data = await response.json();
+                log(`✓ 成功，模型数: ${data.models?.length || 0}`);
+                
+                log('\n调用 POST /api/models/reload...');
+                const response2 = await fetch('http://localhost:8000/api/models/reload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data2 = await response2.json();
+                log(`✓ 成功: ${JSON.stringify(data2)}`);
+                
+            } catch (error) {
+                log(`✗ 失败: ${error.message}`);
+            }
+        }
+    </script>
+</body>
+</html>

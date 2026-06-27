@@ -1,5 +1,9 @@
+// ==================== 版本信息 ====================
+// Version: 3.1.2
+// Last Update: 2026-06-19
 // ==================== 全局配置 ====================
 const API_BASE = 'http://localhost:8000';
+const APP_VERSION = '3.1.2';
 
 // ==================== 全局变量 ====================
 let selectedModel = 'auto';
@@ -87,26 +91,150 @@ async function sendMessage() {
     addMessage('user', message);
     userInput.value = '';
     sendBtn.disabled = true;
+    
+    // 显示加载状态
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'message system';
+    loadingDiv.innerHTML = `
+        <div class="message-content">
+            <div style="background: #e3f2fd; padding: 10px; border-radius: 8px;">
+                <div style="font-weight: bold; margin-bottom: 8px;">🧠 思考过程</div>
+                <div id="thinking-steps" style="font-size: 13px; line-height: 1.6;">
+                    <div id="step-1">⏳ 分析问题中...</div>
+                </div>
+            </div>
+        </div>
+    `;
+    document.getElementById('messages').appendChild(loadingDiv);
+    
+    const thinkingSteps = document.getElementById('thinking-steps');
+    let stepCount = 1;
+    
+    function addStep(message) {
+        stepCount++;
+        const step = document.createElement('div');
+        step.id = `step-${stepCount}`;
+        step.innerHTML = `⏳ ${message}`;
+        thinkingSteps.appendChild(step);
+        return step;
+    }
+    
+    function updateStep(stepId, message) {
+        const step = document.getElementById(stepId);
+        if (step) step.innerHTML = `✅ ${message}`;
+    }
+    
+    const startTime = Date.now();
+    
+    // 模拟思考步骤（让用户看到进度）
+    setTimeout(() => updateStep('step-1', '问题分析完成'), 300);
+    const step2 = addStep('检索知识库...');
+    setTimeout(() => updateStep('step-2', '知识检索完成'), 800);
+    const step3 = addStep('准备调用模型...');
 
     try {
         const requestBody = { message };
         if (selectedModel !== 'auto') requestBody.model = selectedModel;
 
+        // 添加30秒超时
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000);
+        
         const response = await fetch(`${API_BASE}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody)
+            body: JSON.stringify(requestBody),
+            signal: controller.signal
         });
+        
+        clearTimeout(timeoutId);
+        
+        // 更新模型调用步骤
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        updateStep('step-3', `模型响应完成 (${elapsed}秒)`);
+        
+        // 添加总耗时
+        const finalStep = addStep(`✨ 总耗时: ${elapsed}秒`);
+        
+        // 3秒后折叠思考过程
+        setTimeout(() => {
+            loadingDiv.innerHTML = `
+                <div class="message-content">
+                    <details style="background: #f5f5f5; padding: 8px; border-radius: 5px;">
+                        <summary style="cursor: pointer; font-weight: bold;">💭 思考过程 (${elapsed}秒)</summary>
+                        <div style="font-size: 13px; margin-top: 8px; line-height: 1.6;">${thinkingSteps.innerHTML}</div>
+                    </details>
+                </div>
+            `;
+        }, 3000);
+        
         const data = await response.json();
 
         if (data.error) {
             addMessage('system', `❌ 错误: ${data.error}`);
         } else {
-            // 显示思考过程
-            if (data.intent) {
+            // 显示思考过程（真实过程，非编造）
+            if (data.thinking_process) {
                 const thinkingDiv = document.createElement('div');
                 thinkingDiv.className = 'thinking-info';
-                thinkingDiv.innerHTML = `<span class="thinking-label">💭 思考过程</span> <span class="thinking-detail">识别意图: <strong>${data.intent}</strong></span>`;
+                const tp = data.thinking_process;
+                thinkingDiv.innerHTML = `
+                    <details style="margin: 5px 0;">
+                        <summary style="cursor: pointer; color: #666;">
+                            <span class="thinking-label">💭 思考过程</span>
+                            <span style="margin-left: 10px; font-size: 12px;">${tp.deep_intent} (置信度${Math.round(tp.intent_confidence * 100)}%)</span>
+                        </summary>
+                        <div style="margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 5px; font-size: 13px;">
+                            <p><strong>场景角色:</strong> ${tp.scene_role} (${Math.round(tp.role_confidence * 100)}%)</p>
+                            <p><strong>理解意图:</strong> ${tp.deep_intent}</p>
+                            ${tp.evidence && tp.evidence.length > 0 ? `<p><strong>判断依据:</strong> ${tp.evidence.join(', ')}</p>` : ''}
+                            <p><strong>响应策略:</strong> ${tp.response_strategy}</p>
+                            ${tp.learning_triggered ? '<p style="color: #4caf50;">📚 从您的输入中学习</p>' : ''}
+                        </div>
+                    </details>
+                `;
+                document.getElementById('messages').appendChild(thinkingDiv);
+            } else if (data.intent) {
+                // 降级显示（无详细思考过程时）
+                const thinkingDiv = document.createElement('div');
+                thinkingDiv.className = 'thinking-info';
+                
+                // 构建详细的思考过程
+                let thinkingHtml = `<span class="thinking-label">💭 思考过程</span>`;
+                
+                // 显示意图
+                thinkingHtml += `<span class="thinking-detail">识别意图: <strong>${data.intent}</strong></span>`;
+                
+                // 显示RPV循环（如果有）
+                if (data.plan) {
+                    const tasks = data.plan.tasks || [];
+                    thinkingHtml += `<span class="thinking-detail">执行计划: <strong>${tasks.length}个任务</strong></span>`;
+                    
+                    // 显示任务列表
+                    if (tasks.length > 0) {
+                        const taskList = tasks.slice(0, 3).map(t => t.type || t.description || '未知').join(' → ');
+                        thinkingHtml += `<span class="thinking-detail" style="font-size: 12px; color: #888;">${taskList}</span>`;
+                    }
+                }
+                
+                // 显示置信度
+                if (data.confidence) {
+                    const confPercent = Math.round(data.confidence * 100);
+                    thinkingHtml += `<span class="thinking-detail">置信度: <strong>${confPercent}%</strong></span>`;
+                }
+                
+                // 显示执行结果（如果有）
+                if (data.execution_results && data.execution_results.length > 0) {
+                    const successCount = data.execution_results.filter(r => r.status === 'success').length;
+                    thinkingHtml += `<span class="thinking-detail">执行结果: <strong>${successCount}/${data.execution_results.length}成功</strong></span>`;
+                }
+                
+                // 显示耗时
+                if (data.elapsed) {
+                    thinkingHtml += `<span class="thinking-detail">耗时: <strong>${data.elapsed.toFixed(1)}秒</strong></span>`;
+                }
+                
+                thinkingDiv.innerHTML = thinkingHtml;
                 document.getElementById('messages').appendChild(thinkingDiv);
             }
             const responseHtml = formatResponseEnhanced(data.response);
@@ -128,7 +256,14 @@ async function sendMessage() {
             document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
         }
     } catch (error) {
-        addMessage('system', `❌ 请求失败: ${error.message}`);
+
+        loadingDiv.remove();
+        
+        if (error.name === 'AbortError') {
+            addMessage('system', '⏱️ 请求超时（30秒），请简化问题或稍后重试');
+        } else {
+            addMessage('system', `❌ 请求失败: ${error.message}`);
+        }
     } finally {
         sendBtn.disabled = false;
         userInput.focus();
@@ -247,20 +382,28 @@ async function runInduction() {
 }
 
 // 健康检查和统计
-async function checkHealth() {
+async function checkHealth(retryCount = 0, maxRetry = 5) {
+    const indicator = document.getElementById('status-indicator');
+    const statusText = document.getElementById('status-text');
+    
     try {
-        const response = await fetch(`${API_BASE}/api/health`);
+        const response = await fetch(`${API_BASE}/api/health`, {
+            signal: AbortSignal.timeout(5000)
+        });
         const data = await response.json();
-        const indicator = document.getElementById('status-indicator');
-        const statusText = document.getElementById('status-text');
         if (indicator) indicator.classList.add('connected');
         if (statusText) statusText.textContent = `已连接 (v${data.version})`;
+        return true;
     } catch (error) {
-        const indicator = document.getElementById('status-indicator');
-        const statusText = document.getElementById('status-text');
+        if (retryCount < maxRetry) {
+            if (statusText) statusText.textContent = `连接中... (${retryCount + 1}/${maxRetry})`;
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            return checkHealth(retryCount + 1, maxRetry);
+        }
         if (indicator) indicator.classList.remove('connected');
-        if (statusText) statusText.textContent = '连接失败';
+        if (statusText) statusText.textContent = '连接失败（点击重试）';
         console.error('健康检查失败:', error);
+        return false;
     }
 }
 
@@ -335,6 +478,112 @@ async function loadModels() {
         });
     } catch (error) {
         console.error('加载模型失败:', error);
+    }
+}
+
+async function refreshModels(event) {
+    // 获取按钮元素
+    const refreshBtn = event ? event.target : document.getElementById('refresh-models-btn');
+    if (!refreshBtn) {
+        console.error('找不到刷新按钮');
+        return;
+    }
+    
+    const originalText = refreshBtn.textContent;
+    refreshBtn.textContent = '⏳ 刷新中...';
+    refreshBtn.disabled = true;
+    
+    try {
+        console.log('开始刷新模型...');
+        const response = await fetch(`${API_BASE}/api/models/reload`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        console.log('刷新响应:', data);
+        
+        if (data.success) {
+            // 重新加载模型列表
+            await loadModels();
+            
+            refreshBtn.textContent = '✓ 已刷新';
+            setTimeout(() => {
+                refreshBtn.textContent = originalText;
+                refreshBtn.disabled = false;
+            }, 1500);
+            
+            // 更新统计
+            const statModels = document.getElementById('stat-models');
+            if (statModels) statModels.textContent = data.total;
+            
+            // 检查Ollama状态
+            const ollamaStatus = data.ollama_status || 'unknown';
+            
+            // 显示新增模型
+            if (data.added && data.added.length > 0) {
+                console.log(`✅ 新增模型: ${data.added.join(', ')}`);
+                alert(`✅ 检测到 ${data.added.length} 个新模型:\n${data.added.join('\n')}`);
+            } else if (ollamaStatus === 'offline') {
+                console.log('⚠️ Ollama服务未启动');
+                alert(`⚠️ ${data.message}\n\n提示: 运行 'ollama serve' 启动服务`);
+            } else if (ollamaStatus === 'error') {
+                console.log('⚠️ Ollama服务异常');
+                alert(`⚠️ ${data.message}`);
+            } else {
+                console.log('✅ 模型列表已刷新');
+            }
+        } else {
+            refreshBtn.textContent = '✗ 失败';
+            setTimeout(() => {
+                refreshBtn.textContent = originalText;
+                refreshBtn.disabled = false;
+            }, 2000);
+            console.error('刷新模型失败:', data.error);
+            alert(`❌ 刷新失败: ${data.error || '未知错误'}`);
+        }
+    } catch (error) {
+        refreshBtn.textContent = '✗ 错误';
+        setTimeout(() => {
+            refreshBtn.textContent = originalText;
+            refreshBtn.disabled = false;
+        }, 2000);
+        console.error('刷新模型失败:', error);
+        alert(`❌ 请求失败: ${error.message}\n\n请检查后端服务是否运行`);
+    }
+}
+
+let autoRefreshInterval = null;
+
+function startAutoRefresh(intervalSeconds = 30) {
+    if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+    autoRefreshInterval = setInterval(async () => {
+        try {
+            const response = await fetch(`${API_BASE}/api/models/reload`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await response.json();
+            if (data.success && data.added && data.added.length > 0) {
+                await loadModels();
+                const statModels = document.getElementById('stat-models');
+                if (statModels) statModels.textContent = data.total;
+                console.log(`🔄 自动检测到新模型: ${data.added.join(', ')}`);
+            }
+        } catch (error) {
+            console.error('自动刷新模型失败:', error);
+        }
+    }, intervalSeconds * 1000);
+}
+
+function stopAutoRefresh() {
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
     }
 }
 
@@ -968,18 +1217,40 @@ async function testExternalModel() {
 }
 
 // ==================== 初始化（DOMContentLoaded） ====================
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     // 绑定添加模型表单提交事件
     const addForm = document.getElementById('add-model-form');
     if (addForm) {
         addForm.addEventListener('submit', addModelSubmit);
     }
+    
+    // 状态文本点击重试
+    const statusText = document.getElementById('status-text');
+    if (statusText) {
+        statusText.style.cursor = 'pointer';
+        statusText.title = '点击重试连接';
+        statusText.addEventListener('click', async () => {
+            if (statusText.textContent.includes('失败')) {
+                statusText.textContent = '重新连接中...';
+                const success = await checkHealth();
+                if (success) {
+                    loadStats();
+                    loadModels();
+                }
+            }
+        });
+    }
+    
     // 其他按钮的事件已在HTML中通过onclick绑定，无需额外绑定
-    // 加载初始数据
-    checkHealth();
-    loadStats();
-    loadModels();
+    // 加载初始数据（带重试）
+    const healthSuccess = await checkHealth();
+    if (healthSuccess) {
+        loadStats();
+        loadModels();
+    }
     // 定时刷新
     setInterval(checkHealth, 30000);
     setInterval(loadStats, 60000);
+    // 自动检测新模型（每30秒）
+    startAutoRefresh(30);
 });

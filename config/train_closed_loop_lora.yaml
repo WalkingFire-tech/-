@@ -1,0 +1,47 @@
+### 闭环进化系统 LoRA 训练配置
+### 用于训练具备元认知、问题拆解、工具调用、自我进化能力的AI系统
+
+### Model
+model_name_or_path: Qwen/Qwen2.5-7B-Instruct
+
+### Method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_target: all
+lora_rank: 8
+lora_alpha: 16
+lora_dropout: 0.05
+
+### Dataset
+dataset: combined_all
+template: qwen
+cutoff_len: 2048
+overwrite_cache: true
+preprocessing_num_workers: 16
+
+### Output
+output_dir: output/closed_loop_lora
+logging_steps: 10
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: true
+
+### Train
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 4
+learning_rate: 3.0e-5
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+optim: adamw_torch
+
+### Eval
+val_size: 0.1
+per_device_eval_batch_size: 4
+eval_strategy: steps
+eval_steps: 100
+
+### Other
+resume_from_checkpoint: null

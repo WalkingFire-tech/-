@@ -220,7 +220,9 @@ class ActiveLearner:
         try:
             with sqlite3.connect(db_path) as conn:
                 if data["type"] == "correction":
-                    condition = f"raw_input LIKE '%{data['user_input'][:30]}%'"
+                    # ✅ 修复SQL注入：对用户输入进行转义
+                    escaped_input = data['user_input'][:30].replace("'", "''")
+                    condition = f"raw_input LIKE '%{escaped_input}%'"
                     action = f"correct_intent:{data.get('suggested_intent', 'chat')}"
                     
                     conn.execute('''

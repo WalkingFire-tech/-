@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>系统诊断</title>
+</head>
+<body>
+    <h1>联盟拓荒者 - 系统诊断</h1>
+    <div id="result"></div>
+    
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        const result = document.getElementById('result');
+        
+        async function diagnose() {
+            const tests = [
+                { name: '根路径', url: '/' },
+                { name: '健康检查', url: '/api/health' },
+                { name: '模型列表', url: '/api/models' },
+                { name: '系统统计', url: '/api/stats' }
+            ];
+            
+            let html = '<table border="1" cellpadding="10"><tr><th>测试项</th><th>状态</th><th>耗时</th></tr>';
+            
+            for (const test of tests) {
+                const start = performance.now();
+                try {
+                    const resp = await fetch(API_BASE + test.url);
+                    const elapsed = (performance.now() - start).toFixed(0);
+                    const status = resp.ok ? '✅ 成功' : '❌ 失败';
+                    html += `<tr><td>${test.name}</td><td>${status}</td><td>${elapsed}ms</td></tr>`;
+                } catch (e) {
+                    html += `<tr><td>${test.name}</td><td>❌ 错误</td><td>${e.message}</td></tr>`;
+                }
+            }
+            
+            html += '</table>';
+            result.innerHTML = html;
+        }
+        
+        diagnose();
+    </script>
+</body>
+</html>

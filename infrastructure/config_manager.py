@@ -176,8 +176,11 @@ class ConfigManager:
     
     def get_model_config(self, model_name: str) -> Dict[str, Any]:
         local_models = self.get("models.local.available", {})
-        if model_name in local_models:
-            return local_models[model_name]
+        # 尝试原始名称和替换冒号的名称
+        keys_to_try = [model_name, model_name.replace(":", "."), model_name.replace(".", ":")]
+        for key in keys_to_try:
+            if key in local_models:
+                return local_models[key]
         return {"enabled": False, "temperature": 0.7, "max_tokens": 512}
     
     def get_routing_config(self, task_type: str) -> RoutingConfig:

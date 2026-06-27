@@ -1,5 +1,19 @@
 import sys
 import os
+
+# 在导入任何模块之前设置镜像（关键！）
+os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+os.environ['HUGGINGFACE_HUB_CACHE'] = os.path.expanduser('~/.cache/huggingface/hub')
+os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
+os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
+
+# 导入镜像补丁
+try:
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from core.hf_mirror_patch import *
+except:
+    pass
+
 import threading
 import time
 from pathlib import Path
@@ -27,9 +41,10 @@ _cache_lock = threading.Lock()
 CACHE_MAX_SIZE = 100
 CACHE_TTL = 300  # 5分钟
 
-def _get_cache_key(user_input: str) -> str:
-    """生成缓存键"""
-    return hashlib.md5(user_input.encode()).hexdigest()
+def _get_cache_key(user_input: str, current_file: str = None, current_topic: str = None) -> str:
+    """生成缓存键（包含上下文）"""
+    context = f"{user_input}|{current_file or ''}|{current_topic or ''}"
+    return hashlib.md5(context.encode()).hexdigest()
 
 def _get_cached_response(cache_key: str) -> dict:
     """获取缓存响应"""
@@ -82,6 +97,24 @@ async def lifespan(app: FastAPI):
     global planner, intent_parser, campfire, adapters
     
     logger.info("启动后端服务...")
+    
+    # ========== 初始化能力自省系统 ==========
+    logger.info("🔍 初始化能力自省系统...")
+    try:
+        from core.capability_introspection import get_capability_introspection
+        introspection = get_capability_introspection()
+        
+        # 生成能力报告
+        report = introspection.generate_capability_report()
+        logger.info(f"\n{report}")
+        
+        # 保存能力报告
+        with open("logs/capability_report.txt", "w", encoding="utf-8") as f:
+            f.write(report)
+        
+        logger.info("✅ 能力自省系统已初始化")
+    except Exception as e:
+        logger.warning(f"能力自省初始化失败: {e}")
     
     campfire = CampfireLogger()
     intent_parser = IntentParser()
@@ -255,6 +288,53 @@ async def lifespan(app: FastAPI):
     
     logger.info("后端服务初始化完成")
     
+    # ========== 初始化反思管道 ==========
+    logger.info("🔄 初始化反思管道（闭环传动轴）...")
+    try:
+        from infrastructure.reflection_pipeline import get_reflection_pipeline
+        
+        reflection_pipeline = get_reflection_pipeline({
+            "log_db_path": "logs/campfire_log.db",
+            "jsonl_output_dir": "data/finetune/queue",
+            "enable_induction": True,
+            "enable_jsonl": True,
+            "induction_timeout_seconds": 10,
+            "min_confidence_threshold": 0.6
+        })
+        
+        logger.info("✅ 反思管道已就绪")
+    except Exception as e:
+        logger.warning(f"反思管道初始化失败: {e}")
+    
+    # ========== 初始化认知主干道（系统脊髓） ==========
+    logger.info("🧬 初始化认知主干道（系统脊髓）...")
+    try:
+        from infrastructure.cognitive_highway import get_cognitive_highway
+        from infrastructure.reflection_pipeline import get_reflection_pipeline
+        
+        # 获取反思管道
+        reflection_pipeline = get_reflection_pipeline()
+        
+        # 初始化认知主干道
+        cognitive_highway = get_cognitive_highway(
+            llm_adapter=adapters.get("deepseek-chat") or adapters.get("qwen2_5-coder_7b"),
+            tool_registry=None,
+            vector_retriever=None,
+            reflection_pipeline=reflection_pipeline
+        )
+        
+        logger.info("✅ 认知主干道已就绪")
+    except Exception as e:
+        logger.warning(f"认知主干道初始化失败: {e}")
+    
+    # 注册内置工具
+    try:
+        from tools.builtin import register_builtin_tools
+        register_builtin_tools()
+        logger.info("内置工具系统已注册")
+    except Exception as e:
+        logger.warning(f"工具系统注册失败: {e}")
+    
     # 启动学习系统
     try:
         from core.learning_engine import learning_engine
@@ -275,7 +355,33 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"学习系统启动失败: {e}")
     
+    # 启动四层进化系统
+    try:
+        from core.evolution import start_evolution_scheduler, get_meta_learner
+        
+        meta_learner = get_meta_learner()
+        meta_learner.start_auto_learning(interval_hours=6)
+        
+        start_evolution_scheduler()
+        
+        logger.info("🧬 四层进化系统已启动")
+    except Exception as e:
+        logger.warning(f"进化系统启动失败: {e}")
+    
     yield
+    
+    # 关闭进化系统
+    try:
+        from core.evolution import stop_evolution_scheduler, get_meta_learner
+        
+        stop_evolution_scheduler()
+        
+        meta_learner = get_meta_learner()
+        meta_learner.stop_auto_learning()
+        
+        logger.info("🧬 四层进化系统已关闭")
+    except Exception as e:
+        logger.debug(f"进化系统关闭失败: {e}")
     
     # 关闭时清理
     try:
@@ -300,12 +406,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# 允许前端跨域（Tauri 默认允许本地访问，但开发时可能跨端口）
+# CORS配置（生产环境建议通过环境变量配置）
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -374,11 +481,69 @@ async def health():
     """健康检查端点"""
     with adapters_lock:
         models = list(adapters.keys())
+    
+    # 检查LoRA状态
+    lora_status = {"available": False, "loaded": False}
+    try:
+        from core.lora_inference import get_lora_engine
+        lora_engine = get_lora_engine()
+        lora_status = lora_engine.get_info()
+    except:
+        pass
+    
+    # 获取能力概览
+    capabilities_summary = {}
+    try:
+        from core.capability_introspection import get_capability_introspection
+        introspection = get_capability_introspection()
+        capabilities_summary = {
+            "total": len(introspection.capabilities),
+            "available": len(introspection.get_available_capabilities()),
+            "categories": introspection.get_capabilities_by_category()
+        }
+    except:
+        pass
+    
     return {
         "status": "ok",
         "version": "3.1.1",
-        "models": models
+        "models": models,
+        "lora": lora_status,
+        "capabilities": capabilities_summary
     }
+
+@app.get("/api/capabilities")
+async def get_capabilities():
+    """获取系统能力详情"""
+    try:
+        from core.capability_introspection import get_capability_introspection
+        introspection = get_capability_introspection()
+        
+        return {
+            "success": True,
+            "capabilities": introspection.capabilities,
+            "by_category": introspection.get_capabilities_by_category(),
+            "available": introspection.get_available_capabilities(),
+            "report": introspection.generate_capability_report()
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/reflection/stats")
+async def get_reflection_stats():
+    """获取反思管道统计信息"""
+    try:
+        from infrastructure.reflection_pipeline import get_reflection_pipeline
+        
+        pipeline = get_reflection_pipeline()
+        stats = pipeline.get_stats()
+        
+        return {
+            "success": True,
+            "stats": stats
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 @app.get("/api/models")
 async def get_models():
@@ -437,7 +602,16 @@ async def reload_models():
         response = requests.get("http://localhost:11434/api/tags", timeout=3)
         
         if response.status_code != 200:
-            return {"success": False, "error": "Ollama服务不可用"}
+            # Ollama响应异常，返回当前模型
+            with adapters_lock:
+                current_models = list(adapters.keys())
+            return {
+                "success": True,
+                "added": [],
+                "total": len(current_models),
+                "message": f"Ollama服务响应异常，当前已加载{len(current_models)}个模型",
+                "ollama_status": "error"
+            }
         
         models_data = response.json()
         ollama_models = [m['name'] for m in models_data.get('models', [])]
@@ -457,22 +631,51 @@ async def reload_models():
             "success": True,
             "added": added,
             "total": len(adapters),
-            "message": f"成功加载{len(added)}个新模型"
+            "message": f"成功加载{len(added)}个新模型" if added else f"已加载{len(adapters)}个模型，无新增",
+            "ollama_status": "online"
+        }
+    except requests.exceptions.ConnectionError:
+        # Ollama服务未启动，返回当前模型
+        with adapters_lock:
+            current_models = list(adapters.keys())
+        return {
+            "success": True,
+            "added": [],
+            "total": len(current_models),
+            "message": f"Ollama服务未启动(端口11434)，当前已加载{len(current_models)}个模型。启动Ollama后可检测新模型。",
+            "ollama_status": "offline",
+            "hint": "运行 'ollama serve' 启动服务"
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        # 其他异常，返回当前模型
+        with adapters_lock:
+            current_models = list(adapters.keys())
+        return {
+            "success": True,
+            "added": [],
+            "total": len(current_models),
+            "message": f"刷新异常: {str(e)}，当前已加载{len(current_models)}个模型",
+            "ollama_status": "error"
+        }
 
 async def _trigger_external_learning(user_input: str, intent_type: str, response_text: str):
     """异步触发外部学习（不阻塞响应）"""
     try:
         from core.learning import enhanced_learner
-        enhanced_learner.learn_with_external(
-            user_input=user_input,
-            context=json.dumps({"intent": intent_type}),
-            response_text=response_text,
-            confidence=0.8,
-            auto_trigger=True
-        )
+        if enhanced_learner is None:
+            logger.debug("增强学习器未初始化，跳过外部学习")
+            return
+        
+        if hasattr(enhanced_learner, 'learn_with_external'):
+            enhanced_learner.learn_with_external(
+                user_input=user_input,
+                context=json.dumps({"intent": intent_type}),
+                response_text=response_text,
+                confidence=0.8,
+                auto_trigger=True
+            )
+        else:
+            logger.debug("增强学习器不支持learn_with_external方法")
     except Exception as e:
         logger.error(f"外部学习失败: {e}")
 
@@ -493,37 +696,17 @@ async def _trigger_learning_from_chat(user_input: str, intent_type: str):
         
         # 2. 检查是否需要外部学习（无高质量匹配时）
         from core.learning import enhanced_learner
-        result = enhanced_learner.retrieve_knowledge(user_input)
+        
+        result = None
+        if enhanced_learner is not None and hasattr(enhanced_learner, 'retrieve_knowledge'):
+            try:
+                result = enhanced_learner.retrieve_knowledge(user_input)
+            except Exception as e:
+                logger.debug(f"知识检索失败: {e}")
         
         if not result or result.get('confidence', 0) < 0.5:
-            # 触发外部搜索学习
-            logger.info(f"触发外部学习: {user_input[:50]}...")
-            
-            try:
-                from duckduckgo_search import DDGS
-                
-                with DDGS() as ddgs:
-                    search_results = list(ddgs.text(user_input, max_results=3))
-                
-                if search_results:
-                    with sqlite3.connect("data/knowledge_store.db") as conn:
-                        for sr in search_results:
-                            question = user_input
-                            answer = f"{sr.get('title', '')}\n\n{sr.get('body', '')}"
-                            source = sr.get('href', 'chat_triggered')
-                            
-                            conn.execute('''
-                                INSERT INTO knowledge_items 
-                                (question, answer, source, knowledge_type, quality_score, created_at)
-                                VALUES (?, ?, ?, 'chat_learned', 40.0, ?)
-                            ''', (question, answer, source, datetime.now().isoformat()))
-                        
-                        conn.commit()
-                    
-                    logger.info(f"从对话学习: 新增{len(search_results)}条知识")
-                    
-            except Exception as e:
-                logger.warning(f"外部搜索失败: {e}")
+            # 外部搜索已禁用（网络不可用，避免阻塞）
+            logger.debug(f"跳过外部学习（网络不可用）: {user_input[:50]}...")
         
         # 3. 检查是否匹配学习目标关键词
         try:
@@ -554,7 +737,7 @@ async def _trigger_learning_from_chat(user_input: str, intent_type: str):
 
 @app.post("/api/chat")
 async def chat(request: dict):
-    """聊天端点 - 快速响应版（目标<5秒）"""
+    """聊天端点 - 认知调度 + 快速响应"""
     user_input = request.get("message", "")
     current_file = request.get("current_file", None)
     current_topic = request.get("current_topic", None)
@@ -564,7 +747,133 @@ async def chat(request: dict):
     
     start_time = time.time()
     
-    cache_key = _get_cache_key(user_input)
+    # ========== 第一刀：认知调度器（路由决策） ==========
+    try:
+        from core.cognitive_dispatcher import get_cognitive_dispatcher
+        
+        dispatcher = get_cognitive_dispatcher()
+        
+        # 执行调度决策
+        dispatch_result = dispatcher.dispatch(user_input)
+        
+        logger.info(f"🔀 认知调度: {dispatch_result['route']} | 复杂度: {dispatch_result['complexity']:.0%}")
+        logger.info(f"📋 执行计划: {len(dispatch_result['execution_plan']['tasks'])}个任务")
+        
+        # 快路径：简单问题直接回答
+        if dispatch_result["route"] == "fast":
+            logger.info("⚡ 快路径：直接回答")
+            
+            # 简单问候/确认
+            if dispatch_result["intent_type"] == "greeting":
+                return {
+                    "response": "你好！我是联盟拓荒者，一个正在学习进化的AI系统。有什么可以帮你的吗？",
+                    "intent": "greeting",
+                    "route": "fast",
+                    "elapsed": time.time() - start_time
+                }
+            elif dispatch_result["intent_type"] == "confirmation":
+                return {
+                    "response": "好的，我明白了。",
+                    "intent": "confirmation",
+                    "route": "fast",
+                    "elapsed": time.time() - start_time
+                }
+        
+        # 构建能力注入提示
+        capability_prompt = dispatcher.build_capability_prompt(dispatch_result["capabilities"])
+        
+    except Exception as e:
+        logger.warning(f"认知调度失败，使用默认路径: {e}")
+        dispatch_result = {"route": "slow", "execution_plan": {"tasks": []}}
+        capability_prompt = ""
+    
+    # ========== 能力自省：系统知道自己能做什么 ==========
+    try:
+        from core.capability_introspection import get_capability_scheduler
+        scheduler = get_capability_scheduler()
+        
+        # 分析问题，确定需要哪些能力
+        analysis = scheduler.analyze_problem(user_input)
+        
+        logger.info(f"🧠 能力分析: {analysis['problem_type']}")
+        logger.info(f"📋 需要能力: {analysis['available']}")
+        
+        # 如果缺失关键能力，记录警告
+        if analysis['missing']:
+            logger.warning(f"⚠️ 缺失能力: {analysis['missing']}")
+        
+        # 将分析结果传递给后续流程
+        capability_analysis = analysis
+        
+    except Exception as e:
+        logger.debug(f"能力分析失败: {e}")
+        capability_analysis = None
+    
+    # ========== 元认知执行：完整的感知→规划→执行→验证→沉淀 ==========
+    
+    # 优先使用认知主干道（系统脊髓）
+    try:
+        from infrastructure.cognitive_highway import get_cognitive_highway
+        
+        logger.info("🧬 启动认知主干道（RPV循环）")
+        
+        highway = get_cognitive_highway()
+        
+        # 执行完整的RPV循环
+        highway_result = await highway.process(user_input)
+        
+        # 如果认知主干道成功
+        if highway_result and highway_result.get("answer"):
+            logger.info(f"✅ 认知主干道成功: {highway_result['elapsed']:.1f}秒")
+            
+            return {
+                "response": highway_result["answer"],
+                "intent": "cognitive_highway",
+                "confidence": highway_result["confidence"],
+                "plan": highway_result.get("plan_used"),
+                "execution_results": highway_result.get("execution_results"),
+                "elapsed": highway_result["elapsed"]
+            }
+        
+    except Exception as e:
+        logger.warning(f"认知主干道失败，降级到元认知执行: {e}")
+    
+    # 降级：使用元认知执行引擎
+    try:
+        from core.metacognitive_executor import get_metacognitive_executor
+        
+        logger.info("🚀 启动元认知执行引擎")
+        
+        executor = get_metacognitive_executor()
+        
+        # 执行完整的元认知流程
+        execution_trace = await executor.execute_with_full_metacognition(
+            user_query=user_input,
+            context={
+                "current_file": current_file,
+                "current_topic": current_topic
+            }
+        )
+        
+        # 如果元认知执行成功
+        if execution_trace and execution_trace.get("final_result"):
+            logger.info(f"✅ 元认知执行成功: {execution_trace['elapsed']:.1f}秒")
+            
+            return {
+                "response": execution_trace["final_result"],
+                "intent": "metacognitive_execution",
+                "confidence": execution_trace["confidence"],
+                "reasoning_chain": [
+                    f"[阶段{phase}] {str(details)[:100]}"
+                    for phase, details in execution_trace["phases"].items()
+                ],
+                "elapsed": execution_trace["elapsed"]
+            }
+        
+    except Exception as e:
+        logger.warning(f"元认知执行失败，降级到常规流程: {e}")
+    
+    cache_key = _get_cache_key(user_input, current_file, current_topic)
     cached = _get_cached_response(cache_key)
     if cached:
         logger.info(f"缓存命中: {user_input[:50]}...")
@@ -572,6 +881,32 @@ async def chat(request: dict):
         return cached
     
     try:
+        dialogue_result = None
+        try:
+            from core.dialogue import process_dialogue
+            dialogue_result = process_dialogue(user_input)
+            
+            if dialogue_result.action_required and dialogue_result.action_type == "learn":
+                try:
+                    from core.learning import enhanced_learner
+                    if dialogue_result.learning_content:
+                        enhanced_learner.learn(
+                            dialogue_result.learning_content,
+                            source="user_contribution",
+                            metadata={"dialogue_context": dialogue_result.to_dict()}
+                        )
+                        logger.info(f"从用户贡献学习: {dialogue_result.learning_content[:50]}...")
+                except Exception as e:
+                    logger.warning(f"对话学习失败: {e}")
+            
+            logger.debug(
+                f"对话认知: 角色={dialogue_result.scene_hint.primary_role.value}, "
+                f"意图={dialogue_result.understanding.deep_intent.primary.intent_type.value}, "
+                f"置信度={dialogue_result.understanding.deep_intent.primary.confidence:.2f}"
+            )
+        except Exception as e:
+            logger.warning(f"对话认知引擎失败: {e}")
+        
         intent = intent_parser.parse(user_input)
         
         if campfire:
@@ -589,9 +924,54 @@ async def chat(request: dict):
             
             async def run_model():
                 try:
-                    # 不限制超时，让模型充分思考
+                    # 模型推理超时设置（60秒）
+                    MODEL_TIMEOUT = 60
+                    
+                    # ========== 使用可见闭环执行系统 ==========
+                    try:
+                        from core.visible_closed_loop import VisibleClosedLoop
+                        
+                        logger.info("🔄 启动可见闭环执行系统")
+                        
+                        closed_loop = VisibleClosedLoop()
+                        
+                        # 执行完整闭环
+                        loop_result = await closed_loop.execute_full_loop(
+                            question=user_input,
+                            model_adapter=adapters.get("deepseek-chat") or adapters.get("qwen2_5-coder_7b"),
+                            knowledge_base=enhanced_learner if 'enhanced_learner' in dir() else None,
+                            tools=None
+                        )
+                        
+                        if loop_result and loop_result.get("answer"):
+                            logger.info(f"✅ 闭环执行完成: {len(closed_loop.steps)}步, 置信度{loop_result['confidence']:.0%}")
+                            
+                            # 返回结果和推理链
+                            return {
+                                "answer": loop_result["answer"],
+                                "confidence": loop_result["confidence"],
+                                "reasoning_chain": [
+                                    f"{step['step']} → {step['action']}: {step['detail']}"
+                                    for step in closed_loop.steps
+                                ],
+                                "elapsed": loop_result["elapsed"]
+                            }
+                        else:
+                            logger.debug("闭环执行未获得有效结果，降级到常规推理")
+                            
+                    except Exception as e:
+                        logger.debug(f"闭环执行失败，降级: {e}")
+                    
+                    # ========== 降级：常规模型推理 ==========
+                    # 执行模型推理
                     await loop.run_in_executor(None, planner.plan, intent)
-                    return await response_queue.get()
+                    
+                    # 等待响应，带超时
+                    try:
+                        return await asyncio.wait_for(response_queue.get(), timeout=MODEL_TIMEOUT)
+                    except asyncio.TimeoutError:
+                        logger.error(f"模型响应超时 ({MODEL_TIMEOUT}秒)")
+                        return None
                 except Exception as e:
                     logger.error(f"模型推理失败: {e}")
                     return None
@@ -638,6 +1018,14 @@ async def chat(request: dict):
             # 等待模型响应（主要延迟）
             response = await model_task
             
+            # 检查是否是闭环结果
+            reasoning_chain = None
+            if isinstance(response, dict) and "answer" in response:
+                # 闭环执行结果
+                reasoning_chain = response.get("reasoning_chain", [])
+                response = response.get("answer")
+                logger.info(f"闭环推理链: {len(reasoning_chain)}步")
+            
             # 等待其他任务完成（最多等待1秒）
             knowledge_result = None
             vector_result = None
@@ -662,6 +1050,80 @@ async def chat(request: dict):
                 campfire.log_assistant(str(response)[:1000])
             
             response_text = str(response) if response else ""
+            
+            # 诚实学习系统 - 不确定就承认，不要瞎编
+            try:
+                from core.honest_learning_system import honest_system
+                
+                # 评估置信度（从响应质量推断）
+                quality_score = 0.7  # 默认
+                if len(response_text) < 50:
+                    quality_score = 0.3
+                elif any(kw in response_text for kw in ['可能', '大概', '不确定']):
+                    quality_score = 0.5
+                
+                # 诚实处理
+                honest_response, is_valid = honest_system.process_with_honesty(
+                    user_input, response_text, quality_score
+                )
+                
+                if not is_valid:
+                    # 置信度不足或验证失败，使用诚实响应
+                    response_text = honest_response
+                    logger.info("使用诚实响应（拒绝瞎编）")
+                    
+            except Exception as e:
+                logger.warning(f"诚实学习系统失败: {e}")
+            
+            # 需求贯穿验证（确保需求核心始终被满足）
+            try:
+                from core.requirement_validator import requirement_validator
+                
+                # 提取核心需求
+                requirement = requirement_validator.extract_core_requirement(user_input)
+                
+                # 验证响应是否满足需求
+                is_valid, issues = requirement_validator.validate_response_against_requirement(
+                    requirement, response_text
+                )
+                
+                if not is_valid:
+                    logger.warning(f"⚠️ 需求验证失败:")
+                    for issue in issues:
+                        logger.warning(f"  {issue}")
+                    
+                    # 标记需要重新回答
+                    requirement_issues = issues
+                    
+            except Exception as e:
+                logger.warning(f"需求验证失败: {e}")
+            
+            # 知识缺失检测和自动学习进化
+            try:
+                from core.knowledge_gap_detector import gap_detector
+                from core.auto_learning_evolution import auto_evolution
+                
+                # 检测知识缺失
+                has_gap, reason, issues = gap_detector.detect_knowledge_gap(
+                    user_input, response_text, confidence=0.7
+                )
+                
+                if has_gap:
+                    logger.warning(f"⚠️ 检测到知识缺失: {reason}")
+                    logger.info(f"问题: {issues}")
+                    
+                    # 触发自动学习进化
+                    evolution_result = auto_evolution.process_query_with_evolution(
+                        user_input, response_text, confidence=0.7
+                    )
+                    
+                    if evolution_result['corrected']:
+                        # 使用修正后的响应
+                        response_text = evolution_result['final_response']
+                        logger.info("✓ 响应已通过外部学习校准修正")
+                        
+            except Exception as e:
+                logger.warning(f"知识缺失检测失败: {e}")
             
             # 优先使用高质量检索结果
             if knowledge_result and knowledge_result.get('confidence', 0) > 0.7:
@@ -750,11 +1212,92 @@ async def chat(request: dict):
                 else:
                     response = "抱歉，我暂时无法回答这个问题。请稍后再试或换一种方式提问。"
             
+            # ========== 闭环推理：验证→反思→学习→优化 ==========
+            try:
+                from core.closed_loop_reasoning import ClosedLoopReasoning
+                
+                reasoning_engine = ClosedLoopReasoning(planner, None, adapters)
+                
+                # 执行完整闭环（异步，不阻塞）
+                async def run_closed_loop():
+                    try:
+                        closed_result = await reasoning_engine.reason_with_full_cycle(
+                            user_input,
+                            str(response)
+                        )
+                        
+                        # 如果闭环推理发现更好的答案
+                        if closed_result.get("confidence", 0) > 0.8:
+                            # 更新响应
+                            response = closed_result["answer"]
+                            
+                            # 添加推理链到结果
+                            result["reasoning_chain"] = closed_result.get("reasoning_chain", [])
+                            
+                            logger.info(f"闭环推理完成: 置信度 {closed_result['confidence']:.0%}")
+                        
+                        return closed_result
+                    except Exception as e:
+                        logger.debug(f"闭环推理失败: {e}")
+                        return None
+                
+                # 启动闭环推理（后台执行，不阻塞）
+                if len(str(response)) > 20:  # 只对有意义的响应执行
+                    asyncio.create_task(run_closed_loop())
+                    
+            except Exception as e:
+                logger.debug(f"闭环推理初始化失败: {e}")
+            
             result = {"response": str(response), "intent": intent.type}
+            
+            # 添加闭环推理链（如果有）
+            if reasoning_chain:
+                result["reasoning_chain"] = reasoning_chain
+                result["closed_loop"] = True
+            
+            # 添加真实的思考过程（基于对话认知引擎）
+            if dialogue_result:
+                result["thinking_process"] = {
+                    "scene_role": dialogue_result.scene_hint.primary_role.value,
+                    "role_confidence": round(dialogue_result.scene_hint.confidence, 2),
+                    "deep_intent": dialogue_result.understanding.deep_intent.primary.description,
+                    "intent_confidence": round(dialogue_result.understanding.deep_intent.primary.confidence, 2),
+                    "evidence": dialogue_result.understanding.deep_intent.primary.evidence[:3],
+                    "response_strategy": dialogue_result.understanding.response_strategy,
+                    "learning_triggered": dialogue_result.should_learn
+                }
             
             # 记录响应时间
             total_time = time.time() - start_time
             logger.info(f"聊天响应完成，总耗时: {total_time:.2f}s")
+            
+            # ========== 触发反思管道（闭环传动轴） ==========
+            try:
+                from infrastructure.reflection_pipeline import get_reflection_pipeline
+                
+                pipeline = get_reflection_pipeline()
+                
+                # 构建执行上下文
+                execution_context = {
+                    "query": user_input,
+                    "plan": capability_analysis if 'capability_analysis' in dir() else None,
+                    "tool_calls": [],  # 可从推理链提取
+                    "final_answer": str(response),
+                    "confidence": 0.7,  # 可从验证结果获取
+                    "model_used": "deepseek-chat",
+                    "duration_ms": int(total_time * 1000),
+                    "extra": {
+                        "intent": intent.type,
+                        "reasoning_chain": reasoning_chain if 'reasoning_chain' in dir() else None
+                    }
+                }
+                
+                # 异步触发管道（不阻塞响应）
+                asyncio.create_task(pipeline.process(execution_context))
+                
+                logger.debug("🔄 反思管道已触发")
+            except Exception as e:
+                logger.debug(f"反思管道触发失败: {e}")
             
             # 缓存响应（仅缓存高质量响应）
             if len(response_text) > 50:
@@ -772,7 +1315,11 @@ async def chat(request: dict):
         
     except Exception as e:
         logger.error(f"处理请求失败: {e}")
-        return {"error": str(e)}
+        # 不暴露内部错误细节
+        return {
+            "error": "处理请求时发生错误，请稍后重试",
+            "error_code": "INTERNAL_ERROR"
+        }
 
 @app.get("/api/config/external")
 async def get_external_config():
@@ -963,9 +1510,17 @@ async def get_stats():
 async def send_feedback(request: dict):
     """接收用户反馈并自动学习"""
     score = request.get("score", 0)
+    feedback_text = request.get("text", "")
     
     try:
         import sqlite3
+        
+        # 1. 使用反馈分类器分类
+        from infrastructure.feedback_classifier import feedback_classifier
+        fb_result = feedback_classifier.process_feedback(feedback_text)
+        fb_type = fb_result['type']
+        
+        logger.info(f"反馈类型: {fb_type}, 原始分数: {score}")
         
         with sqlite3.connect('data/experience_pool.db') as conn:
             conn.row_factory = sqlite3.Row
@@ -981,37 +1536,94 @@ async def send_feedback(request: dict):
             last_exp = cursor.fetchone()
             
             if last_exp:
-                # 更新反馈
-                cursor.execute("""
-                    UPDATE experiences
-                    SET user_feedback = ?
-                    WHERE id = ?
-                """, (score, last_exp['id']))
-                
-                conn.commit()
-                
-                # 如果用户点赞（正面反馈），自动学习保存到知识库
-                if score > 0 and last_exp['response']:
+                # 2. 如果是纠错，更新事实库
+                if fb_result['should_update_facts'] and feedback_text:
                     try:
-                        from infrastructure.knowledge_injector import KnowledgeInjector
+                        from infrastructure.fact_store import fact_store
+                        corrections = feedback_classifier.parse_correction(feedback_text)
                         
-                        knowledge_injector = KnowledgeInjector()
+                        for corr in corrections:
+                            # 简化处理：将纠错内容添加为事实
+                            fact_store.add_assertion(
+                                question=last_exp['raw_input'],
+                                subject=corr.new_assertion[:20],
+                                predicate="正确描述",
+                                obj=corr.new_assertion,
+                                source="user_correction",
+                                confidence=0.9
+                            )
                         
-                        # 保存为知识点
-                        knowledge_injector.inject_knowledge(
+                        logger.info(f"纠错已注入事实库: {len(corrections)}条")
+                    except Exception as e:
+                        logger.warning(f"纠错注入失败: {e}")
+                
+                # 3. 使用新的适应度评估器
+                if fb_result['should_update_fitness']:
+                    try:
+                        from infrastructure.fitness_evaluator import fitness_evaluator
+                        
+                        fitness_score = fitness_evaluator.evaluate(
                             question=last_exp['raw_input'],
-                            answer=last_exp['response'][:1000],  # 限制长度
-                            source="user_feedback_positive",
-                            intent_type=last_exp['intent_type'],
-                            metadata={
-                                'quality_score': last_exp['quality_score'],
-                                'type': 'conversation_learning'
-                            }
+                            response=last_exp['response'],
+                            user_feedback=score,
+                            intent_type=last_exp['intent_type']
                         )
                         
-                        logger.info(f"从用户反馈学习: {last_exp['raw_input'][:50]}...")
+                        logger.info(
+                            f"适应度评估: 总分={fitness_score.final_score:.1f}, "
+                            f"客观={fitness_score.objective_score:.1f}, "
+                            f"主观={fitness_score.subjective_score:.1f}, "
+                            f"事实性={fitness_score.is_factual_question}"
+                        )
+                        
+                        # 更新经验的质量分数
+                        cursor.execute("""
+                            UPDATE experiences
+                            SET user_feedback = ?, quality_score = ?
+                            WHERE id = ?
+                        """, (score, int(fitness_score.final_score), last_exp['id']))
+                        
+                        conn.commit()
+                        
+                        # 检查是否应该注入知识
+                        should_inject, reason = fitness_evaluator.should_inject_knowledge(fitness_score)
+                        
+                        if should_inject and last_exp['response']:
+                            from infrastructure.knowledge_injector import KnowledgeInjector
+                            
+                            knowledge_injector = KnowledgeInjector()
+                            knowledge_injector.inject_knowledge(
+                                question=last_exp['raw_input'],
+                                answer=last_exp['response'][:1000],
+                                source="fitness_evaluated",
+                                intent_type=last_exp['intent_type'],
+                                metadata={
+                                    'fitness_score': fitness_score.final_score,
+                                    'objective_score': fitness_score.objective_score,
+                                    'subjective_score': fitness_score.subjective_score,
+                                    'reason': reason
+                                }
+                            )
+                            
+                            logger.info(f"适应度评估触发知识注入: {reason}")
+                    
                     except Exception as e:
-                        logger.warning(f"自动学习失败: {e}")
+                        logger.warning(f"适应度评估失败: {e}")
+                        # 降级：使用原始分数
+                        cursor.execute("""
+                            UPDATE experiences
+                            SET user_feedback = ?
+                            WHERE id = ?
+                        """, (score, last_exp['id']))
+                        conn.commit()
+                else:
+                    # 纠错类型：只更新反馈，不更新质量分数
+                    cursor.execute("""
+                        UPDATE experiences
+                        SET user_feedback = ?
+                        WHERE id = ?
+                    """, (score, last_exp['id']))
+                    conn.commit()
         
         if score < 0:
             from infrastructure.event_bus import bus
@@ -1022,9 +1634,9 @@ async def send_feedback(request: dict):
             
             _handle_negative_feedback_for_rules()
         
-        logger.info(f"收到用户反馈: {score}")
+        logger.info(f"收到用户反馈: {score}, 类型: {fb_type}")
         
-        return {"success": True}
+        return {"success": True, "feedback_type": fb_type}
     except Exception as e:
         logger.error(f"反馈处理失败: {e}")
         return {"success": False, "error": str(e)}
@@ -3590,6 +4202,102 @@ async def analyze_pdf(request: Request):
             
     except Exception as e:
         logger.error(f"PDF分析失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/tools/list")
+async def list_tools(category: str = None):
+    """获取工具列表"""
+    try:
+        from tools.registry import registry
+        from tools.base import ToolCategory
+        
+        cat = None
+        if category:
+            try:
+                cat = ToolCategory(category)
+            except ValueError:
+                pass
+        
+        tools = registry.list_tools(category=cat)
+        
+        return {
+            "success": True,
+            "tools": [tool.to_dict() for tool in tools],
+            "count": len(tools)
+        }
+    except Exception as e:
+        logger.error(f"获取工具列表失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/tools/execute")
+async def execute_tool(request: dict):
+    """执行工具"""
+    tool_name = request.get("tool_name", "")
+    params = request.get("params", {})
+    
+    if not tool_name:
+        return {"success": False, "error": "缺少工具名称"}
+    
+    try:
+        from tools.registry import registry
+        
+        result = registry.execute(tool_name, **params)
+        
+        return {
+            "success": result.success,
+            "output": result.output,
+            "error": result.error,
+            "metadata": result.metadata,
+            "execution_time": result.execution_time
+        }
+    except Exception as e:
+        logger.error(f"工具执行失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/tools/stats")
+async def get_tool_stats(tool_name: str = None):
+    """获取工具统计信息"""
+    try:
+        from tools.registry import registry
+        
+        if tool_name:
+            stats = registry.get_tool_stats(tool_name)
+            return {
+                "success": True,
+                "tool_name": tool_name,
+                "stats": stats
+            }
+        else:
+            stats = registry.get_statistics()
+            return {
+                "success": True,
+                "statistics": stats
+            }
+    except Exception as e:
+        logger.error(f"获取工具统计失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/tools/feedback")
+async def tool_feedback(request: dict):
+    """提交工具使用反馈"""
+    tool_name = request.get("tool_name", "")
+    feedback = request.get("feedback", 0)
+    
+    if not tool_name:
+        return {"success": False, "error": "缺少工具名称"}
+    
+    try:
+        from tools.registry import registry
+        
+        registry.update_feedback(tool_name, feedback)
+        
+        return {"success": True, "message": f"反馈已记录: {tool_name}"}
+    except Exception as e:
+        logger.error(f"记录反馈失败: {e}")
         return {"success": False, "error": str(e)}
 
 

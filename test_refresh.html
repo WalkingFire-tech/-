@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>模型刷新测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .panel {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h2 {
+            margin-top: 0;
+            color: #333;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        #log {
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 4px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .log-item {
+            margin: 5px 0;
+            padding: 5px;
+            border-left: 3px solid #4CAF50;
+            background: white;
+        }
+        .log-error {
+            border-left-color: #f44336;
+        }
+        .log-info {
+            border-left-color: #2196F3;
+        }
+    </style>
+</head>
+<body>
+    <div class="panel">
+        <h2>🤖 模型刷新测试</h2>
+        <p>测试本地模型动态刷新功能</p>
+        
+        <div style="margin: 20px 0;">
+            <button id="refresh-btn" onclick="refreshModels()">🔄 刷新模型</button>
+            <button onclick="loadModels()">📋 加载模型列表</button>
+            <button onclick="clearLog()">🗑️ 清空日志</button>
+        </div>
+        
+        <div style="margin: 20px 0;">
+            <h3>当前模型列表</h3>
+            <ul id="model-list"></ul>
+        </div>
+    </div>
+    
+    <div class="panel">
+        <h2>📜 操作日志</h2>
+        <div id="log"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const item = document.createElement('div');
+            item.className = `log-item log-${type}`;
+            item.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(item);
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(message);
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+        
+        async function loadModels() {
+            log('开始加载模型列表...', 'info');
+            try {
+                const response = await fetch(`${API_BASE}/api/models`);
+                const data = await response.json();
+                
+                const modelList = document.getElementById('model-list');
+                modelList.innerHTML = '';
+                
+                if (data.models && data.models.length > 0) {
+                    data.models.forEach(model => {
+                        const li = document.createElement('li');
+                        li.textContent = `${model.name} (${model.type})`;
+                        modelList.appendChild(li);
+                    });
+                    log(`✓ 加载了 ${data.models.length} 个模型`, 'info');
+                } else {
+                    modelList.innerHTML = '<li>暂无模型</li>';
+                    log('⚠ 没有检测到模型', 'info');
+                }
+            } catch (error) {
+                log(`✗ 加载失败: ${error.message}`, 'error');
+            }
+        }
+        
+        async function refreshModels() {
+            const btn = document.getElementById('refresh-btn');
+            const originalText = btn.textContent;
+            btn.textContent = '⏳ 刷新中...';
+            btn.disabled = true;
+            
+            log('开始刷新模型...', 'info');
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/models/reload`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                log(`HTTP响应: ${response.status} ${response.statusText}`, 'info');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const data = await response.json();
+                log(`响应数据: ${JSON.stringify(data, null, 2)}`, 'info');
+                
+                if (data.success) {
+                    btn.textContent = '✓ 已刷新';
+                    log(`✓ 刷新成功！总计 ${data.total} 个模型`, 'info');
+                    
+                    if (data.added && data.added.length > 0) {
+                        log(`✅ 新增模型: ${data.added.join(', ')}`, 'info');
+                    } else {
+                        log('ℹ️ 无新增模型', 'info');
+                    }
+                    
+                    // 重新加载列表
+                    await loadModels();
+                } else {
+                    btn.textContent = '✗ 失败';
+                    log(`✗ 刷新失败: ${data.error}`, 'error');
+                }
+                
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.disabled = false;
+                }, 2000);
+                
+            } catch (error) {
+                btn.textContent = '✗ 错误';
+                log(`✗ 请求失败: ${error.message}`, 'error');
+                log('请检查后端服务是否运行: python backend/main.py', 'error');
+                
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.disabled = false;
+                }, 2000);
+            }
+        }
+        
+        // 页面加载时自动加载模型列表
+        window.onload = () => {
+            log('页面加载完成', 'info');
+            loadModels();
+        };
+    </script>
+</body>
+</html>

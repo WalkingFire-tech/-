@@ -87,7 +87,7 @@ class WebSearchTool(Tool):
                 pass
             
             try:
-                from duckduckgo_search import DDGS
+                from ddgs import DDGS
                 self._search_engine = DDGS()
                 return True
             except ImportError:
