@@ -190,3 +190,132 @@ def get_emotion_detector() -> EmotionDetector:
     if _emotion_detector is None:
         _emotion_detector = EmotionDetector()
     return _emotion_detector
+
+
+class L1PerceptionLayer:
+    """
+    L1: 感知层 - 快速感知用户输入
+    
+    职责：
+    1. 情绪感知 - 理解用户情感状态
+    2. 意图识别 - 判断用户想要什么
+    3. 紧迫度评估 - 判断是否需要立即响应
+    4. 困惑度检测 - 判断用户是否需要更多解释
+    
+    这是系统的"眼睛"，负责看见用户的真实状态。
+    """
+    
+    def __init__(self):
+        self.emotion_detector = get_emotion_detector()
+        self.reporter = None
+        self.collector = None
+        self.heartbeat = None
+        
+        try:
+            from core.introspection.layer_reporter import LayerReporter
+            from core.reporting.state_collector import get_state_collector
+            from core.introspection.heartbeat import get_heartbeat_manager
+            from core.state_report import LayerHealth
+            
+            self.reporter = LayerReporter("L1")
+            self.collector = get_state_collector()
+            self.heartbeat = get_heartbeat_manager()
+            self.reporter.report_idle()
+        except Exception as e:
+            logger.warning(f"L1状态报告初始化失败: {e}")
+        
+        self.stats = {
+            'total_perceptions': 0,
+            'emotion_distribution': {},
+            'avg_confidence': 0.0,
+            'high_urgency_count': 0,
+            'high_confusion_count': 0
+        }
+        
+        logger.info("👁️ L1感知层已初始化")
+        if self.reporter:
+            self.reporter.report_completed(
+                metrics={"initialized": 1},
+                confidence=1.0
+            )
+    
+    def perceive(self, text: str, context: Optional[Dict] = None) -> Dict:
+        """
+        感知用户输入
+        
+        返回：
+        - emotional_state: 情绪状态
+        - intent: 初步意图判断
+        - needs_immediate_response: 是否需要立即响应
+        - needs_clarification: 是否需要澄清
+        - confidence: 整体置信度
+        """
+        self.stats['total_perceptions'] += 1
+        
+        if self.reporter:
+            self.reporter.report_busy(
+                operation=f"感知: {text[:50]}",
+                active_tasks=[f"分析用户输入"]
+            )
+        
+        emotional_state = self.emotion_detector.detect(text, context)
+        
+        intent = self._detect_intent(text, emotional_state)
+        needs_immediate = emotional_state.urgency > 0.7
+        needs_clarification = emotional_state.confusion > 0.6
+        
+        self._update_stats(emotional_state)
+        
+        result = {
+            'emotional_state': emotional_state,
+            'intent': intent,
+            'needs_immediate_response': needs_immediate,
+            'needs_clarification': needs_clarification,
+            'confidence': emotional_state.confidence,
+            'text': text,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        if self.reporter:
+            self.reporter.report_completed(
+                metrics={'perceived': 1, 'emotion': emotional_state.primary_emotion},
+                confidence=emotional_state.confidence
+            )
+        
+        return result
+    
+    def _detect_intent(self, text: str, emotional_state: EmotionalState) -> str:
+        """初步意图判断"""
+        text_lower = text.lower()
+        
+        if any(kw in text_lower for kw in ['为什么', '怎么', '如何', 'why', 'how', 'what']):
+            return 'question'
+        elif any(kw in text_lower for kw in ['帮我', '请', '帮我', 'help', 'please']):
+            return 'request'
+        elif any(kw in text_lower for kw in ['谢谢', '感谢', '好的', 'thanks', 'ok']):
+            return 'acknowledgment'
+        elif emotional_state.primary_emotion == 'anger':
+            return 'complaint'
+        elif emotional_state.confusion > 0.5:
+            return 'clarification'
+        else:
+            return 'statement'
+    
+    def _update_stats(self, emotional_state: EmotionalState):
+        """更新统计信息"""
+        emotion = emotional_state.primary_emotion
+        self.stats['emotion_distribution'][emotion] = \
+            self.stats['emotion_distribution'].get(emotion, 0) + 1
+        
+        total = self.stats['total_perceptions']
+        prev_avg = self.stats['avg_confidence']
+        self.stats['avg_confidence'] = (prev_avg * (total - 1) + emotional_state.confidence) / total
+        
+        if emotional_state.urgency > 0.7:
+            self.stats['high_urgency_count'] += 1
+        if emotional_state.confusion > 0.6:
+            self.stats['high_confusion_count'] += 1
+    
+    def get_stats(self) -> Dict:
+        """获取统计信息"""
+        return self.stats.copy()
