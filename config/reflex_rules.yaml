@@ -1,0 +1,65 @@
+# 反射规则配置 - 简单问题快速拦截
+# 基于 System 1 快思考理论
+
+rules:
+  - patterns:
+      - "你好"
+      - "hi"
+      - "hello"
+      - "您好"
+      - "在吗"
+      - "在不在"
+    response: "你好！很高兴见到你。有什么我可以帮你的吗？"
+    priority: 100
+    category: greeting
+
+  - patterns:
+      - "谢谢"
+      - "感谢"
+      - "多谢"
+      - "thanks"
+    response: "不客气！能帮到你我很高兴。"
+    priority: 90
+    category: confirmation
+
+  - patterns:
+      - "再见"
+      - "拜拜"
+      - "88"
+      - "bye"
+    response: "再见！期待下次与你交流。"
+    priority: 80
+    category: farewell
+
+  - patterns:
+      - "你是谁"
+      - "你是什么"
+      - "介绍一下你自己"
+      - "自我介绍"
+    response: "我是联盟拓荒者，一个会思考的智能助手。我可以帮你处理代码、解答问题、分析数据等。有什么我可以帮你的吗？"
+    priority: 70
+    category: identity
+
+  - patterns:
+      - "好的"
+      - "收到"
+      - "明白"
+      - "知道了"
+      - "ok"
+    response: "好的，请继续。"
+    priority: 60
+    category: acknowledgment
+
+  - patterns:
+      - "你好吗"
+      - "你怎么样"
+      - "how are you"
+    response: "我很好，谢谢关心！作为一个AI，我随时准备好帮助你。你呢？今天过得怎么样？"
+    priority: 55
+    category: greeting
+
+# 匹配选项
+match_options:
+  case_sensitive: false      # 不区分大小写
+  min_match_ratio: 0.8       # 模糊匹配阈值
+  max_response_time_ms: 100  # 最大响应时间

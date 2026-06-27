@@ -57,6 +57,14 @@ class ReflectionPipeline:
         self.induction_timeout = config.get("induction_timeout_seconds", 10)
         self.min_confidence = config.get("min_confidence_threshold", 0.6)
         
+        self.success_threshold = config.get("success_threshold", 0.6)
+        self.weights = config.get("success_weights", {
+            "confidence": 0.5,
+            "tool_execution": 0.3,
+            "plan_execution": 0.2
+        })
+        self.jsonl_sample_strategy = config.get("jsonl_sample_strategy", "low_confidence")
+        
         # 初始化日志数据库
         self._init_log_db()
         
@@ -66,7 +74,7 @@ class ReflectionPipeline:
         logger.info(f"  - 归纳超时: {self.induction_timeout}秒")
         
     def _init_log_db(self):
-        """初始化日志数据库"""
+        """初始化日志数据库（含字段迁移）"""
         Path(self.log_db_path).parent.mkdir(parents=True, exist_ok=True)
         
         with sqlite3.connect(self.log_db_path) as conn:
@@ -86,6 +94,27 @@ class ReflectionPipeline:
                     extra_metadata TEXT
                 )
             ''')
+            conn.commit()
+            
+            cursor = conn.execute("PRAGMA table_info(reflection_log)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            required_columns = {
+                "consolidated": "INTEGER DEFAULT 0",
+                "consolidated_at": "TEXT",
+                "rule_used": "INTEGER",
+                "is_canary_sample": "INTEGER DEFAULT 0",
+                "success": "INTEGER DEFAULT 0"
+            }
+            
+            for col, col_type in required_columns.items():
+                if col not in columns:
+                    try:
+                        conn.execute(f"ALTER TABLE reflection_log ADD COLUMN {col} {col_type}")
+                        logger.info(f"  ✓ 添加字段: {col}")
+                    except Exception as e:
+                        logger.warning(f"  ⚠ 添加字段 {col} 失败: {e}")
+            
             conn.commit()
     
     async def process(self, execution_context: Dict[str, Any]) -> Dict[str, Any]:
@@ -125,7 +154,6 @@ class ReflectionPipeline:
             actions_taken.append("campfire_log")
             logger.debug(f"✓ 反思日志写入: {reflection_id}")
             
-            # 2. 触发元归纳（异步，有超时控制）
             if self.enable_induction:
                 try:
                     await asyncio.wait_for(
@@ -139,8 +167,7 @@ class ReflectionPipeline:
                 except Exception as e:
                     logger.warning(f"元归纳失败: {e}")
             
-            # 3. 生成JSONL样本（如果置信度低于阈值或重要）
-            if self.enable_jsonl and context["confidence"] < self.min_confidence:
+            if self.enable_jsonl and self._should_sample_jsonl(context):
                 await self._append_jsonl(context)
                 actions_taken.append("jsonl_sample")
                 logger.debug(f"✓ JSONL样本生成: {reflection_id}")
@@ -159,6 +186,75 @@ class ReflectionPipeline:
                 "error": str(e),
                 "actions_taken": actions_taken
             }
+    
+    def _should_sample_jsonl(self, context: Dict[str, Any]) -> bool:
+        """判断是否应采样生成JSONL样本"""
+        import random
+        
+        strategy = self.jsonl_sample_strategy
+        success = context.get("success", False)
+        confidence = context.get("confidence", 0.5)
+        
+        if strategy == "low_confidence":
+            return confidence < self.min_confidence
+        elif strategy == "failures_only":
+            return not success
+        elif strategy == "balanced":
+            if not success:
+                return True
+            else:
+                return random.random() < 0.2
+        elif strategy == "all":
+            return True
+        else:
+            return confidence < self.min_confidence
+    
+    def _calculate_success(self, context: Dict[str, Any]) -> bool:
+        """
+        多维度成功率计算 - 控制论负反馈信号
+        
+        维度：
+        1. 置信度（权重可配置）
+        2. 工具执行（权重可配置）
+        3. 计划执行（权重可配置）
+        """
+        confidence = context.get("confidence", 0.5)
+        tool_calls = context.get("tool_calls", [])
+        plan = context.get("plan", {})
+        execution_results = context.get("execution_results", [])
+        
+        w_conf = self.weights.get("confidence", 0.5)
+        w_tool = self.weights.get("tool_execution", 0.3)
+        w_plan = self.weights.get("plan_execution", 0.2)
+        
+        if confidence > 0.7:
+            confidence_score = 1.0
+        elif confidence > 0.5:
+            confidence_score = 0.5
+        else:
+            confidence_score = 0.0
+        
+        if tool_calls:
+            tool_success = any(tc.get("status") == "success" for tc in tool_calls)
+            tool_score = 1.0 if tool_success else 0.0
+        elif execution_results:
+            tool_success = any(r.get("status") == "success" for r in execution_results)
+            tool_score = 1.0 if tool_success else 0.0
+        else:
+            tool_score = 0.5
+        
+        tasks = plan.get("tasks", [])
+        if tasks:
+            task_success = any(t.get("status") == "success" for t in tasks)
+            plan_score = 1.0 if task_success else 0.0
+        elif execution_results:
+            plan_score = 1.0 if len(execution_results) > 0 else 0.0
+        else:
+            plan_score = 0.5
+        
+        total_score = w_conf * confidence_score + w_tool * tool_score + w_plan * plan_score
+        
+        return total_score > self.success_threshold
     
     def _enrich_context(self, raw: Dict[str, Any]) -> Dict[str, Any]:
         """补充元数据，生成唯一ID和时间戳"""
@@ -180,42 +276,52 @@ class ReflectionPipeline:
         else:
             enriched["tool_calls"] = []
         
+        # 使用多维度success计算
+        if "success" not in enriched:
+            enriched["success"] = self._calculate_success(enriched)
+        
         return enriched
     
     async def _write_campfire_log(self, context: Dict[str, Any]) -> None:
         """写入营火日志（异步写入）"""
         def _write():
             with sqlite3.connect(self.log_db_path) as conn:
-                conn.execute(
-                    """INSERT INTO reflection_log 
-                       (id, timestamp, query, plan, tool_calls, final_answer, 
-                        confidence, model_used, user_id, session_id, duration_ms, extra_metadata)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        context["reflection_id"],
-                        context["timestamp"],
-                        context.get("query", ""),
-                        json.dumps(context.get("plan", {}), ensure_ascii=False),
-                        json.dumps(context.get("tool_calls", []), ensure_ascii=False),
-                        context.get("final_answer", ""),
-                        context.get("confidence", 0.0),
-                        context.get("model_used", "unknown"),
-                        context.get("user_id", ""),
-                        context.get("session_id", ""),
-                        context.get("duration_ms", 0),
-                        json.dumps(context.get("extra", {}), ensure_ascii=False)
-                    )
-                )
+                cursor = conn.execute("PRAGMA table_info(reflection_log)")
+                columns = [row[1] for row in cursor.fetchall()]
+                
+                base_sql = """INSERT INTO reflection_log 
+                   (id, timestamp, query, plan, tool_calls, final_answer, 
+                    confidence, model_used, user_id, session_id, duration_ms, extra_metadata"""
+                values = [
+                    context["reflection_id"],
+                    context["timestamp"],
+                    context.get("query", ""),
+                    json.dumps(context.get("plan", {}), ensure_ascii=False),
+                    json.dumps(context.get("tool_calls", []), ensure_ascii=False),
+                    context.get("final_answer", ""),
+                    context.get("confidence", 0.0),
+                    context.get("model_used", "unknown"),
+                    context.get("user_id", ""),
+                    context.get("session_id", ""),
+                    context.get("duration_ms", 0),
+                    json.dumps(context.get("extra", {}), ensure_ascii=False)
+                ]
+                
+                if "success" in columns:
+                    base_sql += ", success"
+                    values.append(1 if context.get("success", False) else 0)
+                
+                base_sql += ") VALUES (" + ",".join(["?"] * len(values)) + ")"
+                
+                conn.execute(base_sql, tuple(values))
                 conn.commit()
         
-        # 在线程池中执行（避免阻塞事件循环）
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, _write)
 
     async def _trigger_induction(self, context: Dict[str, Any]) -> None:
         """触发元归纳"""
         try:
-            # 尝试多种导入路径
             run_induction = None
             
             try:
@@ -231,23 +337,29 @@ class ReflectionPipeline:
                     logger.warning("元归纳模块未找到，跳过触发")
                     return
             
-            # 构造经验条目
             experience = {
                 "query": context["query"],
                 "plan": context.get("plan", {}),
-                "final_answer": context["final_answer"],
-                "confidence": context["confidence"],
+                "final_answer": context.get("final_answer", ""),
+                "confidence": context.get("confidence", 0.5),
                 "tool_used": bool(context.get("tool_calls")),
-                "success": context["confidence"] > 0.7,
-                "timestamp": context["timestamp"]
+                "success": context.get("success", False),
+                "timestamp": context.get("timestamp", ""),
+                "reflection_id": context.get("reflection_id", "")
             }
             
-            # 执行归纳（同步函数，在线程池中运行）
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: run_induction(days=1)
-            )
+            
+            try:
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: run_induction(experience=experience, days=1)
+                )
+            except TypeError:
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: run_induction(days=1)
+                )
             
             logger.debug(f"✅ 元归纳执行完成: {result}")
             

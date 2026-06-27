@@ -22,11 +22,31 @@ class ExperiencePool:
                     quality_score INTEGER,
                     user_feedback INTEGER,
                     success BOOLEAN,
-                    duration REAL
+                    duration REAL,
+                    response TEXT
                 )
             ''')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_intent ON experiences(intent_type)')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_score ON experiences(quality_score)')
+            
+            cursor = conn.execute("PRAGMA table_info(experiences)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            required_columns = {
+                "response": "TEXT",
+                "success": "BOOLEAN",
+                "duration": "REAL"
+            }
+            
+            for col, col_type in required_columns.items():
+                if col not in columns:
+                    try:
+                        conn.execute(f"ALTER TABLE experiences ADD COLUMN {col} {col_type}")
+                        logger.info(f"  ✓ 添加字段: {col}")
+                    except Exception as e:
+                        logger.warning(f"  ⚠ 添加字段 {col} 失败: {e}")
+            
+            conn.commit()
 
     def add_experience(self, intent_type: str, raw_input: str, plan: str,
                        model_name: str, quality_score: int, user_feedback: int,

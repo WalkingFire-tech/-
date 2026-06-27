@@ -131,14 +131,13 @@ class MetacognitiveExecutor:
         让系统知道自己有什么能力（动态扫描）
         """
         
-        # 1. 扫描工具注册表
         tools = []
         try:
-            from tools.registry import tool_registry
-            for tool in tool_registry.list_tools():
+            from tools.registry import registry
+            for tool in registry.list_tools():
                 tools.append({
-                    "name": tool["name"],
-                    "type": tool.get("type", "unknown"),
+                    "name": tool.name if hasattr(tool, 'name') else str(tool),
+                    "type": tool.category.value if hasattr(tool, 'category') and hasattr(tool.category, 'value') else "unknown",
                     "available": True
                 })
         except Exception as e:
@@ -400,19 +399,29 @@ class MetacognitiveExecutor:
     async def _execute_tool(self, tool_name: str, query: str) -> Any:
         """执行工具"""
         try:
-            from tools.registry import tool_registry
-            result = tool_registry.execute(tool_name, {"query": query})
+            from tools.registry import registry
+            result = registry.execute(tool_name, query=query)
+            if hasattr(result, 'output'):
+                return result.output
             return result
-        except:
+        except Exception as e:
+            logger.debug(f"工具执行失败: {e}")
             return None
     
     async def _retrieve_knowledge(self, query: str) -> Any:
         """检索知识"""
         try:
-            from core.learning import enhanced_learner
-            return enhanced_learner.retrieve_knowledge(query)
-        except:
-            return None
+            from data.knowledge_store import get_knowledge_store
+            ks = get_knowledge_store()
+            results = ks.search(query, top_k=3)
+            if results:
+                return {
+                    "results": results,
+                    "confidence": 0.7
+                }
+        except Exception as e:
+            logger.debug(f"知识检索失败: {e}")
+        return None
     
     async def _llm_reasoning(self, query: str, previous_results: List) -> str:
         """LLM推理"""
@@ -515,28 +524,31 @@ class MetacognitiveExecutor:
     async def _store_experience(self, experience: Dict):
         """存储经验"""
         try:
-            import sqlite3
-            with sqlite3.connect("data/experience_pool.db") as conn:
-                conn.execute('''
-                    INSERT INTO experiences 
-                    (timestamp, query, plan, results, validation)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (
-                    experience["timestamp"],
-                    experience["query"],
-                    json.dumps(experience["plan"], ensure_ascii=False),
-                    json.dumps(experience["results"], ensure_ascii=False),
-                    json.dumps(experience["validation"], ensure_ascii=False)
-                ))
-                conn.commit()
+            from infrastructure.experience_pool import ExperiencePool
+            pool = ExperiencePool()
+            
+            success = experience["validation"].get("confidence", 0.5) > 0.6
+            quality_score = int(experience["validation"].get("quality_score", 50))
+            
+            pool.add_experience(
+                intent_type="metacognitive",
+                raw_input=experience["query"],
+                plan=json.dumps(experience["plan"], ensure_ascii=False),
+                model_name="metacognitive_executor",
+                quality_score=quality_score,
+                user_feedback=None,
+                success=success,
+                duration=experience.get("elapsed", 0),
+                response=self._extract_best_answer(experience["results"])
+            )
         except Exception as e:
             logger.debug(f"经验存储失败: {e}")
     
     async def _trigger_meta_induction(self, experience: Dict):
         """触发元归纳"""
         try:
-            from meta.induction import run_induction
-            run_induction(days=7)
+            from meta.induction import induction_scheduler
+            induction_scheduler.run_induction(days=7)
             logger.info("✓ 元归纳已触发")
         except Exception as e:
             logger.debug(f"元归纳触发失败: {e}")

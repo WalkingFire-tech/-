@@ -12,10 +12,45 @@ from loguru import logger
 from tools.base import Tool, ToolCategory, Parameter, ToolResult
 
 
-class FileWriterTool(Tool):
-    """文件写入工具"""
+def sanitize_path(file_path: str, base_dir: Path = None) -> Path:
+    """
+    公共路径沙盒验证函数
+    
+    Args:
+        file_path: 待验证的路径
+        base_dir: 沙盒根目录，默认为 data/workspace
+    
+    Returns:
+        验证后的安全路径
+    """
+    base_dir = base_dir or Path("data/workspace").resolve()
+    base_dir.mkdir(parents=True, exist_ok=True)
+    
+    path = Path(file_path).resolve()
+    
+    try:
+        if path.is_relative_to(base_dir):
+            return path
+    except AttributeError:
+        if str(path).startswith(str(base_dir)):
+            return path
+    
+    logger.warning(f"路径越权，强制使用workspace目录: {file_path}")
+    return base_dir / Path(file_path).name
+
+
+class BaseFileTool(Tool):
+    """文件工具基类，提供公共路径验证"""
     
     BASE_DIR = Path("data/workspace").resolve()
+    
+    def _sanitize_path(self, file_path: str) -> Path:
+        """路径沙盒验证"""
+        return sanitize_path(file_path, self.BASE_DIR)
+
+
+class FileWriterTool(BaseFileTool):
+    """文件写入工具"""
     
     @property
     def name(self) -> str:
@@ -61,17 +96,6 @@ class FileWriterTool(Tool):
             )
         ]
     
-    def _sanitize_path(self, file_path: str) -> Path:
-        """路径沙盒验证"""
-        path = Path(file_path).resolve()
-        self.BASE_DIR.mkdir(parents=True, exist_ok=True)
-        
-        if not path.is_relative_to(self.BASE_DIR):
-            logger.warning(f"路径越权，强制使用workspace目录: {file_path}")
-            return self.BASE_DIR / Path(file_path).name
-        
-        return path
-    
     def execute(self, **kwargs) -> ToolResult:
         file_path = kwargs.get("file_path")
         content = kwargs.get("content")
@@ -106,10 +130,8 @@ class FileWriterTool(Tool):
             )
 
 
-class FileSearchTool(Tool):
+class FileSearchTool(BaseFileTool):
     """文件搜索工具"""
-    
-    BASE_DIR = Path("data/workspace").resolve()
     
     @property
     def name(self) -> str:
@@ -153,17 +175,6 @@ class FileSearchTool(Tool):
                 default="*"
             )
         ]
-    
-    def _sanitize_path(self, path: str) -> Path:
-        """路径沙盒验证"""
-        resolved = Path(path).resolve()
-        self.BASE_DIR.mkdir(parents=True, exist_ok=True)
-        
-        if not resolved.is_relative_to(self.BASE_DIR):
-            logger.warning(f"路径越权，强制使用workspace目录: {path}")
-            return self.BASE_DIR
-        
-        return resolved
     
     def execute(self, **kwargs) -> ToolResult:
         path = kwargs.get("path")
@@ -225,10 +236,8 @@ class FileSearchTool(Tool):
             )
 
 
-class FileBatchProcessorTool(Tool):
+class FileBatchProcessorTool(BaseFileTool):
     """文件批量处理工具"""
-    
-    BASE_DIR = Path("data/workspace").resolve()
     
     @property
     def name(self) -> str:
@@ -273,17 +282,6 @@ class FileBatchProcessorTool(Tool):
                 default=True
             )
         ]
-    
-    def _sanitize_path(self, path: str) -> Path:
-        """路径沙盒验证"""
-        resolved = Path(path).resolve()
-        self.BASE_DIR.mkdir(parents=True, exist_ok=True)
-        
-        if not resolved.is_relative_to(self.BASE_DIR):
-            logger.warning(f"路径越权，强制使用workspace目录: {path}")
-            return self.BASE_DIR
-        
-        return resolved
     
     def execute(self, **kwargs) -> ToolResult:
         folder_path = kwargs.get("folder_path")
@@ -378,10 +376,8 @@ class FileBatchProcessorTool(Tool):
             )
 
 
-class FileRenameTool(Tool):
+class FileRenameTool(BaseFileTool):
     """文件重命名工具"""
-    
-    BASE_DIR = Path("data/workspace").resolve()
     
     @property
     def name(self) -> str:
@@ -418,17 +414,6 @@ class FileRenameTool(Tool):
                 default=False
             )
         ]
-    
-    def _sanitize_path(self, path: str) -> Path:
-        """路径沙盒验证"""
-        resolved = Path(path).resolve()
-        self.BASE_DIR.mkdir(parents=True, exist_ok=True)
-        
-        if not resolved.is_relative_to(self.BASE_DIR):
-            logger.warning(f"路径越权，强制使用workspace目录: {path}")
-            return self.BASE_DIR / Path(path).name
-        
-        return resolved
     
     def execute(self, **kwargs) -> ToolResult:
         source = kwargs.get("source")
@@ -476,10 +461,8 @@ class FileRenameTool(Tool):
             )
 
 
-class FileCopyTool(Tool):
+class FileCopyTool(BaseFileTool):
     """文件复制工具"""
-    
-    BASE_DIR = Path("data/workspace").resolve()
     
     @property
     def name(self) -> str:
@@ -517,17 +500,6 @@ class FileCopyTool(Tool):
             )
         ]
     
-    def _sanitize_path(self, path: str) -> Path:
-        """路径沙盒验证"""
-        resolved = Path(path).resolve()
-        self.BASE_DIR.mkdir(parents=True, exist_ok=True)
-        
-        if not resolved.is_relative_to(self.BASE_DIR):
-            logger.warning(f"路径越权，强制使用workspace目录: {path}")
-            return self.BASE_DIR / Path(path).name
-        
-        return resolved
-    
     def execute(self, **kwargs) -> ToolResult:
         source = kwargs.get("source")
         target = kwargs.get("target")
@@ -544,18 +516,23 @@ class FileCopyTool(Tool):
                     error=f"源路径不存在: {source}"
                 )
             
-            if target_path.exists() and not overwrite:
-                return ToolResult(
-                    success=False,
-                    output=None,
-                    error=f"目标路径已存在: {target}"
-                )
+            if target_path.exists():
+                if not overwrite:
+                    return ToolResult(
+                        success=False,
+                        output=None,
+                        error=f"目标路径已存在: {target}，需设置overwrite=True"
+                    )
+                
+                logger.warning(f"覆盖目标路径: {target_path}")
             
             if source_path.is_file():
+                if target_path.exists() and overwrite:
+                    target_path.unlink()
                 shutil.copy2(source_path, target_path)
                 operation = "文件"
             else:
-                if target_path.exists():
+                if target_path.exists() and overwrite:
                     shutil.rmtree(target_path)
                 shutil.copytree(source_path, target_path)
                 operation = "文件夹"
@@ -565,7 +542,8 @@ class FileCopyTool(Tool):
                 output=f"{operation}复制成功",
                 metadata={
                     "source": str(source_path),
-                    "target": str(target_path)
+                    "target": str(target_path),
+                    "overwrite": overwrite
                 }
             )
         

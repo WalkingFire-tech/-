@@ -288,6 +288,29 @@ async def lifespan(app: FastAPI):
     
     logger.info("后端服务初始化完成")
     
+    # ========== 初始化快速反射引擎（T0反射层） ==========
+    logger.info("⚡ 初始化快速反射引擎（T0反射层）...")
+    try:
+        from infrastructure.quick_reflex import get_quick_reflex
+        
+        quick_reflex = get_quick_reflex("config/reflex_rules.yaml")
+        stats = quick_reflex.get_stats()
+        
+        logger.info(f"✅ 快速反射引擎已就绪: {stats['total_rules']}条规则")
+    except Exception as e:
+        logger.warning(f"快速反射引擎初始化失败: {e}")
+    
+    # ========== 初始化工具仲裁器（T1直觉层） ==========
+    logger.info("🔧 初始化工具仲裁器（T1直觉层）...")
+    try:
+        from tools.arbiter import get_tool_arbiter
+        
+        tool_arbiter = get_tool_arbiter()
+        
+        logger.info("✅ 工具仲裁器已就绪")
+    except Exception as e:
+        logger.warning(f"工具仲裁器初始化失败: {e}")
+    
     # ========== 初始化反思管道 ==========
     logger.info("🔄 初始化反思管道（闭环传动轴）...")
     try:
@@ -326,6 +349,23 @@ async def lifespan(app: FastAPI):
         logger.info("✅ 认知主干道已就绪")
     except Exception as e:
         logger.warning(f"认知主干道初始化失败: {e}")
+    
+    # ========== 初始化系统编排器（第二刀） ==========
+    logger.info("🎯 初始化系统编排器（中枢神经）...")
+    try:
+        from core.orchestrator import SystemOrchestrator
+        
+        orchestrator = SystemOrchestrator({
+            "persistence_dir": "data/orchestrator"
+        })
+        
+        # 启动编排器
+        orchestrator.start()
+        
+        logger.info("✅ 系统编排器已就绪并启动")
+    except Exception as e:
+        logger.warning(f"系统编排器初始化失败: {e}")
+        orchestrator = None
     
     # 注册内置工具
     try:
@@ -737,7 +777,7 @@ async def _trigger_learning_from_chat(user_input: str, intent_type: str):
 
 @app.post("/api/chat")
 async def chat(request: dict):
-    """聊天端点 - 认知调度 + 快速响应"""
+    """聊天端点 - 三层路由：反射(T0) → 主干道(T2) → 降级"""
     user_input = request.get("message", "")
     current_file = request.get("current_file", None)
     current_topic = request.get("current_topic", None)
@@ -747,7 +787,30 @@ async def chat(request: dict):
     
     start_time = time.time()
     
-    # ========== 第一刀：认知调度器（路由决策） ==========
+    # ========== 第零层：快速反射拦截（T0反射层）==========
+    try:
+        from infrastructure.quick_reflex import get_quick_reflex
+        
+        quick_reflex = get_quick_reflex()
+        reflex_result = quick_reflex.match(user_input)
+        
+        if reflex_result:
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            logger.info(f"⚡ 反射拦截: {reflex_result['matched_pattern']} ({elapsed_ms}ms)")
+            
+            return {
+                "response": reflex_result["response"],
+                "intent": "reflex",
+                "route": "reflex",
+                "confidence": 1.0,
+                "matched_pattern": reflex_result["matched_pattern"],
+                "match_type": reflex_result["match_type"],
+                "elapsed_ms": elapsed_ms
+            }
+    except Exception as e:
+        logger.debug(f"反射拦截失败: {e}")
+    
+    # ========== 第一层：认知调度器（路由决策） ==========
     try:
         from core.cognitive_dispatcher import get_cognitive_dispatcher
         

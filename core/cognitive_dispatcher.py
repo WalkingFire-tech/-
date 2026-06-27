@@ -11,14 +11,21 @@
 - 认知科学：双重加工理论（System 1快思考 vs System 2慢思考）
 - 控制论：前馈控制（Feedforward Control）
 - 系统论：分层递阶控制（Hierarchical Control）
+
+与QuickReflexEngine的关系：
+- QuickReflex作为T0层前置拦截简单问题
+- CognitiveDispatcher仅处理QuickReflex未匹配的请求
+- 因此移除fast路径，专注于slow/learning路径
 """
 import json
 import time
+import asyncio
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 from loguru import logger
 from pathlib import Path
 import sqlite3
+import threading
 
 
 class CognitiveDispatcher:
@@ -31,16 +38,48 @@ class CognitiveDispatcher:
     - 学习路径：知识缺失 → 触发外部学习
     """
     
-    def __init__(self):
-        self.intent_patterns = self._load_intent_patterns()
+    def __init__(self, config: Dict[str, Any] = None):
+        config = config or {}
+        self.intent_patterns = self._load_intent_patterns(config)
         self.capability_cache = None
         self.cache_timestamp = 0
-        self.cache_ttl = 300  # 5分钟缓存
+        self.cache_ttl = config.get("cache_ttl", 300)
+        self._cache_lock = threading.Lock()
+        
+        self.complexity_weights = config.get("complexity_weights", {
+            "base": 1.0,
+            "length": 0.1,
+            "keyword": 0.1,
+            "multi_question": 0.2
+        })
+        
+        self.route_thresholds = config.get("route_thresholds", {
+            "fast_complexity": 0.3,
+            "fast_confidence": 0.7,
+            "learning_confidence": 0.5
+        })
+        
+        self.enable_capability_scan = config.get("enable_capability_scan", {
+            "tools": True,
+            "models": True,
+            "knowledge_bases": True
+        })
         
         logger.info("🧠 认知调度器已初始化")
+        logger.info(f"  - 缓存TTL: {self.cache_ttl}秒")
+        logger.info(f"  - 能力扫描: {self.enable_capability_scan}")
     
-    def _load_intent_patterns(self) -> Dict[str, List[str]]:
-        """加载意图模式（用于快速分类）"""
+    def _load_intent_patterns(self, config: Dict = None) -> Dict[str, List[str]]:
+        """加载意图模式（支持外部配置）"""
+        config = config or {}
+        
+        if "intent_patterns_file" in config:
+            try:
+                with open(config["intent_patterns_file"], "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(f"加载外部意图模式失败: {e}，使用默认模式")
+        
         return {
             "greeting": [
                 "你好", "您好", "hi", "hello", "在吗", "在不在"
@@ -165,66 +204,62 @@ class CognitiveDispatcher:
         return min(1.0, complexity)
     
     def _decide_route(self, intent_type: str, complexity: float, confidence: float) -> str:
-        """路由决策"""
+        """
+        路由决策
         
-        # 快路径：简单问题
-        if intent_type in ["greeting", "confirmation"]:
-            return "fast"
+        注意：QuickReflexEngine作为T0层已前置拦截简单问题
+        此处专注于slow/learning路径决策
+        """
+        learning_threshold = self.route_thresholds.get("learning_confidence", 0.5)
         
-        if complexity < 0.3 and confidence > 0.7:
-            return "fast"
-        
-        # 学习路径：低置信度 + 学习触发
-        if intent_type == "learning_trigger" or confidence < 0.5:
+        if intent_type == "learning_trigger" or confidence < learning_threshold:
             return "learning"
         
-        # 慢路径：复杂问题
         return "slow"
     
     def _scan_capabilities(self) -> Dict[str, Any]:
-        """扫描系统能力（带缓存）"""
+        """扫描系统能力（带缓存和锁保护）"""
         now = time.time()
         
-        # 使用缓存
-        if self.capability_cache and (now - self.cache_timestamp) < self.cache_ttl:
-            return self.capability_cache
+        with self._cache_lock:
+            if self.capability_cache and (now - self.cache_timestamp) < self.cache_ttl:
+                return self.capability_cache
         
-        # 扫描工具
         tools = []
-        try:
-            from tools.registry import ToolRegistry
-            registry = ToolRegistry()
-            for tool in registry.list_tools():
-                tools.append({
-                    "name": tool.name,
-                    "type": tool.category.value if hasattr(tool.category, 'value') else str(tool.category),
-                    "description": tool.description
-                })
-        except Exception as e:
-            logger.debug(f"工具扫描失败: {e}")
-        
-        # 扫描模型
-        models = []
-        try:
-            import requests
-            response = requests.get("http://localhost:11434/api/tags", timeout=2)
-            if response.status_code == 200:
-                for model in response.json().get("models", []):
-                    models.append({
-                        "name": model["name"],
-                        "available": True
+        if self.enable_capability_scan.get("tools", True):
+            try:
+                from tools.registry import ToolRegistry
+                registry = ToolRegistry()
+                for tool in registry.list_tools():
+                    tools.append({
+                        "name": tool.name,
+                        "type": tool.category.value if hasattr(tool.category, 'value') else str(tool.category),
+                        "description": tool.description
                     })
-        except:
-            pass
+            except Exception as e:
+                logger.warning(f"工具扫描失败: {e}")
         
-        # 扫描知识库
+        models = []
+        if self.enable_capability_scan.get("models", True):
+            try:
+                import requests
+                response = requests.get("http://localhost:11434/api/tags", timeout=2)
+                if response.status_code == 200:
+                    for model in response.json().get("models", []):
+                        models.append({
+                            "name": model["name"],
+                            "available": True
+                        })
+            except Exception as e:
+                logger.debug(f"模型扫描失败: {e}")
+        
         knowledge_bases = []
-        if Path("data/knowledge_store.db").exists():
-            knowledge_bases.append({"name": "主知识库", "available": True})
-        if Path("data/experience_pool.db").exists():
-            knowledge_bases.append({"name": "经验池", "available": True})
+        if self.enable_capability_scan.get("knowledge_bases", True):
+            if Path("data/knowledge_store.db").exists():
+                knowledge_bases.append({"name": "主知识库", "available": True})
+            if Path("data/experience_pool.db").exists():
+                knowledge_bases.append({"name": "经验池", "available": True})
         
-        # 构建能力清单
         capabilities = {
             "tools": tools,
             "models": models,
@@ -232,9 +267,9 @@ class CognitiveDispatcher:
             "timestamp": datetime.now().isoformat()
         }
         
-        # 更新缓存
-        self.capability_cache = capabilities
-        self.cache_timestamp = now
+        with self._cache_lock:
+            self.capability_cache = capabilities
+            self.cache_timestamp = now
         
         return capabilities
     
@@ -245,60 +280,56 @@ class CognitiveDispatcher:
         capabilities: Dict,
         intent_type: str
     ) -> Dict[str, Any]:
-        """生成执行计划"""
+        """
+        生成执行计划
         
-        if route == "fast":
-            # 快路径：直接回答
-            return {
-                "tasks": [
-                    {"type": "direct_response", "description": "直接生成回答"}
-                ],
-                "expected_confidence": 0.9,
-                "reasoning": "简单问题，无需复杂处理"
-            }
+        注意：
+        - fast路径已由QuickReflexEngine处理，此处不生成
+        - 工具调用改为"工具选择"意图，由ToolArbiter运行时决策
+        """
         
-        elif route == "learning":
-            # 学习路径：触发外部学习
+        if route == "learning":
             return {
                 "tasks": [
                     {"type": "knowledge_retrieval", "description": f"检索关于'{query}'的知识"},
                     {"type": "external_learning", "description": "触发外部搜索学习"},
-                    {"type": "llm_reasoning", "description": "综合推理生成答案"}
+                    {"type": "llm_reasoning", "description": "综合推理生成答案"},
+                    {"type": "reflection_pipeline", "description": "写入反思管道"}
                 ],
                 "expected_confidence": 0.6,
                 "reasoning": "知识缺失，需要外部学习"
             }
         
         else:  # slow
-            # 慢路径：完整认知流程
             tasks = []
             
-            # 1. 知识检索
             tasks.append({
                 "type": "knowledge_retrieval",
                 "description": f"检索关于'{query}'的知识"
             })
             
-            # 2. 工具调用（如果适用）
             applicable_tools = self._find_applicable_tools(query, capabilities)
             if applicable_tools:
-                for tool in applicable_tools[:2]:  # 最多2个工具
-                    tasks.append({
-                        "type": "tool_call",
-                        "tool": tool["name"],
-                        "description": f"使用{tool['name']}处理"
-                    })
+                tasks.append({
+                    "type": "tool_selection",
+                    "description": "需要工具辅助",
+                    "intent": "select_best_tool",
+                    "candidates": [t["name"] for t in applicable_tools[:3]]
+                })
             
-            # 3. LLM推理
             tasks.append({
                 "type": "llm_reasoning",
                 "description": "综合推理生成答案"
             })
             
-            # 4. 验证评估
             tasks.append({
                 "type": "validation",
                 "description": "验证答案质量"
+            })
+            
+            tasks.append({
+                "type": "reflection_pipeline",
+                "description": "写入反思管道"
             })
             
             return {
@@ -334,7 +365,7 @@ class CognitiveDispatcher:
     def _explain_routing(self, route: str, intent_type: str, complexity: float) -> str:
         """解释路由决策"""
         explanations = {
-            "fast": f"简单问题（{intent_type}），复杂度{complexity:.0%}，走快路径",
+
             "slow": f"复杂问题（{intent_type}），复杂度{complexity:.0%}，走慢路径（完整认知流程）",
             "learning": f"知识缺失（{intent_type}），触发外部学习"
         }
