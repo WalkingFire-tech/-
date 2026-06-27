@@ -87,6 +87,9 @@ class CognitiveDispatcher:
             "confirmation": [
                 "好的", "收到", "明白", "知道了", "谢谢", "感谢"
             ],
+            "history_query": [
+                "历史", "记录", "历史记录", "查看历史", "显示历史", "聊天记录"
+            ],
             "simple_query": [
                 "是什么", "什么是", "怎么读", "多少", "什么时候"
             ],
@@ -224,7 +227,7 @@ class CognitiveDispatcher:
         此处专注于slow/learning路径决策
         """
         # 简单意图走fast路径
-        if intent_type in ["greeting", "confirmation", "simple_query"]:
+        if intent_type in ["greeting", "confirmation", "simple_query", "history_query"]:
             return "fast"
         
         learning_threshold = self.route_thresholds.get("learning_confidence", 0.5)
