@@ -156,8 +156,8 @@ class SystemOrchestrator:
             logger.warning(f"增量感知学习加载失败: {e}")
         
         try:
-            from core.learning.feedback_loop import FeedbackLoop
-            self.mechanisms["feedback_loop"] = FeedbackLoop()
+            from core.learning.feedback_loop import LearningFeedbackLoop
+            self.mechanisms["feedback_loop"] = LearningFeedbackLoop()
             logger.info("✓ 经验反馈回路已加载")
         except Exception as e:
             logger.warning(f"经验反馈回路加载失败: {e}")
@@ -170,8 +170,8 @@ class SystemOrchestrator:
             logger.warning(f"失败的炼金术加载失败: {e}")
         
         try:
-            from core.learning.tool_builder import ToolBuilder
-            self.mechanisms["tool_builder"] = ToolBuilder()
+            from core.learning.tool_builder import ToolSelfBuilder
+            self.mechanisms["tool_builder"] = ToolSelfBuilder()
             logger.info("✓ 工具自我构建已加载")
         except Exception as e:
             logger.warning(f"工具自我构建加载失败: {e}")
