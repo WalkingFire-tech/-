@@ -10,9 +10,9 @@ from .llm.local_qwen_adapter import LocalQwenAdapter
 from .llm.mock_adapter import MockAdapter
 from .llm.remote_adapter import RemoteAdapter
 from .llm.lora_adapter import LoRAAdapter
-from .ui.cli_ui import CLIUI
+from .ui.cli_ui import EnhancedCliUI
 from .input.file_adapter import FileAdapter
-from .input.folder_processor import FolderProcessor
+from .input.folder_processor import FolderBatchProcessor
 
 __all__ = [
     'OllamaAdapter',
@@ -21,7 +21,7 @@ __all__ = [
     'MockAdapter',
     'RemoteAdapter',
     'LoRAAdapter',
-    'CLIUI',
+    'EnhancedCliUI',
     'FileAdapter',
-    'FolderProcessor',
+    'FolderBatchProcessor',
 ]

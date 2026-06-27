@@ -5,9 +5,9 @@
 """
 
 from .file_adapter import FileAdapter
-from .folder_processor import FolderProcessor
+from .folder_processor import FolderBatchProcessor
 
 __all__ = [
     'FileAdapter',
-    'FolderProcessor',
+    'FolderBatchProcessor',
 ]
