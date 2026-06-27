@@ -116,6 +116,113 @@ async def get_stats():
     
     return stats
 
+@app.get("/api/models")
+async def get_models():
+    """获取可用模型列表"""
+    return {
+        "models": [
+            {"name": "mock", "type": "MockAdapter"}
+        ],
+        "message": "使用minimal_app.py，模型功能受限"
+    }
+
+@app.get("/api/models/scan")
+async def scan_ollama_models():
+    """扫描Ollama服务中的可用模型"""
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=3)
+        
+        if response.status_code == 200:
+            models_data = response.json()
+            models = models_data.get('models', [])
+            
+            return {
+                "success": True,
+                "ollama_available": True,
+                "models": [
+                    {
+                        "name": m['name'],
+                        "size": m.get('size', 0),
+                        "modified_at": m.get('modified_at', '')
+                    }
+                    for m in models
+                ],
+                "count": len(models)
+            }
+        else:
+            return {
+                "success": False,
+                "ollama_available": False,
+                "error": f"Ollama响应异常: {response.status_code}"
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "ollama_available": False,
+            "error": f"无法连接Ollama服务: {str(e)}",
+            "hint": "请启动Ollama服务: ollama serve"
+        }
+
+@app.post("/api/models/reload")
+async def reload_models():
+    """重新加载模型"""
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=3)
+        
+        if response.status_code == 200:
+            models_data = response.json()
+            models = [m['name'] for m in models_data.get('models', [])]
+            
+            return {
+                "success": True,
+                "added": models,
+                "total": len(models),
+                "message": f"发现{len(models)}个Ollama模型"
+            }
+        else:
+            return {
+                "success": False,
+                "added": [],
+                "total": 0,
+                "message": "Ollama服务响应异常"
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "added": [],
+            "total": 0,
+            "message": f"无法连接Ollama: {str(e)}",
+            "hint": "请启动Ollama服务: ollama serve"
+        }
+
+@app.get("/api/external_models")
+async def get_external_models():
+    """获取外部模型配置"""
+    return {
+        "models": [],
+        "message": "使用minimal_app.py，外部模型功能受限"
+    }
+
+@app.post("/api/chat")
+async def chat(request: dict):
+    """聊天接口"""
+    user_input = request.get("message", "")
+    model = request.get("model", "auto")
+    
+    # 简单响应
+    response_text = f"收到消息: {user_input}\n\n"
+    response_text += "⚠️ 使用minimal_app.py，功能受限。\n\n"
+    response_text += "完整功能请使用:\n"
+    response_text += "  python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000"
+    
+    return {
+        "success": True,
+        "response": response_text,
+        "model": model
+    }
+
 if __name__ == "__main__":
     import uvicorn
     print("=" * 70)
