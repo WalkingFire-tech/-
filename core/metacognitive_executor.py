@@ -178,16 +178,9 @@ class MetacognitiveExecutor:
         """
         
         tools = []
-        try:
-            from tools.registry import registry
-            for tool in registry.list_tools():
-                tools.append({
-                    "name": tool.name if hasattr(tool, 'name') else str(tool),
-                    "type": tool.category.value if hasattr(tool, 'category') and hasattr(tool.category, 'value') else "unknown",
-                    "available": True
-                })
-        except Exception as e:
-            logger.debug(f"工具扫描失败: {e}")
+        # 注意：工具扫描可能导致卡住，暂时跳过
+        # TODO: 修复工具扫描后重新启用
+        logger.debug("跳过工具扫描（可能导致卡住）")
         
         # 2. 扫描模型适配器（异步，快速失败）
         models = []
