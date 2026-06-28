@@ -1,16 +1,16 @@
 """
-永不放弃的聊天处理 - 简化版
-保留原来的工作逻辑，但添加降级保护
+永不放弃的聊天处理
 
-核心精神：所有回复都必须符合精神内核
-- 合理且逻辑清晰有理有据且自洽
-- 即使失败也给出有意义的回复
-- 永不放弃是元能力
+核心理念：
+- 超时不等于放弃！系统正在思考，不应该被中断
+- 先给用户即时回复（状态同步），后台继续深度思考
+- 思考完成后更新结果到经验池，下次直接使用
+- 永不放弃是元能力，刻进底层
 """
 import asyncio
+import time
 from loguru import logger
 
-# 导入精神内核
 try:
     from core.spirit_core import spirit_core, ensure_spirit_compliance
     SPIRIT_CORE_AVAILABLE = True
@@ -20,32 +20,47 @@ except ImportError as e:
     SPIRIT_CORE_AVAILABLE = False
 
 
+def _get_available_ollama_model() -> str:
+    """获取可用的Ollama模型"""
+    try:
+        import requests
+        tags = requests.get("http://localhost:11434/api/tags", timeout=2)
+        available = [m["name"] for m in tags.json().get("models", [])]
+    except Exception:
+        return None
+    
+    model_priority = ["qwen2.5:7b", "qwen2.5-coder:7b", "gemma-4-12B:latest", "deepcoder:latest"]
+    for m in model_priority:
+        for a in available:
+            if m in a or a.startswith(m.split(":")[0]):
+                return a
+    return available[0] if available else None
+
+
 async def chat_never_giveup(user_input: str, context: dict) -> dict:
     """
     永不放弃的聊天处理
     
-    策略：
-    1. 快速意图识别
-    2. 简单意图直接回复
-    3. 深度认知处理
-    4. Ollama本地模型
-    5. 知识库查询
-    6. 经验池查询
-    7. 规则匹配回复
-    8. 后台任务（永不放弃）
+    核心改变：超时不等于放弃！
+    - 系统正在思考，不应该被中断
+    - 先给用户即时回复（状态同步）
+    - 后台继续深度思考
+    - 思考完成后存入经验池，下次直接使用
     """
     
+    start_time = time.time()
     attempts = []
     final_response = None
     
     # ========== 策略1：快速意图识别 ==========
     try:
         from core.cognitive_dispatcher import CognitiveDispatcher
-        loop = asyncio.get_event_loop()
         dispatcher = CognitiveDispatcher()
         
         dispatch_result = await asyncio.wait_for(
-            loop.run_in_executor(None, lambda: dispatcher.dispatch(user_query=user_input, context=context)),
+            asyncio.get_event_loop().run_in_executor(
+                None, lambda: dispatcher.dispatch(user_query=user_input, context=context)
+            ),
             timeout=3.0
         )
         
@@ -77,73 +92,51 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
         attempts.append(("历史查询", True, "历史"))
         return {"response": final_response, "attempts": attempts, "intent": intent_type}
     
-    # ========== 策略3：深度认知处理（所有问题都尝试） ==========
+    # ========== 策略3：深度认知处理（不设超时！） ==========
+    # 超时=放弃，这违背永不放弃精神！
+    # 改为：先尝试快速获取结果，如果慢就先给即时回复
     if not final_response:
         logger.info(f"🔄 开始深度认知处理: intent={intent_type}")
-        try:
-            from core.metacognitive_executor import MetacognitiveExecutor
-            executor = MetacognitiveExecutor()
-            
-            exec_result = await asyncio.wait_for(
-                executor.execute_with_full_metacognition(user_query=user_input, context=context),
-                timeout=20.0
+        
+        # 3a. 先尝试快速路径（知识库+经验池）
+        quick_result = await _quick_solve(user_input, intent_type)
+        if quick_result:
+            final_response = quick_result
+            attempts.append(("快速解答", True, "即时回复"))
+        
+        # 3b. 启动后台深度思考（不阻塞返回）
+        if not final_response or len(final_response) < 50:
+            asyncio.create_task(
+                _background_deep_thinking(user_input, context, intent_type)
             )
-            
-            result = exec_result.get("final_result", "")
-            if result and len(result) > 20:
-                final_response = result
-                attempts.append(("深度认知", True, f"{len(result)}字"))
-                logger.info(f"✅ 深度认知成功: {len(result)}字")
-        except Exception as e:
-            logger.error(f"❌ 深度认知失败: {e}")
-            attempts.append(("深度认知", False, str(e)[:50]))
+            logger.info("🔄 后台深度思考已启动")
     
-    # ========== 策略4：Ollama本地模型 ==========
+    # ========== 策略4：Ollama本地模型（不设超时！） ==========
     if not final_response:
-        try:
-            import requests
-            # 自动选择可用模型
+        selected = _get_available_ollama_model()
+        if selected:
             try:
-                tags = requests.get("http://localhost:11434/api/tags", timeout=2)
-                available = [m["name"] for m in tags.json().get("models", [])]
-            except Exception:
-                available = []
-            
-            model_priority = ["qwen2.5:7b", "qwen2.5-coder:7b", "gemma-4-12B:latest", "deepcoder:latest"]
-            selected = None
-            for m in model_priority:
-                for a in available:
-                    if m in a or a.startswith(m.split(":")[0]):
-                        selected = a
-                        break
-                if selected:
-                    break
-            if not selected and available:
-                selected = available[0]
-            
-            if selected:
-                response = await asyncio.wait_for(
-                    asyncio.get_event_loop().run_in_executor(
-                        None,
-                        lambda: requests.post(
-                            "http://localhost:11434/api/generate",
-                            json={"model": selected, "prompt": user_input, "stream": False},
-                            timeout=15
-                        )
-                    ),
-                    timeout=18.0
+                import requests
+                logger.info(f"  🤖 使用模型: {selected}")
+                response = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: requests.post(
+                        "http://localhost:11434/api/generate",
+                        json={"model": selected, "prompt": user_input, "stream": False},
+                        timeout=60  # 给模型足够时间思考
+                    )
                 )
                 if response.status_code == 200:
                     result = response.json().get("response", "")
                     if result and len(result) > 10:
                         final_response = result
                         attempts.append(("Ollama", True, f"{len(result)}字 ({selected})"))
-            else:
-                attempts.append(("Ollama", False, "无可用模型"))
-        except asyncio.TimeoutError:
-            attempts.append(("Ollama", False, "超时"))
-        except Exception as e:
-            attempts.append(("Ollama", False, str(e)[:50]))
+                        # 存入经验池
+                        _save_to_experience_pool(user_input, result)
+            except Exception as e:
+                attempts.append(("Ollama", False, str(e)[:50]))
+        else:
+            attempts.append(("Ollama", False, "无可用模型"))
     
     # ========== 策略5：知识库查询 ==========
     if not final_response:
@@ -180,9 +173,8 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
         final_response = _generate_smart_reply(user_input, intent_type)
         attempts.append(("规则匹配", True, "智能回复"))
     
-    # ========== 策略8：精神内核强制注入（最后一道防线） ==========
+    # ========== 策略8：精神内核强制注入 ==========
     if SPIRIT_CORE_AVAILABLE:
-        # 使用enforce_on_output：自动验证+异常触发+自动修正
         original_response = final_response
         final_response = spirit_core.enforce_on_output(final_response, source="chat_handler")
         if final_response != original_response:
@@ -190,13 +182,12 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
         else:
             attempts.append(("精神内核验证", True, "回复符合精神"))
     else:
-        # 如果精神内核不可用，使用基础的有意义回复生成
         if not final_response or len(final_response) < 20:
             final_response = _generate_meaningful_fallback(user_input, attempts)
             attempts.append(("降级保护", True, "基础有意义回复"))
     
-    # ========== 记录解决过程 ==========
-    logger.info(f"✅ 问题解决: {user_input[:30]} → {[(a[0], a[1]) for a in attempts]}")
+    elapsed = time.time() - start_time
+    logger.info(f"✅ 问题解决: {user_input[:30]} → {[(a[0], a[1]) for a in attempts]} ({elapsed:.1f}秒)")
     
     return {
         "response": final_response,
@@ -204,8 +195,88 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
         "intent": intent_type,
         "confidence": confidence,
         "route": route,
-        "spirit_compliant": SPIRIT_CORE_AVAILABLE
+        "spirit_compliant": SPIRIT_CORE_AVAILABLE,
+        "elapsed": elapsed
     }
+
+
+async def _quick_solve(query: str, intent_type: str) -> str:
+    """快速解答：先尝试知识库和经验池"""
+    # 1. 经验池
+    try:
+        import sqlite3
+        conn = sqlite3.connect("data/experience_pool.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT response FROM experiences WHERE query LIKE ? ORDER BY timestamp DESC LIMIT 1", (f"%{query[:20]}%",))
+        row = cursor.fetchone()
+        conn.close()
+        if row and len(row[0]) > 30:
+            return row[0]
+    except:
+        pass
+    
+    # 2. 知识库
+    try:
+        import sqlite3
+        conn = sqlite3.connect("data/knowledge_store.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{query[:30]}%",))
+        row = cursor.fetchone()
+        conn.close()
+        if row and len(row[0]) > 30:
+            return row[0]
+    except:
+        pass
+    
+    return None
+
+
+async def _background_deep_thinking(query: str, context: dict, intent_type: str):
+    """
+    后台深度思考（永不放弃！）
+    
+    核心理念：超时不等于放弃！
+    - 系统正在思考，不应该被中断
+    - 思考完成后存入经验池
+    - 下次遇到同样问题，直接使用
+    """
+    try:
+        logger.info(f"🧠 后台深度思考开始: {query[:30]}...")
+        
+        from core.metacognitive_executor import MetacognitiveExecutor
+        executor = MetacognitiveExecutor()
+        
+        exec_result = await executor.execute_with_full_metacognition(
+            user_query=query, context=context
+        )
+        
+        result = exec_result.get("final_result", "")
+        if result and len(result) > 20:
+            # 存入经验池，下次直接使用
+            _save_to_experience_pool(query, result)
+            logger.info(f"✅ 后台思考完成: {len(result)}字，已存入经验池")
+        else:
+            logger.info(f"⚠️ 后台思考未获得满意结果")
+            
+    except Exception as e:
+        logger.error(f"❌ 后台思考失败: {e}")
+
+
+def _save_to_experience_pool(query: str, response: str):
+    """存入经验池"""
+    try:
+        import sqlite3
+        from datetime import datetime
+        conn = sqlite3.connect("data/experience_pool.db")
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO experiences (query, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
+            (query, response, datetime.now().isoformat(), "deep_thinking", 70)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.debug(f"经验存储失败: {e}")
 
 
 async def _solve_history_query(query: str) -> str:
