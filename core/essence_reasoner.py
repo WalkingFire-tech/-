@@ -554,18 +554,13 @@ class EssenceReasoner:
         return prompt
 
     def _web_fact_check(self, query: str, facts: List[Dict]) -> Dict:
-        """
-        web搜索事实校验：对关键科学事实声明进行交叉验证
-
-        策略：只对高风险事实（科学域+不可追溯）进行web校验，避免过度请求
-        """
         result = {"checked": [], "contradictions": [], "confirmed": [], "unverifiable": []}
 
         high_risk_facts = [f for f in facts if f.get("domain") != "通用" and f.get("type") == "scientific"]
         if not high_risk_facts:
             return result
 
-        for fact in high_risk_facts[:3]:
+        for fact in high_risk_facts[:2]:
             stmt = fact["statement"]
             domain = fact["domain"]
 
@@ -577,7 +572,7 @@ class EssenceReasoner:
                 resp = requests.get(
                     "https://api.duckduckgo.com/",
                     params={"q": search_query, "format": "json", "no_html": 1},
-                    timeout=5
+                    timeout=2
                 )
                 if resp.status_code == 200:
                     data = resp.json()
@@ -605,8 +600,9 @@ class EssenceReasoner:
                                 result["contradictions"].append(f"「{stmt[:40]}」与搜索结果冲突：{c}")
                                 check_entry["result"] = "contradicted"
             except Exception as e:
-                logger.debug(f"web事实校验失败: {e}")
-                check_entry["result"] = "error"
+                logger.debug(f"web事实校验跳过: {str(e)[:60]}")
+                check_entry["result"] = "skipped"
+                break
 
             result["checked"].append(check_entry)
 

@@ -733,7 +733,11 @@ async def chat_stream(user_input: str, context: dict):
     route = "slow"
     confidence = 0.5
 
-    # 构建对话上下文
+    user_input = user_input.strip().rstrip("/\\|").strip()
+    if not user_input:
+        yield _emit("result", {"response": "请输入你的问题。", "attempts": [], "intent": "greeting"})
+        return
+
     history = context.get("history", []) if context else []
     conversation_context = _build_conversation_context(history)
 
