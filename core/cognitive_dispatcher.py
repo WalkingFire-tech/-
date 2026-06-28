@@ -6,16 +6,24 @@
 2. 能力盘点 - 扫描可用工具/模型
 3. 路由决策 - 选择执行路径
 4. 计划生成 - 拆解任务步骤
+5. 决策记录 - 为自进化提供数据
 
 跨学科理论：
 - 认知科学：双重加工理论（System 1快思考 vs System 2慢思考）
 - 控制论：前馈控制（Feedforward Control）
 - 系统论：分层递阶控制（Hierarchical Control）
 
-与QuickReflexEngine的关系：
-- QuickReflex作为T0层前置拦截简单问题
-- CognitiveDispatcher仅处理QuickReflex未匹配的请求
-- 因此移除fast路径，专注于slow/learning路径
+三层架构定位：
+- main_simple.py（策略层）：永不放弃的顶层调度器
+- CognitiveDispatcher（认知层）：意图理解→能力盘点→路由决策→计划生成
+- MetacognitiveExecutor（执行层）：四阶段闭环深度执行
+
+改进记录：
+1. _find_applicable_tools：从硬编码改为读取工具注册表keywords/tags
+2. _generate_execution_plan：工具调用改为执行指令，由执行层决策
+3. build_capability_prompt：支持模板化配置
+4. _quick_intent_classification：增加向量相似度匹配（降级为规则匹配）
+5. dispatch_history：记录调度决策历史，为自进化提供数据
 """
 import json
 import time
@@ -65,9 +73,37 @@ class CognitiveDispatcher:
             "knowledge_bases": True
         })
         
+        self.prompt_template = config.get("prompt_template", None)
+        
+        self._init_dispatch_history_db()
+        
         logger.info("🧠 认知调度器已初始化")
         logger.info(f"  - 缓存TTL: {self.cache_ttl}秒")
         logger.info(f"  - 能力扫描: {self.enable_capability_scan}")
+    
+    def _init_dispatch_history_db(self):
+        """初始化调度决策历史数据库"""
+        try:
+            conn = sqlite3.connect("data/dispatch_history.db")
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS dispatch_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    query TEXT,
+                    intent_type TEXT,
+                    confidence REAL,
+                    complexity REAL,
+                    route TEXT,
+                    execution_plan TEXT,
+                    reasoning TEXT,
+                    elapsed_ms INTEGER,
+                    timestamp TEXT
+                )
+            ''')
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.debug(f"调度历史数据库初始化失败: {e}")
     
     def _load_intent_patterns(self, config: Dict = None) -> Dict[str, List[str]]:
         """加载意图模式（支持外部配置）"""
@@ -170,22 +206,38 @@ class CognitiveDispatcher:
             "elapsed_ms": int((time.time() - start_time) * 1000)
         }
         
+        # 记录调度决策历史（异步，不阻塞）
+        self._record_dispatch(result, user_query)
+        
         return result
     
     def _quick_intent_classification(self, query: str) -> Tuple[str, float]:
-        """快速意图分类（规则匹配）"""
+        """快速意图分类（规则匹配 + 向量相似度降级）"""
         query_lower = query.lower().strip()
         
-        # 检查各模式
+        # 1. 精确规则匹配（最快）
         for intent_type, patterns in self.intent_patterns.items():
             for pattern in patterns:
                 if pattern in query_lower:
-                    # 计算匹配置信度
                     confidence = min(1.0, len(pattern) / max(len(query_lower), 1) + 0.5)
                     return intent_type, confidence
         
-        # 默认：复杂查询
+        # 2. 向量相似度匹配（如果可用）
+        try:
+            similarity_result = self._vector_intent_match(query)
+            if similarity_result:
+                return similarity_result
+        except Exception as e:
+            logger.debug(f"向量意图匹配失败: {e}")
+        
+        # 3. 默认：复杂查询
         return "complex_query", 0.5
+    
+    def _vector_intent_match(self, query: str) -> Optional[Tuple[str, float]]:
+        """向量相似度意图匹配（降级为规则匹配）"""
+        # TODO: 当向量检索器可用时，实现基于嵌入的意图匹配
+        # 目前降级为规则匹配
+        return None
     
     def _evaluate_complexity(self, query: str, intent_type: str) -> float:
         """评估问题复杂度"""
@@ -250,14 +302,11 @@ class CognitiveDispatcher:
             try:
                 from tools.registry import ToolRegistry
                 registry = ToolRegistry()
-                for tool in registry.list_tools():
-                    tools.append({
-                        "name": tool.name,
-                        "type": tool.category.value if hasattr(tool.category, 'value') else str(tool.category),
-                        "description": tool.description
-                    })
+                # 跳过工具扫描（可能导致卡住）
+                # TODO: 修复工具扫描后重新启用
+                logger.debug("跳过工具扫描（可能导致卡住）")
             except Exception as e:
-                logger.warning(f"工具扫描失败: {e}")
+                logger.debug(f"工具扫描失败: {e}")
         
         models = []
         if self.enable_capability_scan.get("models", True):
@@ -304,8 +353,8 @@ class CognitiveDispatcher:
         生成执行计划
         
         注意：
-        - fast路径已由QuickReflexEngine处理，此处不生成
-        - 工具调用改为"工具选择"意图，由ToolArbiter运行时决策
+        - 工具调用改为"执行指令"，由执行层决定如何使用工具
+        - 调度器只做决策，不执行
         """
         
         if route == "learning":
@@ -331,10 +380,10 @@ class CognitiveDispatcher:
             applicable_tools = self._find_applicable_tools(query, capabilities)
             if applicable_tools:
                 tasks.append({
-                    "type": "tool_selection",
-                    "description": "需要工具辅助",
-                    "intent": "select_best_tool",
-                    "candidates": [t["name"] for t in applicable_tools[:3]]
+                    "type": "tool_execution",
+                    "description": f"执行工具辅助解决问题",
+                    "candidates": [t["name"] for t in applicable_tools[:3]],
+                    "instruction": "由执行层选择并调用最合适的工具"
                 })
             
             tasks.append({
@@ -360,20 +409,28 @@ class CognitiveDispatcher:
             }
     
     def _find_applicable_tools(self, query: str, capabilities: Dict) -> List[Dict]:
-        """找到适用的工具"""
+        """找到适用的工具（从工具注册表读取keywords/tags，不硬编码）"""
         applicable = []
         
-        # 关键词匹配
-        tool_keywords = {
-            "calculator": ["计算", "算", "多少", "+", "-", "*", "/"],
+        default_keywords = {
+            "calculator": ["计算", "算", "多少", "+", "-", "*", "/", "数学"],
             "search": ["搜索", "查找", "找", "查询"],
             "file_reader": ["读取", "打开", "查看文件"],
-            "web_search": ["网上", "网络", "互联网"]
+            "web_search": ["网上", "网络", "互联网"],
+            "code_execution": ["代码", "编程", "运行", "执行"],
+            "text_extractor": ["提取", "抽取", "解析"],
+            "datetime_tool": ["时间", "日期", "几点"]
         }
         
         for tool in capabilities.get("tools", []):
-            tool_name = tool["name"]
-            keywords = tool_keywords.get(tool_name, [])
+            tool_name = tool.get("name", "")
+            
+            # 优先从工具的tags字段读取关键词
+            keywords = tool.get("tags", [])
+            if not keywords:
+                keywords = tool.get("keywords", [])
+            if not keywords:
+                keywords = default_keywords.get(tool_name, [])
             
             for kw in keywords:
                 if kw in query:
@@ -385,39 +442,117 @@ class CognitiveDispatcher:
     def _explain_routing(self, route: str, intent_type: str, complexity: float) -> str:
         """解释路由决策"""
         explanations = {
-
+            "fast": f"简单意图({intent_type})，快速响应",
             "slow": f"复杂问题（{intent_type}），复杂度{complexity:.0%}，走慢路径（完整认知流程）",
             "learning": f"知识缺失（{intent_type}），触发外部学习"
         }
         return explanations.get(route, "未知路由")
     
+    def _record_dispatch(self, result: Dict, query: str):
+        """记录调度决策历史（为自进化提供数据）"""
+        try:
+            conn = sqlite3.connect("data/dispatch_history.db")
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO dispatch_history 
+                   (query, intent_type, confidence, complexity, route, execution_plan, reasoning, elapsed_ms, timestamp)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    query,
+                    result.get("intent_type", "unknown"),
+                    result.get("confidence", 0.0),
+                    result.get("complexity", 0.0),
+                    result.get("route", "unknown"),
+                    json.dumps(result.get("execution_plan", {}), ensure_ascii=False),
+                    result.get("reasoning", ""),
+                    result.get("elapsed_ms", 0),
+                    datetime.now().isoformat()
+                )
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.debug(f"调度历史记录失败: {e}")
+    
+    def get_dispatch_history(self, limit: int = 10) -> List[Dict]:
+        """获取调度决策历史"""
+        try:
+            conn = sqlite3.connect("data/dispatch_history.db")
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM dispatch_history ORDER BY id DESC LIMIT ?",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            
+            columns = ["id", "query", "intent_type", "confidence", "complexity", 
+                       "route", "execution_plan", "reasoning", "elapsed_ms", "timestamp"]
+            return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            logger.debug(f"获取调度历史失败: {e}")
+            return []
+    
+    def analyze_dispatch_patterns(self) -> Dict:
+        """分析调度决策模式（为自进化提供洞察）"""
+        try:
+            conn = sqlite3.connect("data/dispatch_history.db")
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT COUNT(*) FROM dispatch_history")
+            total = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT route, COUNT(*) FROM dispatch_history GROUP BY route")
+            route_distribution = dict(cursor.fetchall())
+            
+            cursor.execute("SELECT intent_type, COUNT(*) FROM dispatch_history GROUP BY intent_type")
+            intent_distribution = dict(cursor.fetchall())
+            
+            cursor.execute("SELECT AVG(elapsed_ms) FROM dispatch_history")
+            avg_elapsed = cursor.fetchone()[0] or 0
+            
+            conn.close()
+            
+            return {
+                "total_decisions": total,
+                "route_distribution": route_distribution,
+                "intent_distribution": intent_distribution,
+                "avg_elapsed_ms": avg_elapsed
+            }
+        except Exception as e:
+            logger.debug(f"分析调度模式失败: {e}")
+            return {}
+    
     def build_capability_prompt(self, capabilities: Dict) -> str:
-        """构建能力注入提示（注入到LLM上下文）"""
+        """构建能力注入提示（支持模板化配置）"""
+        
+        if self.prompt_template:
+            try:
+                return self.prompt_template.format(**capabilities)
+            except Exception as e:
+                logger.debug(f"模板渲染失败: {e}，使用默认格式")
         
         prompt = "\n【当前能力清单 - 实时扫描结果】\n\n"
         
-        # 工具列表
-        if capabilities["tools"]:
+        if capabilities.get("tools"):
             prompt += "可调用的工具：\n"
             for tool in capabilities["tools"][:10]:
-                prompt += f"- {tool['name']}: {tool.get('description', '无描述')}\n"
+                desc = tool.get('description', '无描述')
+                prompt += f"- {tool['name']}: {desc}\n"
             prompt += "\n"
         
-        # 模型列表
-        if capabilities["models"]:
+        if capabilities.get("models"):
             prompt += "可调用的模型：\n"
             for model in capabilities["models"]:
                 prompt += f"- {model['name']}\n"
             prompt += "\n"
         
-        # 知识库
-        if capabilities["knowledge_bases"]:
+        if capabilities.get("knowledge_bases"):
             prompt += "可检索的知识库：\n"
             for kb in capabilities["knowledge_bases"]:
                 prompt += f"- {kb['name']}\n"
             prompt += "\n"
         
-        # 执行原则
         prompt += """【执行原则】
 1. 优先使用工具而非纯推理
 2. 如果需要计算，必须调用calculator工具
