@@ -123,6 +123,12 @@ class CognitiveDispatcher:
             "confirmation": [
                 "好的", "收到", "明白", "知道了", "谢谢", "感谢"
             ],
+            "challenge": [
+                "你确定", "确定吗", "真的吗", "不是吧", "不对吧",
+                "你确定？", "确定吗？", "真的吗？", "不对吧？",
+                "你错了", "你说错了", "不对", "不是这样的",
+                "我不信", "不可能", "别瞎说", "胡说"
+            ],
             "history_query": [
                 "历史", "记录", "历史记录", "查看历史", "显示历史", "聊天记录"
             ],
@@ -131,7 +137,9 @@ class CognitiveDispatcher:
             ],
             "complex_query": [
                 "为什么", "如何实现", "怎么优化", "分析", "比较",
-                "设计", "构建", "创建", "实现", "改进"
+                "设计", "构建", "创建", "实现", "改进",
+                "应该", "什么样", "怎样", "如何", "怎么样",
+                "架构", "思路", "原理", "机制", "体系"
             ],
             "learning_trigger": [
                 "我不懂", "不明白", "什么是", "介绍一下", "解释一下"
@@ -183,7 +191,8 @@ class CognitiveDispatcher:
             }
         
         # ========== 第四步：能力盘点（缓存） ==========
-        capabilities = self._scan_capabilities()
+        # 注意：能力扫描可能导致卡住，使用缓存或跳过
+        capabilities = self._scan_capabilities_fast()
         
         logger.info(f"🔧 能力清单: {len(capabilities['tools'])}个工具, {len(capabilities['models'])}个模型")
         
@@ -214,15 +223,44 @@ class CognitiveDispatcher:
     def _quick_intent_classification(self, query: str) -> Tuple[str, float]:
         """快速意图分类（规则匹配 + 向量相似度降级）"""
         query_lower = query.lower().strip()
+        import re
+        query_clean = re.sub(r'[？?！!。.，,、；;：:""''\"\'\s]+$', '', query_lower)
+        query_clean_all = re.sub(r'[？?！!。.，,、；;：:""''\"\'\s]', '', query_lower)
         
-        # 1. 精确规则匹配（最快）
-        for intent_type, patterns in self.intent_patterns.items():
+        # 超短句(<6字符)且包含greeting/confirmation/challenge关键词，直接判定
+        if len(query_clean_all) <= 8:
+            for pattern in self.intent_patterns.get("greeting", []):
+                if pattern in query_clean_all or query_clean_all in pattern:
+                    return "greeting", 0.95
+            for pattern in self.intent_patterns.get("confirmation", []):
+                if pattern in query_clean_all or query_clean_all in pattern:
+                    return "confirmation", 0.95
+            for pattern in self.intent_patterns.get("challenge", []):
+                if pattern in query_clean_all or query_clean_all in pattern:
+                    return "challenge", 0.9
+        
+        # 匹配优先级：challenge > complex > simple > 其他
+        # 避免短模式误判长问题
+        match_order = ["challenge", "complex_query", "learning_trigger", "simple_query", "history_query", "greeting", "confirmation"]
+        short_match_intents = {"greeting", "confirmation", "challenge"}
+        
+        for intent_type in match_order:
+            patterns = self.intent_patterns.get(intent_type, [])
             for pattern in patterns:
-                if pattern in query_lower:
-                    confidence = min(1.0, len(pattern) / max(len(query_lower), 1) + 0.5)
-                    return intent_type, confidence
+                if intent_type == "challenge":
+                    if pattern in query_clean_all or query_clean_all in pattern:
+                        confidence = min(1.0, len(pattern) / max(len(query_lower), 1) + 0.5)
+                        return intent_type, confidence
+                elif intent_type in short_match_intents:
+                    if query_clean == pattern or query_clean.startswith(pattern + " ") or query_clean_all == pattern:
+                        confidence = min(1.0, len(pattern) / max(len(query_lower), 1) + 0.5)
+                        return intent_type, confidence
+                else:
+                    if pattern in query_lower:
+                        confidence = min(1.0, len(pattern) / max(len(query_lower), 1) + 0.5)
+                        return intent_type, confidence
         
-        # 2. 向量相似度匹配（如果可用）
+        # 向量相似度匹配（如果可用）
         try:
             similarity_result = self._vector_intent_match(query)
             if similarity_result:
@@ -230,7 +268,7 @@ class CognitiveDispatcher:
         except Exception as e:
             logger.debug(f"向量意图匹配失败: {e}")
         
-        # 3. 默认：复杂查询
+        # 默认：复杂查询
         return "complex_query", 0.5
     
     def _vector_intent_match(self, query: str) -> Optional[Tuple[str, float]]:
@@ -247,6 +285,7 @@ class CognitiveDispatcher:
         base_complexity = {
             "greeting": 0.1,
             "confirmation": 0.1,
+            "challenge": 0.8,
             "simple_query": 0.3,
             "complex_query": 0.7,
             "learning_trigger": 0.5
@@ -282,6 +321,10 @@ class CognitiveDispatcher:
         if intent_type in ["greeting", "confirmation", "simple_query", "history_query"]:
             return "fast"
         
+        # 质疑检测走slow路径，需要重新验证
+        if intent_type == "challenge":
+            return "slow"
+        
         learning_threshold = self.route_thresholds.get("learning_confidence", 0.5)
         
         if intent_type == "learning_trigger" or confidence < learning_threshold:
@@ -289,7 +332,35 @@ class CognitiveDispatcher:
         
         return "slow"
     
-    def _scan_capabilities(self) -> Dict[str, Any]:
+    def _scan_capabilities_fast(self) -> Dict[str, Any]:
+        """快速能力扫描（不调用外部服务，避免卡住）"""
+        now = time.time()
+        
+        with self._cache_lock:
+            if self.capability_cache and (now - self.cache_timestamp) < self.cache_ttl:
+                return self.capability_cache
+        
+        tools = []
+        models = []
+        # 跳过Ollama扫描，避免卡住
+        knowledge_bases = []
+        if Path("data/knowledge_store.db").exists():
+            knowledge_bases.append({"name": "主知识库", "available": True})
+        if Path("data/experience_pool.db").exists():
+            knowledge_bases.append({"name": "经验池", "available": True})
+        
+        capabilities = {
+            "tools": tools,
+            "models": models,
+            "knowledge_bases": knowledge_bases,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        with self._cache_lock:
+            self.capability_cache = capabilities
+            self.cache_timestamp = now
+        
+        return capabilities
         """扫描系统能力（带缓存和锁保护）"""
         now = time.time()
         
@@ -312,7 +383,7 @@ class CognitiveDispatcher:
         if self.enable_capability_scan.get("models", True):
             try:
                 import requests
-                response = requests.get("http://localhost:11434/api/tags", timeout=1)
+                response = requests.get("http://localhost:11434/api/tags", timeout=3)
                 if response.status_code == 200:
                     for model in response.json().get("models", []):
                         models.append({

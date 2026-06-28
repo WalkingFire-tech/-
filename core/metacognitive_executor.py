@@ -98,20 +98,17 @@ class MetacognitiveExecutor:
         for i, task in enumerate(plan['tasks'], 1):
             logger.info(f"  [{i}] {task['type']}: {task['description']}")
         
-        # ========== 阶段2：正交执行（快速） ==========
+        # ========== 阶段2：正交执行（不设固定超时，等自然返回） ==========
         logger.info("⚡ [阶段2] 正交执行 - 工具仲裁 + 并行执行")
         
         try:
-            execution_results = await asyncio.wait_for(
-                self._phase2_execute_with_arbitration(
-                    plan['tasks'],
-                    capability_context,
-                    user_query
-                ),
-                timeout=8.0  # 最多8秒
+            execution_results = await self._phase2_execute_with_arbitration(
+                plan['tasks'],
+                capability_context,
+                user_query
             )
-        except asyncio.TimeoutError:
-            logger.warning("⚠️ 阶段2超时，返回空结果")
+        except Exception as e:
+            logger.warning(f"⚠️ 阶段2执行异常: {e}")
             execution_results = {
                 "results": [],
                 "success_count": 0,
@@ -515,24 +512,19 @@ class MetacognitiveExecutor:
             
             if selected_model:
                 logger.info(f"  🤖 使用模型: {selected_model}")
-                response = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        lambda: requests.post(
-                            "http://localhost:11434/api/generate",
-                            json={"model": selected_model, "prompt": query, "stream": False},
-                            timeout=15
-                        )
-                    ),
-                    timeout=18.0
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: requests.post(
+                        "http://localhost:11434/api/generate",
+                        json={"model": selected_model, "prompt": query, "stream": False},
+                        timeout=180
+                    )
                 )
                 if response.status_code == 200:
                     answer = response.json().get("response", "")
                     if answer and len(answer) > 10:
                         logger.info(f"  ✅ 模型推理完成: {len(answer)}字")
                         return answer
-        except asyncio.TimeoutError:
-            logger.warning("  ⏱️ Ollama推理超时")
         except Exception as e:
             logger.debug(f"Ollama推理失败: {e}")
         
@@ -544,14 +536,9 @@ class MetacognitiveExecutor:
                 base_url="https://api.deepseek.com/v1"
             )
             loop = asyncio.get_event_loop()
-            result = await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: adapter.generate(query)),
-                timeout=8.0
-            )
+            result = await loop.run_in_executor(None, lambda: adapter.generate(query))
             if result and len(result) > 10:
                 return result
-        except asyncio.TimeoutError:
-            logger.debug("远程API推理超时")
         except Exception as e:
             logger.debug(f"远程API推理失败: {e}")
         
@@ -635,7 +622,7 @@ class MetacognitiveExecutor:
                 cursor = conn.cursor()
                 answer = self._extract_best_answer(execution_results)
                 cursor.execute(
-                    "INSERT INTO experiences (query, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
                     (user_query, answer, datetime.now().isoformat(), "metacognitive", int(validation.get("quality_score", 50)))
                 )
                 conn.commit()
