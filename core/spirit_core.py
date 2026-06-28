@@ -28,6 +28,12 @@
 ║  4. 每一次失败都是学习的机会，而不是放弃的理由                               ║
 ║  5. 回复是"状态同步"，不是"结束动作"                                        ║
 ║                                                                            ║
+║  改进记录：                                                                ║
+║  1. 精神异常机制：回复不符合原则时触发警报并记录                            ║
+║  2. 系统入口强制注入：所有输出管道自动挂载验证                              ║
+║  3. 与SelfReflection联动：失败教训作为反思素材                              ║
+║  4. 教训持久化：SQLite存储，跨会话保留                                      ║
+║                                                                            ║
 ║  警告：此文件是系统精神内核，修改时请保持以上原则！                         ║
 ╚════════════════════════════════════════════════════════════════════════════╝
 """
@@ -35,6 +41,10 @@
 from typing import Dict, Any, List, Optional
 from loguru import logger
 import time
+import sqlite3
+import json
+import threading
+from datetime import datetime
 
 
 class SpiritCore:
@@ -67,9 +77,41 @@ class SpiritCore:
     }
     
     def __init__(self):
-        self.lesson_book = []  # 失败教训记录
-        self.success_patterns = []  # 成功模式记录
-        self.created_methods = []  # 自我创造的方法
+        self.lesson_book = []
+        self.success_patterns = []
+        self.created_methods = []
+        self._violation_count = 0
+        self._total_validations = 0
+        self._lock = threading.Lock()
+        self._init_lesson_db()
+    
+    def _init_lesson_db(self):
+        """初始化教训持久化数据库"""
+        try:
+            conn = sqlite3.connect("data/spirit_lessons.db")
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS lessons (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    question TEXT,
+                    attempts TEXT,
+                    failed_methods TEXT,
+                    timestamp TEXT
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS violations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    response TEXT,
+                    issues TEXT,
+                    source TEXT,
+                    timestamp TEXT
+                )
+            ''')
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.debug(f"精神内核数据库初始化失败: {e}")
         
     def validate_response(self, response: str, context: Dict = None) -> Dict[str, Any]:
         """
@@ -98,6 +140,50 @@ class SpiritCore:
             "valid": len(issues) == 0,
             "issues": issues,
             "spirit_compliance": len(issues) == 0
+        }
+    
+    def raise_spirit_violation(self, response: str, issues: List[str], source: str = "unknown"):
+        """
+        精神异常机制：当回复不符合核心原则时触发
+        
+        1. 记录违规日志
+        2. 持久化到数据库
+        3. 为SelfReflection提供素材
+        """
+        with self._lock:
+            self._violation_count += 1
+        
+        violation_id = self._violation_count
+        
+        logger.warning(
+            f"🚨 精神异常 #{violation_id} | "
+            f"来源: {source} | "
+            f"问题: {'; '.join(issues)}"
+        )
+        
+        try:
+            conn = sqlite3.connect("data/spirit_lessons.db")
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO violations (response, issues, source, timestamp)
+                   VALUES (?, ?, ?, ?)""",
+                (
+                    response[:500],
+                    json.dumps(issues, ensure_ascii=False),
+                    source,
+                    datetime.now().isoformat()
+                )
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.debug(f"精神异常记录失败: {e}")
+        
+        return {
+            "violation_id": violation_id,
+            "issues": issues,
+            "source": source,
+            "action": "recorded"
         }
     
     def ensure_meaningful_response(
@@ -223,7 +309,7 @@ class SpiritCore:
         return suggestions[:5]
     
     def _record_lesson(self, question: str, attempts: List[Dict]):
-        """记录失败教训，作为学习材料"""
+        """记录失败教训，作为学习材料（持久化到SQLite）"""
         lesson = {
             "timestamp": time.time(),
             "question": question,
@@ -231,6 +317,26 @@ class SpiritCore:
             "failed_methods": [a.get('method') for a in attempts if not a.get('success')]
         }
         self.lesson_book.append(lesson)
+        
+        # 持久化到数据库
+        try:
+            conn = sqlite3.connect("data/spirit_lessons.db")
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO lessons (question, attempts, failed_methods, timestamp)
+                   VALUES (?, ?, ?, ?)""",
+                (
+                    question,
+                    json.dumps(attempts, ensure_ascii=False)[:2000],
+                    json.dumps(lesson["failed_methods"], ensure_ascii=False),
+                    datetime.now().isoformat()
+                )
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.debug(f"教训持久化失败: {e}")
+        
         logger.info(f"📖 记录失败教训: {question[:30]}...")
     
     def get_spirit_status(self) -> Dict[str, Any]:
@@ -247,8 +353,96 @@ class SpiritCore:
             "lessons_learned": len(self.lesson_book),
             "success_patterns": len(self.success_patterns),
             "created_methods": len(self.created_methods),
+            "violations": self._violation_count,
+            "total_validations": self._total_validations,
             "status": "精神内核运行正常，永不放弃"
         }
+    
+    def get_lessons_for_reflection(self, limit: int = 10) -> List[Dict]:
+        """
+        获取失败教训，供SelfReflection模块使用
+        
+        这是SpiritCore与SelfReflection的联动接口
+        """
+        try:
+            conn = sqlite3.connect("data/spirit_lessons.db")
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT question, attempts, failed_methods, timestamp FROM lessons ORDER BY id DESC LIMIT ?",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            
+            lessons = []
+            for row in rows:
+                lessons.append({
+                    "question": row[0],
+                    "attempts": json.loads(row[1]) if row[1] else [],
+                    "failed_methods": json.loads(row[2]) if row[2] else [],
+                    "timestamp": row[3]
+                })
+            return lessons
+        except Exception as e:
+            logger.debug(f"获取反思素材失败: {e}")
+            return self.lesson_book[-limit:]
+    
+    def get_violations_for_analysis(self, limit: int = 10) -> List[Dict]:
+        """获取精神异常记录，供系统分析"""
+        try:
+            conn = sqlite3.connect("data/spirit_lessons.db")
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT response, issues, source, timestamp FROM violations ORDER BY id DESC LIMIT ?",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            
+            violations = []
+            for row in rows:
+                violations.append({
+                    "response": row[0],
+                    "issues": json.loads(row[1]) if row[1] else [],
+                    "source": row[2],
+                    "timestamp": row[3]
+                })
+            return violations
+        except Exception as e:
+            logger.debug(f"获取异常记录失败: {e}")
+            return []
+    
+    def enforce_on_output(self, response: str, source: str = "unknown") -> str:
+        """
+        系统入口强制注入：所有输出管道自动挂载验证
+        
+        用法：
+            response = spirit_core.enforce_on_output(response, source="chat_handler")
+        
+        如果回复不符合精神内核：
+        1. 触发精神异常
+        2. 自动修正回复
+        3. 返回符合精神的回复
+        """
+        with self._lock:
+            self._total_validations += 1
+        
+        validation = self.validate_response(response)
+        
+        if not validation["valid"]:
+            # 触发精神异常
+            self.raise_spirit_violation(response, validation["issues"], source)
+            
+            # 自动修正：生成有意义的回复
+            corrected = self.ensure_meaningful_response(
+                "", 
+                [{"method": source, "success": False, "error": "; ".join(validation["issues"])}],
+                response
+            )
+            logger.info(f"🔧 精神内核自动修正: {source}")
+            return corrected
+        
+        return response
 
 
 # ========== 全局精神内核实例 ==========
