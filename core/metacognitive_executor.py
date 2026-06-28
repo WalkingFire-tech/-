@@ -338,22 +338,8 @@ class MetacognitiveExecutor:
     async def _retrieve_metacognitive_examples(self, query: str) -> str:
         """从255条闭环数据中检索相关范例"""
         
-        try:
-            # 尝试从向量库检索
-            from core.vector_retriever import vector_retriever
-            results = vector_retriever.hybrid_search(
-                query=f"元认知: {query}",
-                top_k=3
-            )
-            
-            if results:
-                examples = []
-                for r in results[:3]:
-                    if r.get('answer'):
-                        examples.append(r['answer'][:200])
-                return "\n\n".join(examples)
-        except:
-            pass
+        # 暂时跳过向量检索（可能导致卡住）
+        # TODO: 修复向量检索器初始化后重新启用
         
         # 降级：返回默认范例
         return """
@@ -364,7 +350,12 @@ class MetacognitiveExecutor:
 范例2：
 问题："什么是机器学习？"
 计划：{"tasks": [{"type": "knowledge_retrieval"}, {"type": "llm_reasoning"}]}
+
+范例3：
+问题："如何学习编程？"
+计划：{"tasks": [{"type": "knowledge_retrieval"}, {"type": "llm_reasoning"}]}
 """
+
     
     def _create_default_plan(self, query: str) -> Dict:
         """创建默认执行计划"""
