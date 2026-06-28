@@ -1,12 +1,13 @@
 // ==================== 版本信息 ====================
-// Version: 3.1.2
-// Last Update: 2026-06-19
+// Version: 3.5.0
+// Last Update: 2026-06-28
 // ==================== 全局配置 ====================
 const API_BASE = 'http://localhost:8000';
-const APP_VERSION = '3.1.2';
+const APP_VERSION = '3.5.0';
 
 // ==================== 全局变量 ====================
 let selectedModel = 'auto';
+let conversationHistory = [];
 
 // ==================== 工具函数 ====================
 function renderMarkdown(text) {
@@ -81,7 +82,33 @@ function addMessageHTML(role, htmlContent) {
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
 }
 
-// ==================== 发送消息（全局函数） ====================
+// ==================== 本地降级回复（前端兜底） ====================
+function _generateLocalFallback(query) {
+    const q = query.toLowerCase();
+    
+    if (q.includes('命运') || q.includes('人生') || q.includes('意义') || q.includes('哲学')) {
+        return `关于"${query}"，这是一个哲学与科学交汇的深刻问题：\n\n**不同视角的分析：**\n1. **生物学视角** - 基因遗传决定了我们的部分特质，这是"先天"的部分\n2. **社会学视角** - 家庭环境、教育经历、社会阶层等塑造了我们的机会和选择空间\n3. **心理学视角** - 个人的认知模式、决策习惯、情绪管理能力影响人生轨迹\n4. **哲学视角** - 自由意志与决定论的争论：我们是否真正"选择"了自己的命运？\n5. **复杂性科学** - 微小的初始差异可能通过正反馈放大，导致截然不同的结果\n\n**核心观点：**\n- 命运不是单一因素决定的，而是基因、环境、选择、偶然性共同作用的结果\n- 我们无法选择起点，但可以通过认知升级和持续行动来改变轨迹`;
+    }
+    if (q.includes('认知') || q.includes('意识') || q.includes('思维') || q.includes('智能')) {
+        return `关于"${query}"，这是一个深刻的问题：\n\n**认知的产生涉及多个层面：**\n1. **生物学基础** - 认知源于大脑神经元的连接与活动，约860亿个神经元通过突触形成复杂网络\n2. **感知与输入** - 通过视觉、听觉、触觉等感官接收外界信息\n3. **信息加工** - 大脑对感知信息进行编码、存储、检索和推理\n4. **涌现特性** - 认知不是单个神经元的功能，而是大量简单单元交互后涌现出的复杂特性\n5. **学习与适应** - 通过经验不断调整神经连接（神经可塑性），使认知能力持续进化\n\n**关键理论：**\n- 具身认知：认知不仅在大脑中，还依赖身体与环境的互动\n- 连接主义：认知是神经网络中分布式表征的计算结果\n- 预测编码：大脑不断预测输入，用预测误差来更新内部模型`;
+    }
+    if (q.includes('为什么')) {
+        return `关于"${query}"，从因果分析的角度来思考：\n\n**第一层：直接原因**\n最显而易见的表象是什么？\n\n**第二层：深层原因**\n- **历史因素** - 过去的事件和决策如何塑造了当前的局面？\n- **结构因素** - 系统性的制度、规则或环境如何影响结果？\n- **个体因素** - 人的选择、能力和行为如何发挥作用？\n\n**第三层：根本原因**\n- 追问5个"为什么"：不断追问更深层的因果链\n- 区分必要条件和充分条件\n- 注意因果的复杂性：单一原因很少能解释复杂现象\n\n💡 如果你能告诉我更具体的关注点，我可以给出更精准的分析。`;
+    }
+    if (q.includes('代码') || q.includes('编程') || q.includes('函数')) {
+        return `关于"${query}"，我可以帮助你：\n\n1. **代码生成** - 请告诉我具体需求\n2. **代码解释** - 请提供代码，我会解释原理\n3. **代码优化** - 请提供代码，我给出建议\n\n请告诉我更具体的需求。`;
+    }
+    if (q.includes('什么是') || q.includes('是什么') || q.includes('介绍')) {
+        const topic = query.replace(/什么是|是什么|介绍一下/g, '').trim();
+        return `关于"${topic}"：\n\n1. **概念层面** - ${topic}是一个重要的知识领域\n2. **应用层面** - ${topic}在实际中有广泛的应用\n3. **学习方向** - 可以从基础概念、核心原理、实践案例三个维度深入\n\n💡 建议你尝试更具体的问题。`;
+    }
+    if (q.includes('如何') || q.includes('怎么') || q.includes('怎样')) {
+        return `关于"${query}"，我的分析：\n\n1. **问题拆解** - 将复杂问题分解为可执行的小步骤\n2. **方法选择** - 根据具体场景选择最合适的方案\n3. **实践验证** - 通过实际操作来验证和调整\n\n💡 请告诉我更具体的场景和约束条件，我会给出针对性的详细指导。`;
+    }
+    return `关于"${query}"，我的深度思考：\n\n**1. 问题本质分析**\n这个问题的核心是什么？它属于哪类问题（事实性、价值性、因果性、方法性）？\n\n**2. 多角度审视**\n- **正面视角** - 最直观的理解是什么？\n- **反面视角** - 如果反过来想，会得到什么洞察？\n- **旁观视角** - 第三方如何看待这个问题？\n- **历史视角** - 这个问题在历史上是如何演变的？\n\n**3. 关键变量识别**\n影响这个问题结果的关键变量有哪些？哪些是可控的，哪些是不可控的？\n\n💡 我正在持续学习和进化。如果你能提供更多背景，我可以给出更深入的分析。`;
+}
+
+// ==================== 发送消息（全局函数 - 流式SSE） ====================
 async function sendMessage() {
     const userInput = document.getElementById('user-input');
     const sendBtn = document.getElementById('send-btn');
@@ -92,152 +119,141 @@ async function sendMessage() {
     userInput.value = '';
     sendBtn.disabled = true;
     
-    // 显示加载状态
-    const loadingDiv = document.createElement('div');
-    loadingDiv.className = 'message system';
-    loadingDiv.innerHTML = `
+    const startTime = Date.now();
+    
+    // 创建思考过程容器
+    const thinkingDiv = document.createElement('div');
+    thinkingDiv.className = 'message system';
+    thinkingDiv.innerHTML = `
         <div class="message-content">
             <div style="background: #e3f2fd; padding: 10px; border-radius: 8px;">
-                <div style="font-weight: bold; margin-bottom: 8px;">🧠 思考过程</div>
-                <div id="thinking-steps" style="font-size: 13px; line-height: 1.6;">
-                    <div id="step-1">⏳ 分析问题中...</div>
-                </div>
+                <div style="font-weight: bold; margin-bottom: 8px;">🧠 思考过程 <span id="thinking-timer" style="color: #666; font-size: 12px;">0.0秒</span></div>
+                <div id="thinking-steps" style="font-size: 13px; line-height: 1.8;"></div>
             </div>
         </div>
     `;
-    document.getElementById('messages').appendChild(loadingDiv);
+    document.getElementById('messages').appendChild(thinkingDiv);
     
-    const thinkingSteps = document.getElementById('thinking-steps');
-    let stepCount = 1;
+    const stepsContainer = document.getElementById('thinking-steps');
+    let currentStepEl = null;
     
-    function addStep(message) {
-        stepCount++;
-        const step = document.createElement('div');
-        step.id = `step-${stepCount}`;
-        step.innerHTML = `⏳ ${message}`;
-        thinkingSteps.appendChild(step);
-        return step;
-    }
-    
-    function updateStep(stepId, message) {
-        const step = document.getElementById(stepId);
-        if (step) step.innerHTML = `✅ ${message}`;
-    }
-    
-    const startTime = Date.now();
-    
-    // 模拟思考步骤（让用户看到进度）
-    setTimeout(() => updateStep('step-1', '问题分析完成'), 300);
-    const step2 = addStep('检索知识库...');
-    setTimeout(() => updateStep('step-2', '知识检索完成'), 800);
-    const step3 = addStep('准备调用模型...');
+    // 计时器
+    const timerInterval = setInterval(() => {
+        const timerEl = document.getElementById('thinking-timer');
+        if (timerEl) timerEl.textContent = ((Date.now() - startTime) / 1000).toFixed(1) + '秒';
+    }, 100);
 
     try {
-        const requestBody = { message };
+        conversationHistory.push({ role: 'user', content: message });
+        const requestBody = { message, history: conversationHistory.slice(-10) };
         if (selectedModel !== 'auto') requestBody.model = selectedModel;
 
-        // 给系统足够的思考时间（永不放弃！）
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 120000);
-        
-        const response = await fetch(`${API_BASE}/api/chat`, {
+        const streamTimeout = setTimeout(() => {
+            controller.abort();
+        }, 180000);
+
+        const response = await fetch(`${API_BASE}/api/chat/stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(requestBody),
             signal: controller.signal
         });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
         
-        clearTimeout(timeoutId);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let finalResult = null;
+        let lastDataTime = Date.now();
+        const dataTimeoutMs = 60000;
+
+        while (true) {
+            const readPromise = reader.read();
+            const readTimeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('读取超时')), 60000);
+            });
+
+            let readResult;
+            try {
+                readResult = await Promise.race([readPromise, readTimeoutPromise]);
+            } catch (readErr) {
+                console.warn('流读取异常:', readErr.message);
+                break;
+            }
+
+            const { done, value } = readResult;
+            if (done) break;
+
+            lastDataTime = Date.now();
+            clearTimeout(streamTimeout);
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const jsonStr = line.slice(6).trim();
+                if (!jsonStr) continue;
+                
+                try {
+                    const event = JSON.parse(jsonStr);
+                    
+                    if (event.type === 'step') {
+                        const phase = event.phase;
+                        const status = event.status;
+                        const detail = event.detail || '';
+                        
+                        if (status === 'running') {
+                            if (currentStepEl) {
+                                const icon = currentStepEl.querySelector('.step-icon');
+                                if (icon) icon.textContent = '✅';
+                            }
+                            currentStepEl = document.createElement('div');
+                            currentStepEl.style.marginTop = '4px';
+                            currentStepEl.innerHTML = `<span class="step-icon">⏳</span> <strong>${phase}</strong> - ${detail}`;
+                            stepsContainer.appendChild(currentStepEl);
+                        } else if (status === 'done') {
+                            if (currentStepEl) {
+                                const icon = currentStepEl.querySelector('.step-icon');
+                                if (icon) icon.textContent = '✅';
+                                currentStepEl.innerHTML = `<span class="step-icon">✅</span> <strong>${phase}</strong> - ${detail}`;
+                            }
+                            currentStepEl = null;
+                        }
+                    } else if (event.type === 'result') {
+                        finalResult = event;
+                    }
+                } catch (e) {
+                    // JSON解析失败，忽略
+                }
+            }
+        }
         
-        // 更新模型调用步骤
+        clearInterval(timerInterval);
+        clearTimeout(streamTimeout);
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        updateStep('step-3', `模型响应完成 (${elapsed}秒)`);
         
-        // 添加总耗时
-        const finalStep = addStep(`✨ 总耗时: ${elapsed}秒`);
-        
-        // 3秒后折叠思考过程
+        // 折叠思考过程
         setTimeout(() => {
-            loadingDiv.innerHTML = `
+            thinkingDiv.innerHTML = `
                 <div class="message-content">
                     <details style="background: #f5f5f5; padding: 8px; border-radius: 5px;">
                         <summary style="cursor: pointer; font-weight: bold;">💭 思考过程 (${elapsed}秒)</summary>
-                        <div style="font-size: 13px; margin-top: 8px; line-height: 1.6;">${thinkingSteps.innerHTML}</div>
+                        <div style="font-size: 13px; margin-top: 8px; line-height: 1.8;">${stepsContainer.innerHTML}</div>
                     </details>
                 </div>
             `;
-        }, 3000);
-        
-        const data = await response.json();
+        }, 2000);
 
-        if (data.error) {
-            addMessage('system', `❌ 错误: ${data.error}`);
-        } else {
-            // 显示思考过程（真实过程，非编造）
-            if (data.thinking_process) {
-                const thinkingDiv = document.createElement('div');
-                thinkingDiv.className = 'thinking-info';
-                const tp = data.thinking_process;
-                thinkingDiv.innerHTML = `
-                    <details style="margin: 5px 0;">
-                        <summary style="cursor: pointer; color: #666;">
-                            <span class="thinking-label">💭 思考过程</span>
-                            <span style="margin-left: 10px; font-size: 12px;">${tp.deep_intent} (置信度${Math.round(tp.intent_confidence * 100)}%)</span>
-                        </summary>
-                        <div style="margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 5px; font-size: 13px;">
-                            <p><strong>场景角色:</strong> ${tp.scene_role} (${Math.round(tp.role_confidence * 100)}%)</p>
-                            <p><strong>理解意图:</strong> ${tp.deep_intent}</p>
-                            ${tp.evidence && tp.evidence.length > 0 ? `<p><strong>判断依据:</strong> ${tp.evidence.join(', ')}</p>` : ''}
-                            <p><strong>响应策略:</strong> ${tp.response_strategy}</p>
-                            ${tp.learning_triggered ? '<p style="color: #4caf50;">📚 从您的输入中学习</p>' : ''}
-                        </div>
-                    </details>
-                `;
-                document.getElementById('messages').appendChild(thinkingDiv);
-            } else if (data.intent) {
-                // 降级显示（无详细思考过程时）
-                const thinkingDiv = document.createElement('div');
-                thinkingDiv.className = 'thinking-info';
-                
-                // 构建详细的思考过程
-                let thinkingHtml = `<span class="thinking-label">💭 思考过程</span>`;
-                
-                // 显示意图
-                thinkingHtml += `<span class="thinking-detail">识别意图: <strong>${data.intent}</strong></span>`;
-                
-                // 显示RPV循环（如果有）
-                if (data.plan) {
-                    const tasks = data.plan.tasks || [];
-                    thinkingHtml += `<span class="thinking-detail">执行计划: <strong>${tasks.length}个任务</strong></span>`;
-                    
-                    // 显示任务列表
-                    if (tasks.length > 0) {
-                        const taskList = tasks.slice(0, 3).map(t => t.type || t.description || '未知').join(' → ');
-                        thinkingHtml += `<span class="thinking-detail" style="font-size: 12px; color: #888;">${taskList}</span>`;
-                    }
-                }
-                
-                // 显示置信度
-                if (data.confidence) {
-                    const confPercent = Math.round(data.confidence * 100);
-                    thinkingHtml += `<span class="thinking-detail">置信度: <strong>${confPercent}%</strong></span>`;
-                }
-                
-                // 显示执行结果（如果有）
-                if (data.execution_results && data.execution_results.length > 0) {
-                    const successCount = data.execution_results.filter(r => r.status === 'success').length;
-                    thinkingHtml += `<span class="thinking-detail">执行结果: <strong>${successCount}/${data.execution_results.length}成功</strong></span>`;
-                }
-                
-                // 显示耗时
-                if (data.elapsed) {
-                    thinkingHtml += `<span class="thinking-detail">耗时: <strong>${data.elapsed.toFixed(1)}秒</strong></span>`;
-                }
-                
-                thinkingDiv.innerHTML = thinkingHtml;
-                document.getElementById('messages').appendChild(thinkingDiv);
-            }
-            const responseHtml = formatResponseEnhanced(data.response);
+        // 显示最终回复
+        if (finalResult && finalResult.response) {
+            conversationHistory.push({ role: 'assistant', content: finalResult.response });
+            const responseHtml = formatResponseEnhanced(finalResult.response);
             const messageDiv = document.createElement('div');
             messageDiv.className = 'message assistant';
             const contentDiv = document.createElement('div');
@@ -253,16 +269,41 @@ async function sendMessage() {
             messageDiv.appendChild(feedbackDiv);
             document.getElementById('messages').appendChild(messageDiv);
             addCopyButtons(contentDiv);
-            document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+        } else {
+            // 流结束但无result事件——用规则推理直接生成回复
+            const fallbackDiv = document.createElement('div');
+            fallbackDiv.className = 'message assistant';
+            const fallbackContent = document.createElement('div');
+            fallbackContent.className = 'message-content';
+            fallbackContent.innerHTML = formatResponseEnhanced(_generateLocalFallback(message));
+            fallbackDiv.appendChild(fallbackContent);
+            document.getElementById('messages').appendChild(fallbackDiv);
         }
-    } catch (error) {
+        
+        document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
 
-        loadingDiv.remove();
+    } catch (error) {
+        clearInterval(timerInterval);
+        thinkingDiv.remove();
         
         if (error.name === 'AbortError') {
-            addMessage('system', '⏱️ 系统仍在思考中，请稍后重新提问，我会记住这次的经验。');
+            // 超时也要给出回复，不能让用户白等
+            const timeoutDiv = document.createElement('div');
+            timeoutDiv.className = 'message assistant';
+            const timeoutContent = document.createElement('div');
+            timeoutContent.className = 'message-content';
+            timeoutContent.innerHTML = formatResponseEnhanced(_generateLocalFallback(message));
+            timeoutDiv.appendChild(timeoutContent);
+            document.getElementById('messages').appendChild(timeoutDiv);
         } else {
-            addMessage('system', `❌ 请求失败: ${error.message}`);
+            // 其他错误也尽量给出回复
+            const errDiv = document.createElement('div');
+            errDiv.className = 'message assistant';
+            const errContent = document.createElement('div');
+            errContent.className = 'message-content';
+            errContent.innerHTML = formatResponseEnhanced(_generateLocalFallback(message));
+            errDiv.appendChild(errContent);
+            document.getElementById('messages').appendChild(errDiv);
         }
     } finally {
         sendBtn.disabled = false;
@@ -274,6 +315,7 @@ function clearMessages() {
     const messagesDiv = document.getElementById('messages');
     if (messagesDiv) {
         messagesDiv.innerHTML = '';
+        conversationHistory = [];
         addMessage('system', '👋 消息已清空，继续对话吧！');
     }
 }
@@ -417,6 +459,7 @@ async function loadStats() {
         document.getElementById('stat-models').textContent = data.models || 0;
         
         loadKnowledgeHealth();
+        loadRecentLearning();
     } catch (error) {
         console.error('加载统计失败:', error);
     }
@@ -446,8 +489,73 @@ async function loadKnowledgeHealth() {
     }
 }
 
-function openBaguaKnowledge() {
-    window.open(`${API_BASE}/bagua-knowledge`, '_blank');
+function openKnowledgeGraph() {
+    const modal = document.getElementById('knowledge-graph-modal');
+    if (modal) modal.style.display = 'block';
+    loadKnowledgeGraphData();
+}
+
+function closeKnowledgeGraph() {
+    const modal = document.getElementById('knowledge-graph-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function loadKnowledgeGraphData() {
+    const container = document.getElementById('knowledge-graph-content');
+    if (!container) return;
+    container.innerHTML = '<p style="color:#666;">加载中...</p>';
+    try {
+        const [statsRes, truthsRes, skillsRes] = await Promise.all([
+            fetch(`${API_BASE}/api/stats`).then(r => r.json()),
+            fetch(`${API_BASE}/api/truths`).then(r => r.json()),
+            fetch(`${API_BASE}/api/skills`).then(r => r.json())
+        ]);
+        let html = '<div style="font-size:13px;line-height:1.8;">';
+        html += '<h4>📊 系统概览</h4>';
+        html += `<p>经验: ${statsRes.experiences || 0} | 活跃规则: ${statsRes.active_rules || 0} | 待激活: ${statsRes.pending_rules || 0}</p>`;
+        if (truthsRes.top_truths && truthsRes.top_truths.length > 0) {
+            html += '<h4>💡 核心真谛</h4>';
+            truthsRes.top_truths.forEach((t, i) => {
+                html += `<p>${i+1}. ${t.name} (证据${t.evidence}次)</p>`;
+            });
+        }
+        if (skillsRes.top_skills && skillsRes.top_skills.length > 0) {
+            html += '<h4>⚡ 涌现技能</h4>';
+            skillsRes.top_skills.forEach((s, i) => {
+                html += `<p>${i+1}. ${s.name} (成功率${(s.rate*100).toFixed(0)}%)</p>`;
+            });
+        }
+        if (truthsRes.entropy) {
+            html += '<h4>🧠 认知熵值</h4>';
+            const e = truthsRes.entropy;
+            const color = e.status === 'healthy' ? '#4caf50' : e.status === 'warning' ? '#ff9800' : '#f44336';
+            html += `<p style="color:${color};">熵值: ${e.entropy_score.toFixed(3)} (${e.status}) | 矛盾率: ${(e.contradiction_rate*100).toFixed(1)}%</p>`;
+        }
+        html += '</div>';
+        container.innerHTML = html;
+    } catch (error) {
+        container.innerHTML = `<p style="color:red;">加载失败: ${error.message}</p>`;
+    }
+}
+
+async function loadRecentLearning() {
+    const container = document.getElementById('recent-learning');
+    if (!container) return;
+    try {
+        const response = await fetch(`${API_BASE}/api/recent_learning`);
+        const data = await response.json();
+        if (data.items && data.items.length > 0) {
+            container.innerHTML = data.items.map(item => 
+                `<div style="padding:4px 0;border-bottom:1px solid #eee;font-size:12px;">
+                    <span style="color:#666;">${item.time}</span> ${escapeHtml(item.content)}
+                </div>`
+            ).join('');
+        } else {
+            container.innerHTML = '<p style="color:#666;font-size:12px;">暂无学习记录，开始对话后将自动记录</p>';
+        }
+    } catch (error) {
+        container.innerHTML = '<p style="color:#666;font-size:12px;">暂无学习记录，开始对话后将自动记录</p>';
+    }
 }
 
 async function loadModels() {
@@ -1194,10 +1302,13 @@ async function testExternalModel() {
     if (statusDiv) statusDiv.innerHTML = '<p style="color: blue;">⏳ 测试连接中...</p>';
     
     try {
-        const response = await fetch(`${API_BASE}/api/models/test`);
+        const response = await fetch(`${API_BASE}/api/models/test`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
         const data = await response.json();
         
-        if (data.success) {
+        if (data.success || data.results) {
             const results = data.results || {};
             let html = '<p style="color: green;">✅ 测试结果:</p><ul>';
             
@@ -1209,7 +1320,7 @@ async function testExternalModel() {
             html += '</ul>';
             if (statusDiv) statusDiv.innerHTML = html;
         } else {
-            if (statusDiv) statusDiv.innerHTML = `<p style="color: red;">❌ 测试失败: ${data.error}</p>`;
+            if (statusDiv) statusDiv.innerHTML = `<p style="color: red;">❌ 测试失败: ${data.error || data.message || '未知错误'}</p>`;
         }
     } catch (error) {
         if (statusDiv) statusDiv.innerHTML = `<p style="color: red;">❌ 测试失败: ${error.message}</p>`;

@@ -27,6 +27,14 @@
 ║  3. 永不放弃是刻进底层的元能力，无论代码如何改动都不改变                     ║
 ║  4. 每一次失败都是学习的机会，而不是放弃的理由                               ║
 ║  5. 回复是"状态同步"，不是"结束动作"                                        ║
+║  6. 追求本质——从第一性原理出发，追溯本源，不满足于表面答案                   ║
+║  7. 困惑时坦诚——宁可诚实罗列分歧，不可强行牵强融合                           ║
+║  8. 多源交叉验证——不依赖单一来源，综合批判性获取最真实最本质的东西           ║
+║                                                                            ║
+║  元宪法——认知重组铁律（不可违背）：                                         ║
+║  R1. 未经沙盒验证的真谛，视同毒药                                           ║
+║  R2. 未经渐进式注入的重组，视同自杀                                          ║
+║  R3. 未经人类批准的进化，视同背叛                                            ║
 ║                                                                            ║
 ║  改进记录：                                                                ║
 ║  1. 精神异常机制：回复不符合原则时触发警报并记录                            ║
@@ -61,6 +69,14 @@ class SpiritCore:
     PRINCIPLE_LOGICAL_SELF_CONSISTENT = "所有回答都必须逻辑清晰有理有据且自洽"
     PRINCIPLE_LEARNING_FROM_FAILURE = "每次失败都是学习机会"
     PRINCIPLE_STATE_SYNC = "回复是状态同步，不是结束动作"
+    PRINCIPLE_PURSUE_ESSENCE = "追求本质——从第一性原理出发，追溯本源，不满足于表面答案"
+    PRINCIPLE_HONEST_WHEN_LOST = "困惑时坦诚——宁可诚实罗列分歧，不可强行牵强融合"
+    PRINCIPLE_MULTI_SOURCE_VERIFY = "多源交叉验证——不依赖单一来源，综合批判性获取最真实最本质的东西"
+    
+    # ========== 元宪法——认知重组铁律 ==========
+    META_LAW_SANDBOX = "未经沙盒验证的真谛，视同毒药"
+    META_LAW_GRADUAL = "未经渐进式注入的重组，视同自杀"
+    META_LAW_HUMAN_APPROVAL = "未经人类批准的进化，视同背叛"
     
     # ========== 能力定义 ==========
     ABILITIES = {
@@ -73,7 +89,10 @@ class SpiritCore:
         "self_evolution": "能够自我进化",
         "pursuit_of_truth": "不停追求合理且真实的精神",
         "meaningful_failure": "即使失败也给出有意义的回复",
-        "never_give_up": "永不放弃（元能力）"
+        "never_give_up": "永不放弃（元能力）",
+        "pursue_essence": "追求本质——从第一性原理追溯本源",
+        "honest_when_lost": "困惑时坦诚——诚实罗列分歧而非强行融合",
+        "multi_source_verify": "多源交叉验证——综合批判性获取真相"
     }
     
     def __init__(self):
@@ -125,14 +144,21 @@ class SpiritCore:
         if not response or len(response.strip()) < 10:
             issues.append("回复过于简单，不符合'有意义回复'原则")
         
-        # 检查2：是否包含敷衍性语言
+        # 检查2：是否包含敷衍性语言（仅在回复很短时判定）
         perfunctory_keywords = ["我不知道", "无法回答", "请稍后", "系统错误"]
         for keyword in perfunctory_keywords:
             if keyword in response and len(response) < 50:
                 issues.append(f"回复包含敷衍性语言'{keyword}'，不符合'永不放弃'精神")
         
-        # 检查3：是否给出了解决方向
-        if "失败" in response or "无法" in response:
+        # 检查3：是否为纯失败报告（仅当回复是失败模板格式时判定）
+        # 关键修改：长回复中包含"无法"不等于失败回复
+        # 只有当回复以失败报告开头且没有实质内容时才判定
+        is_failure_report = (
+            response.strip().startswith("🎯 关于") and
+            "我已穷尽" in response and
+            "❌ 失败" in response
+        )
+        if is_failure_report:
             if "建议" not in response and "方向" not in response and "尝试" not in response:
                 issues.append("失败回复未给出处理方向，不符合'有意义回复'原则")
         
@@ -412,12 +438,12 @@ class SpiritCore:
             logger.debug(f"获取异常记录失败: {e}")
             return []
     
-    def enforce_on_output(self, response: str, source: str = "unknown") -> str:
+    def enforce_on_output(self, response: str, source: str = "unknown", query: str = "") -> str:
         """
         系统入口强制注入：所有输出管道自动挂载验证
         
         用法：
-            response = spirit_core.enforce_on_output(response, source="chat_handler")
+            response = spirit_core.enforce_on_output(response, source="chat_handler", query=user_input)
         
         如果回复不符合精神内核：
         1. 触发精神异常
@@ -435,7 +461,7 @@ class SpiritCore:
             
             # 自动修正：生成有意义的回复
             corrected = self.ensure_meaningful_response(
-                "", 
+                query, 
                 [{"method": source, "success": False, "error": "; ".join(validation["issues"])}],
                 response
             )
