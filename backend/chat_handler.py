@@ -153,19 +153,13 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
         final_response = _generate_smart_reply(user_input, intent_type)
         attempts.append(("规则匹配", True, "智能回复"))
     
-    # ========== 策略8：精神内核验证（最后一道防线） ==========
+    # ========== 策略8：精神内核强制注入（最后一道防线） ==========
     if SPIRIT_CORE_AVAILABLE:
-        # 验证回复是否符合精神内核
-        validation = spirit_core.validate_response(final_response)
-        if not validation["valid"]:
-            logger.warning(f"⚠️ 回复不符合精神内核: {validation['issues']}")
-            # 生成符合精神内核的回复
-            final_response = spirit_core.ensure_meaningful_response(
-                user_input,
-                [{"method": a[0], "success": a[1], "error": a[2] if not a[1] else None} for a in attempts],
-                final_response
-            )
-            attempts.append(("精神内核修正", True, "确保回复有意义"))
+        # 使用enforce_on_output：自动验证+异常触发+自动修正
+        original_response = final_response
+        final_response = spirit_core.enforce_on_output(final_response, source="chat_handler")
+        if final_response != original_response:
+            attempts.append(("精神内核修正", True, "自动修正敷衍回复"))
         else:
             attempts.append(("精神内核验证", True, "回复符合精神"))
     else:
