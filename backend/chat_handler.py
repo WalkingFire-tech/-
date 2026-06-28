@@ -86,7 +86,7 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
             
             exec_result = await asyncio.wait_for(
                 executor.execute_with_full_metacognition(user_query=user_input, context=context),
-                timeout=15.0
+                timeout=20.0
             )
             
             result = exec_result.get("final_result", "")
@@ -102,19 +102,46 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
     if not final_response:
         try:
             import requests
-            response = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: requests.post(
-                    "http://localhost:11434/api/generate",
-                    json={"model": "qwen2.5:7b", "prompt": user_input, "stream": False},
-                    timeout=10
+            # 自动选择可用模型
+            try:
+                tags = requests.get("http://localhost:11434/api/tags", timeout=2)
+                available = [m["name"] for m in tags.json().get("models", [])]
+            except Exception:
+                available = []
+            
+            model_priority = ["qwen2.5:7b", "qwen2.5-coder:7b", "gemma-4-12B:latest", "deepcoder:latest"]
+            selected = None
+            for m in model_priority:
+                for a in available:
+                    if m in a or a.startswith(m.split(":")[0]):
+                        selected = a
+                        break
+                if selected:
+                    break
+            if not selected and available:
+                selected = available[0]
+            
+            if selected:
+                response = await asyncio.wait_for(
+                    asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: requests.post(
+                            "http://localhost:11434/api/generate",
+                            json={"model": selected, "prompt": user_input, "stream": False},
+                            timeout=15
+                        )
+                    ),
+                    timeout=18.0
                 )
-            )
-            if response.status_code == 200:
-                result = response.json().get("response", "")
-                if result and len(result) > 20:
-                    final_response = result
-                    attempts.append(("Ollama", True, f"{len(result)}字"))
+                if response.status_code == 200:
+                    result = response.json().get("response", "")
+                    if result and len(result) > 10:
+                        final_response = result
+                        attempts.append(("Ollama", True, f"{len(result)}字 ({selected})"))
+            else:
+                attempts.append(("Ollama", False, "无可用模型"))
+        except asyncio.TimeoutError:
+            attempts.append(("Ollama", False, "超时"))
         except Exception as e:
             attempts.append(("Ollama", False, str(e)[:50]))
     
