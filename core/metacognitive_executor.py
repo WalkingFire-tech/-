@@ -270,76 +270,75 @@ class MetacognitiveExecutor:
     ) -> Dict:
         """
         阶段1：规划生成
-        利用255条闭环数据做Few-shot，强制生成执行计划
+        快速生成执行计划，不依赖远程API
         """
         
-        # 1. 检索相关的元认知模板（从255条数据中）
-        metacognitive_examples = await self._retrieve_metacognitive_examples(user_query)
-        
-        # 2. 构建规划提示（强制注入工具列表）
-        planning_prompt = f"""
-{capability_context['capability_prompt']}
-
-【参考范例】
-{metacognitive_examples}
-
-【用户问题】
-{user_query}
-
-【强制要求】
-1. 你必须先分析问题，判断需要使用哪些工具
-2. 如果问题涉及计算，必须使用calculator工具
-3. 如果问题涉及搜索信息，必须使用search工具
-4. 不要仅靠推理，优先使用工具
-5. 输出格式必须是JSON
-
-请输出执行计划（JSON格式）：
-{{
-  "analysis": "问题分析（必须说明为什么选择这些工具）",
-  "tasks": [
-    {{"type": "tool", "name": "工具名", "description": "做什么", "timeout": 3}},
-    {{"type": "knowledge_retrieval", "description": "检索什么"}},
-    {{"type": "llm_reasoning", "description": "推理什么"}}
-  ],
-  "expected_confidence": 0.8
-}}
-"""
-        
-        # 3. 调用LLM生成计划（低温，强制JSON）
-        try:
-            from adapters.llm.remote_adapter import RemoteAdapter
-            adapter = RemoteAdapter(
-                model="deepseek-chat",
-                base_url="https://api.deepseek.com/v1"
-            )
-            
-            # 异步执行同步的generate调用
-            import asyncio
-            loop = asyncio.get_event_loop()
-            plan_text = await loop.run_in_executor(
-                None,
-                lambda: adapter.generate(planning_prompt, temperature=0.3)
-            )
-            
-            # 解析JSON
-            import re
-            json_match = re.search(r'\{[\s\S]*\}', plan_text)
-            if json_match:
-                plan = json.loads(json_match.group())
-            else:
-                plan = self._create_default_plan(user_query)
-                
-        except Exception as e:
-            logger.debug(f"规划生成失败: {e}")
-            plan = self._create_default_plan(user_query)
+        # 1. 基于问题类型智能生成计划（不调用远程API）
+        plan = self._smart_generate_plan(user_query, capability_context)
         
         return plan
+    
+    def _smart_generate_plan(self, query: str, capability_context: Dict) -> Dict:
+        """基于问题类型智能生成执行计划（不依赖远程API）"""
+        
+        query_lower = query.lower()
+        
+        tasks = []
+        analysis = f"分析问题: {query}"
+        
+        # 根据问题类型决定执行策略
+        if any(kw in query_lower for kw in ["计算", "数学", "等于", "+", "-", "*", "/"]):
+            tasks.append({"type": "tool", "name": "calculator", "description": f"计算: {query}", "timeout": 3})
+            analysis += " -> 数学计算问题"
+            
+        elif any(kw in query_lower for kw in ["搜索", "查找", "最新", "新闻"]):
+            tasks.append({"type": "knowledge_retrieval", "description": f"搜索: {query}"})
+            analysis += " -> 信息搜索问题"
+            
+        elif any(kw in query_lower for kw in ["代码", "编程", "函数", "实现", "写"]):
+            tasks.append({"type": "llm_reasoning", "description": f"生成代码: {query}"})
+            analysis += " -> 代码生成问题"
+            
+        elif any(kw in query_lower for kw in ["什么是", "是什么", "概念", "定义", "介绍"]):
+            tasks.append({"type": "knowledge_retrieval", "description": f"检索知识: {query}"})
+            tasks.append({"type": "llm_reasoning", "description": f"综合解释: {query}"})
+            analysis += " -> 知识解释问题"
+            
+        elif any(kw in query_lower for kw in ["为什么", "原因", "如何", "怎么", "怎样"]):
+            tasks.append({"type": "knowledge_retrieval", "description": f"检索相关知识: {query}"})
+            tasks.append({"type": "llm_reasoning", "description": f"分析推理: {query}"})
+            analysis += " -> 分析推理问题"
+            
+        else:
+            tasks.append({"type": "knowledge_retrieval", "description": f"检索: {query}"})
+            tasks.append({"type": "llm_reasoning", "description": f"推理: {query}"})
+            analysis += " -> 综合问题"
+        
+        return {
+            "analysis": analysis,
+            "tasks": tasks,
+            "expected_confidence": 0.7
+        }
     
     async def _retrieve_metacognitive_examples(self, query: str) -> str:
         """从255条闭环数据中检索相关范例"""
         
-        # 暂时跳过向量检索（可能导致卡住）
-        # TODO: 修复向量检索器初始化后重新启用
+        try:
+            # 尝试从向量库检索
+            from core.vector_retriever import vector_retriever
+            results = vector_retriever.hybrid_search(
+                query=f"元认知: {query}",
+                top_k=3
+            )
+            
+            if results:
+                examples = []
+                for r in results[:3]:
+                    if r.get('answer'):
+                        examples.append(r['answer'][:200])
+                return "\n\n".join(examples)
+        except:
+            pass
         
         # 降级：返回默认范例
         return """
@@ -350,12 +349,7 @@ class MetacognitiveExecutor:
 范例2：
 问题："什么是机器学习？"
 计划：{"tasks": [{"type": "knowledge_retrieval"}, {"type": "llm_reasoning"}]}
-
-范例3：
-问题："如何学习编程？"
-计划：{"tasks": [{"type": "knowledge_retrieval"}, {"type": "llm_reasoning"}]}
 """
-
     
     def _create_default_plan(self, query: str) -> Dict:
         """创建默认执行计划"""
@@ -461,14 +455,21 @@ class MetacognitiveExecutor:
             return None
     
     async def _retrieve_knowledge(self, query: str) -> Any:
-        """检索知识"""
+        """检索知识（快速，不依赖向量检索器）"""
         try:
-            from data.knowledge_store import get_knowledge_store
-            ks = get_knowledge_store()
-            results = ks.search(query, top_k=3)
-            if results:
+            import sqlite3
+            conn = sqlite3.connect("data/knowledge_store.db")
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT content FROM knowledge WHERE content LIKE ? LIMIT 3",
+                (f"%{query[:30]}%",)
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            if rows:
+                results = [row[0] for row in rows]
                 return {
-                    "results": results,
+                    "answer": "\n".join(results),
                     "confidence": 0.7
                 }
         except Exception as e:
@@ -476,18 +477,51 @@ class MetacognitiveExecutor:
         return None
     
     async def _llm_reasoning(self, query: str, previous_results: List) -> str:
-        """LLM推理"""
+        """LLM推理（优先Ollama本地模型，快速失败）"""
+        # 1. 尝试Ollama本地模型
+        try:
+            import requests
+            loop = asyncio.get_event_loop()
+            response = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: requests.post(
+                        "http://localhost:11434/api/generate",
+                        json={"model": "qwen2.5:7b", "prompt": query, "stream": False},
+                        timeout=8
+                    )
+                ),
+                timeout=10.0
+            )
+            if response.status_code == 200:
+                answer = response.json().get("response", "")
+                if answer and len(answer) > 20:
+                    return answer
+        except asyncio.TimeoutError:
+            logger.debug("Ollama推理超时")
+        except Exception as e:
+            logger.debug(f"Ollama推理失败: {e}")
+        
+        # 2. 尝试DeepSeek远程API
         try:
             from adapters.llm.remote_adapter import RemoteAdapter
             adapter = RemoteAdapter(
                 model="deepseek-chat",
                 base_url="https://api.deepseek.com/v1"
             )
-            import asyncio
             loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, lambda: adapter.generate(query))
-        except:
-            return None
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: adapter.generate(query)),
+                timeout=8.0
+            )
+            if result and len(result) > 20:
+                return result
+        except asyncio.TimeoutError:
+            logger.debug("远程API推理超时")
+        except Exception as e:
+            logger.debug(f"远程API推理失败: {e}")
+        
+        return None
     
     async def _phase3_validate_and_score(
         self,
@@ -545,14 +579,13 @@ class MetacognitiveExecutor:
         execution_trace: Dict
     ):
         """
-        阶段4：反思沉淀（强制闭环）
-        数据序列化 → 向量存储 → 归纳触发
+        阶段4：反思沉淀（强制闭环，异步不阻塞）
+        数据序列化 → 经验存储 → 训练数据生成
         """
         
         logger.info("🔄 [后台] 强制反思沉淀...")
         
         try:
-            # 1. 序列化经验
             experience = {
                 "query": user_query,
                 "plan": plan,
@@ -561,14 +594,35 @@ class MetacognitiveExecutor:
                 "timestamp": datetime.now().isoformat()
             }
             
-            # 2. 存储到经验池
-            await self._store_experience(experience)
+            # 1. 存储到经验池（SQLite，快速）
+            try:
+                import sqlite3
+                conn = sqlite3.connect("data/experience_pool.db")
+                cursor = conn.cursor()
+                answer = self._extract_best_answer(execution_results)
+                cursor.execute(
+                    "INSERT INTO experiences (query, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
+                    (user_query, answer, datetime.now().isoformat(), "metacognitive", int(validation.get("quality_score", 50)))
+                )
+                conn.commit()
+                conn.close()
+                logger.debug("✓ 经验已存储")
+            except Exception as e:
+                logger.debug(f"经验存储失败: {e}")
             
-            # 3. 触发元归纳
-            await self._trigger_meta_induction(experience)
-            
-            # 4. 转化为训练数据
-            await self._convert_to_training_data(experience)
+            # 2. 生成训练数据（JSONL，快速）
+            try:
+                if validation.get("confidence", 0) > 0.6:
+                    sample = {
+                        "question": user_query,
+                        "answer": self._extract_best_answer(execution_results),
+                        "source": "metacognitive_execution"
+                    }
+                    with open("data/pending_training.jsonl", "a", encoding="utf-8") as f:
+                        f.write(json.dumps(sample, ensure_ascii=False) + "\n")
+                    logger.debug("✓ 训练数据已生成")
+            except Exception as e:
+                logger.debug(f"训练数据生成失败: {e}")
             
             logger.info("✓ 反思沉淀完成")
             
@@ -638,14 +692,22 @@ class MetacognitiveExecutor:
         return ""
     
     def _synthesize_final_answer(self, results: Dict, validation: Dict) -> str:
-        """综合最终答案"""
+        """综合最终答案（符合精神内核：即使失败也给出有意义的回复）"""
         answer = self._extract_best_answer(results)
         
-        if not answer:
-            answer = "抱歉，我暂时无法回答这个问题。"
-        
-        # 添加置信度标记
-        if validation["confidence"] < 0.7:
+        if not answer or len(answer) < 10:
+            # 即使失败，也给出有意义的回复
+            from core.spirit_core import spirit_core
+            attempts = []
+            for r in results.get("results", []):
+                task = r.get("task", {})
+                attempts.append({
+                    "method": f"{task.get('type', '未知')}: {task.get('description', '')}",
+                    "success": r.get("success", False),
+                    "error": r.get("error", "")
+                })
+            answer = spirit_core.ensure_meaningful_response("", attempts)
+        elif validation["confidence"] < 0.7:
             answer = f"⚠️ 置信度较低({validation['confidence']:.0%})\n\n{answer}"
         
         return answer
