@@ -136,9 +136,9 @@ async function sendMessage() {
         const requestBody = { message };
         if (selectedModel !== 'auto') requestBody.model = selectedModel;
 
-        // 添加30秒超时
+        // 给系统足够的思考时间（永不放弃！）
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000);
+        const timeoutId = setTimeout(() => controller.abort(), 120000);
         
         const response = await fetch(`${API_BASE}/api/chat`, {
             method: 'POST',
@@ -260,7 +260,7 @@ async function sendMessage() {
         loadingDiv.remove();
         
         if (error.name === 'AbortError') {
-            addMessage('system', '⏱️ 请求超时（30秒），请简化问题或稍后重试');
+            addMessage('system', '⏱️ 系统仍在思考中，请稍后重新提问，我会记住这次的经验。');
         } else {
             addMessage('system', `❌ 请求失败: ${error.message}`);
         }
