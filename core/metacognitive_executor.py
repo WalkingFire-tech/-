@@ -478,27 +478,61 @@ class MetacognitiveExecutor:
     
     async def _llm_reasoning(self, query: str, previous_results: List) -> str:
         """LLM推理（优先Ollama本地模型，快速失败）"""
-        # 1. 尝试Ollama本地模型
+        # 1. 尝试Ollama本地模型（自动选择可用模型）
         try:
             import requests
             loop = asyncio.get_event_loop()
-            response = await asyncio.wait_for(
-                loop.run_in_executor(
-                    None,
-                    lambda: requests.post(
-                        "http://localhost:11434/api/generate",
-                        json={"model": "qwen2.5:7b", "prompt": query, "stream": False},
-                        timeout=8
-                    )
-                ),
-                timeout=10.0
-            )
-            if response.status_code == 200:
-                answer = response.json().get("response", "")
-                if answer and len(answer) > 20:
-                    return answer
+            
+            # 1a. 先获取可用模型列表
+            try:
+                tags_response = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: requests.get("http://localhost:11434/api/tags", timeout=2)
+                    ),
+                    timeout=3.0
+                )
+                available_models = [m["name"] for m in tags_response.json().get("models", [])]
+            except Exception:
+                available_models = []
+            
+            # 1b. 按优先级选择模型
+            model_priority = [
+                "qwen2.5:7b", "qwen2.5-coder:7b", "gemma-4-12B:latest",
+                "deepcoder:latest", "gemma-4-12B", "deepcoder"
+            ]
+            selected_model = None
+            for model in model_priority:
+                for available in available_models:
+                    if model in available or available.startswith(model.split(":")[0]):
+                        selected_model = available
+                        break
+                if selected_model:
+                    break
+            
+            if not selected_model and available_models:
+                selected_model = available_models[0]
+            
+            if selected_model:
+                logger.info(f"  🤖 使用模型: {selected_model}")
+                response = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: requests.post(
+                            "http://localhost:11434/api/generate",
+                            json={"model": selected_model, "prompt": query, "stream": False},
+                            timeout=15
+                        )
+                    ),
+                    timeout=18.0
+                )
+                if response.status_code == 200:
+                    answer = response.json().get("response", "")
+                    if answer and len(answer) > 10:
+                        logger.info(f"  ✅ 模型推理完成: {len(answer)}字")
+                        return answer
         except asyncio.TimeoutError:
-            logger.debug("Ollama推理超时")
+            logger.warning("  ⏱️ Ollama推理超时")
         except Exception as e:
             logger.debug(f"Ollama推理失败: {e}")
         
@@ -514,7 +548,7 @@ class MetacognitiveExecutor:
                 loop.run_in_executor(None, lambda: adapter.generate(query)),
                 timeout=8.0
             )
-            if result and len(result) > 20:
+            if result and len(result) > 10:
                 return result
         except asyncio.TimeoutError:
             logger.debug("远程API推理超时")
