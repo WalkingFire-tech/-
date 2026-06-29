@@ -1060,7 +1060,8 @@ async def chat_stream(user_input: str, context: dict):
         # 但代码/工程/编程问题不走科学免责，而是走代码验证
         is_code_query = any(kw in user_input.lower() for kw in ["代码", "编程", "函数", "程序", "算法", "单片机", "stm32", "arduino", "嵌入式", "写一段", "实现", "编译", "调试", "跑一遍", "运行"])
         is_paradox_query = any(kw in user_input.lower() for kw in ["悖论", "鸡和蛋", "先有鸡", "先有蛋", "自指", "罗素", "说谎者", "理发师", "无限", "芝诺", "如何处理", "怎么办", "如何看", "怎么看"])
-        if verification.get("is_science") and not is_code_query and not is_paradox_query:
+        is_engineering_query = any(kw in user_input.lower() for kw in ["esp32", "电路", "电压", "电流", "供电", "引脚", "gpio", "串口", "焊接", "万用表", "示波器", "电容", "电阻", "上拉", "下拉", "复位", "烧录", "固件", "不工作", "不启动", "硬件", "pcb", "芯片", "模块", "传感器"])
+        if verification.get("is_science") and not is_code_query and not is_paradox_query and not is_engineering_query:
             domain_ref = _get_domain_reference(user_input, final_response)
             disclaimer = f"\n\n---\n⚠️ 以上涉及科学事实，我的推论可能存在偏差，建议参考{domain_ref}。\n（此声明仅为核实建议，非本回答的立论依据，请勿在后续推理中引用此声明）\n---"
             if "建议参考" not in final_response:

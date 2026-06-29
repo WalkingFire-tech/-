@@ -105,19 +105,36 @@ class EssenceReasoner:
         ]
         is_paradox = any(p in query.lower() for p in paradox_patterns)
 
+        engineering_patterns = [
+            "esp32", "stm32", "arduino", "单片机", "mcu", "嵌入式",
+            "电路", "电压", "电流", "供电", "引脚", "gpio", "串口",
+            "焊接", "杜邦线", "万用表", "示波器", "电容", "电阻",
+            "上拉", "下拉", "复位", "烧录", "固件", "波特率",
+            "不工作", "不启动", "无法启动", "无法工作", "不亮",
+            "硬件", "pcb", "原理图", "芯片", "模块", "传感器"
+        ]
+        is_engineering = any(p in query.lower() for p in engineering_patterns)
+
         facts = self._extract_facts(response)
         result["facts"] = facts
 
         chain = self._first_principles_reasoning(query, facts, response)
         result["reasoning_chain"] = chain
 
-        consistency = self._check_consistency(query, response, facts, chain, is_paradox)
+        consistency = self._check_consistency(query, response, facts, chain, is_paradox or is_engineering)
         result["consistency_issues"] = consistency["issues"]
 
         if is_paradox:
             result["passed"] = True
             result["confidence"] = 0.7
             result["verdict"] = "悖论/定义边界问题，不适用基本原理追溯"
+            self._save_reasoning(query, response, result)
+            return result
+
+        if is_engineering:
+            result["passed"] = True
+            result["confidence"] = 0.75
+            result["verdict"] = "工程/硬件问题，适用实验验证而非基本原理追溯"
             self._save_reasoning(query, response, result)
             return result
 
