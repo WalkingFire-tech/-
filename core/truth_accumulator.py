@@ -638,18 +638,18 @@ class TruthAccumulator:
         }
 
         try:
-            # 矛盾率：最近100次交互中失败的占比
+            # 矛盾率：最近交互中核心失败的占比（排除多策略中部分路径失败）
             conn = sqlite3.connect("data/spirit_lessons.db")
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM reflections WHERE timestamp > datetime('now', '-1 day')")
             recent = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM reflections WHERE timestamp > datetime('now', '-1 day') AND lessons LIKE '%失败%'")
+            c.execute("SELECT COUNT(*) FROM reflections WHERE timestamp > datetime('now', '-1 day') AND lessons LIKE '%全部失败%' OR (lessons LIKE '%失败%' AND lessons NOT LIKE '%成功%')")
             failed = c.fetchone()[0]
             conn.close()
             if recent > 0:
-                entropy["contradiction_rate"] = round(failed / recent, 3)
+                entropy["contradiction_rate"] = round(min(failed / recent, 1.0), 3)
 
-            # 真谛冲突率：互相矛盾的活跃真谛占比
+            # 真谛冲突率：弱证据真谛占比（新沉淀的真谛evidence<2是正常的，降低权重）
             conn2 = sqlite3.connect(self.db_path)
             c2 = conn2.cursor()
             c2.execute("SELECT COUNT(*) FROM truths WHERE is_active=1")
@@ -662,10 +662,11 @@ class TruthAccumulator:
 
             # 综合熵值评分（0-1，越低越健康）
             entropy_score = (
-                entropy["contradiction_rate"] * 0.4 +
-                entropy["truth_conflict_rate"] * 0.3 +
-                min(entropy["gene_safety_violations"] / 10.0, 0.3)
+                entropy["contradiction_rate"] * 0.5 +
+                entropy["truth_conflict_rate"] * 0.15 +
+                min(entropy["gene_safety_violations"] / 10.0, 0.2)
             )
+            entropy_score = min(entropy_score, 1.0)
             entropy["entropy_score"] = round(entropy_score, 3)
 
             if entropy_score > 0.5:
