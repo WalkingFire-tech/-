@@ -36,6 +36,6 @@ echo.
 REM Open browser and start server
 start "" http://localhost:8000/
 
-python -m uvicorn backend.main_fast:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn backend.main_fast:app --host 0.0.0.0 --port 8000 --reload --reload-exclude ".codeartsdoer/*" --reload-exclude "data/*" --reload-exclude "logs/*" --reload-exclude "knowledge_base/*"
 
 pause
