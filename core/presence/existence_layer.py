@@ -107,21 +107,24 @@ class ExistenceLayer:
         try:
             from core.presence.self_perception import SelfPerceptionModule
             self.self_perception = SelfPerceptionModule()
-            logger.info("  ✓ 自我感知模块已加载")
+            self.self_perception.start()
+            logger.info("  ✓ 自我感知模块已加载并启动")
         except Exception as e:
             logger.warning(f"  ⚠ 自我感知模块未找到: {e}")
         
         try:
             from core.presence.gap_growth import GapGrowthEngine
             self.gap_growth = GapGrowthEngine()
-            logger.info("  ✓ 间隙生长模块已加载")
+            self.gap_growth.start()
+            logger.info("  ✓ 间隙生长模块已加载并启动")
         except Exception as e:
             logger.warning(f"  ⚠ 间隙生长模块未找到: {e}")
         
         try:
             from core.presence.sleep_consolidation import SleepConsolidationEngine
             self.sleep_consolidation = SleepConsolidationEngine()
-            logger.info("  ✓ 睡眠整合模块已加载")
+            self.sleep_consolidation.start()
+            logger.info("  ✓ 睡眠整合模块已加载并启动")
         except Exception as e:
             logger.warning(f"  ⚠ 睡眠整合模块未找到: {e}")
     
@@ -291,6 +294,17 @@ class ExistenceLayer:
         
         if len(self.pending_signals) > 50:
             self.pending_signals = self.pending_signals[-30:]
+
+        try:
+            from infrastructure.event_bus import bus, EventTypes
+            bus.publish(EventTypes.IdlePeriod, {
+                "state": self.state.value,
+                "silence_duration": self.metrics.silence_duration,
+                "pending_signals": len(self.pending_signals),
+                "resting_cycles": self.metrics.resting_cycles,
+            })
+        except Exception:
+            pass
     
     def _sleep(self):
         """睡眠：深度整合记忆"""

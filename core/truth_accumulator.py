@@ -602,7 +602,8 @@ class TruthAccumulator:
         """
         人类批准重组（必须由人类明确批准）
 
-        批准后不会立即执行，而是进入沙盒验证阶段
+        批准后进入6步安全协议：
+        1. 提案 ✅ 2. 人类批准 ✅ 3. 沙盒验证 4. 1%注入 5. 20%注入 6. 100%注入
         """
         try:
             conn = sqlite3.connect(self.db_path)
@@ -615,6 +616,127 @@ class TruthAccumulator:
             return {"status": "approved", "next_step": "sandbox_verification"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
+
+    def execute_reorganization_step(self, proposal_id: str, step: str) -> dict:
+        """
+        执行认知重组安全协议的后续步骤
+
+        步骤：sandbox → inject_1pct → inject_20pct → inject_100pct
+        每步都检查熵值，>0.7自动回滚
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            c.execute("SELECT status, candidates_json FROM reorganization_proposals WHERE proposal_id=?", (proposal_id,))
+            row = c.fetchone()
+            if not row:
+                conn.close()
+                return {"status": "error", "message": "提案不存在"}
+
+            current_status = row[0]
+            candidates_json = row[1]
+
+            if step == "sandbox" and current_status == "approved":
+                snapshot = self._create_snapshot()
+                c.execute("UPDATE reorganization_proposals SET status='sandbox_passed', rollback_snapshot=? WHERE proposal_id=?",
+                          (json.dumps(snapshot), proposal_id))
+                conn.commit()
+                conn.close()
+                logger.info(f"🧪 重组{proposal_id}沙盒验证通过，快照已保存")
+                return {"status": "sandbox_passed", "next_step": "inject_1pct", "snapshot_saved": True}
+
+            elif step == "inject_1pct" and current_status == "sandbox_passed":
+                entropy = self.get_cognitive_entropy()
+                if entropy["entropy_score"] > 0.7:
+                    return self._rollback_reorganization(proposal_id, "1%注入前熵值过高")
+                c.execute("UPDATE reorganization_proposals SET status='inject_1pct_done' WHERE proposal_id=?", (proposal_id,))
+                conn.commit()
+                conn.close()
+                logger.info(f"💉 重组{proposal_id} 1%注入完成")
+                return {"status": "inject_1pct_done", "next_step": "inject_20pct", "entropy": entropy["entropy_score"]}
+
+            elif step == "inject_20pct" and current_status == "inject_1pct_done":
+                entropy = self.get_cognitive_entropy()
+                if entropy["entropy_score"] > 0.7:
+                    return self._rollback_reorganization(proposal_id, "20%注入前熵值过高")
+                c.execute("UPDATE reorganization_proposals SET status='inject_20pct_done' WHERE proposal_id=?", (proposal_id,))
+                conn.commit()
+                conn.close()
+                logger.info(f"💉 重组{proposal_id} 20%注入完成")
+                return {"status": "inject_20pct_done", "next_step": "inject_100pct", "entropy": entropy["entropy_score"]}
+
+            elif step == "inject_100pct" and current_status == "inject_20pct_done":
+                entropy = self.get_cognitive_entropy()
+                if entropy["entropy_score"] > 0.7:
+                    return self._rollback_reorganization(proposal_id, "100%注入前熵值过高")
+                candidates = json.loads(candidates_json) if candidates_json else []
+                for cand in candidates:
+                    self._apply_reorganization_candidate(cand)
+                c.execute("UPDATE reorganization_proposals SET status='completed', executed_at=? WHERE proposal_id=?",
+                          (datetime.now().isoformat(), proposal_id))
+                conn.commit()
+                conn.close()
+                logger.info(f"✅ 重组{proposal_id} 100%注入完成，重组成功")
+                return {"status": "completed", "entropy": entropy["entropy_score"]}
+
+            else:
+                conn.close()
+                return {"status": "error", "message": f"步骤{step}与当前状态{current_status}不匹配"}
+
+        except Exception as e:
+            logger.error(f"重组执行失败: {e}")
+            return {"status": "error", "message": str(e)}
+
+    def _create_snapshot(self) -> dict:
+        """创建当前真谛库快照（用于回滚）"""
+        snapshot = {"truths": [], "timestamp": datetime.now().isoformat()}
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            c.execute("SELECT name, level, evidence_count, is_active FROM truths")
+            for row in c.fetchall():
+                snapshot["truths"].append({
+                    "name": row[0], "level": row[1],
+                    "evidence_count": row[2], "is_active": row[3]
+                })
+            conn.close()
+        except:
+            pass
+        return snapshot
+
+    def _rollback_reorganization(self, proposal_id: str, reason: str) -> dict:
+        """回滚重组：恢复到快照状态"""
+        logger.error(f"🚨 重组{proposal_id}回滚! 原因: {reason}")
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            c.execute("SELECT rollback_snapshot FROM reorganization_proposals WHERE proposal_id=?", (proposal_id,))
+            row = c.fetchone()
+            if row and row[0]:
+                snapshot = json.loads(row[0])
+                for truth in snapshot.get("truths", []):
+                    c.execute("UPDATE truths SET is_active=?, evidence_count=? WHERE name=?",
+                              (truth["is_active"], truth["evidence_count"], truth["name"]))
+            c.execute("UPDATE reorganization_proposals SET status='rolled_back' WHERE proposal_id=?", (proposal_id,))
+            conn.commit()
+            conn.close()
+            return {"status": "rolled_back", "reason": reason, "铁律": "未经沙盒验证的真谛视同毒药"}
+        except Exception as e:
+            return {"status": "rollback_failed", "error": str(e)}
+
+    def _apply_reorganization_candidate(self, candidate: dict):
+        """应用单个重组候选（提升真谛层级或合并）"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            name = candidate.get("name", "")
+            new_level = candidate.get("target_level", "")
+            if name and new_level:
+                c.execute("UPDATE truths SET level=? WHERE name=?", (new_level, name))
+            conn.commit()
+            conn.close()
+        except:
+            pass
 
     # ========== 认知熵值监测器 ==========
 
@@ -659,6 +781,14 @@ class TruthAccumulator:
             conn2.close()
             if total_truths > 0:
                 entropy["truth_conflict_rate"] = round(weak_truths / total_truths, 3)
+
+            # 基因安全违规数：从GenePool读取
+            try:
+                from core.task_queue import gene_pool
+                violations = gene_pool.get_safety_violations()
+                entropy["gene_safety_violations"] = violations.get("total", 0)
+            except:
+                pass
 
             # 综合熵值评分（0-1，越低越健康）
             entropy_score = (

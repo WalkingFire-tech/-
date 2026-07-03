@@ -1,5 +1,7 @@
 # 端到端能力验证报告
 
+> ⚠️ **历史参考文档** — 本报告记录早期验证结果，不代表当前v3.2.0状态。请以 [ARCHITECTURE_CURRENT.md](../ARCHITECTURE_CURRENT.md) 为准。
+
 ## 测试结果
 
 ```

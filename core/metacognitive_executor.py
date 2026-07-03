@@ -453,25 +453,36 @@ class MetacognitiveExecutor:
     
     async def _retrieve_knowledge(self, query: str) -> Any:
         """检索知识（快速，不依赖向量检索器）"""
+        def _do_retrieve(q):
+            try:
+                import sqlite3
+                conn = sqlite3.connect("data/knowledge_store.db")
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT content FROM knowledge WHERE content LIKE ? LIMIT 3",
+                    (f"%{q[:30]}%",)
+                )
+                rows = cursor.fetchall()
+                conn.close()
+                if rows:
+                    results = [row[0] for row in rows]
+                    return {"answer": "\n".join(results), "confidence": 0.7}
+            except Exception as e:
+                logger.debug(f"知识检索失败: {e}")
+            return None
+        
         try:
-            import sqlite3
-            conn = sqlite3.connect("data/knowledge_store.db")
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT content FROM knowledge WHERE content LIKE ? LIMIT 3",
-                (f"%{query[:30]}%",)
+            loop = asyncio.get_event_loop()
+            return await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: _do_retrieve(query)),
+                timeout=5
             )
-            rows = cursor.fetchall()
-            conn.close()
-            if rows:
-                results = [row[0] for row in rows]
-                return {
-                    "answer": "\n".join(results),
-                    "confidence": 0.7
-                }
+        except asyncio.TimeoutError:
+            logger.debug("知识检索超时")
+            return None
         except Exception as e:
-            logger.debug(f"知识检索失败: {e}")
-        return None
+            logger.debug(f"知识检索异常: {e}")
+            return None
     
     async def _llm_reasoning(self, query: str, previous_results: List) -> str:
         """LLM推理（优先Ollama本地模型，快速失败）"""
@@ -512,13 +523,16 @@ class MetacognitiveExecutor:
             
             if selected_model:
                 logger.info(f"  🤖 使用模型: {selected_model}")
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: requests.post(
-                        "http://localhost:11434/api/generate",
-                        json={"model": selected_model, "prompt": query, "stream": False},
-                        timeout=180
-                    )
+                response = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: requests.post(
+                            "http://localhost:11434/api/generate",
+                            json={"model": selected_model, "prompt": query, "stream": False},
+                            timeout=30
+                        )
+                    ),
+                    timeout=35
                 )
                 if response.status_code == 200:
                     answer = response.json().get("response", "")

@@ -53,6 +53,7 @@ class GenePool:
         self.db_path = db_path
         self._init_db()
         self._genes = self._load_genes()
+        self._safety_violations = 0
 
     def _init_db(self):
         conn = sqlite3.connect(self.db_path)
@@ -71,6 +72,15 @@ class GenePool:
             delta REAL,
             trigger TEXT,
             context TEXT,
+            timestamp TEXT
+        )''')
+        c.execute('''CREATE TABLE IF NOT EXISTS safety_violations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            gene_key TEXT,
+            attempted_value REAL,
+            bound_type TEXT,
+            bound_value REAL,
+            trigger TEXT,
             timestamp TEXT
         )''')
         conn.commit()
@@ -105,9 +115,11 @@ class GenePool:
             min_val, max_val = bounds
             if new < min_val:
                 new = min_val
+                self._record_safety_violation(key, new, "lower_bound", min_val, trigger)
                 logger.debug(f"🧬 基因安全基线触发: {key} 降至下限 {min_val}")
             elif new > max_val:
                 new = max_val
+                self._record_safety_violation(key, new, "upper_bound", max_val, trigger)
                 logger.debug(f"🧬 基因安全基线触发: {key} 升至上限 {max_val}")
 
         self._genes[key] = new
@@ -154,6 +166,31 @@ class GenePool:
 
     def get_all(self) -> dict:
         return dict(self._genes)
+
+    def _record_safety_violation(self, gene_key: str, attempted_value: float, bound_type: str, bound_value: float, trigger: str):
+        self._safety_violations += 1
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.execute("INSERT INTO safety_violations (gene_key, attempted_value, bound_type, bound_value, trigger, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+                         (gene_key, attempted_value, bound_type, bound_value, trigger, datetime.now().isoformat()))
+            conn.commit()
+            conn.close()
+        except:
+            pass
+        logger.warning(f"🧬 基因安全违规 #{self._safety_violations}: {gene_key} 尝试={attempted_value:.3f} {bound_type}={bound_value:.3f}")
+
+    def get_safety_violations(self) -> dict:
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM safety_violations")
+            total = c.fetchone()[0]
+            c.execute("SELECT gene_key, COUNT(*) FROM safety_violations GROUP BY gene_key ORDER BY COUNT(*) DESC")
+            by_gene = {r[0]: r[1] for r in c.fetchall()}
+            conn.close()
+            return {"total": total, "by_gene": by_gene}
+        except:
+            return {"total": self._safety_violations, "by_gene": {}}
 
     def get_expression_profile(self) -> dict:
         """基因表达谱：雷达图数据，展示系统当前性格"""
@@ -393,13 +430,16 @@ class PersistentTaskQueue:
         try:
             import requests
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: requests.post(
-                    "http://localhost:11434/api/generate",
-                    json={"model": model, "prompt": query, "stream": False},
-                    timeout=180
-                )
+            response = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: requests.post(
+                        "http://localhost:11434/api/generate",
+                        json={"model": model, "prompt": query, "stream": False},
+                        timeout=30
+                    )
+                ),
+                timeout=35
             )
             if response.status_code == 200:
                 result = response.json().get("response", "")

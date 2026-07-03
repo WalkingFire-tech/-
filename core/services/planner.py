@@ -1926,7 +1926,12 @@ _感谢您的质疑，这帮助我发现了错误。_
     def _handle_normal_flow(self, intent: Intent, emotion: Dict):
         """【正常流程】常规处理逻辑 - 已拆分为子流程"""
         
-        # 0. 所有问题类型都尝试搜索增强（扩展）
+        # 0. 学习规则影子匹配（记录统计，不干扰主流程）
+        matched_rule = self._match_learning_rule(intent)
+        if matched_rule:
+            self._update_rule_stats(matched_rule["id"], success=True)
+        
+        # 0.5 所有问题类型都尝试搜索增强（扩展）
         if intent.type in ["question", "verification", "chat"]:
             logger.info(f"🔍 尝试搜索增强: intent.type={intent.type}, query={intent.raw_text[:50]}")
             if response := self._try_search_enhanced_answer(intent):
@@ -2676,47 +2681,79 @@ _感谢您的质疑，这帮助我发现了错误。_
             return "抱歉,处理时出错。请稍后重试或联系管理员。"
     
     def _match_learning_rule(self, intent: Intent) -> Optional[Dict]:
-        """匹配学习规则库中的活跃规则"""
+        """匹配学习规则库中的活跃规则，同时为trial规则记录影子匹配"""
         try:
             import sqlite3
             from infrastructure.rule_matcher import RuleMatcher
             
-            with sqlite3.connect("learning_rules.db") as conn:
+            with sqlite3.connect("data/learning_rules.db") as conn:
                 conn.row_factory = sqlite3.Row
                 cur = conn.execute('''
-                    SELECT id, condition, action, priority, confidence
+                    SELECT id, condition, action, priority, confidence, status
                     FROM learning_rules
-                    WHERE status = 'active'
+                    WHERE status IN ('active', 'trial')
                     ORDER BY priority ASC, confidence DESC
                 ''')
                 rules = [dict(row) for row in cur.fetchall()]
             
             matcher = RuleMatcher()
+            
+            intent_type_mapped = intent.type
+            INTENT_TYPE_MAP = {
+                "greeting": "chat",
+                "confirmation": "chat",
+                "simple_query": "question",
+                "complex_query": "code",
+                "learning_trigger": "question",
+                "challenge": "verification",
+                "history_query": "memory",
+            }
+            mapped_type = INTENT_TYPE_MAP.get(intent.type, intent.type)
+            
             context = {
                 "intent_type": intent.type,
+                "intent_type_legacy": mapped_type,
                 "raw_input": intent.raw_text,
                 "quality": self.last_call_info.get("quality", 100),
                 "model": self.last_call_info.get("model", ""),
                 "duration": self.last_call_info.get("duration", 0),
             }
             
+            matched_active = None
             for rule in rules:
                 cond = rule["condition"]
                 if matcher.evaluate_condition(cond, context):
-                    logger.debug(f"规则匹配成功: {cond}")
-                    return rule
+                    if rule.get("status") == "active":
+                        logger.debug(f"规则匹配成功: {cond}")
+                        matched_active = rule
+                    elif rule.get("status") == "trial":
+                        self._record_trial_match(rule["id"])
             
-            return None
+            return matched_active
         
         except Exception as e:
             logger.debug(f"规则匹配失败: {e}")
             return None
     
+    def _record_trial_match(self, rule_id: int):
+        """记录trial规则的影子匹配，增加apply_count用于后续评估"""
+        try:
+            import sqlite3
+            with sqlite3.connect("data/learning_rules.db") as conn:
+                conn.execute('''
+                    UPDATE learning_rules
+                    SET apply_count = apply_count + 1,
+                        last_applied = ?
+                    WHERE id = ? AND status = 'trial'
+                ''', (time.time(), rule_id))
+        except Exception as e:
+            logger.debug(f"记录trial匹配失败: {e}")
+    
     def _update_rule_stats(self, rule_id: int, success: bool = True):
         """更新规则应用统计"""
         try:
             import sqlite3
-            with sqlite3.connect("learning_rules.db") as conn:
+            with sqlite3.connect("data/learning_rules.db") as conn:
                 conn.execute('''
                     UPDATE learning_rules
                     SET apply_count = apply_count + 1,

@@ -1,5 +1,7 @@
 # 系统完整实施报告
 
+> ⚠️ **历史参考文档** — 本报告记录早期实施状态，不代表当前v3.2.0状态。请以 [ARCHITECTURE_CURRENT.md](../ARCHITECTURE_CURRENT.md) 为准。
+
 ## 实施时间
 2026-06-23
 

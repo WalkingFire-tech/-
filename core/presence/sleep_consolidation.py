@@ -179,6 +179,14 @@ class SleepConsolidationEngine:
         """睡眠循环 - 修复P4: 添加唤醒检查"""
         while self._running:
             try:
+                try:
+                    from core.resource_awareness.background_controller import get_background_controller
+                    if not get_background_controller().should_run("sleep_consolidation"):
+                        time.sleep(self._idle_detection_interval)
+                        continue
+                except ImportError:
+                    pass
+
                 if self._is_sleeping:
                     if self._should_wake():
                         self._wake_up()
@@ -264,8 +272,8 @@ class SleepConsolidationEngine:
             pass
         
         try:
-            from core.memory.stereo_memory import get_stereo_store
-            store = get_stereo_store()
+            from core.memory.stereo_memory import get_stereo_memory
+            store = get_stereo_memory()
             recent = store.get_recent(limit=100)
             unprocessed = sum(1 for m in recent if not m.get('consolidated', False))
             workload += unprocessed
@@ -335,8 +343,8 @@ class SleepConsolidationEngine:
             logger.debug(f"读取间隙生长队列失败: {e}")
         
         try:
-            from core.memory.stereo_memory import get_stereo_store
-            store = get_stereo_store()
+            from core.memory.stereo_memory import get_stereo_memory
+            store = get_stereo_memory()
             recent = store.get_recent(limit=30)
             
             topic_counts = Counter()
@@ -381,8 +389,8 @@ class SleepConsolidationEngine:
         details = {}
         
         try:
-            from core.memory.stereo_memory import get_stereo_store
-            store = get_stereo_store()
+            from core.memory.stereo_memory import get_stereo_memory
+            store = get_stereo_memory()
             recent = store.get_recent(limit=100)
             
             topic_counts = Counter()
@@ -445,8 +453,8 @@ class SleepConsolidationEngine:
         details = {}
         
         try:
-            from core.memory.stereo_memory import get_stereo_store
-            store = get_stereo_store()
+            from core.memory.stereo_memory import get_stereo_memory
+            store = get_stereo_memory()
             recent = store.get_recent(limit=200)
             
             topic_patterns = Counter()
@@ -488,8 +496,7 @@ class SleepConsolidationEngine:
             logger.debug(f"记忆清理失败: {e}")
         
         try:
-            self._update_knowledge_structure()
-            reorganized += 1
+            reorganized += self._reorganize_from_db()
         except Exception as e:
             logger.debug(f"知识结构更新失败: {e}")
         
@@ -576,8 +583,8 @@ class SleepConsolidationEngine:
         forgotten = 0
         
         try:
-            from core.memory.stereo_memory import get_stereo_store
-            store = get_stereo_store()
+            from core.memory.stereo_memory import get_stereo_memory
+            store = get_stereo_memory()
             
             threshold_days = 7 if aggressive else 30
             cutoff = datetime.now() - timedelta(days=threshold_days)
@@ -588,14 +595,27 @@ class SleepConsolidationEngine:
         
         return forgotten
 
-    def _update_knowledge_structure(self) -> None:
-        """更新知识结构"""
+    def _reorganize_from_db(self) -> int:
+        """从数据库重组知识结构（纯SQL，不调Ollama）"""
+        reorganized = 0
         try:
-            from core.knowledge.learner import get_domain_learner
-            learner = get_domain_learner()
-            learner.reorganize_knowledge()
+            with sqlite3.connect(str(self._db_path)) as conn:
+                cursor = conn.execute('''
+                    SELECT skill_name, occurrence_count, importance
+                    FROM solidified_skills
+                    WHERE importance < 0.5 AND occurrence_count >= 5
+                ''')
+                for row in cursor:
+                    conn.execute('''
+                        UPDATE solidified_skills
+                        SET importance = importance + 0.1, last_updated = ?
+                        WHERE skill_name = ?
+                    ''', (datetime.now().isoformat(), row[0]))
+                    reorganized += 1
+                conn.commit()
         except Exception as e:
-            logger.debug(f"知识结构更新失败: {e}")
+            logger.debug(f"知识结构重组失败: {e}")
+        return reorganized
 
     def _save_consolidation_result(self, result: ConsolidationResult) -> None:
         """保存整合结果"""

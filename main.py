@@ -1,5 +1,9 @@
 """
 Alliance Pioneer - Main Entry (Fixed Feedback Loop)
+
+⚠️ 历史参考入口 — 本文件已不再使用。
+当前唯一运行入口为 backend/main_fast.py，通过 uvicorn 启动：
+    python -m uvicorn backend.main_fast:app --host 0.0.0.0 --port 8000
 """
 import os
 import sys

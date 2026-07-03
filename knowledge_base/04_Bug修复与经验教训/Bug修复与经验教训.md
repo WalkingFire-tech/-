@@ -87,3 +87,37 @@
 - **根因**：矛盾率把"多策略部分失败"也算进去了（38/40=0.95），但5条路径中2条失败3条成功是正常的
 - **修复**：矛盾率只计"全部失败"（排除多策略部分失败）；真谛冲突率权重0.3→0.15
 - **教训**：监控指标的"失败"定义必须精确，不能把正常的部分失败算进去
+
+---
+
+## 五、v3.2.0 系统性修复（2026年6月）
+
+### 14. 反馈信号断裂（P0致命）
+- **现象**：经验池2769条success=0、188条success=NULL、0条success=1，整个学习闭环失效
+- **根因**：`_save_to_experience_pool()`只写入5个字段，不包含success字段；`chat_handler.py`和`chat_stream.py`各有独立的实现，都缺少success
+- **修复**：两个文件中的`_save_to_experience_pool()`增加success/intent_type/quality_score/duration参数，所有调用点传入正确值
+- **教训**：学习闭环的"反馈信号"是最关键的数据，必须从第一天就验证
+
+### 15. 双轨问题——核心模块从未被加载（P0致命）
+- **现象**：大量核心模块（认知循环、编排器、反思管道、自动学习进化、七大学习机制等）"存在但休眠"
+- **根因**：系统有main.py(4369行，集成了全部组件)和main_fast.py(882行，简化版)两个后端入口，实际运行的是main_fast.py
+- **修复**：在main_fast.py中逐步集成最关键的核心能力（反思管道、自动学习进化、认知代谢）；认知代谢和压力测试已通过task_queue正确集成
+- **教训**：简化版入口必须包含核心闭环，否则系统"看起来能运行"但"实际上没有学习能力"
+
+### 16. 本质推理器"推理链断裂"误报
+- **现象**：对天文/物理事实问题报"推理链断裂：无法从物理基本原理直接追溯"
+- **根因**：`_first_principles_reasoning`中，`_get_known_truths`只有极少数硬编码真理，大部分科学事实无法匹配；未匹配的事实被标记为traceable=False，触发"推理链断裂"
+- **修复**：引入traceable=None（"已知真理库未覆盖"），与traceable=False（"确实断裂"）区分；_check_consistency只计traceable=False
+- **教训**："不知道"和"知道有问题"是两种完全不同的状态，不能混为一谈
+
+### 17. infrastructure/__init__.py导入阻塞
+- **现象**：`from infrastructure.reflection_pipeline import ...`超时
+- **根因**：`__init__.py`在导入时加载所有子模块（config_manager, experience_pool, reflection_pipeline, quick_reflex），其中某些模块初始化耗时很长
+- **修复**：改为`__getattr__`延迟导入，只在真正使用时才加载对应模块
+- **教训**：包的__init__.py不应该eager import所有子模块，应该用延迟导入
+
+### 18. 技能涌现命名包含查询内容
+- **现象**：技能名如"本质追溯者_esp32明明供"，后半部分是查询内容
+- **根因**：`_generate_skill_name`用`trigger[:8]`作为后缀，trigger可能包含查询内容
+- **修复**：改为用触发模式类型（如"essence_reasoning"）而非查询内容
+- **教训**：用户输入不应直接出现在系统内部标识符中

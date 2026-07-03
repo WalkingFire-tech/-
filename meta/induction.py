@@ -464,8 +464,8 @@ class InductionScheduler:
         
         return result
     
-    def activate_pending_rules(self, min_confidence: float = 0.6) -> int:
-        """激活待定规则"""
+    def activate_pending_rules(self, min_confidence: float = 0.4) -> int:
+        """激活待定规则：置信度达标的直接激活，低于阈值的晋升到trial"""
         try:
             import sqlite3
             with sqlite3.connect("data/learning_rules.db") as conn:
@@ -476,10 +476,19 @@ class InductionScheduler:
                 ''', (min_confidence,))
                 
                 activated = cur.rowcount
+                
+                cur2 = conn.execute('''
+                    UPDATE learning_rules
+                    SET status = 'trial', promoted_at = ?,
+                        promotion_reason = '归纳调度晋升试用：置信度不足但值得验证'
+                    WHERE status = 'pending' AND confidence >= 0.3
+                ''', (datetime.now().isoformat(),))
+                
+                promoted = cur2.rowcount
                 conn.commit()
                 
-                logger.info(f"激活{activated}条待定规则")
-                return activated
+                logger.info(f"激活{activated}条规则，晋升{promoted}条到试用期")
+                return activated + promoted
         
         except Exception as e:
             logger.error(f"激活规则失败: {e}")

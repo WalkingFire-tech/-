@@ -36,7 +36,7 @@ Write-Host ""
 
 # 启动服务
 try {
-    python start_backend_simple.py
+    python -m uvicorn backend.main_fast:app --host 0.0.0.0 --port 8000
 } catch {
     Write-Host "启动失败: $_" -ForegroundColor Red
     Write-Host ""

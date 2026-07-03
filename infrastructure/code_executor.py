@@ -119,20 +119,32 @@ class CodeExecutor:
             
             compiled = compile_restricted(code, '<sandbox>', 'exec')
             
-            import signal
+            import io
+            import threading
+            output_buffer = io.StringIO()
+            _timed_out = [False]
             
-            def timeout_handler(signum, frame):
-                raise TimeoutError("执行超时")
+            def _timeout_handler():
+                _timed_out[0] = True
+                import os
+                os._exit(2)
             
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(timeout)
+            safe_globals_with_output = dict(safe_globals)
+            safe_globals_with_output['print'] = lambda *args, **kwargs: print(*args, file=output_buffer, **kwargs)
+            
+            timer = threading.Timer(timeout, _timeout_handler)
+            timer.daemon = True
             
             try:
-                exec(compiled, safe_globals)
-                signal.alarm(0)
-                return {"success": True, "output": "", "error": "", "method": "restricted"}
+                timer.start()
+                exec(compiled, safe_globals_with_output)
+                timer.cancel()
+                if _timed_out[0]:
+                    return {"success": False, "error": f"执行超时（{timeout}秒）", "method": "restricted"}
+                output = output_buffer.getvalue()
+                return {"success": True, "output": output, "error": "", "method": "restricted"}
             finally:
-                signal.alarm(0)
+                timer.cancel()
         
         except ImportError:
             return {"success": False, "error": "RestrictedPython不可用", "method": "restricted"}

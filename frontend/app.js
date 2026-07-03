@@ -76,6 +76,33 @@ function addMessageHTML(role, htmlContent) {
     const contentDiv = document.createElement('div');
     contentDiv.className = 'message-content';
     contentDiv.innerHTML = htmlContent;
+
+    if (role === 'assistant') {
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'copy-response-btn';
+        copyBtn.title = '复制回复';
+        copyBtn.innerHTML = '&#128203;';
+        copyBtn.onclick = async () => {
+            const text = contentDiv.innerText || contentDiv.textContent || '';
+            try {
+                await navigator.clipboard.writeText(text);
+                copyBtn.innerHTML = '&#10003;';
+                copyBtn.title = '已复制';
+                setTimeout(() => { copyBtn.innerHTML = '&#128203;'; copyBtn.title = '复制回复'; }, 1500);
+            } catch {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                copyBtn.innerHTML = '&#10003;';
+                setTimeout(() => { copyBtn.innerHTML = '&#128203;'; copyBtn.title = '复制回复'; }, 1500);
+            }
+        };
+        messageDiv.appendChild(copyBtn);
+    }
+
     messageDiv.appendChild(contentDiv);
     messagesDiv.appendChild(messageDiv);
     addCopyButtons(contentDiv);
@@ -84,28 +111,7 @@ function addMessageHTML(role, htmlContent) {
 
 // ==================== 本地降级回复（前端兜底） ====================
 function _generateLocalFallback(query) {
-    const q = query.toLowerCase();
-    
-    if (q.includes('命运') || q.includes('人生') || q.includes('意义') || q.includes('哲学')) {
-        return `关于"${query}"，这是一个哲学与科学交汇的深刻问题：\n\n**不同视角的分析：**\n1. **生物学视角** - 基因遗传决定了我们的部分特质，这是"先天"的部分\n2. **社会学视角** - 家庭环境、教育经历、社会阶层等塑造了我们的机会和选择空间\n3. **心理学视角** - 个人的认知模式、决策习惯、情绪管理能力影响人生轨迹\n4. **哲学视角** - 自由意志与决定论的争论：我们是否真正"选择"了自己的命运？\n5. **复杂性科学** - 微小的初始差异可能通过正反馈放大，导致截然不同的结果\n\n**核心观点：**\n- 命运不是单一因素决定的，而是基因、环境、选择、偶然性共同作用的结果\n- 我们无法选择起点，但可以通过认知升级和持续行动来改变轨迹`;
-    }
-    if (q.includes('认知') || q.includes('意识') || q.includes('思维') || q.includes('智能')) {
-        return `关于"${query}"，这是一个深刻的问题：\n\n**认知的产生涉及多个层面：**\n1. **生物学基础** - 认知源于大脑神经元的连接与活动，约860亿个神经元通过突触形成复杂网络\n2. **感知与输入** - 通过视觉、听觉、触觉等感官接收外界信息\n3. **信息加工** - 大脑对感知信息进行编码、存储、检索和推理\n4. **涌现特性** - 认知不是单个神经元的功能，而是大量简单单元交互后涌现出的复杂特性\n5. **学习与适应** - 通过经验不断调整神经连接（神经可塑性），使认知能力持续进化\n\n**关键理论：**\n- 具身认知：认知不仅在大脑中，还依赖身体与环境的互动\n- 连接主义：认知是神经网络中分布式表征的计算结果\n- 预测编码：大脑不断预测输入，用预测误差来更新内部模型`;
-    }
-    if (q.includes('为什么')) {
-        return `关于"${query}"，从因果分析的角度来思考：\n\n**第一层：直接原因**\n最显而易见的表象是什么？\n\n**第二层：深层原因**\n- **历史因素** - 过去的事件和决策如何塑造了当前的局面？\n- **结构因素** - 系统性的制度、规则或环境如何影响结果？\n- **个体因素** - 人的选择、能力和行为如何发挥作用？\n\n**第三层：根本原因**\n- 追问5个"为什么"：不断追问更深层的因果链\n- 区分必要条件和充分条件\n- 注意因果的复杂性：单一原因很少能解释复杂现象\n\n💡 如果你能告诉我更具体的关注点，我可以给出更精准的分析。`;
-    }
-    if (q.includes('代码') || q.includes('编程') || q.includes('函数')) {
-        return `关于"${query}"，我可以帮助你：\n\n1. **代码生成** - 请告诉我具体需求\n2. **代码解释** - 请提供代码，我会解释原理\n3. **代码优化** - 请提供代码，我给出建议\n\n请告诉我更具体的需求。`;
-    }
-    if (q.includes('什么是') || q.includes('是什么') || q.includes('介绍')) {
-        const topic = query.replace(/什么是|是什么|介绍一下/g, '').trim();
-        return `关于"${topic}"：\n\n1. **概念层面** - ${topic}是一个重要的知识领域\n2. **应用层面** - ${topic}在实际中有广泛的应用\n3. **学习方向** - 可以从基础概念、核心原理、实践案例三个维度深入\n\n💡 建议你尝试更具体的问题。`;
-    }
-    if (q.includes('如何') || q.includes('怎么') || q.includes('怎样')) {
-        return `关于"${query}"，我的分析：\n\n1. **问题拆解** - 将复杂问题分解为可执行的小步骤\n2. **方法选择** - 根据具体场景选择最合适的方案\n3. **实践验证** - 通过实际操作来验证和调整\n\n💡 请告诉我更具体的场景和约束条件，我会给出针对性的详细指导。`;
-    }
-    return `关于"${query}"，我的深度思考：\n\n**1. 问题本质分析**\n这个问题的核心是什么？它属于哪类问题（事实性、价值性、因果性、方法性）？\n\n**2. 多角度审视**\n- **正面视角** - 最直观的理解是什么？\n- **反面视角** - 如果反过来想，会得到什么洞察？\n- **旁观视角** - 第三方如何看待这个问题？\n- **历史视角** - 这个问题在历史上是如何演变的？\n\n**3. 关键变量识别**\n影响这个问题结果的关键变量有哪些？哪些是可控的，哪些是不可控的？\n\n💡 我正在持续学习和进化。如果你能提供更多背景，我可以给出更深入的分析。`;
+    return `关于「${query}」，我正在思考中，但响应时间较长。请稍等片刻再试，或尝试换个方式描述你的问题。`;
 }
 
 // ==================== 发送消息（全局函数 - 流式SSE） ====================
@@ -240,11 +246,29 @@ async function sendMessage() {
         
         // 折叠思考过程
         setTimeout(() => {
+            let metaHtml = '';
+            if (finalResult) {
+                if (finalResult.path_contributions && Object.keys(finalResult.path_contributions).length > 0) {
+                    const bars = Object.entries(finalResult.path_contributions).map(([k, v]) => {
+                        const color = k.includes('Ollama') || k.includes('本地') ? '#4CAF50' : 
+                                      k.includes('DeepSeek') || k.includes('OpenAI') ? '#2196F3' : 
+                                      k.includes('经验') ? '#FF9800' : '#9C27B0';
+                        return `<span style="display:inline-block;margin-right:8px;font-size:12px;"><span style="display:inline-block;width:8px;height:8px;background:${color};border-radius:50%;margin-right:3px;"></span>${k} ${v}%</span>`;
+                    }).join('');
+                    metaHtml += `<div style="margin-top:6px;font-size:12px;color:#555;">📊 路径贡献: ${bars}</div>`;
+                }
+                if (finalResult.token_usage && Object.keys(finalResult.token_usage).length > 0) {
+                    const tokens = Object.entries(finalResult.token_usage).map(([k, v]) => 
+                        `<span style="font-size:12px;margin-right:8px;">💰 ${k}: ${v.total_tokens||0} tokens (输入${v.prompt_tokens||0}+输出${v.completion_tokens||0})</span>`
+                    ).join('');
+                    metaHtml += `<div style="margin-top:4px;font-size:12px;color:#555;">${tokens}</div>`;
+                }
+            }
             thinkingDiv.innerHTML = `
                 <div class="message-content">
                     <details style="background: #f5f5f5; padding: 8px; border-radius: 5px;">
                         <summary style="cursor: pointer; font-weight: bold;">💭 思考过程 (${elapsed}秒)</summary>
-                        <div style="font-size: 13px; margin-top: 8px; line-height: 1.8;">${stepsContainer.innerHTML}</div>
+                        <div style="font-size: 13px; margin-top: 8px; line-height: 1.8;">${stepsContainer.innerHTML}${metaHtml}</div>
                     </details>
                 </div>
             `;
@@ -265,6 +289,29 @@ async function sendMessage() {
                 <button class="feedback-btn positive" onclick="sendFeedback(1, this)">👍</button>
                 <button class="feedback-btn negative" onclick="sendFeedback(-1, this)">👎</button>
             `;
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'copy-response-btn';
+            copyBtn.title = '复制回复';
+            copyBtn.innerHTML = '&#128203;';
+            copyBtn.onclick = async () => {
+                const text = contentDiv.innerText || contentDiv.textContent || '';
+                try {
+                    await navigator.clipboard.writeText(text);
+                    copyBtn.innerHTML = '&#10003;';
+                    copyBtn.title = '已复制';
+                    setTimeout(() => { copyBtn.innerHTML = '&#128203;'; copyBtn.title = '复制回复'; }, 1500);
+                } catch {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    copyBtn.innerHTML = '&#10003;';
+                    setTimeout(() => { copyBtn.innerHTML = '&#128203;'; copyBtn.title = '复制回复'; }, 1500);
+                }
+            };
+            messageDiv.appendChild(copyBtn);
             messageDiv.appendChild(contentDiv);
             messageDiv.appendChild(feedbackDiv);
             document.getElementById('messages').appendChild(messageDiv);
@@ -276,6 +323,15 @@ async function sendMessage() {
             const fallbackContent = document.createElement('div');
             fallbackContent.className = 'message-content';
             fallbackContent.innerHTML = formatResponseEnhanced(_generateLocalFallback(message));
+            const fallbackCopyBtn = document.createElement('button');
+            fallbackCopyBtn.className = 'copy-response-btn';
+            fallbackCopyBtn.title = '复制回复';
+            fallbackCopyBtn.innerHTML = '&#128203;';
+            fallbackCopyBtn.onclick = async () => {
+                const text = fallbackContent.innerText || fallbackContent.textContent || '';
+                try { await navigator.clipboard.writeText(text); fallbackCopyBtn.innerHTML = '&#10003;'; setTimeout(() => { fallbackCopyBtn.innerHTML = '&#128203;'; }, 1500); } catch { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); fallbackCopyBtn.innerHTML = '&#10003;'; setTimeout(() => { fallbackCopyBtn.innerHTML = '&#128203;'; }, 1500); }
+            };
+            fallbackDiv.appendChild(fallbackCopyBtn);
             fallbackDiv.appendChild(fallbackContent);
             document.getElementById('messages').appendChild(fallbackDiv);
         }
@@ -542,7 +598,10 @@ async function loadRecentLearning() {
     const container = document.getElementById('recent-learning');
     if (!container) return;
     try {
-        const response = await fetch(`${API_BASE}/api/recent_learning`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const response = await fetch(`${API_BASE}/api/recent_learning`, { signal: controller.signal });
+        clearTimeout(timeoutId);
         const data = await response.json();
         if (data.items && data.items.length > 0) {
             container.innerHTML = data.items.map(item => 
@@ -1362,6 +1421,153 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 定时刷新
     setInterval(checkHealth, 30000);
     setInterval(loadStats, 60000);
+    setInterval(refreshProbabilityCloud, 30000);
+    setInterval(refreshResourceStatus, 30000);
     // 自动检测新模型（每30秒）
     startAutoRefresh(30);
+    refreshProbabilityCloud();
+    refreshResourceStatus();
 });
+
+async function refreshProbabilityCloud() {
+    try {
+        const resp = await fetch('/api/weights');
+        const data = await resp.json();
+        if (data.error) return;
+
+        const container = document.getElementById('weight-bars');
+        if (!container) return;
+
+        const weights = data.weights?.paths || {};
+        const colors = ['#4fc3f7','#81c784','#fff176','#ff8a65','#ce93d8','#4dd0e1','#aed581','#f48fb1','#90a4ae'];
+
+        let html = '';
+        let i = 0;
+        for (const [name, info] of Object.entries(weights)) {
+            const pct = (info.weight * 100).toFixed(1);
+            const sr = (info.success_rate * 100).toFixed(0);
+            const color = colors[i % colors.length];
+            html += `<div class="weight-bar-item">
+                <span class="weight-bar-label" title="${name}">${name}</span>
+                <div class="weight-bar-track">
+                    <div class="weight-bar-fill" style="width:${pct}%;background:${color}"></div>
+                </div>
+                <span class="weight-bar-value">${pct}%</span>
+            </div>`;
+            i++;
+        }
+        container.innerHTML = html || '<p style="color:#999;font-size:12px">暂无数据</p>';
+
+        const entropyEl = document.getElementById('entropy-indicator');
+        if (entropyEl && data.confidence_distribution) {
+            const topSource = Object.entries(data.confidence_distribution).sort((a,b) => b[1]-a[1])[0];
+            entropyEl.textContent = `最可靠: ${topSource ? topSource[0] : '--'} | 路径数: ${Object.keys(weights).length}`;
+        }
+
+        // 概率分布展示
+        const probDistContainer = document.getElementById('prob-dist-bars');
+        if (probDistContainer && data.confidence_distribution) {
+            const dist = data.confidence_distribution;
+            const sorted = Object.entries(dist).sort((a,b) => b[1]-a[1]);
+            let distHtml = '';
+            let j = 0;
+            for (const [name, prob] of sorted) {
+                const pct = (prob * 100).toFixed(1);
+                const color = colors[j % colors.length];
+                distHtml += `<div class="weight-bar-item">
+                    <span class="weight-bar-label" title="${name}">${name}</span>
+                    <div class="weight-bar-track">
+                        <div class="weight-bar-fill" style="width:${pct}%;background:${color}"></div>
+                    </div>
+                    <span class="weight-bar-value">${pct}%</span>
+                </div>`;
+                j++;
+            }
+            probDistContainer.innerHTML = distHtml || '<p style="color:#999;font-size:12px">暂无概率分布</p>';
+        }
+
+        // 检索信息展示
+        const retrievalInfo = document.getElementById('retrieval-info');
+        if (retrievalInfo) {
+            const mode = data.prob_mode || '--';
+            const queryEntropy = data.query_entropy != null ? data.query_entropy.toFixed(3) : '--';
+            const alpha = data.alpha != null ? data.alpha.toFixed(3) : '--';
+            retrievalInfo.textContent = `检索模式: ${mode} | 查询熵: ${queryEntropy} | α(稀疏权重): ${alpha}`;
+        }
+    } catch (e) {
+        // silently fail
+    }
+}
+
+async function refreshResourceStatus() {
+    try {
+        const resp = await fetch('/api/resource-status');
+        const data = await resp.json();
+        if (data.error) return;
+
+        const snap = data.health?.snapshot || {};
+        const hw = data.health?.hardware || {};
+        const mode = snap.mode || 'normal';
+        const mem = snap.memory_usage || 0;
+        const threads = snap.thread_count || 0;
+        const paths = data.parallel_paths || 9;
+        const retrieval = data.retrieval_strategy || 'hybrid';
+        const gpuMem = snap.gpu_memory || 0;
+        const gpuVramUsed = snap.gpu_vram_used_gb || 0;
+        const gpuVramTotal = snap.gpu_vram_total_gb || 0;
+
+        const modeEl = document.getElementById('rs-mode');
+        if (modeEl) {
+            const modeLabels = {normal: '正常', conservative: '保守', emergency: '紧急'};
+            const modeColors = {normal: '#4CAF50', conservative: '#FF9800', emergency: '#F44336'};
+            modeEl.textContent = modeLabels[mode] || mode;
+            modeEl.style.color = modeColors[mode] || '#666';
+        }
+
+        const memEl = document.getElementById('rs-memory');
+        if (memEl) memEl.textContent = (mem * 100).toFixed(1) + '%';
+
+        const memBar = document.getElementById('rs-memory-bar');
+        if (memBar) {
+            memBar.style.width = (mem * 100) + '%';
+            if (mem > 0.88) memBar.style.background = '#F44336';
+            else if (mem > 0.75) memBar.style.background = '#FF9800';
+            else memBar.style.background = '#4CAF50';
+        }
+
+        const gpuSection = document.getElementById('rs-gpu-section');
+        if (gpuSection && gpuVramTotal > 0) {
+            gpuSection.style.display = 'block';
+            const gpuEl = document.getElementById('rs-gpu');
+            if (gpuEl) gpuEl.textContent = gpuVramUsed.toFixed(1) + '/' + gpuVramTotal.toFixed(1) + 'GB';
+            const gpuBar = document.getElementById('rs-gpu-bar');
+            if (gpuBar) {
+                gpuBar.style.width = (gpuMem * 100) + '%';
+                if (gpuMem > 0.88) gpuBar.style.background = '#F44336';
+                else if (gpuMem > 0.75) gpuBar.style.background = '#FF9800';
+                else gpuBar.style.background = '#2196F3';
+            }
+        }
+
+        const threadsEl = document.getElementById('rs-threads');
+        if (threadsEl) threadsEl.textContent = threads;
+
+        const pathsEl = document.getElementById('rs-paths');
+        if (pathsEl) pathsEl.textContent = paths + '/9';
+
+        const retrievalEl = document.getElementById('rs-retrieval');
+        if (retrievalEl) {
+            const retrievalLabels = {hybrid: '混合', sparse_only: '仅词法'};
+            retrievalEl.textContent = retrievalLabels[retrieval] || retrieval;
+        }
+
+        const hwEl = document.getElementById('rs-hardware');
+        if (hwEl && hw.total_ram_gb) {
+            let hwText = 'RAM: ' + hw.total_ram_gb.toFixed(1) + 'GB';
+            if (hw.gpu_name) hwText += ' | GPU: ' + hw.gpu_name;
+            hwEl.textContent = hwText;
+        }
+    } catch (e) {
+        // silently fail
+    }
+}

@@ -36,4 +36,4 @@ echo.
 echo 按 Ctrl+C 停止服务
 echo.
 
-python backend/main.py
+python -m uvicorn backend.main_fast:app --host 0.0.0.0 --port 8000

@@ -100,11 +100,12 @@ class SkillEmergence:
             return skill_name
 
     def _classify_skill_type(self, query: str, success_path: list) -> str:
-        """分类技能类型"""
         query_lower = query.lower()
 
         if any(kw in query_lower for kw in ["代码", "编程", "函数", "算法", "单片机", "stm32", "实现"]):
             return "code_generation"
+        if any(kw in query_lower for kw in ["esp32", "电压", "电流", "引脚", "电路", "硬件", "不工作", "不启动", "供电", "焊接", "万用表"]):
+            return "engineering"
         if any(kw in query_lower for kw in ["为什么", "原理", "原因", "机制", "本质"]):
             return "essence_reasoning"
         if any(kw in query_lower for kw in ["天文", "物理", "化学", "生物", "医学", "数学"]):
@@ -114,7 +115,6 @@ class SkillEmergence:
         if any(kw in query_lower for kw in ["如何", "怎么", "方法"]):
             return "method_guidance"
 
-        # 根据成功路径推断
         if "代码验证" in success_path:
             return "code_generation"
         if "本质推理" in success_path or "本质闸门" in success_path:
@@ -130,6 +130,7 @@ class SkillEmergence:
         keywords = []
         type_triggers = {
             "code_generation": ["代码", "编程", "函数", "算法", "实现", "写一段"],
+            "engineering": ["esp32", "电压", "电流", "引脚", "电路", "硬件", "供电", "焊接"],
             "essence_reasoning": ["为什么", "原理", "本质", "机制", "原因"],
             "science_facts": ["天文", "物理", "化学", "生物", "科学"],
             "philosophical_analysis": ["命运", "意义", "哲学", "悖论"],
@@ -142,8 +143,7 @@ class SkillEmergence:
                 keywords.append(t)
 
         if not keywords:
-            # 回退：取问题前10个字符作为触发
-            return query[:10]
+            return skill_type
 
         return "|".join(keywords)
 
@@ -212,7 +212,6 @@ class SkillEmergence:
             pass
 
     def _generate_skill_name(self, skill_type: str, trigger: str) -> str:
-        """生成技能名称"""
         names = {
             "code_generation": "代码工匠",
             "essence_reasoning": "本质追溯者",
@@ -220,28 +219,42 @@ class SkillEmergence:
             "philosophical_analysis": "思辨者",
             "method_guidance": "方法导航员",
             "multi_source_verify": "多源仲裁者",
+            "engineering": "工程诊断师",
             "general": "通用解题者",
         }
         base = names.get(skill_type, "解题者")
-        return f"{base}_{trigger[:8]}"
+        trigger_key = trigger.replace("|", "_").replace(" ", "")[:20]
+        return f"{base}_{trigger_key}"
 
     def _record_failure(self, query: str, failed: list):
-        """记录失败，更新相关技能的失败计数"""
+        """记录失败，更新相关技能的失败计数，并检查退化"""
         if not failed:
             return
-        # 查找可能相关的技能，增加失败计数
+        failed_names = set()
+        for item in failed:
+            if isinstance(item, (list, tuple)) and len(item) > 0:
+                name = str(item[0])
+                if name and name not in ("规则推理", "本质推理"):
+                    failed_names.add(name)
         try:
             conn = sqlite3.connect(self.db_path)
             c = conn.cursor()
-            c.execute("SELECT skill_name, fail_count FROM skills WHERE is_active=1")
+            c.execute("SELECT skill_name, success_count, fail_count FROM skills WHERE is_active=1")
             rows = c.fetchall()
             for row in rows:
+                skill_name, succ, fail = row
+                new_fail = fail + 1
+                total = succ + new_fail
+                new_rate = succ / max(total, 1)
                 c.execute("UPDATE skills SET fail_count=?, success_rate=? WHERE skill_name=?",
-                          (row[1] + 1, row[1] / max(row[1] + 2, 1), row[0]))
+                          (new_fail, new_rate, skill_name))
+                if new_rate < 0.3 and total >= 5:
+                    c.execute("UPDATE skills SET is_active=0 WHERE skill_name=?", (skill_name,))
+                    logger.info(f"技能退化: {skill_name} 成功率{new_rate:.0%}<{30}%，已标记为休眠")
             conn.commit()
             conn.close()
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"技能失败记录异常: {e}")
 
     def get_applicable_skills(self, query: str) -> List[dict]:
         """获取适用于当前问题的技能（按成功率排序）"""
