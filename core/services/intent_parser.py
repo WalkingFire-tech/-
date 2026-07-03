@@ -357,7 +357,7 @@ class IntentParser:
         """
         try:
             import sqlite3
-            conn = sqlite3.connect("learning_rules.db")
+            conn = sqlite3.connect("data/learning_rules.db")
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS learning_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,

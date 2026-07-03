@@ -216,7 +216,7 @@ class KnowledgeIndex:
                 logger.warning(f"统计经验池失败: {e}")
             
             try:
-                with sqlite3.connect("learning_rules.db") as conn:
+                with sqlite3.connect("data/learning_rules.db") as conn:
                     cursor = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
                     rule_count = cursor.fetchone()[0]
                 self.update_count("rules", rule_count)

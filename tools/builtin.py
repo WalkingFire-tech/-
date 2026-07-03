@@ -15,7 +15,7 @@ from tools.base import Tool, ToolCategory, Parameter, ToolResult
 
 
 class CodeExecutionTool(Tool):
-    """代码执行工具"""
+    """代码执行工具 - 委托给infrastructure.code_executor统一实现"""
     
     @property
     def name(self) -> str:
@@ -23,7 +23,7 @@ class CodeExecutionTool(Tool):
     
     @property
     def description(self) -> str:
-        return "安全执行Python代码,支持数学计算、数据处理等"
+        return "安全执行Python代码,支持Docker/RestrictedPython/子进程多层沙箱"
     
     @property
     def category(self) -> ToolCategory:
@@ -44,82 +44,43 @@ class CodeExecutionTool(Tool):
                 description="超时时间(秒)",
                 required=False,
                 default=10
+            ),
+            Parameter(
+                name="method",
+                type="str",
+                description="执行方法(auto/docker/restricted/subprocess)",
+                required=False,
+                default="auto"
             )
         ]
     
     def execute(self, **kwargs) -> ToolResult:
         code = kwargs.get("code")
         timeout = kwargs.get("timeout", 10)
+        method = kwargs.get("method", "auto")
         
-        SAFE_MODULES = {'math', 'json', 'datetime', 're', 'collections', 'itertools', 'functools'}
-        for match in re.finditer(r'\bimport\s+(\w+)|\bfrom\s+(\w+)', code):
-            module = match.group(1) or match.group(2)
-            if module not in SAFE_MODULES:
-                return ToolResult(
-                    success=False,
-                    output=None,
-                    error=f"禁止使用模块: {module}，仅允许: {SAFE_MODULES}"
-                )
-        
-        DANGEROUS_PATTERNS = [
-            r'\bopen\s*\(',
-            r'\bfile\s*\(',
-            r'\b__import__\s*\(',
-            r'\beval\s*\(',
-            r'\bexec\s*\(',
-            r'\bcompile\s*\(',
-            r'\bglobals\s*\(',
-            r'\blocals\s*\(',
-            r'\bvars\s*\(',
-            r'\bdir\s*\(',
-            r'\bgetattr\s*\(',
-            r'\bsetattr\s*\(',
-            r'\bdelattr\s*\(',
-        ]
-        
-        for pattern in DANGEROUS_PATTERNS:
-            if re.search(pattern, code):
-                return ToolResult(
-                    success=False,
-                    output=None,
-                    error=f"禁止使用危险函数: {pattern}"
-                )
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
-            f.write(code)
-            tmp = f.name
+        if not code:
+            return ToolResult(success=False, output=None, error="代码不能为空")
         
         try:
-            result = subprocess.run(
-                ['python', tmp],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env={}
-            )
-            
-            return ToolResult(
-                success=result.returncode == 0,
-                output=result.stdout,
-                error=result.stderr if result.returncode != 0 else None
-            )
-        
-        except subprocess.TimeoutExpired:
-            return ToolResult(
-                success=False,
-                output=None,
-                error=f"执行超时({timeout}秒)"
-            )
-        
+            from infrastructure.code_executor import CodeExecutor
+            result = CodeExecutor.execute(code, timeout=timeout, method=method)
         except Exception as e:
+            return ToolResult(success=False, output=None, error=f"代码执行失败: {e}")
+        
+        if result and result.get("success"):
+            return ToolResult(
+                success=True,
+                output=result.get("output", ""),
+                metadata={"method": result.get("method", "unknown")}
+            )
+        else:
             return ToolResult(
                 success=False,
                 output=None,
-                error=str(e)
+                error=(result or {}).get("error", "执行失败"),
+                metadata={"method": (result or {}).get("method", "unknown")}
             )
-        
-        finally:
-            os.unlink(tmp)
 
 
 class CalculatorTool(Tool):

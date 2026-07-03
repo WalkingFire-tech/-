@@ -172,6 +172,13 @@ class ReflectionPipeline:
                 actions_taken.append("jsonl_sample")
                 logger.debug(f"✓ JSONL样本生成: {reflection_id}")
             
+            # P1-7: 反思教训回流到spirit_lessons.db
+            try:
+                await self._write_lesson_to_spirit(context)
+                actions_taken.append("spirit_lesson")
+            except Exception as e:
+                logger.debug(f"反思教训写入跳过: {e}")
+            
             return {
                 "success": True,
                 "reflection_id": reflection_id,
@@ -243,7 +250,7 @@ class ReflectionPipeline:
         else:
             tool_score = 0.5
         
-        tasks = plan.get("tasks", [])
+        tasks = plan.get("tasks", []) if isinstance(plan, dict) else []
         if tasks:
             task_success = any(t.get("status") == "success" for t in tasks)
             plan_score = 1.0 if task_success else 0.0
@@ -255,6 +262,60 @@ class ReflectionPipeline:
         total_score = w_conf * confidence_score + w_tool * tool_score + w_plan * plan_score
         
         return total_score > self.success_threshold
+    
+    async def _write_lesson_to_spirit(self, context: Dict[str, Any]):
+        """P1-7: 将反思教训写入spirit_lessons.db，供下次规划读取"""
+        query = context.get("query", "")
+        confidence = context.get("confidence", 0.5)
+        success = context.get("success", False)
+        lessons = []
+        
+        if not success:
+            lessons.append({
+                "lesson_type": "execution_failure",
+                "lesson_text": f"查询'{query[:30]}'执行失败，置信度{confidence:.0%}",
+                "severity": 3,
+                "context": query[:50]
+            })
+        elif confidence < 0.4:
+            lessons.append({
+                "lesson_type": "low_confidence",
+                "lesson_text": f"查询'{query[:30]}'置信度低({confidence:.0%})，需加强验证",
+                "severity": 2,
+                "context": query[:50]
+            })
+        
+        tool_calls = context.get("tool_calls", [])
+        for tc in tool_calls:
+            if not tc.get("success", True):
+                lessons.append({
+                    "lesson_type": "tool_failure",
+                    "lesson_text": f"工具{tc.get('tool','?')}执行失败: {tc.get('error','未知')[:50]}",
+                    "severity": 2,
+                    "context": query[:50]
+                })
+        
+        if not lessons:
+            return
+        
+        try:
+            with sqlite3.connect("data/spirit_lessons.db", timeout=3) as conn:
+                conn.execute('''CREATE TABLE IF NOT EXISTS spirit_lessons (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lesson_type TEXT,
+                    lesson_text TEXT,
+                    severity INTEGER DEFAULT 1,
+                    context TEXT,
+                    created_at TEXT
+                )''')
+                now = datetime.now().isoformat()
+                for lesson in lessons:
+                    conn.execute(
+                        "INSERT INTO spirit_lessons (lesson_type, lesson_text, severity, context, created_at) VALUES (?,?,?,?,?)",
+                        (lesson["lesson_type"], lesson["lesson_text"], lesson["severity"], lesson["context"], now)
+                    )
+        except Exception as e:
+            logger.debug(f"教训写入失败: {e}")
     
     def _enrich_context(self, raw: Dict[str, Any]) -> Dict[str, Any]:
         """补充元数据，生成唯一ID和时间戳"""

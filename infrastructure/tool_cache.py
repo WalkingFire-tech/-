@@ -149,7 +149,7 @@ class ToolResultCache:
                     INSERT OR REPLACE INTO tool_cache
                     (tool_name, params_hash, params_json, result_json, quality_score, created_at, expires_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                ""', (
+                """, (
                     tool_name,
                     params_hash,
                     params_json,

@@ -9,7 +9,10 @@
 """
 import asyncio
 import time
+import concurrent.futures
 from loguru import logger
+
+_slow_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="chat_slow")
 
 try:
     from core.spirit_core import spirit_core, ensure_spirit_compliance
@@ -77,7 +80,7 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
         
         dispatch_result = await asyncio.wait_for(
             asyncio.get_event_loop().run_in_executor(
-                None, lambda: dispatcher.dispatch(user_query=user_input, context=context)
+                _slow_pool, lambda: dispatcher.dispatch(user_query=user_input, context=context)
             ),
             timeout=3.0
         )
@@ -94,9 +97,55 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
         confidence = 0.5
         attempts.append(("意图识别", False, str(e)[:50]))
     
+    # ========== 策略1.5：规则匹配与统计 ==========
+    try:
+        import sqlite3 as _sql
+        from infrastructure.rule_matcher import RuleMatcher as _RM
+        _INTENT_TYPE_MAP = {
+            "greeting": "chat", "confirmation": "chat", "simple_query": "question",
+            "complex_query": "code", "learning_trigger": "question",
+            "challenge": "verification", "history_query": "memory",
+        }
+        _mapped_type = _INTENT_TYPE_MAP.get(intent_type, intent_type)
+        _rule_ctx = {
+            "intent_type": intent_type,
+            "intent_type_legacy": _mapped_type,
+            "raw_input": user_input,
+        }
+        _matcher = _RM()
+        with _sql.connect("data/learning_rules.db") as _conn:
+            _conn.row_factory = _sql.Row
+            _cur = _conn.execute(
+                "SELECT id, condition, action, status FROM learning_rules WHERE status IN ('active','trial') ORDER BY priority ASC, confidence DESC"
+            )
+            _active_matched = False
+            _trial_matched = False
+            for _row in _cur.fetchall():
+                try:
+                    if _matcher.evaluate_condition(_row["condition"], _rule_ctx):
+                        if _row["status"] == "active" and not _active_matched:
+                            _conn.execute(
+                                "UPDATE learning_rules SET apply_count=apply_count+1, last_applied=? WHERE id=?",
+                                (time.time(), _row["id"]),
+                            )
+                            _active_matched = True
+                        elif _row["status"] == "trial" and not _trial_matched:
+                            _conn.execute(
+                                "UPDATE learning_rules SET apply_count=apply_count+1, last_applied=? WHERE id=? AND status='trial'",
+                                (time.time(), _row["id"]),
+                            )
+                            _trial_matched = True
+                        if _active_matched and _trial_matched:
+                            break
+                except Exception:
+                    pass
+            _conn.commit()
+    except Exception as _e:
+        logger.debug(f"规则匹配统计失败: {_e}")
+
     # ========== 策略2：简单意图直接回复 ==========
     if intent_type == "greeting":
-        final_response = "你好！我是联盟拓荒者智能体系统，很高兴为你服务。我可以帮助你完成各种任务，包括代码生成、问题解答、数据分析等。"
+        final_response = "嘿，我在。有什么想聊的，或者遇到了什么问题？我们一起看看。"
         attempts.append(("简单回复", True, "问候语"))
         return {"response": final_response, "attempts": attempts, "intent": intent_type}
     
@@ -122,10 +171,12 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
         
         # 3b. 无论快速解答是否成功，都启动后台深度思考
         # 快速解答可能不够好，后台思考可以产出更高质量的答案存入经验池
-        asyncio.create_task(
-            _background_deep_thinking(user_input, context, intent_type)
-        )
-        logger.info("🔄 后台深度思考已启动")
+        # 后台深度思考已禁用——fire-and-forget占用_slow_pool线程池导致服务卡死
+        # 反思学习由chat_stream.py阶段7的reflection_pipeline负责
+        # asyncio.create_task(
+        #     _background_deep_thinking(user_input, context, intent_type)
+        # )
+        logger.debug("后台深度思考已由reflection_pipeline替代")
     
     # ========== 策略4：Ollama本地模型（等待结果，前端120秒超时够用） ==========
     if not final_response:
@@ -135,11 +186,11 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
                 import requests
                 logger.info(f"  🤖 调用Ollama推理: {selected}")
                 response = await asyncio.get_event_loop().run_in_executor(
-                    None,
+                    _slow_pool,
                     lambda: requests.post(
                         "http://localhost:11434/api/generate",
                         json={"model": selected, "prompt": user_input, "stream": False},
-                        timeout=90
+                        timeout=45
                     )
                 )
                 if response.status_code == 200:
@@ -147,7 +198,7 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
                     if result and len(result) > 10:
                         final_response = result
                         attempts.append(("Ollama", True, f"{len(result)}字 ({selected})"))
-                        _save_to_experience_pool(user_input, result)
+                        _save_to_experience_pool(user_input, result, success=True, intent_type="ollama")
                     else:
                         attempts.append(("Ollama", False, "回复过短"))
                 else:
@@ -259,17 +310,17 @@ async def _background_ollama_thinking(query: str, model: str):
         logger.info(f"🤖 后台Ollama思考开始: {query[:30]}... (模型: {model})")
         import requests
         response = await asyncio.get_event_loop().run_in_executor(
-            None,
+            _slow_pool,
             lambda: requests.post(
                 "http://localhost:11434/api/generate",
                 json={"model": model, "prompt": query, "stream": False},
-                timeout=120
+                timeout=60
             )
         )
         if response.status_code == 200:
             result = response.json().get("response", "")
             if result and len(result) > 10:
-                _save_to_experience_pool(query, result)
+                _save_to_experience_pool(query, result, success=True, intent_type="ollama_background")
                 logger.info(f"✅ 后台Ollama思考完成: {len(result)}字，已存入经验池")
             else:
                 logger.info(f"⚠️ 后台Ollama思考未获得满意结果")
@@ -294,14 +345,17 @@ async def _background_deep_thinking(query: str, context: dict, intent_type: str)
         from core.metacognitive_executor import MetacognitiveExecutor
         executor = MetacognitiveExecutor()
         
-        exec_result = await executor.execute_with_full_metacognition(
-            user_query=query, context=context
+        exec_result = await asyncio.wait_for(
+            executor.execute_with_full_metacognition(
+                user_query=query, context=context
+            ),
+            timeout=45,
         )
         
         result = exec_result.get("final_result", "")
         if result and len(result) > 20:
             # 存入经验池，下次直接使用
-            _save_to_experience_pool(query, result)
+            _save_to_experience_pool(query, result, success=True, intent_type="metacognitive_background")
             logger.info(f"✅ 后台思考完成: {len(result)}字，已存入经验池")
         else:
             logger.info(f"⚠️ 后台思考未获得满意结果")
@@ -310,7 +364,7 @@ async def _background_deep_thinking(query: str, context: dict, intent_type: str)
         logger.error(f"❌ 后台思考失败: {e}")
 
 
-def _save_to_experience_pool(query: str, response: str):
+def _save_to_experience_pool(query: str, response: str, success: bool = True, intent_type: str = "deep_thinking", quality_score: int = 70):
     """存入经验池"""
     try:
         import sqlite3
@@ -318,8 +372,8 @@ def _save_to_experience_pool(query: str, response: str):
         conn = sqlite3.connect("data/experience_pool.db")
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
-            (query, response, datetime.now().isoformat(), "deep_thinking", 70)
+            "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score, success) VALUES (?, ?, ?, ?, ?, ?)",
+            (query, response, datetime.now().isoformat(), intent_type, quality_score, 1 if success else 0)
         )
         conn.commit()
         conn.close()

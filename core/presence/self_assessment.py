@@ -585,8 +585,8 @@ class ContinuousSelfAssessment:
         修复P6: 与主系统集成
         """
         try:
-            from core.memory.stereo_memory import get_stereo_store
-            store = get_stereo_store()
+            from core.memory.stereo_memory import get_stereo_memory
+            store = get_stereo_memory()
             
             assessment_summary = (
                 f"自我评估 [{result.overall_score:.2f}]\n"

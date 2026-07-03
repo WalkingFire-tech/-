@@ -219,7 +219,7 @@ class OnlineReflector:
         """保存规则到数据库"""
         import sqlite3
         
-        with sqlite3.connect("learning_rules.db") as conn:
+        with sqlite3.connect("data/learning_rules.db") as conn:
             conn.execute('''
                 INSERT INTO learning_rules
                 (condition, action, confidence, status, source, priority, created_at)

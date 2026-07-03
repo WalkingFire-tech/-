@@ -24,8 +24,8 @@ class EssenceReasoner:
     """本质推理器 — 确保回答从本质出发、逻辑自洽、跨域无悖"""
 
     SCIENCE_DOMAINS = {
-        "天文": ["恒星", "行星", "星系", "宇宙", "黑洞", "星云", "银河", "太阳系", "轨道", "引力", "光年", "火星", "木星", "土星"],
-        "物理": ["力", "能量", "质量", "速度", "光速", "量子", "相对论", "电磁", "散射", "折射", "波长", "频率", "温度", "压力", "密度", "加速度"],
+        "天文": ["恒星", "行星", "星系", "黑洞", "星云", "银河", "太阳系", "轨道", "光年", "火星", "木星", "土星", "卫星", "彗星"],
+        "物理": ["力", "能量", "质量", "速度", "光速", "量子", "相对论", "电磁", "散射", "折射", "波长", "频率", "温度", "压力", "密度", "加速度", "光", "光子", "光谱", "波动", "蓝色", "颜色", "大气", "引力", "宇宙", "涨落", "不确定性", "粒子", "场", "真空", "湮灭", "虚粒子", "暴胀", "大爆炸", "核聚变"],
         "化学": ["原子", "分子", "元素", "化合物", "反应", "化学键", "离子", "氧化", "还原", "催化"],
         "生物": ["细胞", "基因", "DNA", "RNA", "蛋白质", "进化", "物种", "光合作用", "病毒", "疫苗"],
         "数学": ["证明", "定理", "公式", "函数", "方程", "概率", "统计", "几何", "代数", "微积分"],
@@ -34,7 +34,7 @@ class EssenceReasoner:
 
     LOGICAL_FALLACIES = {
         "循环论证": r"(因为.*所以.*因此.*因为|A因为B.*B因为A)",
-        "以偏概全": r"(所有.*都|每个.*总是|永远.*不会)",
+        "以偏概全": r"(所有\S+都|每个\S+总是|永远\S+不会)",
         "因果倒置": r"(因为.*结果.*导致.*原因)",
         "自相矛盾": r"(既是.*又不是|既.*又.*但.*不)",
         "滑坡谬误": r"(如果.*那么.*最终.*导致.*灾难)",
@@ -76,6 +76,23 @@ class EssenceReasoner:
         except Exception as e:
             logger.debug(f"本质推理器数据库初始化失败: {e}")
 
+    HISTORY_PHILOSOPHY_KEYWORDS = [
+        "古文明", "文明", "历史", "朝代", "帝国", "王朝", "古代", "近代",
+        "考古", "遗址", "文物", "文献", "史料", "编年",
+        "哲学", "思想", "意义", "价值", "伦理", "道德", "存在", "本质",
+        "思辨", "辩证", "逻辑", "理性", "感性", "意识", "认知",
+        "文化", "传统", "传承", "民俗", "信仰", "宗教", "神话",
+        "社会", "制度", "政治", "经济", "法律", "治理", "组织",
+        "人类", "人性", "心理", "行为", "动机", "进步", "发展",
+        "演化", "变迁", "兴衰", "崩溃", "复兴",
+    ]
+
+    EDUCATION_KEYWORDS = [
+        "建议", "暑假", "寒假", "学习计划", "复习", "预习", "升学",
+        "中考", "高考", "课程", "作业", "考试", "成绩", "教育",
+        "教学", "老师", "学生", "家长", "孩子", "小学", "初中", "高中",
+    ]
+
     def reason(self, query: str, response: str, conversation_context: str = "") -> Dict[str, Any]:
         """
         核心推理流程：对回答进行本质推理与自洽验证
@@ -97,6 +114,10 @@ class EssenceReasoner:
             result["passed"] = False
             result["verdict"] = "回答过短，无法推理"
             return result
+
+        is_history_philosophy = any(kw in query for kw in self.HISTORY_PHILOSOPHY_KEYWORDS)
+        is_education = any(kw in query for kw in self.EDUCATION_KEYWORDS)
+        self._query_is_humanities = is_history_philosophy or is_education
 
         paradox_patterns = [
             "鸡和蛋", "先有鸡", "先有蛋", "悖论", "矛盾", "无解",
@@ -199,14 +220,20 @@ class EssenceReasoner:
             is_factual = False
             domain = "通用"
 
-            for dom, keywords in self.SCIENCE_DOMAINS.items():
-                for kw in keywords:
-                    if kw in sent:
-                        is_factual = True
-                        domain = dom
-                        break
-                if is_factual:
-                    break
+            skip_science_domain = getattr(self, '_query_is_humanities', False)
+
+            best_domain = None
+            best_count = 0
+            domain_priority = {"物理": 1, "化学": 2, "生物": 3, "天文": 4, "数学": 5, "医学": 6, "通用": 99}
+            if not skip_science_domain:
+                for dom, keywords in self.SCIENCE_DOMAINS.items():
+                    count = sum(1 for kw in keywords if kw in sent)
+                    if count > best_count or (count == best_count and count > 0 and domain_priority.get(dom, 99) < domain_priority.get(best_domain, 99)):
+                        best_count = count
+                        best_domain = dom
+                if best_domain and best_count > 0:
+                    is_factual = True
+                    domain = best_domain
 
             factual_patterns = [
                 r"是(\w+)的", r"因为.*所以", r"由于.*导致",
@@ -259,9 +286,12 @@ class EssenceReasoner:
                     break
 
             if not matched:
-                step["gap"] = f"无法从{domain}基本原理直接追溯，需要进一步验证"
-                if domain != "通用":
+                if domain == "通用":
                     step["traceable"] = False
+                    step["gap"] = "无法从通用基本原理直接追溯，需要进一步验证"
+                else:
+                    step["traceable"] = None
+                    step["gap"] = f"已知真理库未覆盖此观点，建议多源交叉验证"
 
             chain.append(step)
 
@@ -313,10 +343,12 @@ class EssenceReasoner:
         """自洽性检查：回答内部不能有逻辑冲突"""
         issues = []
 
-        # 检查1：逻辑谬误检测
-        for fallacy_name, pattern in self.LOGICAL_FALLACIES.items():
-            if re.search(pattern, response):
-                issues.append(f"检测到可能的{fallacy_name}")
+        is_humanities = getattr(self, '_query_is_humanities', False)
+
+        if not is_humanities:
+            for fallacy_name, pattern in self.LOGICAL_FALLACIES.items():
+                if re.search(pattern, response):
+                    issues.append(f"检测到可能的{fallacy_name}")
 
         # 检查2：事实声明之间的矛盾
         fact_statements = [f["statement"] for f in facts]
@@ -330,7 +362,7 @@ class EssenceReasoner:
 
         # 检查3：推理链断裂（悖论问题跳过此检查）
         if not is_paradox:
-            untraceable = [s for s in chain if not s.get("traceable") and s.get("domain") != "通用"]
+            untraceable = [s for s in chain if s.get("traceable") is False and s.get("domain") != "通用"]
             for s in untraceable:
                 if s.get("gap"):
                     issues.append(f"推理链断裂：{s['gap'][:60]}")
@@ -355,6 +387,10 @@ class EssenceReasoner:
             (r"上升", r"下降"),
             (r"加速", r"减速"),
         ]
+        rhetorical_patterns = ["而是", "而是要", "而是应该", "而是需要", "而是先"]
+        for rp in rhetorical_patterns:
+            if rp in s1 or rp in s2:
+                return ""
         def _same_subject(st1: str, st2: str) -> bool:
             subjects1 = set()
             for marker in ["的", "是", "有", "在", "能", "会", "可以"]:
@@ -515,11 +551,16 @@ class EssenceReasoner:
 
         enhancement_parts = []
 
-        untraceable = [s for s in chain if not s.get("traceable") and s.get("domain") != "通用"]
+        untraceable = [s for s in chain if s.get("traceable") is False and s.get("domain") != "通用"]
+        uncovered = [s for s in chain if s.get("traceable") is None]
         if untraceable:
             enhancement_parts.append("🔍 **推理链审视**：")
             for s in untraceable[:2]:
                 enhancement_parts.append(f"  - 「{s['fact'][:40]}」— {s.get('gap', '需要进一步验证')}")
+        if uncovered:
+            enhancement_parts.append("💡 **交叉验证建议**：")
+            for s in uncovered[:2]:
+                enhancement_parts.append(f"  - 「{s['fact'][:40]}」— {s.get('gap', '建议多源验证')}")
 
         consistency_issues = [i for i in issues if "矛盾" in i or "冲突" in i or "谬误" in i]
         if consistency_issues:
@@ -529,7 +570,9 @@ class EssenceReasoner:
 
         if enhancement_parts:
             enhancement = "\n\n" + "\n".join(enhancement_parts)
-            return response + enhancement
+            if "交叉验证建议" not in response:
+                return response + enhancement
+            return response
 
         return response
 

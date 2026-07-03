@@ -29,7 +29,7 @@ echo 地址: http://localhost:8000
 echo API文档: http://localhost:8000/docs
 echo.
 
-start "联盟拓荒者后端" cmd /k "python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
+start "联盟拓荒者后端" cmd /k "cd /d "%~dp0" && python -m uvicorn backend.main_fast:app --host 0.0.0.0 --port 8000"
 
 echo 等待服务启动...
 ping 127.0.0.1 -n 6 >nul

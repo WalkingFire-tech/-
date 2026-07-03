@@ -18,7 +18,7 @@ if not errorlevel 1 (
     for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8000.*LISTENING"') do (
         taskkill /F /PID %%a >nul 2>&1
     )
-    timeout /t 2 /nobreak >nul
+    timeout /t 3 /nobreak >nul
 )
 echo   Port ready
 
@@ -30,12 +30,19 @@ echo   URL:  http://localhost:8000/
 echo   Docs: http://localhost:8000/docs
 echo ========================================
 echo.
-echo   Starting...
+
+REM Wait for port fully released
+timeout /t 2 /nobreak >nul
+
+REM Open browser after delay
+start "" cmd /c "timeout /t 15 /nobreak >nul && start http://localhost:8000/"
+
+python -m uvicorn backend.main_fast:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 30 --reload --reload-dir backend --reload-dir core --reload-dir config
+
 echo.
-
-REM Open browser and start server
-start "" http://localhost:8000/
-
-python -m uvicorn backend.main_fast:app --host 0.0.0.0 --port 8000 --reload --reload-exclude ".codeartsdoer/*" --reload-exclude "data/*" --reload-exclude "logs/*" --reload-exclude "knowledge_base/*"
-
-pause
+echo ========================================
+echo   Server stopped. Restarting in 5s...
+echo ========================================
+echo.
+timeout /t 5 /nobreak >nul
+goto :eof

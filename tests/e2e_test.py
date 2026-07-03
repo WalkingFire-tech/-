@@ -162,7 +162,10 @@ if __name__ == "__main__":
     if test_num == 0 or test_num == 6:
         # 测试6：上下文连续性
         r1 = test_stream_chat("火星的大气成分是什么", label="测试6a: 上下文-第一轮")
-        r2 = test_stream_chat("那火星的天空是什么颜色", label="测试6b: 上下文-第二轮(应联系前文)")
+        history_6a = []
+        if r1.get("success") and r1.get("response"):
+            history_6a = [{"role": "assistant", "content": r1["response"]}]
+        r2 = test_stream_chat("那火星的天空是什么颜色", history=history_6a, label="测试6b: 上下文-第二轮(应联系前文)")
         results.append(("上下文", r2))
     
     # 汇总

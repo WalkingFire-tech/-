@@ -19,23 +19,25 @@ class RuleMatcher:
         logger.info("规则匹配引擎初始化完成")
     
     def evaluate_condition(self, 
-                          condition: str, 
-                          context: Dict[str, Any]) -> bool:
-        """评估条件表达式
-        
-        Args:
-            condition: 条件字符串(如 "intent_type == 'code' and quality < 30")
-            context: 上下文变量(如 {"intent_type": "code", "quality": 25})
-        
-        Returns:
-            条件是否满足
-        """
+                           condition: str, 
+                           context: Dict[str, Any]) -> bool:
+        if not self._is_valid_expression(condition):
+            return False
         try:
             normalized = self._normalize_condition(condition)
             return self._simple_eval(normalized, context)
-        except Exception as e:
-            logger.debug(f"条件评估失败: {condition}, 错误: {e}")
+        except Exception:
             return self._fallback_match(condition, context)
+    
+    def _is_valid_expression(self, condition: str) -> bool:
+        if not condition or not condition.strip():
+            return False
+        if re.search(r'[\u4e00-\u9fff]', condition):
+            if not re.search(r'\w+\s*[<>=!]+\s*["\']', condition):
+                return False
+        if not re.search(r'[<>=!]', condition) and not re.search(r'\b(and|or|not|in|contains|LIKE)\b', condition, re.IGNORECASE):
+            return False
+        return True
     
     def _normalize_condition(self, condition: str) -> str:
         """规范化条件表达式（转换SQL语法为Python语法）"""

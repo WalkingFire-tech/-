@@ -1,4 +1,11 @@
-﻿# 🔥 联盟拓荒者 (Alliance Pioneer)
+﻿# 历史报告存档
+
+> ⚠️ 本目录下的所有报告均为**历史参考文档**，不代表当前系统状态。
+> 当前架构请参考 [ARCHITECTURE_CURRENT.md](../../ARCHITECTURE_CURRENT.md)
+
+---
+
+# 🔥 联盟拓荒者 (Alliance Pioneer)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)

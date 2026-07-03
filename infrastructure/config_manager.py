@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 class ConfigManager:
     _instance = None
     _config: Dict[str, Any] = {}
-    _lock = threading.Lock()
+    _lock = threading.RLock()
     _initialized = False
     
     def __new__(cls):

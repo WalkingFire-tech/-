@@ -170,7 +170,7 @@
                 <div id="messages" class="messages">
                     <div class="message system">
                         <div class="message-content">
-                            <p>👋 欢迎使用联盟拓荒者智能体系统！</p>
+                            <p>👋 欢迎使用联盟拓荒者！</p>
                             <p>我可以帮助你完成各种任务，包括代码生成、问题解答、数据分析等。</p>
                         </div>
                     </div>
@@ -260,6 +260,66 @@
                     <h3>🔥 最近学习</h3>
                     <div id="recent-learning" class="recent-list">
                         <p style="color: #666; font-size: 12px;">暂无学习记录</p>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h3>☁️ 概率云 <button onclick="refreshProbabilityCloud()" class="btn btn-secondary" style="float: right; padding: 2px 8px; font-size: 12px;">🔄</button></h3>
+                    <div id="probability-cloud" class="probability-cloud">
+                        <div id="prob-dist-section" style="margin-bottom:8px;">
+                            <div style="font-size:11px;color:#888;margin-bottom:4px;">概率分布</div>
+                            <div id="prob-dist-bars" class="weight-bars"></div>
+                        </div>
+                        <div id="weight-bars" class="weight-bars"></div>
+                        <div id="entropy-indicator" class="entropy-indicator" style="margin-top: 8px; font-size: 12px; color: #666;">
+                            熵值: -- | 置信度: --
+                        </div>
+                        <div id="retrieval-info" style="margin-top:4px;font-size:11px;color:#888;">
+                            检索模式: -- | 查询熵: --
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h3>🫀 系统状态 <button onclick="refreshResourceStatus()" class="btn btn-secondary" style="float: right; padding: 2px 8px; font-size: 12px;">🔄</button></h3>
+                    <div id="resource-status" style="font-size:12px;">
+                        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                            <span>运行模式</span>
+                            <span id="rs-mode" style="font-weight:bold;color:#4CAF50;">正常</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                            <span>内存</span>
+                            <span id="rs-memory">--</span>
+                        </div>
+                        <div style="margin-bottom:4px;">
+                            <div style="background:#e0e0e0;border-radius:3px;height:6px;overflow:hidden;">
+                                <div id="rs-memory-bar" style="background:#4CAF50;height:100%;width:0%;transition:width 0.5s,background 0.5s;"></div>
+                            </div>
+                        </div>
+                        <div id="rs-gpu-section" style="display:none;">
+                            <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                                <span>GPU显存</span>
+                                <span id="rs-gpu">--</span>
+                            </div>
+                            <div style="margin-bottom:4px;">
+                                <div style="background:#e0e0e0;border-radius:3px;height:6px;overflow:hidden;">
+                                    <div id="rs-gpu-bar" style="background:#2196F3;height:100%;width:0%;transition:width 0.5s,background 0.5s;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                            <span>线程</span>
+                            <span id="rs-threads">--</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                            <span>并行路径</span>
+                            <span id="rs-paths">--</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;">
+                            <span>检索策略</span>
+                            <span id="rs-retrieval">--</span>
+                        </div>
+                        <div id="rs-hardware" style="margin-top:6px;padding-top:6px;border-top:1px solid #eee;font-size:11px;color:#888;"></div>
                     </div>
                 </div>
 

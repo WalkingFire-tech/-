@@ -11,7 +11,7 @@ from loguru import logger
 class RuleTrialManager:
     """规则试用期管理器"""
     
-    def __init__(self, db_path: str = "learning_rules.db"):
+    def __init__(self, db_path: str = "data/learning_rules.db"):
         self.db_path = db_path
         
         # 试用期配置

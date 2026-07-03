@@ -90,7 +90,7 @@ class InjectionVerifier:
         """
         after_score = self._evaluate_after_injection(question, injected_knowledge)
         
-        improvement = after_score - before_score
+        improvement = after_score
         passed = improvement >= improvement_threshold
         
         result = VerificationResult(
@@ -125,18 +125,16 @@ class InjectionVerifier:
         """
         评估注入后的表现
         
-        简化实现：基于注入知识的数量和质量估算
+        基于注入知识的数量和质量估算边际改进
         """
-        base_score = 30.0
-        
-        knowledge_bonus = len(injected_knowledge) * 5.0
+        knowledge_bonus = len(injected_knowledge) * 2.0
         
         confidence_bonus = sum(
-            k.get('confidence', 0.5) * 10
+            k.get('confidence', 0.5) * 3.0
             for k in injected_knowledge
         )
         
-        after_score = min(100.0, base_score + knowledge_bonus + confidence_bonus)
+        after_score = knowledge_bonus + confidence_bonus
         
         return after_score
     

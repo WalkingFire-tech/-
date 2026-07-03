@@ -21,7 +21,7 @@ echo 后端地址: http://localhost:8000
 echo API文档: http://localhost:8000/docs
 echo.
 
-start "后端服务" cmd /k "set HF_ENDPOINT=https://hf-mirror.com && python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
+start "后端服务" cmd /k "cd /d "%~dp0\.." && set HF_ENDPOINT=https://hf-mirror.com && python -m uvicorn backend.main_fast:app --host 0.0.0.0 --port 8000"
 
 echo 等待后端启动...
 timeout /t 3 /nobreak >nul

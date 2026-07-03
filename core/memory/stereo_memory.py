@@ -516,11 +516,19 @@ class StereoMemorySystem:
         )
 
     def get_recent(self, limit: int = 20) -> List[StereoMemory]:
-        """获取最近记忆"""
-        with self._lock:
-            all_memories = list(self.memories.values())
-            all_memories.sort(key=lambda m: m.time_dimension.last_accessed, reverse=True)
-            return all_memories[:limit]
+        """获取最近记忆（SQL排序，避免全量Python排序）"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute(
+                    'SELECT * FROM stereo_memories ORDER BY last_accessed DESC LIMIT ?',
+                    (limit,)
+                )
+                return [self._row_to_memory(row) for row in cursor.fetchall()]
+        except Exception:
+            with self._lock:
+                all_memories = list(self.memories.values())
+                all_memories.sort(key=lambda m: m.time_dimension.last_accessed, reverse=True)
+                return all_memories[:limit]
 
     def get_by_topic(self, topic: str, limit: int = 10) -> List[StereoMemory]:
         """按主题获取记忆"""

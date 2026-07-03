@@ -26,16 +26,40 @@ class ExternalLearner:
         logger.info("外部学习器已初始化")
     
     def search_web(self, query: str, num_results: int = 3) -> List[str]:
-        """搜索引擎查询（模拟或真实调用）"""
+        """搜索引擎查询 — 优先隐身搜索(TLS指纹伪装)，降级到多源搜索，再降级到本地"""
+
+        try:
+            from infrastructure.stealth_search import search_web_stealthy
+            stealth_results = search_web_stealthy(query, max_results=num_results)
+            if stealth_results:
+                return [f"[{r['source']}] {r['title']}: {r['snippet']}" for r in stealth_results]
+        except Exception as e:
+            logger.debug(f"隐身搜索失败: {e}")
+        
+        try:
+            from infrastructure.external_learners import composite_learner
+            if composite_learner.is_available():
+                results = composite_learner.learn(query, max_results=num_results)
+                if results:
+                    return [f"[{r.source}] {r.content}" for r in results]
+        except Exception as e:
+            logger.debug(f"composite_learner搜索失败: {e}")
         
         if not self.search_api_key:
-            logger.warning("未配置搜索引擎API，返回模拟结果")
-            return [
-                f"[模拟搜索] 关于 '{query}' 的背景资料：",
-                f"1. 这是一个技术概念，需要更深入的研究",
-                f"2. 建议配置真实搜索引擎API以获取准确信息",
-                f"提示：在环境变量中设置 SEARCH_API_KEY 和 SEARCH_ENGINE_ID"
-            ]
+            logger.warning("外部搜索不可用，尝试本地知识库降级")
+            local_results = self._search_local_knowledge(query)
+            if local_results:
+                return local_results
+            
+            logger.warning("本地知识库也无结果，尝试问本地模型")
+            llm_answer = self.ask_llm(
+                f"请简要回答以下问题，列出关键事实：{query}",
+                system_prompt="你是一个知识助手，简洁准确地回答问题。"
+            )
+            if llm_answer:
+                return [f"[本地推理] {llm_answer[:500]}"]
+            
+            return []
         
         try:
             import requests
@@ -61,50 +85,123 @@ class ExternalLearner:
             logger.error(f"搜索失败: {e}")
             return []
     
+    def _search_local_knowledge(self, query: str) -> List[str]:
+        """从本地知识库和经验池搜索"""
+        results = []
+        
+        try:
+            import sqlite3
+            for db_name, label in [("data/knowledge_base.db", "知识库"), ("data/experience_pool.db", "经验池")]:
+                try:
+                    conn = sqlite3.connect(db_name)
+                    c = conn.cursor()
+                    tables = [row[0] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+                    
+                    if "knowledge_entries" in tables:
+                        c.execute("SELECT content, source FROM knowledge_entries WHERE content LIKE ? LIMIT 3", (f"%{query[:20]}%",))
+                        for row in c.fetchall():
+                            if row[0] and len(row[0]) > 20:
+                                results.append(f"[{label}] {row[0][:300]}")
+                    
+                    elif "experiences" in tables:
+                        c.execute("SELECT raw_input, response FROM experiences WHERE raw_input LIKE ? AND success=1 ORDER BY timestamp DESC LIMIT 3", (f"%{query[:20]}%",))
+                        for row in c.fetchall():
+                            if row[1] and len(row[1]) > 20:
+                                results.append(f"[{label}] {row[1][:300]}")
+                    
+                    conn.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        
+        return results[:5]
+    
     def ask_llm(self, prompt: str, system_prompt: str = None) -> str:
-        """调用更强大的LLM获取答案或反思"""
+        """调用更强大的LLM获取答案或反思 — 优先外部API，降级到本地Ollama"""
         
-        if not self.llm_api_key:
-            logger.warning("未配置LLM API，返回模拟结果")
-            return json.dumps({
-                "intent": "需要配置真实LLM API",
-                "common_mistakes": ["未配置API密钥"],
-                "parsing_strategies": ["请在环境变量中设置 LLM_API_KEY"],
-                "experience_notes": "当前为模拟模式，无法获得真实的深度分析"
-            }, ensure_ascii=False)
+        if self.llm_api_key:
+            try:
+                import requests
+                messages = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.append({"role": "user", "content": prompt})
+                
+                response = requests.post(
+                    f"{self.llm_base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.llm_api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": self.llm_model,
+                        "messages": messages,
+                        "temperature": 0.7,
+                        "max_tokens": 2000
+                    },
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    return data["choices"][0]["message"]["content"]
+                else:
+                    logger.debug(f"外部LLM失败({response.status_code})，尝试本地Ollama")
+            except Exception as e:
+                logger.debug(f"外部LLM失败: {e}，尝试本地Ollama")
         
+        return self._ask_local_ollama(prompt, system_prompt)
+    
+    def _ask_local_ollama(self, prompt: str, system_prompt: str = None) -> str:
+        """使用本地Ollama模型进行推理"""
         try:
             import requests
             
-            messages = []
+            model = self._get_ollama_model()
+            if not model:
+                return json.dumps({
+                    "intent": "无可用LLM",
+                    "common_mistakes": ["未配置外部API且Ollama不可用"],
+                    "parsing_strategies": ["请配置DEEPSEEK_API_KEY或启动Ollama"],
+                    "experience_notes": "无法获取深度分析"
+                }, ensure_ascii=False)
+            
+            full_prompt = prompt
             if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
+                full_prompt = f"{system_prompt}\n\n{prompt}"
             
             response = requests.post(
-                f"{self.llm_base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.llm_api_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": self.llm_model,
-                    "messages": messages,
-                    "temperature": 0.7,
-                    "max_tokens": 2000
-                },
+                "http://localhost:11434/api/generate",
+                json={"model": model, "prompt": full_prompt, "stream": False},
                 timeout=30
             )
             
             if response.status_code == 200:
-                data = response.json()
-                return data["choices"][0]["message"]["content"]
+                return response.json().get("response", "")
             else:
-                logger.error(f"LLM API调用失败: {response.status_code}")
-                return ""
+                logger.debug(f"Ollama推理失败: {response.status_code}")
         except Exception as e:
-            logger.error(f"LLM调用失败: {e}")
-            return ""
+            logger.debug(f"Ollama推理失败: {e}")
+        
+        return ""
+    
+    def _get_ollama_model(self) -> str:
+        """获取可用的Ollama模型"""
+        try:
+            import requests
+            tags = requests.get("http://localhost:11434/api/tags", timeout=3)
+            available = [m["name"] for m in tags.json().get("models", [])]
+            priority = ["gemma-4-12B:latest", "qwen2.5-coder:7b", "qwen2.5:7b", "deepcoder:latest"]
+            for m in priority:
+                for a in available:
+                    if m in a or a.startswith(m.split(":")[0]):
+                        return a
+            if available:
+                return available[0]
+        except:
+            pass
+        return ""
     
     def analyze_conversation_parsing(self, user_input: str, context: str) -> Dict[str, Any]:
         """询问更强AI：这个对话应该如何解析？有什么解析经验？"""
@@ -179,51 +276,100 @@ class ExternalLearner:
                             trigger_reason: str = "unknown") -> List[Dict]:
         """
         主入口：从外部学习并返回新增的知识点列表
+        
+        策略：
+        1. 多源搜索（arXiv/极客公园/知乎/CSDN等）
+        2. 问自己/问模型（本地Ollama或外部API）
+        3. 综合分析+沉淀见解
         """
         new_items = []
         timestamp = datetime.now().isoformat()
         
         logger.info(f"触发外部学习，原因: {trigger_reason}")
         
-        try:
-            search_results = self.search_web(user_input)
-            if search_results:
-                search_item = {
-                    "question": f"关于'{user_input[:50]}'的搜索结果",
-                    "answer": "\n".join(search_results),
-                    "source": "external_search",
-                    "knowledge_type": "external",
-                    "metadata": json.dumps({
-                        "method": "web_search",
-                        "timestamp": timestamp,
-                        "trigger_reason": trigger_reason
-                    }, ensure_ascii=False)
-                }
-                new_items.append(search_item)
-                logger.info(f"从搜索引擎获取 {len(search_results)} 条结果")
-        except Exception as e:
-            logger.error(f"搜索学习失败: {e}")
+        search_results = self.search_web(user_input)
+        if search_results:
+            search_item = {
+                "question": f"关于'{user_input[:50]}'的多源搜索结果",
+                "answer": "\n".join(search_results),
+                "source": "multi_source_search",
+                "knowledge_type": "external",
+                "metadata": json.dumps({
+                    "method": "multi_source_search",
+                    "timestamp": timestamp,
+                    "trigger_reason": trigger_reason
+                }, ensure_ascii=False)
+            }
+            new_items.append(search_item)
+            logger.info(f"从多源搜索获取 {len(search_results)} 条结果")
         
         try:
             parsing_insight = self.analyze_conversation_parsing(user_input, context)
-            parsing_item = {
-                "question": f"如何解析：{user_input[:50]}",
-                "answer": json.dumps(parsing_insight, ensure_ascii=False),
-                "source": "llm_analysis",
-                "knowledge_type": "meta",
-                "metadata": json.dumps({
-                    "method": "llm_analysis",
-                    "timestamp": timestamp,
-                    "trigger_reason": trigger_reason,
-                    "type": "parsing_experience"
-                }, ensure_ascii=False)
-            }
-            new_items.append(parsing_item)
-            logger.info("从LLM获取对话解析经验")
+            if parsing_insight and parsing_insight.get("intent") != "无可用LLM":
+                parsing_item = {
+                    "question": f"如何解析：{user_input[:50]}",
+                    "answer": json.dumps(parsing_insight, ensure_ascii=False),
+                    "source": "llm_analysis",
+                    "knowledge_type": "meta",
+                    "metadata": json.dumps({
+                        "method": "llm_analysis",
+                        "timestamp": timestamp,
+                        "trigger_reason": trigger_reason,
+                        "type": "parsing_experience"
+                    }, ensure_ascii=False)
+                }
+                new_items.append(parsing_item)
+                logger.info("从LLM获取对话解析经验")
         except Exception as e:
-            logger.error(f"LLM分析失败: {e}")
+            logger.debug(f"LLM分析失败: {e}")
+        
+        try:
+            synthesis = self._synthesize_insights(user_input, search_results)
+            if synthesis:
+                synthesis_item = {
+                    "question": f"综合分析：{user_input[:50]}",
+                    "answer": synthesis,
+                    "source": "self_synthesis",
+                    "knowledge_type": "synthesis",
+                    "metadata": json.dumps({
+                        "method": "self_synthesis",
+                        "timestamp": timestamp,
+                        "trigger_reason": trigger_reason,
+                        "search_result_count": len(search_results)
+                    }, ensure_ascii=False)
+                }
+                new_items.append(synthesis_item)
+                logger.info("完成自主综合分析")
+        except Exception as e:
+            logger.debug(f"综合分析失败: {e}")
         
         return new_items
+    
+    def _synthesize_insights(self, question: str, search_results: List[str]) -> str:
+        """综合搜索结果，添加自己的见解"""
+        if not search_results:
+            return ""
+        
+        results_text = "\n".join(search_results[:5])
+        prompt = f"""基于以下多源搜索结果，请综合分析问题并给出有价值的见解：
+
+问题：{question}
+
+搜索结果：
+{results_text}
+
+请：
+1. 提炼核心观点（2-3条）
+2. 指出不同来源的共识与分歧
+3. 给出你自己的分析和建议
+4. 标注哪些观点需要进一步验证
+
+用简洁的中文回答。"""
+        
+        response = self.ask_llm(prompt)
+        if response and len(response) > 50:
+            return response[:1000]
+        return ""
     
     def learn_and_integrate(self, user_input: str, context: str,
                            trigger_reason: str = "unknown") -> Dict:

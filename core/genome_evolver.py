@@ -82,19 +82,22 @@ class GenomeEvolver:
                 self._insert_default_genes(conn)
     
     def _insert_default_genes(self, conn):
-        """插入默认基因定义"""
-        genes = [
-            ("G001", "安全", "禁止破坏性代码", "bool", 0, 1, 0, "true", ""),
-            ("G002", "检索", "本地知识库置信度阈值", "float", 0.4, 0.9, 1, "0.6", ""),
-            ("G003", "学习", "工具自动生成频率(秒)", "int", 86400, 604800, 1, "604800", "秒"),
-            ("G004", "情感", "正面情感salience增益", "float", 0.0, 0.2, 1, "0.05", ""),
-            ("G005", "记忆", "情境重构最低置信度", "float", 0.2, 0.7, 1, "0.4", ""),
-            ("G006", "交互", "回答风格(0简洁-1详细)", "float", 0.0, 1.0, 1, "0.5", ""),
-            ("G007", "外部", "触发外部学习的置信度下限", "float", 0.3, 0.8, 1, "0.55", ""),
-            ("G008", "遗忘", "记忆衰减率", "float", 0.9, 0.99, 1, "0.98", ""),
-            ("G009", "社交", "跨体知识交换意愿", "float", 0.0, 1.0, 1, "0.5", ""),
-            ("G010", "探索", "新知识探索倾向", "float", 0.0, 1.0, 1, "0.3", ""),
-        ]
+        """插入默认基因定义——统一使用task_queue.py的GENE_DEFAULTS作为唯一来源"""
+        from core.task_queue import GENE_DEFAULTS, GENE_SAFETY_BOUNDS
+        
+        domain_map = {
+            "curiosity_weight": "探索", "caution_threshold": "安全", "learning_rate": "学习",
+            "timeout_tolerance": "交互", "depth_preference": "推理", "confidence_bias": "认知",
+            "retry_aggression": "交互", "knowledge_solidify_threshold": "知识",
+            "model_preference_speed": "推理", "self_doubt_frequency": "反思",
+        }
+        
+        genes = []
+        for i, (key, default_val) in enumerate(GENE_DEFAULTS.items(), 1):
+            gid = f"G{i:03d}"
+            bounds = GENE_SAFETY_BOUNDS.get(key, (0.0, 1.0))
+            domain = domain_map.get(key, "通用")
+            genes.append((gid, domain, key, "float", bounds[0], bounds[1], 1, str(default_val), ""))
         
         for g in genes:
             conn.execute('''

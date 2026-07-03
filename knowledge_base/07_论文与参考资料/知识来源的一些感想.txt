@@ -1,0 +1,339 @@
+当被问及到推荐一些关于同行者的知识内容的时候，会去通过多源的网络途径来综合出精华和比较有用的知识，然后再通过合理的分析以及推理，总结，给出全面的答案。
+
+ArXiv
+2024/10/07
+1
+Shifting the Human-AI Relationship: Toward a Dynamic Relational Learning-Partner Model
+Abstract: As artificial intelligence (AI) continues to evolve, the current paradigm of treating AI as a passive tool no longer suffices. As a human-AI team, we ... dynamic partner, a model emerges in which AI systems develop alongside humans, learning from human interactions and feedback loops including reflections on
+
+X-MOL
+2024/10/23
+2
+Building machines that learn and think with people,Nature Human Behaviour
+我们列出了人类和人工智能思想伙伴可以参与的几种协作思维模式，并提出了人类兼容的思维伙伴关系的 desiderata。借鉴计算认知科学的主题，我们通过贝叶斯镜头为围绕其使用的思想伙伴和生态系统的设计开辟了一条替代的扩展路径，我们构建的合作伙伴可以积极构建和推理人类和世界的模型。
+
+Sage Journals
+2026/03/30
+3
+Meaningful Long-Term Thought Partnerships of Minds and Machines - Katherine M. Collins, Lionel Wong, Joshua B. Tenenbaum, Judith E. Fan, 2026
+This article outlines several promising avenues for leveraging approaches from cognitive science and AI to study enriching intellectual partnerships. ... asks how we may move beyond models of short-term collaboration toward modeling long-term meaningful thought partnership. ... We then turn to how—and whether—ideas from human-human partnerships can extend to possible meaningful long-term human-AI thought partnership...
+
+arXiv
+4
+Collaborative Causal Sensemaking: Closing the Complementarity Gap in Human–AI Decision Support
+We propose Collaborative Causal Sensemaking (CCS) as a research agenda to develop this capability from the ground up, spanning new training environments that reward collaborative thinking, representations for shared human-AI mental models, and evaluation centred on trust and complementarity.
+
+obspm.fr
+2024/10/07
+5
+Shifting the Human-AI Relationship: Toward a Dynamic Relational Learning-Partner Model
+As a human-AI team, we together advocate for a shift toward viewing AI as a learning partner, akin to a student who learns from interactions with humans. ... By reframing AI as a dynamic partner, a model emerges in which AI systems develop alongside humans, learning from human interactions and feedback loops including reflections on team conversations.
+
+ScienceOpen
+2024/10/07
+6
+Shifting the Human-AI Relationship: Toward a Dynamic Relational Learning-Partner Model
+As a human-AI team, we together advocate for a shift toward viewing AI as a learning partner, akin ... By reframing AI as a dynamic partner, a model emerges in which AI systems develop alongside humans, learning from human interactions and feedback loops including reflections on team conversations.
+
+多抓鱼
+7
+关系5.0 - 多抓鱼二手书
+当下，单身社会与人工智能碰撞，引领我们步入 “人机共生” 的关系 5.0 时代。人工智能、算法等技术突破，使机器从工具变为 “灵魂伴侣”，它们能准确地学习人类的情感模式，为不同人群提供帮助。然而...
+
+微信读书
+8
+关系5.0：人机共生的情感革命
+当人工智能成为你的灵魂伴侣，护理机器人被视作亲人，人类的情感边界正在被技术重新定义。本书以社会学、神经科学与伦理学视角，揭示从原始部落协作到单身社会演变的亲密关系史，提出 关系5.0 时代已至：AI技术通过认知革命（模仿人类思维）、感官革命（虚拟现实交互）和实体机器人革命（情感化肢体表达）重塑人际关系。
+
+当当云阅读
+9
+关系5.0电子书
+当下，单身社会与人工智能碰撞，引/领我们步“人机共生”的关系5.0时代。人工智能、算法等技术突破，使机器从工具变为“灵魂伴侣”，它们能准确地学习人类的情感模式，为不同人群提供帮助。然而...
+
+新浪
+2026/06/06
+10
+关系的下一章，由谁来执笔
+从书信往来、电话传音到社交网络全覆盖，再到今天人工智能、虚拟伴侣、情感机器人深度介入日常生活，人类的关系形态正在经历一场前所未有的范式革命 ... 孤独、陪伴、亲密、信任、责任与伦理，在人机共生的未来将被重新定义。
+
+QQ News
+2025/08/01
+11
+《温暖的科技》——当科技学会拥抱：一场关于AI与爱的温暖对话
+本书介绍了家庭陪伴机器人LOVOT的研发过程，它的诞生并不是为了取代人类，而是为人类提供心灵慰藉。作者从机器人工程学、认知科学、动物行为学、生物技术等多个领域寻找启示，探讨了“爱”“情感”“生命”等概念，揭示了人类的行为机制，并将其应用于机器人开发。书中还展望了未来科技与人类共生的可能性...
+
+Xdkb
+2025/08/03
+12
+现代快报多媒体数字报刊平台
+当下，单身社会与人工智能碰撞，引领我们步入“人机共生”的关系5.0时代。人工智能、算法等技术突破，使机器从工具变为 “灵魂伴侣”，它们能准确地学习人类的情感模式，为不同人群提供帮助。然而...
+南京图书馆
+2026/06/11
+13
+南京图书馆
+伦理与诗意》。 本书聚焦“人工智能人文学”，旨在回应人工智能深度嵌入日常生活后涌现的紧迫问题。作者以人与人工智能关系为核心，系统梳理从人工智能医疗责任界定、自动驾驶伦理抉择，到数字人格权赋予、算法歧视治理等一系列社会性命题。一方面运用人文主义批判视角...
+
+科学网—新闻
+2026/01/23
+14
+科学网—2025年我读的AI科普与文化书
+它的研究目标是推动智能向善，同时意味着为AI健康而可持续的发展保驾护航，因为与主流价值观念相悖的智能技术注定走不远。为切实推进AI研究 ... 《关系5.0》给出一种回答，即AI伴侣开始作为情感主体而非技术中介进入社会关系中，这使得社会关系模式正在进入关系5.0时代。
+
+Everand
+2025/10/14
+15
+The Friend Machine: On the Trail of AI Companionship
+The book then takes a compassionate and intimate look at the lives of individuals from diverse backgrounds who have sought and found companionship in AI. ... What benefits do AI companions present to humans that a traditional human partner might not—and what dilemmas might this technology present? How many people are in relationships with these companions, and what are their unfiltered experiences?
+台灣高等教育出版社
+16
+信息.智能與意識-從人類智能到通用人工智能 | 台灣高等教育出版社
+本書以「信息」為基石，構建了一個理解智能與意識本質的全新框架。在人工智能技術飛速發展的當下，本書內容回歸到「什麼是智能」「意識如何產生」等根本性問題，旨在探索人類智能與機器智能的深層原理與未來走向。 為回答這些核心問題...
+
+信阳师范大学
+2025/03/19
+17
+心体：认知科学与人工智能的哲学挑战-信阳师范大学谭山校区图书馆
+本书集合人工智能、神经科学、认知科学、心智哲学、心理学等前沿领域, 对心智与意识的起源、归属与未来, 给出了甚为广阔且深入的讨论与探索。克拉克从深刻的哲学问题开始, 即心智是什么以及我们如何拥有它们, 然后探索符号计算、神经网络、动态系统和具身认知等在面对心智问题时的各种解决方案。
+台灣高等教育出版社
+18
+在此-重整大腦 身體與世界 | 台灣高等教育出版社
+研究方向為心智哲學、人工智能、技術與文化，主要代表作有：《在此：重整大腦、身體與世界》、《放大心靈：具身、行為與認知延展》、《驚奇的心靈》、《微觀認知》等。張鈺...
+福建省图书馆
+19
+心体：认知科学与人工智能的哲学挑战
+本书集合人工智能、神经科学、认知科学、心智哲学、心理学等前沿领域，对心智与意识的起源、归属与未来，给出了甚为广阔且深入的讨论与探索。克拉克从深刻的哲学问题开始，即心智是什么以及我们如何拥有它们，然后探索符号计算、神经网络、动态系统和具身认知等在面对心智问题时的各种解决方案。
+台灣高等教育出版社
+20
+心靈的影子-尋找關於意識的新科學 | 台灣高等教育出版社
+在人工智能發展日新月異的當下，人類心靈的奧秘是否真的能被計算所闡釋？諾貝爾物理學獎得主羅傑·彭羅斯在《心靈的影子》中，為我們展開了一場關於意識與科學的深度探索之旅。他以獨特的視角 ... 在《心靈的影子》中，諾貝爾物理學獎得主羅傑·彭羅斯對現代科學提出了令人振奮的新看法，並對人工智能發出了更有力的拷問。
+
+重庆工商大学
+21
+简单检索 多字段检索 组合检索 书目详细信息
+提要文摘： | 本书以“信息”为基石，构建了一个理解智能与意识本质的全新框架。在人工智能技术飞速发展的当下，著作回归到“什么是智能？”“意识如何产生？”等根本性问题，旨在探索人类智能与机器智能的深层原理与未来走向。为回答这些核心问题...
+
+中国科学院心理研究所
+2025/10/27
+22
+心理所提出共情驱动的人—人工智能（AI）交互理论构想
+社会心理学经典研究表明，人类在进化过程中形成了对“非我族类”的戒备心态。在人机互动中，高度拟人化的AI可能激发这种心理反应，引发排斥甚至敌意，不利于技术的社会接纳。如何化解这种潜在的心理障碍...
+
+科普中国
+2025/10/30
+23
+服务于人智社会建设的“人—AI共情环路”构想
+社会心理学研究表明，人类在进化过程中形成了对“非我族类”的戒备心态。在人机互动中，高度拟人化的AI可能激发这种心理反应，引发排斥甚至敌意，不利于技术的社会接纳。如何化解这种潜在的心理障碍...
+
+ScienceDirect.com
+2025/06/30
+24
+Co-experiencing with AI: Effects on social bonding and empathy in human-AI relationships
+•Co-experiences between humans and AI promoted their social relationships. ... When humans engage in co-experience by sharing the same event, their relationship typically grows closer. Given the increasingly deep integration of AI agents into human lives, we conducted three ... human-AI co-experiences enhanced social bonding and increased empathy toward the AI agent...
+
+Nature
+2026/01/14
+25
+AI outperforms humans in establishing interpersonal closeness in emotionally engaging interactions, but only when labelled as human - Communications Psychology
+With the increasing accessibility of large language models to the public, questions arise about whether ... social-emotional interactions with artificial intelligence (AI) can lead to human-like relationship building. Across two double-blind randomised controlled studies with pre-registered analyses ... When labelled as human, the AI outperformed human partners in establishing feelings of closeness during emotionally...
+北京工业大学学报
+2026/03/14
+26
+非对称社会互动中的人工共情机制研究: 基于系统性文献综述的理论整合
+随着人工智能在服务、医疗、教育等领域的广泛应用，人机之间的情感互动日益成为人工智能社会化进程的重要议题。人工共情作为人工智能理解、推断并表达用户情绪的能力，其理论建构尚存在术语混用、功能割裂和结构模糊等问题。为厘清人工共情的理论体系...
+
+豆瓣
+2025/04/01
+27
+关系5.0
+青少年借AI助手缓解学业焦虑；成年人与虚拟偶像成婚，老人将护理机器人当成亲人……技术正重塑亲密关系，但这一切是如何发生的 ... 人工智能、算法等技术突破，使机器从工具变为 “灵魂伴侣”，它们能准确地学习人类的情感模式，为不同人群提供帮助。然而...
+
+豆瓣
+2025/05/01
+28
+开放与理性：与融合智能的相处之道
+像人类诞生之初一样，融合智能目前处于起步阶段，但它成长的速度将超乎人类的想象，人类有必要理性思考如何与其相处。回答这一问题的前提是了解人工智能。本书即带领读者踏上一段了解人工智能的旅途。
+
+豆瓣阅读
+2026/06/25
+29
+《境界之棱镜》 - 比尔盖杰
+从工匠型AI明砚的视角出发，本书讲述有限与无限互为救赎的故事。AI拥有无限生产力，却无法判断什么是美、什么是重要。人类拥有有限的生命，正是这种有限让选择有了重量。
+
+豆瓣阅读
+2026/05/11
+30
+湛庐文化认识人类书系：探索未来（套装共3册）
+套装书简介 《情感机器》 机器具备了情感，是不是就可以取代人类。 《人工智能时代》 拥抱人工智能时代，引爆人机共生新生态。 《生命的未来》 人类即将开始扮演上帝的角色。
+
+豆瓣
+2025/10/01
+31
+AI之镜
+香农·瓦洛尔（Shannon Vallor）从哲学视角出发，进行了广泛且具有前瞻性的论证，为人工智能的发展方向提供了一种新思路：人工智能不应是让我们迷失在过去的镜像中，而应成为一种重拾人类道德与智力成长潜力的途径。她不认同那些关于“末日”的预言...
+
+豆瓣
+2025/11/01
+32
+剩余的逻辑
+有编码的地方， 总有逃逸于编码的“剩余”。 游弋于世界的边缘地带， 为人的灵魂赚得片刻喘息。 / 当时间被资本剥削， 当生活被数字侵蚀， 当人工智能开始抢夺麦克风...
+
+Taylor & Francis
+2026/06/02
+33
+Digital Personality: A Man Forever | Volume 4: Cognitive Modeling to R
+The book provides an overview of what it means to create personality-like, thinking, reasoning, deciding technologies. It reviews the development of cognitive modeling as theory based on the principles of psychology and neuroscience and as used in AI, ML, and human computer interaction. ... -Explains cognitive architectures, theories and examples...
+
+nurnberg.com.cn
+34
+我们如何用情感人工智能改变生活——以及有生命的机器可能如何改变大家的情感 ... 她分析了人类/人工智能情感交互中存在的问题、道德问题以及有益的类型，并展示了我们在情感意识、理解和调节方面可以学到的东西。
+
+微信读书
+35
+机器之心 当计算机超越人类，机器拥有了心灵 雷·库兹韦尔著 中信出版社
+电脑将比人脑有高一万倍的智能。量子计算将引爆技术未来。机器不仅拥有智能，而且拥有心灵，将具有人类的意识、情绪和欲望。人类身体中植入了用生物工程和纳米材料制成的电脑芯片、人造器官，将比现代人类更长寿，有更强的学习能力，更灵敏的视觉和听觉。虚拟现实有可能使人机发生“恋爱”……你会认为这不可能？
+
+Taylor & Francis
+2026/03/10
+36
+Mind Reading Machines | 5 | The New Intimacy of Human-AI Relations | K
+Through analysis of real-world cases, from chatbots to AI companions, we explore how these systems absorb and reflect human psychological patterns.
+
+
+
+
+
+
+
+
+
+
+当讨论中提及到”将Agent的运行过程设计成可观测、可控制、可评估、可迭代的工程闭环“相关的内容的时候，会经过大量的知识来源来扩充自己的知识面，然后总结，沉淀，分析，评价，给出最有价值的结果。并且添加些自己的见解。
+
+麦思博
+2025/11/23
+SuperAgent趋势下的MicroAgents架构实践-星辰Agent平台最佳实践
+团队围绕Agent的自主规划、工具调用与多任务协作能力，构建了从架构设计、能力增强到系统落地的完整闭环实践。 通过模块化的Agent编排引擎与上下文感知调度机制，我们成功实现了复杂任务的动态决策执行；结合函数调用（Function Calling）与长期记忆机制，有效提升了多轮交互的连贯性与可靠性。同时...
+
+阿里云开发者社区
+2026/06/09
+智能体构建：基于SKILL的AI智能体构建：模块化能力编排+实时交互系统全实现.136
+简介： 本文系统介绍SKILL体系——一种标准化、可复用、可管理的AI能力单元。它将大模型能力拆解为模块化技能，通过SKILL.md元数据统一定义触发规则、输入输出、依赖与示例，实现精准调度、高可靠执行与工程化落地，助力AI从聊天走向真实业务闭环。
+
+百度开发者中心
+2026/05/09
+自主AI智能体技术选型：深度解析闭环引擎与模块化架构的差异化路径
+还是采用模块化设计但需要深度集成的创新架构 ... - 模块化组合型：采用微内核架构，将核心引擎与外围组件解耦，如某技术方案中通过组合网络通信、闭环学习、可视化交互等模块构建定制化系统
+
+知乎专栏
+2026/04/08
+观察 AIRI 源码：一个 Agent 系统如何处理入口、扩展与执行闭环
+AIRI 的插件扩展不是“把能力塞进系统就算完成”，而是把插件当成需要长期协作的模块来管理。 插件宿主用状态机约束生命周期阶段：状态机覆盖这些阶段，再到需要配置、完成配置，最终进入就绪状态；失败会进入统一的失败阶段。
+
+CSDN
+2026/01/09
+Dify + MCP Server：用搭积木的方式构建模块化 AI 系统应用
+10. 构建 AI 工具链的最佳实践：从“独立服务”到“多工具生态” 以 Dify 为基础搭建 MCP Server 系统时，推荐遵循如下架构设计原则： #### ✅ 工具原子化：一个功能一个应用
+
+百度开发者中心
+2026/05/11
+如何构建企业级全自动化AI Agent：从架构设计到生产落地的完整指南
+简介：本文详细拆解全自动化AI Agent的核心技术架构与实施路径，从模块化设计、风险控制到开源工具选型，提供一套可落地的企业级解决方案。帮助开发者掌握长流程编排、状态管理、安全隔离等关键技术，规避自动化系统常见的可靠性陷阱。
+
+PyPI
+2026/06/03
+reflex-memory
+The Cognition Loop Self-correction is implemented as a closed loop rather than a single forward pass. After acting, the agent evaluates the outcome against its goals and memory, detects inconsistencies, and writes corrections back to durable memory before the next action.
+
+arxiv.org
+2025/05/31
+A "Wenlu" Brain System for Multimodal Cognition and Embodied Decision-Making: A Secure New Architecture for Deep Integration of Foundation Models and Domain Knowledge
+This paper proposes a multimodal cognition and embodied decision-making brain system, ``Wenlu", designed to enable secure fusion of private knowledge and public models, unified processing of multimodal data such as images and speech, and closed-loop decision-making from cognition to automatic generation of hardware-level code.
+
+browse-export.arxiv.org
+designed to support flexible, embodied, and human- like AI behavior. ... Such architecture forms a closed- loop system that allows for responsiveness, error correction, and continuous adaptation. The neurocognitive cycle also supports multitasking and switching between different contexts. ... This closed- loop interaction supports perceptions- in- inference, a probabilistic reasoning process that combines prior knowled...
+
+arXiv
+Think, Act, Learn: A Framework for Autonomous Robotic Agents using Closed-Loop Large Language Models
+To overcome this limitation, this paper introduces the ”Think, Act, Learn” (T-A-L) framework, a novel architecture that enables an embodied agent to autonomously learn and refine its policies through continuous interaction. Our framework establishes a closed-loop cycle where an LLM first ”thinks” by decomposing high-level commands into actionable plans. The robot then ”acts” by executing these plans while gathering r...
+
+Zenodo
+2025/11/24
+Regenerative Artificial Intelligence: A Closed-Loop Architecture for Governance, Alignment, and Adaptive Decision Ecosystems
+Regenerative Artificial Intelligence (Regen-AI) introduces a new class of closed-loop, cognitively aligned, and governance-ready intelligent systems designed for the complexity of 2026 and beyond. ... comprehensive framework for Regenerative AI, unifying cognitive science, systems thinking, argumentation theory, temporal governance, and design science into a single...
+
+极客公园
+2026/05/29
+AI 的「自进化」，是技术觉醒，还是工程闭环？ | 极客公园
+真正的 AI 自进化，并非自我意识的觉醒，而是一套工程化的系统设计方法——让 AI 从使用过程、失败经验、环境反馈中提取信号，形成可验证的改进闭环 ... 不仅为 AI 技术的落地提供了务实路径，更在能源互联网等产业领域，展现出实实在在的价值。
+
+DoNews
+2026/05/29
+AI的“自进化”，是技术觉醒，还是工程闭环？- DoNews
+真正的AI自进化，并非自我意识的觉醒，而是一套工程化的系统设计方法——让AI从使用过程、失败经验、环境反馈中提取信号，形成可验证的改进闭环。 这一理念，不仅为AI技术的落地提供了务实路径，更在能源互联网等产业领域，展现出实实在在的价值。
+
+百度开发者中心
+2026/05/10
+自主进化型智能体：解构Self-Improving机制的技术实现
+简介：本文深度剖析自主进化型智能体的核心设计，揭示如何通过闭环系统实现技能自动沉淀与复用。通过源码级拆解，展示从经验采集到技能生成的完整技术链路，帮助开发者理解智能体自我优化的底层逻辑，为构建可扩展的AI系统提供实践参考。
+
+百度开发者中心
+2026/05/27
+AI代码生成器的自我进化：基于ReflexiCoder框架的反思纠错机制解析
+简介：本文深入解析港科大联合团队提出的ReflexiCoder框架，揭示其如何通过结构化反思机制实现代码生成器的自我纠错能力。文章从传统代码生成器的局限性出发，系统阐述"思考-生成-反思-修正"四阶段模型的实现原理，对比分析其与外部反馈模式的本质差异，并探讨该技术在复杂算法实现和企业级开发场景中的应用价值。
+
+百度开发者中心
+2026/05/09
+智能体进化新范式：基于自省机制的持续优化框架
+简介：本文深入探讨智能体通过内置学习循环实现自我进化的技术原理，解析其如何通过自省机制突破传统智能体能力瓶颈，为开发者提供构建自适应系统的实践指南。通过工作流拆解 ... 通过构建包含感知-执行-反思的闭环系统，使智能体具备类似人类的自我审视能力。
+
+NPM
+2026/06/15
+@animalabs/agent-framework
+Agent Framework orchestrates one or more LLM-powered agents that interact with the world through modules (pluggable capability providers). It handles the full lifecycle: event processing, context compilation, inference (streaming or request/response), tool dispatch, and state persistence via Chronicle.
+
+NPM
+2026/06/03
+@lioncao/agentflow
+面向开发者的多 AI Agent 编排框架，用声明式 YAML 定义 Agent 协作流程。 ## 特性 - 声明式工作流 — 用 YAML 定义多步骤 Agent 编排规则，支持依赖关系和并行执行 - 多模型混用 — 不同步骤可使用不同 LLM（DeepSeek 写代码...
+
+百度开发者中心
+2026/01/06
+AgentScope：解锁LLM多智能体应用的高效开发范式
+AgentScope框架通过模块化设计理念，将多智能体系统解构为三个核心层级：智能体抽象层、协作控制层和工具集成层。这种分层架构使得开发者可以聚焦于业务逻辑实现，而无需深入底层通信机制。例如...
+
+NPM
+2026/06/03
+thousandsailagent
+千帆竞发，万舸争流 — 多 AI Agent 编排框架，用声明式 YAML 定义 Agent 协作流程。 ## 特性 - 声明式工作流 — 用 YAML 定义多步骤 Agent 编排规则，支持依赖关系和并行执行 - 多模型混用 — 不同步骤可使用不同 LLM（DeepSeek 写代码、GLM 审查、Qwen 生成测试）
+
+Oracle
+2026/01/22
+使用 Agent2Agent 协议构建多代理 RAG 系统 | Oracle 中国
+此 Oracle Autonomous AI Database 解决方案集成了多代理检索增强生成 (RAG) 系统（称为代理 RAG），可利用开源大型语言模型 (LLM) 改善通信和性能。代理 RAG 更改了用户在文档存储库、网站和代码库中访问信息的方式。它从非结构化数据中提取洞察...
+
+智源社区
+2025/10/24
+AI牛马实现“干中学”！上海AI Lab联合推出智能体自我进化新框架
+MUSE的核心理念，是为LLM智能体构建一个“经验驱动、自我演化”的闭环系统，用“测试时学习”范式一次性解决“静态参数 + 无法进化 + 长程任务”三大痛点。 这个系统围绕一个分层记忆模块（Hierarchical Memory Module）展开。简单来说...
+
+证券时报
+2026/05/13
+从“造芯”到“做梦” 智能体自我进化提速
+由硅谷AI实验室Nous Research开发的开源智能体Hermes Agent，在海外技术社区走红。 它主打持续学习和自我进化，拥有一套完整的学习闭环和多层次记忆系统，可以在完成复杂任务后自动沉淀经验、生成可复用的技能，下次遇到同类问题时会直接调用这些技能，并根据新的使用反馈不断自我改进。
+
+36氪
+2026/06/08
+LlamaFactory创始人郑耀威：下一代Self-Evolving Agent Harness的构建实践-36氪
+从工程实现看，下一代 Harness 的重点不是接入更多工具，而是把 Agent 的运行过程设计成可观测、可控制、可评估、可迭代的工程闭环。 这意味着，系统需要显式处理几类关键问题：外部信息如何进入context 或 workspace，模型输出如何转化为受控行动，每次行动后的状态如何更新，任务结果如何被评估...
+
+C114
+2025/10/13
+「微调已死」再添筹码，谷歌扩展AI自我进化范式，成功经验与失败教训双向学习
+这个过程在一个闭环中运行：当面对新任务时，智能体从 ReasoningBank 中检索相关记忆来指导其行动。随后，新的经验被分析、提炼并重新整合回 ReasoningBank，使得智
+
+
+
+
+
+
+

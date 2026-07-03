@@ -23,7 +23,7 @@ echo [步骤2] 启动后端服务...
 echo 启动命令: python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 echo.
 
-start "后端服务" cmd /k "python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000"
+start "后端服务" cmd /k "cd /d "%~dp0" && python -m uvicorn backend.main_fast:app --host 0.0.0.0 --port 8000"
 
 echo 等待后端启动（10秒）...
 timeout /t 10 /nobreak >nul

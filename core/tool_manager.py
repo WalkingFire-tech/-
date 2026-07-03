@@ -107,6 +107,11 @@ class ToolManager:
             except sqlite3.OperationalError:
                 pass
             
+            try:
+                conn.execute('ALTER TABLE tools ADD COLUMN last_used TEXT')
+            except sqlite3.OperationalError:
+                pass
+            
             conn.commit()
     
     def _cleanup_orphan_files(self):

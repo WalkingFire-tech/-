@@ -193,6 +193,14 @@ class GapGrowthEngine:
         """生长主循环"""
         while self._running:
             try:
+                try:
+                    from core.resource_awareness.background_controller import get_background_controller
+                    if not get_background_controller().should_run("gap_growth"):
+                        time.sleep(self._processing_interval)
+                        continue
+                except ImportError:
+                    pass
+
                 # 1. 处理信号队列
                 processed = self._process_signals()
 
@@ -364,39 +372,28 @@ class GapGrowthEngine:
         }
 
     def _digest_knowledge_gap(self, signal: Signal) -> Dict:
-        """消化知识缺口信号 - 触发外部学习"""
+        """消化知识缺口信号 - 入队待学习，不在daemon线程中同步调Ollama"""
         gap = signal.content
         
         try:
-            from core.external_learner import external_learner
-            result = external_learner.learn_and_integrate(
-                user_input=gap,
-                context=f"检测到知识缺口: {gap}",
-                trigger_reason="knowledge_gap_detected"
-            )
-            
-            if result.get("saved_count", 0) > 0:
-                return {
-                    "digested": True,
-                    "action_taken": True,
-                    "impact": 0.6,
-                    "description": f"知识缺口已通过外部学习填补: {gap[:50]}",
-                    "details": {
-                        "saved_count": result.get("saved_count"),
-                        "items": result.get("items", [])[:3]
-                    }
-                }
-        except Exception as e:
-            logger.debug(f"外部学习触发失败: {e}")
+            from core.task_queue import task_queue
+            task_queue.enqueue("knowledge_gap_learning", {
+                "gap": gap,
+                "source": signal.source,
+                "priority": "low"
+            }, priority=5, delay_seconds=30)
+            logger.info(f"🌱 知识缺口已入队待学习: {gap[:50]}")
+        except Exception:
+            pass
         
         return {
             "digested": True,
             "action_taken": True,
-            "impact": 0.5,
-            "description": f"识别知识缺口: {gap}",
+            "impact": 0.3,
+            "description": f"知识缺口已入队待学习: {gap[:50]}",
             "details": {
                 "source": signal.source,
-                "priority": "medium",
+                "priority": "low",
                 "should_learn": True
             }
         }

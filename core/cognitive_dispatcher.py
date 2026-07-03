@@ -201,6 +201,12 @@ class CognitiveDispatcher:
             user_query, route, capabilities, intent_type
         )
         
+        # ========== P1-7：反思教训注入 ==========
+        lessons_context = self._get_reflection_lessons(user_query, intent_type)
+        if lessons_context:
+            execution_plan["reflection_lessons"] = lessons_context
+            logger.info(f"📝 反思教训注入: {len(lessons_context)}条")
+        
         logger.info(f"📋 执行计划: {len(execution_plan['tasks'])}个任务")
         
         # 构建调度结果
@@ -412,6 +418,26 @@ class CognitiveDispatcher:
             self.cache_timestamp = now
         
         return capabilities
+    
+    def _get_reflection_lessons(self, query: str, intent_type: str) -> List[Dict]:
+        """P1-7: 从spirit_lessons.db读取相关反思教训，回流到规划"""
+        try:
+            with sqlite3.connect("data/spirit_lessons.db", timeout=3) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    "SELECT lesson_type, lesson_text, severity, context FROM spirit_lessons "
+                    "WHERE lesson_text LIKE ? OR context LIKE ? "
+                    "ORDER BY severity DESC, created_at DESC LIMIT 5",
+                    (f"%{query[:15]}%", f"%{intent_type}%")
+                ).fetchall()
+                if not rows:
+                    rows = conn.execute(
+                        "SELECT lesson_type, lesson_text, severity, context FROM spirit_lessons "
+                        "WHERE severity >= 3 ORDER BY created_at DESC LIMIT 3"
+                    ).fetchall()
+                return [dict(r) for r in rows]
+        except Exception:
+            return []
     
     def _generate_execution_plan(
         self, 
