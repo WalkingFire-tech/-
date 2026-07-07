@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 class FeedbackStore:
     MAX_ENTRIES = 10000

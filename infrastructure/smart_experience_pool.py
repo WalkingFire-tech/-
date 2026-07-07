@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from loguru import logger
 from infrastructure.config_manager import config
+from infrastructure.database_manager import DatabaseManager
 
 
 class SmartExperiencePool:
@@ -269,7 +270,6 @@ class SmartExperiencePool:
         params.append(limit)
         
         with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
             cur = conn.execute(query, params)
             
             # 更新访问计数
@@ -298,7 +298,6 @@ class SmartExperiencePool:
         params.append(limit)
         
         with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
             cur = conn.execute(query, params)
             return [dict(row) for row in cur.fetchall()]
     

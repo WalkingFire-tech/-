@@ -9,6 +9,7 @@ from loguru import logger
 from datetime import datetime
 import sqlite3
 from pathlib import Path
+from infrastructure.database_manager import DatabaseManager
 
 
 class ResultFusion:

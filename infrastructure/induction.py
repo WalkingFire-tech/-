@@ -9,6 +9,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 from loguru import logger
 from infrastructure.experience_pool import ExperiencePool
+from infrastructure.database_manager import DatabaseManager
 
 
 class InductionEngine:
@@ -65,8 +66,6 @@ class InductionEngine:
             db_path = "experience_pool.db"
             
             with sqlite3.connect(db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                
                 if intent_type:
                     cur = conn.execute('''
                         SELECT intent_type, raw_input, plan, model_name, 
@@ -99,8 +98,6 @@ class InductionEngine:
             db_path = "experience_pool.db"
             
             with sqlite3.connect(db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                
                 if intent_type:
                     cur = conn.execute('''
                         SELECT intent_type, raw_input, plan, model_name,

@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from loguru import logger
 from infrastructure.config_manager import config
+from infrastructure.database_manager import DatabaseManager
 
 
 class PlanTemplate:
@@ -94,7 +95,6 @@ class PlanTemplateLibrary:
     def _find_similar_template(self, intent_type: str, steps: List[Dict]) -> Optional[Dict]:
         """查找相似模板"""
         with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
             cur = conn.execute('''
                 SELECT * FROM plan_templates
                 WHERE intent_type = ?
@@ -136,7 +136,6 @@ class PlanTemplateLibrary:
     def retrieve_template(self, intent_type: str) -> Optional[PlanTemplate]:
         """检索最佳模板"""
         with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
             cur = conn.execute('''
                 SELECT *
                 FROM plan_templates
@@ -171,7 +170,6 @@ class PlanTemplateLibrary:
     def get_templates_for_intent(self, intent_type: str, limit: int = 5) -> List[PlanTemplate]:
         """获取意图类型的所有模板"""
         with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
             cur = conn.execute('''
                 SELECT *
                 FROM plan_templates
