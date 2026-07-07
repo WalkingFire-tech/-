@@ -11,7 +11,7 @@ import time
 import json
 import asyncio
 from pathlib import Path
-from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -43,267 +43,7 @@ os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
 import concurrent.futures
 _executor = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="pioneer")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """简化的lifespan - 快速启动"""
-    logger.info("🚀 启动后端服务...")
-    
-    # 初始化资源感知系统
-    try:
-        from core.resource_awareness.health_monitor import get_health_monitor
-        from core.resource_awareness.adaptive_governor import get_adaptive_governor
-        from core.resource_awareness.background_controller import get_background_controller
-        monitor = get_health_monitor()
-        snap = monitor.check()
-        logger.info(f"🫀 资源感知已启动: MEM={snap.memory_usage:.1%}, Threads={snap.thread_count}, Mode={snap.mode.value}")
-        get_adaptive_governor()
-        get_background_controller()
-    except Exception as e:
-        logger.warning(f"资源感知启动失败: {e}")
-    
-    # 加载向量检索索引
-    try:
-        from infrastructure.vector_retriever import vector_retriever
-        vector_retriever.load_index()
-        logger.info(f"✅ 向量检索索引已加载: {vector_retriever.current_id}条记录")
-    except Exception as e:
-        logger.warning(f"向量检索索引加载失败: {e}")
-    
-    # 启动持久化任务队列worker
-    try:
-        from core.task_queue import task_queue
-        asyncio.create_task(task_queue.start_worker(interval=5.0))
-        logger.info("✅ 持久化任务队列worker已启动")
-    except Exception as e:
-        logger.warning(f"任务队列启动失败: {e}")
-    
-    # 初始化反思管道（延迟到首次使用时初始化，避免启动阻塞）
-    app.state.reflection_pipeline = None
-    logger.info("✅ 反思管道已标记为延迟初始化")
-    
-    # 启动SDRS系统守护者巡逻
-    try:
-        from core.defense.guardian import system_guardian
-        asyncio.create_task(system_guardian.start_patrol(interval=60))
-        logger.info("✅ SDRS系统守护者已启动巡逻")
-    except Exception as e:
-        logger.warning(f"系统守护者启动失败: {e}")
-    
-    # 启动硬件监控定时记录（每30秒写入logs/hardware.log）
-    async def _periodic_hardware_log():
-        await asyncio.sleep(10)
-        while True:
-            try:
-                from infrastructure.hardware_monitor import log_hardware_stats
-                log_hardware_stats(force=True)
-            except Exception:
-                pass
-            await asyncio.sleep(30)
-    asyncio.create_task(_periodic_hardware_log())
-    logger.info("✅ 硬件监控定时记录已启动(30秒间隔)")
-    
-    # 启动持续自我评估（每5分钟一次，评估→诊断→修复闭环）
-    async def _periodic_assessment():
-        await asyncio.sleep(120)
-        while True:
-            try:
-                from core.self_assessment import self_assessment
-                report = self_assessment.assess()
-                level = report["overall"]["level"]
-                score = report["overall"]["score"]
-                logger.info(f"🔍 自我评估完成: {level} ({score:.2f})")
-                if report["recommendations"]:
-                    for rec in report["recommendations"][:3]:
-                        logger.info(f"  → [{rec['priority']}] {rec['action']}")
-                
-                # 评估→修复闭环：根据评估结果自动触发修复动作
-                await _assessment_driven_repair(report)
-            except Exception as e:
-                logger.debug(f"自我评估失败: {e}")
-            await asyncio.sleep(300)
-    
-    async def _assessment_driven_repair(report: dict):
-        """评估驱动的自动修复：将评估发现的问题转化为修复动作"""
-        score = report["overall"]["score"]
-        
-        # 闭环完整性低 → 触发低负载重组
-        loop_score = report.get("loop_integrity", {}).get("score", 1.0)
-        if loop_score < 0.5:
-            try:
-                from core.low_load_reorganization import low_load_reorganization
-                result = low_load_reorganization.run()
-                s = result.get("summary", {})
-                if any(v > 0 for v in s.values()):
-                    logger.info(f"🔄 评估驱动重组: 激活{s.get('rules_activated',0)} 合并{s.get('rules_merged',0)} 提取{s.get('rules_extracted',0)}")
-            except Exception as e:
-                logger.debug(f"评估驱动重组失败: {e}")
-        
-        # 知识活力低 → 触发遗忘清理
-        vitality_score = report.get("knowledge_vitality", {}).get("score", 1.0)
-        if vitality_score < 0.5:
-            try:
-                from core.knowledge_forgetting import knowledge_forgetting
-                result = knowledge_forgetting.execute_fading(dry_run=False)
-                logger.info(f"🧹 评估驱动遗忘: 规则淡化{result['rules']['faded']}+清除{result['rules']['pruned']}, 经验淡化{result['experiences']['faded']}+清除{result['experiences']['pruned']}")
-            except Exception as e:
-                logger.debug(f"评估驱动遗忘失败: {e}")
-        
-        # 行为偏差 → 触发认知自修复
-        deviation = report.get("behavior_deviation", {})
-        if deviation.get("deviations"):
-            try:
-                from core.defense.cognitive_self_repair import cognitive_self_repair
-                result = cognitive_self_repair.run_full_repair()
-                logger.info(f"🧠 评估驱动修复: {result['repairs']}")
-            except Exception as e:
-                logger.debug(f"评估驱动修复失败: {e}")
-    
-    asyncio.create_task(_periodic_assessment())
-    logger.info("✅ 持续自我评估已启动")
-    
-    # 注册系统级工具（P0-4 工具调用框架）
-    try:
-        from core.tool_registry import register_builtin_tools
-        register_builtin_tools()
-        logger.info("✅ 工具调用框架已初始化")
-    except Exception as e:
-        logger.warning(f"工具调用框架初始化失败: {e}")
-    
-    # 启动存在层（让系统"活"起来：持续感知、间隙生长、睡眠整合）
-    try:
-        from core.presence.existence_layer import get_existence_layer
-        existence_layer = get_existence_layer()
-        existence_layer.start()
-        logger.info("✅ 存在层已启动（心跳/生长/休息/睡眠四阶段循环）")
-    except Exception as e:
-        logger.warning(f"存在层启动失败: {e}")
-    
-    # 认知规划器延迟初始化（不在lifespan中阻塞启动，首次请求时自动初始化）
-    app.state.cognitive_planner = None
-    async def _init_cognitive_planner_async():
-        try:
-            from core.services.cognitive_planner import get_cognitive_planner
-            cp = get_cognitive_planner()
-            status = cp.get_system_status()
-            logger.info(f"✅ 认知规划器已初始化(延迟): 对话数={status.get('conversation_count', 0)}, 组件={list(status.get('components', {}).keys())}")
-            app.state.cognitive_planner = cp
-        except Exception as e:
-            logger.warning(f"认知规划器延迟初始化失败: {e}")
-    asyncio.create_task(_init_cognitive_planner_async())
-    logger.info("✅ 认知规划器已标记为延迟初始化")
-    
-    # P1-2: 启动定时任务调度器（5分钟自检/30分钟学习/24小时报告）
-    try:
-        from infrastructure.scheduled_tasks import scheduled_task_manager
-        scheduled_task_manager.start()
-        logger.info("✅ 定时任务调度器已启动")
-    except Exception as e:
-        logger.warning(f"定时任务调度器启动失败: {e}")
-    
-    # G1: 注册事件总线订阅（让发布的事件有人接收）
-    try:
-        from infrastructure.event_bus import bus, EventTypes
-        
-        def _on_idle_period(data):
-            try:
-                from core.presence.proactivity import get_proactivity_engine, ProactivityContext
-                from core.relationship.model import get_relationship_model
-                from core.presence.existence_layer import get_existence_layer
-                from datetime import datetime
-                engine = get_proactivity_engine()
-                rm = get_relationship_model()
-                el = get_existence_layer()
-                silence = el.metrics.silence_duration if el.metrics else 0
-                rel = rm.get_relationship_summary()
-                ctx = ProactivityContext(
-                    user_silence_duration=silence,
-                    relationship_trust=rel.get("trust_level", 0.5),
-                    recent_interactions=rel.get("total_interactions", 0),
-                    last_proactivity_time=engine.last_proactivity or datetime.now(),
-                    user_engagement_level=0.5,
-                )
-                decision = engine.evaluate(ctx)
-                if decision.should_act and decision.content:
-                    engine.execute(decision)
-                    _enqueue_proactivity({
-                        "type": "proactivity",
-                        "action_type": decision.action_type.value if decision.action_type else "unknown",
-                        "content": decision.content,
-                        "reason": decision.reason,
-                        "confidence": decision.confidence,
-                    })
-            except Exception:
-                pass
-        
-        def _on_knowledge_update(data):
-            try:
-                from core.knowledge_graph import get_knowledge_graph, NodeType
-                kg = get_knowledge_graph()
-                if isinstance(data, dict) and data.get("content"):
-                    kg.add_node(data["content"], node_type=NodeType.FACT, importance=0.6)
-            except Exception:
-                pass
-        
-        def _on_system_health(data):
-            try:
-                if isinstance(data, dict) and data.get("health", 1.0) < 0.5:
-                    import gc
-                    gc.collect()
-                    logger.info("事件驱动: 系统健康度过低，执行gc.collect()")
-            except Exception:
-                pass
-        
-        bus.subscribe(EventTypes.IdlePeriod, _on_idle_period)
-        bus.subscribe(EventTypes.KnowledgeUpdate, _on_knowledge_update)
-        bus.subscribe(EventTypes.SystemHealth, _on_system_health)
-        logger.info("✅ 事件总线订阅已注册（IdlePeriod/KnowledgeUpdate/SystemHealth）")
-    except Exception as e:
-        logger.warning(f"事件总线订阅注册失败: {e}")
-    
-    # P2-1: 文件变化感知（监控monitored/目录）— 因config_manager导入卡住，暂不自动启动
-    # 用户可通过 /api/folder/learn 端点手动触发文件学习
-    logger.info("✅ 文件变化感知已标记为手动模式（config_manager兼容性问题）")
-    
-    yield
-    
-    # 关闭认知规划器
-    try:
-        if hasattr(app.state, 'cognitive_planner') and app.state.cognitive_planner:
-            app.state.cognitive_planner.shutdown()
-            logger.info("✅ 认知规划器已关闭")
-    except Exception:
-        pass
-    
-    # 停止存在层
-    try:
-        from core.presence.existence_layer import get_existence_layer
-        existence_layer = get_existence_layer()
-        existence_layer.stop()
-    except:
-        pass
-    
-    # 停止定时任务调度器
-    try:
-        from infrastructure.scheduled_tasks import scheduled_task_manager
-        scheduled_task_manager.stop()
-    except:
-        pass
-    
-    # 停止文件变化感知
-    try:
-        if hasattr(app.state, 'directory_monitor') and app.state.directory_monitor:
-            app.state.directory_monitor.stop()
-    except:
-        pass
-    
-    # 停止任务队列
-    try:
-        from core.task_queue import task_queue
-        task_queue.stop_worker()
-    except:
-        pass
-    
-    logger.info("后端服务关闭")
+from backend.lifespan import lifespan, _proactivity_subscribers, _enqueue_proactivity
 
 app = FastAPI(
     title="联盟拓荒者 API",
@@ -356,15 +96,6 @@ async def health():
     """健康检查"""
     return {"status": "ok", "version": "3.7.0"}
 
-_proactivity_subscribers: list = []
-
-def _broadcast_proactivity(msg: dict):
-    for q in _proactivity_subscribers:
-        try:
-            q.put_nowait(msg)
-        except Exception:
-            pass
-
 @app.get("/api/proactivity/stream")
 async def proactivity_stream():
     import asyncio as _asyncio
@@ -396,16 +127,6 @@ async def proactivity_stream():
         "X-Accel-Buffering": "no",
         "Connection": "keep-alive",
     })
-
-def _enqueue_proactivity(msg: dict):
-    try:
-        if not _proactivity_subscribers:
-            logger.debug(f"📤 无SSE订阅者，消息丢弃: type={msg.get('type')}")
-            return
-        _broadcast_proactivity(msg)
-        logger.info(f"📤 主动性消息已广播: type={msg.get('type')} subscribers={len(_proactivity_subscribers)}")
-    except Exception as e:
-        logger.warning(f"主动性消息广播失败: {e}")
 
 @app.post("/api/proactivity/test")
 async def proactivity_test():
@@ -549,7 +270,7 @@ async def get_stats():
         cursor.execute("SELECT COUNT(*) FROM experiences")
         stats["experiences"] = cursor.fetchone()[0]
         conn.close()
-    except:
+    except Exception:
         stats["experiences"] = 0
     try:
         conn = sqlite3.connect("data/learning_rules.db")
@@ -561,14 +282,14 @@ async def get_stats():
         cursor.execute("SELECT COUNT(*) FROM learning_rules")
         stats["rules"] = cursor.fetchone()[0]
         conn.close()
-    except:
+    except Exception:
         stats["active_rules"] = 0
         stats["pending_rules"] = 0
         stats["rules"] = 0
     try:
         from core.task_queue import task_queue
         stats["task_queue"] = task_queue.get_stats()
-    except:
+    except Exception:
         stats["task_queue"] = {}
     return stats
 
@@ -580,7 +301,7 @@ async def get_genes():
         profile = gene_pool.get_expression_profile()
         profile["mutation_history"] = gene_pool.get_mutation_history(10)
         return profile
-    except:
+    except Exception:
         return {"genes": {}, "mutation_history": [], "radar": {}, "personality": "unknown"}
 
 @app.get("/api/skills")
@@ -589,7 +310,7 @@ async def get_skills():
     try:
         from core.skill_emergence import skill_emergence
         return skill_emergence.get_skill_stats()
-    except:
+    except Exception:
         return {"total_skills": 0, "mature_skills": 0, "top_skills": []}
 
 @app.get("/api/truths")
@@ -601,7 +322,7 @@ async def get_truths():
         stats["entropy"] = truth_accumulator.get_cognitive_entropy()
         stats["reorganization_candidates"] = len(truth_accumulator.get_reorganization_candidates())
         return stats
-    except:
+    except Exception:
         return {"total_truths": 0, "by_level": {}, "top_truths": [], "entropy": {}, "reorganization_candidates": 0}
 
 @app.get("/api/truths/entropy")
@@ -610,7 +331,7 @@ async def get_cognitive_entropy():
     try:
         from core.truth_accumulator import truth_accumulator
         return truth_accumulator.get_cognitive_entropy()
-    except:
+    except Exception:
         return {"entropy_score": 0, "status": "unknown"}
 
 @app.post("/api/truths/reorganization/propose")
@@ -657,7 +378,7 @@ async def get_models():
         if response.status_code == 200:
             models = response.json().get('models', [])
             return {"models": [{"name": m['name'], "type": "Ollama"} for m in models], "count": len(models)}
-    except:
+    except Exception:
         pass
     return {"models": [], "count": 0}
 
@@ -674,7 +395,7 @@ async def chat(request: dict):
         user_input, threat = input_sanitizer.sanitize(user_input)
         if threat:
             return {"success": True, "response": f"检测到潜在安全风险({threat})，输入已清理。请重新描述您的问题。", "model": model, "intent": "security_block", "confidence": 1.0}
-    except:
+    except Exception:
         user_input = (user_input or "").strip().rstrip("/\\|")
     
     from backend.chat_handler import chat_never_giveup
@@ -727,7 +448,7 @@ async def chat_stream(request: dict):
                 yield f"data: {{'type': 'content', 'content': '检测到潜在安全风险({threat})，输入已清理。请重新描述您的问题。'}}\n\n"
                 yield f"data: {{'type': 'done'}}\n\n"
             return StreamingResponse(_blocked_stream(), media_type="text/event-stream")
-    except:
+    except Exception:
         user_input = (user_input or "").strip().rstrip("/\\|")
     
     from backend.chat_stream import chat_stream as stream_generator
@@ -784,7 +505,7 @@ async def feedback(request: dict):
         )
         conn.commit()
         conn.close()
-    except:
+    except Exception:
         pass
     return {"success": True, "message": "感谢反馈"}
 
@@ -813,7 +534,7 @@ async def solve_history_query(query: str) -> str:
             return f"📜 最近的历史记录：\n{history_text}\n\n（完整历史功能开发中）"
         else:
             return "暂无历史记录。开始和我对话吧！"
-    except:
+    except Exception:
         return "历史记录功能正在初始化，请稍后再试。"
 
 async def query_knowledge_base(query: str) -> str:
@@ -826,7 +547,7 @@ async def query_knowledge_base(query: str) -> str:
         row = cursor.fetchone()
         conn.close()
         return row[0] if row else None
-    except:
+    except Exception:
         return None
 
 async def query_experience_pool(query: str) -> str:
@@ -839,7 +560,7 @@ async def query_experience_pool(query: str) -> str:
         row = cursor.fetchone()
         conn.close()
         return row[0] if row else None
-    except:
+    except Exception:
         return None
 
 def generate_rule_based_response(query: str, intent_type: str) -> str:
@@ -979,7 +700,7 @@ async def models_reload():
         if response.status_code == 200:
             models = response.json().get('models', [])
             return {"success": True, "added": [m['name'] for m in models], "total": len(models)}
-    except:
+    except Exception:
         pass
     return {"success": False, "added": [], "total": 0}
 
@@ -1136,21 +857,21 @@ async def get_knowledge_health():
             cur = conn.execute("SELECT COUNT(*) FROM knowledge")
             knowledge_total = cur.fetchone()[0]
             conn.close()
-        except:
+        except Exception:
             pass
         try:
             conn = sqlite3.connect("data/skills.db")
             cur = conn.execute("SELECT COUNT(*) FROM skills")
             skills_total = cur.fetchone()[0]
             conn.close()
-        except:
+        except Exception:
             pass
         try:
             conn = sqlite3.connect("data/learning_rules.db")
             cur = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
             rules_active = cur.fetchone()[0]
             conn.close()
-        except:
+        except Exception:
             pass
         total = knowledge_total + skills_total + rules_active
         score = min(100, total // 3)
@@ -1225,7 +946,7 @@ async def run_induction(request: dict):
                 cur = conn.execute("SELECT COUNT(*) FROM experiences WHERE created_at >= ?", (cutoff,))
                 recent = cur.fetchone()[0]
                 patterns = min(recent // 10, 5)
-        except:
+        except Exception:
             pass
         try:
             with sqlite3.connect("data/learning_rules.db") as conn:
@@ -1237,7 +958,7 @@ async def run_induction(request: dict):
                 promoted = cur2.rowcount
                 conn.commit()
                 rules = activated + promoted
-        except:
+        except Exception:
             pass
         return {
             "success": True,
@@ -1318,7 +1039,7 @@ async def browse_folder(request: dict):
                     "size": stat.st_size if item.is_file() else 0,
                     "modified": stat.st_mtime
                 })
-            except:
+            except Exception:
                 continue
         items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
         return {"success": True, "items": items, "path": str(folder)}
@@ -1491,13 +1212,13 @@ async def get_recent_learning():
                     try:
                         dt = datetime.fromisoformat(created)
                         time_str = dt.strftime("%m/%d %H:%M")
-                    except:
+                    except Exception:
                         time_str = str(created)[:10]
                 else:
                     time_str = ""
                 items.append({"content": f"[{intent}] {query}", "time": time_str})
             conn.close()
-        except:
+        except Exception:
             pass
         try:
             conn = sqlite3.connect("data/essence_reasoning.db", timeout=3)
@@ -1509,13 +1230,13 @@ async def get_recent_learning():
                     try:
                         dt = datetime.fromisoformat(created)
                         time_str = dt.strftime("%m/%d %H:%M")
-                    except:
+                    except Exception:
                         time_str = str(created)[:10]
                 else:
                     time_str = ""
                 items.append({"content": f"推理: {query}", "time": time_str})
             conn.close()
-        except:
+        except Exception:
             pass
         items.sort(key=lambda x: x.get("time", ""), reverse=True)
         return {"items": items[:8]}
@@ -1531,7 +1252,7 @@ async def get_reflection_stats():
         pipeline = get_reflection_pipeline()
         if pipeline:
             return pipeline.get_stats()
-    except:
+    except Exception:
         pass
     return {"total_reflections": 0, "status": "unavailable"}
 
@@ -1542,7 +1263,7 @@ async def get_module_health():
     try:
         from core.module_health import module_health
         return module_health.get_health_report()
-    except:
+    except Exception:
         return {"healthy": [], "degraded": [], "isolated": [], "unknown": []}
 
 
@@ -1552,7 +1273,7 @@ async def get_trajectory_stats():
     try:
         from core.trajectory_evolution import trajectory_store
         return trajectory_store.get_evolution_stats()
-    except:
+    except Exception:
         return {"total_trajectories": 0, "avg_fitness": 0, "status": "unavailable"}
 
 
@@ -1565,7 +1286,7 @@ async def search_trajectories(q: str = "", intent: str = "", limit: int = 5):
             results = trajectory_store.find_similar_trajectories(q, intent_type=intent or None, limit=limit)
             return {"trajectories": [{"id": r["id"], "query": r["query"][:50], "fitness": r["fitness_score"], "steps_count": len(json.loads(r["steps_json"]))} for r in results]}
         return {"trajectories": []}
-    except:
+    except Exception:
         return {"trajectories": []}
 
 
