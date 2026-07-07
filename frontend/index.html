@@ -63,6 +63,17 @@
                 </div>
 
                 <div class="panel">
+                    <h3>💬 对话历史 <button onclick="refreshChatHistory()" class="btn btn-secondary" style="float: right; padding: 2px 8px; font-size: 12px;">🔄</button></h3>
+                    <div id="chat-history-list" style="max-height:200px;overflow-y:auto;font-size:12px;">
+                        <p style="color:#999;font-size:11px;">暂无历史记录</p>
+                    </div>
+                    <div style="margin-top:6px;display:flex;gap:4px;">
+                        <input type="text" id="chat-history-search" placeholder="搜索对话..." style="flex:1;padding:4px 8px;font-size:12px;border:1px solid #ddd;border-radius:3px;" onkeydown="if(event.key==='Enter')searchChatHistory()">
+                        <button onclick="searchChatHistory()" class="btn btn-secondary" style="padding:2px 8px;font-size:11px;">🔍</button>
+                    </div>
+                </div>
+
+                <div class="panel">
                     <h3>⚡ 快捷操作</h3>
                     <button onclick="runOptimize()" class="btn btn-secondary">
                         🎯 运行优化
@@ -74,6 +85,13 @@
                     <button onclick="showFolderLearn()" class="btn btn-secondary">
                         📁 文件夹学习
                     </button>
+                </div>
+
+                <div class="panel">
+                    <h3>🔥 最近学习</h3>
+                    <div id="recent-learning" class="recent-list">
+                        <p style="color: #666; font-size: 12px;">暂无学习记录</p>
+                    </div>
                 </div>
                 
                 <!-- 外部模型配置模态框 -->
@@ -170,8 +188,7 @@
                 <div id="messages" class="messages">
                     <div class="message system">
                         <div class="message-content">
-                            <p>👋 欢迎使用联盟拓荒者！</p>
-                            <p>我可以帮助你完成各种任务，包括代码生成、问题解答、数据分析等。</p>
+                            <p>嘿，我在。有什么想聊的，或者遇到了什么问题？我们一起看看。</p>
                         </div>
                     </div>
                 </div>
@@ -234,32 +251,29 @@
                             <div class="bar-track">
                                 <div class="bar-fill" id="bar-coverage" style="width: 0%"></div>
                             </div>
+                            <span id="val-coverage" style="font-size:11px;color:#666;margin-left:4px;">0%</span>
                         </div>
                         <div class="vitality-bar">
                             <span class="bar-label">质量评分</span>
                             <div class="bar-track">
                                 <div class="bar-fill" id="bar-quality" style="width: 0%"></div>
                             </div>
+                            <span id="val-quality" style="font-size:11px;color:#666;margin-left:4px;">0%</span>
                         </div>
                         <div class="vitality-bar">
                             <span class="bar-label">记忆结构</span>
                             <div class="bar-track">
                                 <div class="bar-fill" id="bar-memory" style="width: 0%"></div>
                             </div>
+                            <span id="val-memory" style="font-size:11px;color:#666;margin-left:4px;">0%</span>
                         </div>
                         <div class="vitality-bar">
                             <span class="bar-label">技能应用</span>
                             <div class="bar-track">
                                 <div class="bar-fill" id="bar-skills" style="width: 0%"></div>
                             </div>
+                            <span id="val-skills" style="font-size:11px;color:#666;margin-left:4px;">0%</span>
                         </div>
-                    </div>
-                </div>
-                
-                <div class="panel">
-                    <h3>🔥 最近学习</h3>
-                    <div id="recent-learning" class="recent-list">
-                        <p style="color: #666; font-size: 12px;">暂无学习记录</p>
                     </div>
                 </div>
 
@@ -319,7 +333,65 @@
                             <span>检索策略</span>
                             <span id="rs-retrieval">--</span>
                         </div>
+                        <div id="hw-temps" style="margin-top:8px;padding-top:8px;border-top:1px solid #eee;">
+                            <div style="font-size:11px;color:#888;margin-bottom:4px;">🌡️ 硬件温度</div>
+                            <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+                                <span>CPU</span>
+                                <span id="hw-cpu-temp" style="font-weight:bold;">--</span>
+                            </div>
+                            <div style="margin-bottom:3px;">
+                                <div style="background:#e0e0e0;border-radius:3px;height:4px;overflow:hidden;">
+                                    <div id="hw-cpu-bar" style="background:#4CAF50;height:100%;width:0%;transition:width 0.5s;"></div>
+                                </div>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+                                <span>GPU</span>
+                                <span id="hw-gpu-temp" style="font-weight:bold;">--</span>
+                            </div>
+                            <div style="margin-bottom:3px;">
+                                <div style="background:#e0e0e0;border-radius:3px;height:4px;overflow:hidden;">
+                                    <div id="hw-gpu-bar" style="background:#2196F3;height:100%;width:0%;transition:width 0.5s;"></div>
+                                </div>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+                                <span>GPU使用率</span>
+                                <span id="hw-gpu-usage">--</span>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+                                <span>GPU频率</span>
+                                <span id="hw-gpu-clock">--</span>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;">
+                                <span>GPU风扇</span>
+                                <span id="hw-gpu-fan">--</span>
+                            </div>
+                        </div>
                         <div id="rs-hardware" style="margin-top:6px;padding-top:6px;border-top:1px solid #eee;font-size:11px;color:#888;"></div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h3>🛡️ 系统全景 <button onclick="refreshSystemPanorama()" class="btn btn-secondary" style="float: right; padding: 2px 8px; font-size: 12px;">🔄</button></h3>
+                    <div style="display:flex;gap:2px;margin-bottom:8px;flex-wrap:wrap;">
+                        <button onclick="switchPanoramaTab('defense')" id="pan-tab-defense" class="btn btn-secondary" style="font-size:11px;padding:2px 6px;border-radius:3px;">防御</button>
+                        <button onclick="switchPanoramaTab('presence')" id="pan-tab-presence" class="btn btn-secondary" style="font-size:11px;padding:2px 6px;border-radius:3px;">存在</button>
+                        <button onclick="switchPanoramaTab('assessment')" id="pan-tab-assessment" class="btn btn-secondary" style="font-size:11px;padding:2px 6px;border-radius:3px;">评估</button>
+                        <button onclick="switchPanoramaTab('genes')" id="pan-tab-genes" class="btn btn-secondary" style="font-size:11px;padding:2px 6px;border-radius:3px;">基因</button>
+                        <button onclick="switchPanoramaTab('cognitive')" id="pan-tab-cognitive" class="btn btn-secondary" style="font-size:11px;padding:2px 6px;border-radius:3px;">认知</button>
+                        <button onclick="switchPanoramaTab('agents')" id="pan-tab-agents" class="btn btn-secondary" style="font-size:11px;padding:2px 6px;border-radius:3px;">协作</button>
+                        <button onclick="switchPanoramaTab('facts')" id="pan-tab-facts" class="btn btn-secondary" style="font-size:11px;padding:2px 6px;border-radius:3px;">事实</button>
+                        <button onclick="switchPanoramaTab('memory')" id="pan-tab-memory" class="btn btn-secondary" style="font-size:11px;padding:2px 6px;border-radius:3px;">记忆</button>
+                        <button onclick="switchPanoramaTab('tools')" id="pan-tab-tools" class="btn btn-secondary" style="font-size:11px;padding:2px 6px;border-radius:3px;">工具</button>
+                        <button onclick="switchPanoramaTab('relation')" id="pan-tab-relation" class="btn btn-secondary" style="font-size:11px;padding:2px 6px;border-radius:3px;">关系</button>
+                        <button onclick="switchPanoramaTab('system')" id="pan-tab-system" class="btn btn-secondary" style="font-size:11px;padding:2px 6px;border-radius:3px;">系统</button>
+                        <button onclick="switchPanoramaTab('introspection')" id="pan-tab-introspection" class="btn btn-secondary" style="font-size:11px;padding:2px 6px;border-radius:3px;">内省</button>
+                        <button onclick="switchPanoramaTab('knowledgegraph')" id="pan-tab-knowledgegraph" class="btn btn-secondary" style="font-size:11px;padding:2px 6px;border-radius:3px;">图谱</button>
+                        <button onclick="switchPanoramaTab('alignment')" id="pan-tab-alignment" class="btn btn-secondary" style="font-size:11px;padding:2px 6px;border-radius:3px;">对齐</button>
+                        <button onclick="switchPanoramaTab('audit')" id="pan-tab-audit" class="btn btn-secondary" style="font-size:11px;padding:2px 6px;border-radius:3px;">审核</button>
+                        <button onclick="switchPanoramaTab('cbnr')" id="pan-tab-cbnr" class="btn btn-secondary" style="font-size:11px;padding:2px 6px;border-radius:3px;">CBNR</button>
+                    </div>
+                    <div id="panorama-content" style="font-size:12px;min-height:60px;">
+                        <p style="color:#999;font-size:11px;">点击标签查看子系统状态</p>
                     </div>
                 </div>
 
@@ -379,6 +451,6 @@
         </footer>
     </div>
 
-    <script src="/frontend/app.js?v=3.5.0"></script>
+    <script src="/frontend/app.js?v=3.5.3"></script>
 </body>
 </html>

@@ -226,3 +226,31 @@ class RatchetGate:
 
 
 ratchet_gate = RatchetGate()
+
+
+def guard_change(domain: str, quality_score: float, description: str = "",
+                 block_on_reject: bool = False) -> Tuple[bool, RatchetDecision]:
+    """
+    全链路棘轮守卫 — 在关键变更前调用
+    
+    Args:
+        domain: 变更域 (cbnr/knowledge_graph/truth/experience/genome/chat_response)
+        quality_score: 变更的质量分数 [0, 1]
+        description: 变更描述
+        block_on_reject: True=拒绝时阻断变更, False=影子模式(仅记录)
+    
+    Returns:
+        (proceed, decision) — proceed=True表示可以继续, decision包含详细信息
+    """
+    decision = ratchet_gate.validate(quality_score, domain=domain)
+    
+    if not decision.approved:
+        if block_on_reject:
+            logger.warning(f"棘轮守卫阻断: {domain} | {description[:60]} | {decision.reason}")
+            return False, decision
+        else:
+            logger.info(f"棘轮守卫影子记录: {domain} | {description[:60]} | {decision.reason}")
+            return True, decision
+    
+    ratchet_gate.promote(domain)
+    return True, decision

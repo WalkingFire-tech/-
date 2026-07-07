@@ -64,8 +64,15 @@ class CognitiveTransformer:
         动作：生成工具函数，标记原始记忆为"已转化"
         """
         skills_created = 0
+        MAX_AUTO_TOOLS = 30
         
         with sqlite3.connect(self.db_path) as conn:
+            existing_count = conn.execute("SELECT COUNT(*) FROM tools WHERE enabled=1").fetchone()[0]
+            if existing_count >= MAX_AUTO_TOOLS:
+                logger.debug(f"自动工具已达上限({MAX_AUTO_TOOLS})，跳过技能转化")
+                return 0
+            
+            remaining_slots = MAX_AUTO_TOOLS - existing_count
             conn.row_factory = sqlite3.Row
             
             # 统计L3情景记忆中的高频问题模式
@@ -84,6 +91,8 @@ class CognitiveTransformer:
             candidates = cur.fetchall()
             
             for row in candidates:
+                if skills_created >= remaining_slots:
+                    break
                 question = row['question']
                 answer = row['answer']
                 freq = row['freq']

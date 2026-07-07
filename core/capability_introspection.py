@@ -423,8 +423,8 @@ class DynamicCapabilityScheduler:
                 return {"success": bool(result), "result": result}
                 
             elif capability == "向量检索":
-                from core.vector_retriever import vector_retriever
-                results = vector_retriever.hybrid_search(problem, top_k=3)
+                from infrastructure.vector_retriever import vector_retriever
+                results = vector_retriever.search_similar(problem, k=3)
                 return {"success": bool(results), "results": results}
                 
             elif capability == "闭环推理":

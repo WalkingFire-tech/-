@@ -156,6 +156,8 @@ class SemanticMatcher:
     def _load_model(self):
         """加载语义编码模型"""
         try:
+            os.environ['HF_HUB_OFFLINE'] = '1'
+            os.environ['TRANSFORMERS_OFFLINE'] = '1'
             from sentence_transformers import SentenceTransformer
             self.model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
         except:

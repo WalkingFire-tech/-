@@ -177,11 +177,11 @@ class ProactivityEngine:
         
         if silence >= threshold and context.relationship_trust >= 0.7:
             timing_score = min(1.0, silence / threshold / 2)
-            
+            content = self._get_dynamic_content("greeting", f"用户沉默{silence/60:.0f}分钟")
             return ProactivityDecision(
                 should_act=True,
                 action_type=ProactivityType.GREETING,
-                content="好久不见，有什么我可以帮助你的吗？",
+                content=content,
                 reason=f"用户沉默{silence/60:.0f}分钟",
                 confidence=context.relationship_trust,
                 timing_score=timing_score,
@@ -211,10 +211,11 @@ class ProactivityEngine:
                 timing_score=0.0,
             )
         
+        content = self._get_dynamic_content("follow_up", "跟进上次对话")
         return ProactivityDecision(
             should_act=True,
             action_type=ProactivityType.FOLLOW_UP,
-            content="之前我们讨论的事情，你有什么新的想法吗？",
+            content=content,
             reason="跟进上次对话",
             confidence=0.6,
             timing_score=0.7,
@@ -245,10 +246,11 @@ class ProactivityEngine:
                 timing_score=0.0,
             )
         
+        content = self._get_dynamic_content("insight", "发现新洞察")
         return ProactivityDecision(
             should_act=True,
             action_type=ProactivityType.INSIGHT_SHARING,
-            content="我在思考中发现了有趣的模式，想和你分享。",
+            content=content,
             reason="发现新洞察",
             confidence=0.7,
             timing_score=0.8,
@@ -269,15 +271,70 @@ class ProactivityEngine:
                 timing_score=0.0,
             )
         
+        content = self._get_dynamic_content("learning", "学习进展")
         return ProactivityDecision(
             should_act=True,
             action_type=ProactivityType.LEARNING_UPDATE,
-            content="我最近学到了一些新东西，可能对你有帮助。",
+            content=content,
             reason="学习进展",
             confidence=0.6,
             timing_score=0.6,
         )
     
+    def _get_dynamic_content(self, action_type: str, fallback_reason: str) -> str:
+        try:
+            if action_type == "greeting":
+                import sqlite3
+                conn = sqlite3.connect("data/experience_pool.db")
+                cur = conn.execute(
+                    "SELECT raw_input FROM experiences WHERE intent_type != 'proactivity' ORDER BY timestamp DESC LIMIT 1"
+                )
+                row = cur.fetchone()
+                conn.close()
+                if row and row[0]:
+                    topic = row[0][:40]
+                    return f"好久不见！上次我们聊到了「{topic}」，还想继续吗？"
+                return "好久不见，有什么我可以帮助你的吗？"
+
+            elif action_type == "follow_up":
+                import sqlite3
+                conn = sqlite3.connect("data/experience_pool.db")
+                cur = conn.execute(
+                    "SELECT raw_input, response FROM experiences WHERE intent_type != 'proactivity' AND quality_score >= 50 ORDER BY timestamp DESC LIMIT 1"
+                )
+                row = cur.fetchone()
+                conn.close()
+                if row and row[0]:
+                    return f"之前我们讨论的「{row[0][:30]}」，你有什么新的想法吗？"
+                return "之前我们讨论的事情，你有什么新的想法吗？"
+
+            elif action_type == "insight":
+                from core.knowledge_graph import get_knowledge_graph
+                kg = get_knowledge_graph()
+                clusters = kg.find_clusters()
+                if clusters and len(clusters) > 0:
+                    largest = max(clusters, key=lambda c: len(c.node_ids))
+                    nodes = [kg.get_node(nid) for nid in largest.node_ids[:3]]
+                    names = [n.content[:15] for n in nodes if n]
+                    if names:
+                        return f"我发现「{'」和「'.join(names)}」之间有有趣的关联，想和你聊聊。"
+                return "我在思考中发现了有趣的模式，想和你分享。"
+
+            elif action_type == "learning":
+                import sqlite3
+                conn = sqlite3.connect("data/truths.db")
+                cur = conn.execute(
+                    "SELECT content FROM truths ORDER BY created_at DESC LIMIT 1"
+                )
+                row = cur.fetchone()
+                conn.close()
+                if row and row[0]:
+                    return f"我最近领悟到：{row[0][:60]}，可能对你有帮助。"
+                return "我最近学到了一些新东西，可能对你有帮助。"
+
+        except Exception:
+            pass
+        return fallback_reason
     def execute(
         self,
         decision: ProactivityDecision,

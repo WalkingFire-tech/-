@@ -133,7 +133,9 @@ class CognitiveDispatcher:
                 "历史", "记录", "历史记录", "查看历史", "显示历史", "聊天记录"
             ],
             "simple_query": [
-                "是什么", "什么是", "怎么读", "多少", "什么时候"
+                "是什么", "什么是", "怎么读", "多少", "什么时候",
+                "能做", "做什么", "有哪些", "能什么", "干什么", "会什么", "有什么用", "能帮我",
+                "等于", "加", "减", "乘", "除", "计算"
             ],
             "complex_query": [
                 "为什么", "如何实现", "怎么优化", "分析", "比较",
@@ -142,10 +144,40 @@ class CognitiveDispatcher:
                 "架构", "思路", "原理", "机制", "体系"
             ],
             "learning_trigger": [
-                "我不懂", "不明白", "什么是", "介绍一下", "解释一下"
+                "我不懂", "不明白", "介绍一下", "解释一下",
+                "教我", "告诉我", "说明一下", "讲讲", "说说"
             ]
         }
     
+    def _assess_urgency_confusion(self, query: str) -> Dict[str, float]:
+        urgency_keywords = ['紧急', '急', '马上', '立刻', '赶紧', '快点', 'urgent', 'asap', 'immediately', 'now']
+        confusion_keywords = ['不确定', '不太确定', '困惑', '迷茫', '不懂', '不明白', '什么意思', '为什么', '怎么回事', '怎么用', '怎么搞', '怎么办', 'confused', 'what', 'why', 'how']
+        repeat_markers = ['还是', '又', '还是不行', '还是不对', '还是没解决', 'still', 'again']
+
+        query_lower = query.lower()
+        urgency = 0.0
+        confusion = 0.0
+
+        for kw in urgency_keywords:
+            if kw in query_lower:
+                urgency += 0.3
+        urgency = min(urgency, 1.0)
+
+        for kw in confusion_keywords:
+            if kw in query_lower:
+                confusion += 0.25
+        for kw in repeat_markers:
+            if kw in query_lower:
+                confusion += 0.2
+        confusion = min(confusion, 1.0)
+
+        if query.endswith('???') or query.endswith('！！！'):
+            urgency = min(urgency + 0.3, 1.0)
+        if '?' in query or '？' in query:
+            confusion = min(confusion + 0.1, 1.0)
+
+        return {"urgency": urgency, "confusion": confusion}
+
     def dispatch(self, user_query: str, context: Dict = None) -> Dict[str, Any]:
         """
         调度决策 - 返回执行计划
@@ -165,15 +197,27 @@ class CognitiveDispatcher:
         # ========== 第一步：快速意图分类（System 1） ==========
         intent_type, confidence = self._quick_intent_classification(user_query)
         
-        logger.info(f"🎯 意图分类: {intent_type} (置信度: {confidence:.0%})")
+        # ========== 第一步半：紧迫度/困惑度信号 ==========
+        signals = self._assess_urgency_confusion(user_query)
+        
+        logger.info(f"🎯 意图分类: {intent_type} (置信度: {confidence:.0%}) | 紧迫度: {signals['urgency']:.1f} 困惑度: {signals['confusion']:.1f}")
         
         # ========== 第二步：复杂度评估 ==========
         complexity = self._evaluate_complexity(user_query, intent_type)
+        
+        # 高困惑度提升复杂度（用户困惑时需要更深入的回答）
+        if signals['confusion'] > 0.5:
+            complexity = min(complexity + 0.15, 1.0)
         
         logger.info(f"📊 复杂度: {complexity:.0%}")
         
         # ========== 第三步：路由决策 ==========
         route = self._decide_route(intent_type, complexity, confidence)
+        
+        # 高紧迫度时，慢路径降级为快路径（紧急问题优先快速响应）
+        if signals['urgency'] > 0.7 and route == "slow":
+            route = "fast"
+            logger.info(f"⚡ 高紧迫度({signals['urgency']:.1f})，慢路径降级为快路径")
         
         logger.info(f"🔀 路由决策: {route}")
         
@@ -184,6 +228,8 @@ class CognitiveDispatcher:
                 "complexity": complexity,
                 "intent_type": intent_type,
                 "confidence": confidence,
+                "urgency": signals['urgency'],
+                "confusion": signals['confusion'],
                 "capabilities": {"tools": [], "models": [], "knowledge_bases": []},
                 "execution_plan": {"tasks": []},
                 "reasoning": f"简单意图({intent_type})，快速响应",
@@ -215,6 +261,8 @@ class CognitiveDispatcher:
             "complexity": complexity,
             "intent_type": intent_type,
             "confidence": confidence,
+            "urgency": signals['urgency'],
+            "confusion": signals['confusion'],
             "capabilities": capabilities,
             "execution_plan": execution_plan,
             "reasoning": self._explain_routing(route, intent_type, complexity),
@@ -274,8 +322,74 @@ class CognitiveDispatcher:
         except Exception as e:
             logger.debug(f"向量意图匹配失败: {e}")
         
+        # 语义级意图推断：分析query的语义结构而非关键词
+        semantic_result = self._semantic_intent_inference(query)
+        if semantic_result:
+            return semantic_result
+        
         # 默认：复杂查询
         return "complex_query", 0.5
+    
+    def _semantic_intent_inference(self, query: str) -> Optional[Tuple[str, float]]:
+        """
+        语义级意图推断——理解用户在问什么，而非匹配关键词
+        
+        分析维度：
+        1. 语句结构：疑问/陈述/祈使
+        2. 信息需求：事实/方法/观点/能力
+        3. 复杂度信号：多从句/条件/对比
+        """
+        import re
+        
+        has_question_mark = '？' in query or '?' in query
+        
+        capability_patterns = [
+            r'你(?:能|可以|会|可)(?:做|帮|给|提供|完成|处理|解决|回答|解释|分析)',
+            r'(?:有|具备)什么(?:能力|功能|本领|特点)',
+            r'(?:介绍|说说|讲讲)(?:一下|一下你自己)?(?:你|自己)',
+        ]
+        if any(re.search(p, query) for p in capability_patterns):
+            return "simple_query", 0.8
+        
+        code_patterns = [
+            r'(?:写|编写|实现|开发|创建)(?:一个|一段|个)?(?:函数|代码|程序|脚本|类|模块)',
+            r'(?:帮我|请帮我|麻烦)(?:写|编|做|实现)',
+            r'(?:debug|调试|修复|fix|bug)',
+        ]
+        if any(re.search(p, query) for p in code_patterns):
+            return "complex_query", 0.8
+        
+        method_patterns = [
+            r'怎么.{0,4}(?:做|办|解决|处理|实现|操作)',
+            r'如何.{0,4}(?:做|办|解决|处理|实现|操作)',
+            r'(?:步骤|方法|流程|过程|方式)',
+        ]
+        if any(re.search(p, query) for p in method_patterns):
+            return "complex_query", 0.75
+        
+        factual_patterns = [
+            r'(?:是什么|什么是|定义|含义|意思|指的)',
+            r'(?:多少|几|何时|什么时候|哪里|哪儿)',
+            r'(?:等于|是否|有没有|是不是)',
+        ]
+        if any(re.search(p, query) for p in factual_patterns):
+            return "simple_query", 0.75
+        
+        causal_patterns = [
+            r'为什么.{0,6}(?:会|能|是|要|有)',
+            r'(?:原因|缘故|缘由|根源)',
+            r'(?:导致|引起|造成|使得).{0,6}(?:什么|为何|为什么)',
+        ]
+        if any(re.search(p, query) for p in causal_patterns):
+            return "complex_query", 0.8
+        
+        if has_question_mark and len(query) < 15:
+            return "simple_query", 0.65
+        
+        if len(query) < 6 and not has_question_mark:
+            return "greeting", 0.6
+        
+        return None
     
     def _vector_intent_match(self, query: str) -> Optional[Tuple[str, float]]:
         """向量相似度意图匹配（降级为规则匹配）"""

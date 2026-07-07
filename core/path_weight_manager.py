@@ -157,7 +157,7 @@ class PathWeightManager:
         self._save_path_weight(path)
 
         logger.debug(f"路径权重更新: {path} {old_weight:.4f}→{self._paths[path]['weight']:.4f} "
-                      f"({'✓' if success else '✗'} conf={confidence:.2f} unc={uncertainty:.2f if uncertainty else 'N/A'})")
+                      f"({'✓' if success else '✗'} conf={confidence:.2f} unc={uncertainty:.2f if uncertainty is not None else 'N/A'})")
 
     def _normalize(self):
         total = sum(info["weight"] for info in self._paths.values())

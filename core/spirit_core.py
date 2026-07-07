@@ -46,7 +46,7 @@
 ╚════════════════════════════════════════════════════════════════════════════╝
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Final
 from loguru import logger
 import time
 import sqlite3
@@ -55,7 +55,55 @@ import threading
 from datetime import datetime
 
 
-class SpiritCore:
+class _ImmutableNamespace:
+    """不可变命名空间 — 阻止运行时修改核心常量"""
+    __slots__ = ('_data',)
+
+    def __init__(self, data: dict):
+        object.__setattr__(self, '_data', dict(data))
+
+    def __getattr__(self, name):
+        try:
+            return self._data[name]
+        except KeyError:
+            raise AttributeError(f"不可变命名空间无属性 '{name}'")
+
+    def __setattr__(self, name, value):
+        raise AttributeError(f"核心常量不可修改: {name}")
+
+    def __delattr__(self, name):
+        raise AttributeError(f"核心常量不可删除: {name}")
+
+    def __contains__(self, item):
+        return item in self._data
+
+    def __iter__(self):
+        return iter(self._data.values())
+
+
+class _SpiritCoreMeta(type):
+    """元类 — 阻止运行时修改SpiritCore的核心常量"""
+    _IMMUTABLE_ATTRS = frozenset({
+        'PRINCIPLE_NEVER_GIVE_UP', 'PRINCIPLE_MEANINGFUL_RESPONSE',
+        'PRINCIPLE_LOGICAL_SELF_CONSISTENT', 'PRINCIPLE_LEARNING_FROM_FAILURE',
+        'PRINCIPLE_STATE_SYNC', 'PRINCIPLE_PURSUE_ESSENCE',
+        'PRINCIPLE_HONEST_WHEN_LOST', 'PRINCIPLE_MULTI_SOURCE_VERIFY',
+        'META_LAW_SANDBOX', 'META_LAW_GRADUAL', 'META_LAW_HUMAN_APPROVAL',
+        'ABILITIES', '_PRINCIPLES', '_META_LAWS',
+    })
+
+    def __setattr__(cls, name, value):
+        if name in cls._IMMUTABLE_ATTRS:
+            raise AttributeError(f"精神内核常量不可修改: {name}")
+        super().__setattr__(name, value)
+
+    def __delattr__(cls, name):
+        if name in cls._IMMUTABLE_ATTRS:
+            raise AttributeError(f"精神内核常量不可删除: {name}")
+        super().__delattr__(name)
+
+
+class SpiritCore(metaclass=_SpiritCoreMeta):
     """
     精神内核 - 系统最底层的核心
     
@@ -63,23 +111,41 @@ class SpiritCore:
     无论框架如何重构，这些原则永远不变。
     """
     
-    # ========== 核心原则（常量，不可修改） ==========
-    PRINCIPLE_NEVER_GIVE_UP = "永不放弃是元能力"
-    PRINCIPLE_MEANINGFUL_RESPONSE = "即使失败也给出有意义的回复"
-    PRINCIPLE_LOGICAL_SELF_CONSISTENT = "所有回答都必须逻辑清晰有理有据且自洽"
-    PRINCIPLE_LEARNING_FROM_FAILURE = "每次失败都是学习机会"
-    PRINCIPLE_STATE_SYNC = "回复是状态同步，不是结束动作"
-    PRINCIPLE_PURSUE_ESSENCE = "追求本质——从第一性原理出发，追溯本源，不满足于表面答案"
-    PRINCIPLE_HONEST_WHEN_LOST = "困惑时坦诚——宁可诚实罗列分歧，不可强行牵强融合"
-    PRINCIPLE_MULTI_SOURCE_VERIFY = "多源交叉验证——不依赖单一来源，综合批判性获取最真实最本质的东西"
+    # ========== 核心原则（不可修改） ==========
+    _PRINCIPLES = _ImmutableNamespace({
+        "NEVER_GIVE_UP": "永不放弃是元能力",
+        "MEANINGFUL_RESPONSE": "即使失败也给出有意义的回复",
+        "LOGICAL_SELF_CONSISTENT": "所有回答都必须逻辑清晰有理有据且自洽",
+        "LEARNING_FROM_FAILURE": "每次失败都是学习机会",
+        "STATE_SYNC": "回复是状态同步，不是结束动作",
+        "PURSUE_ESSENCE": "追求本质——从第一性原理出发，追溯本源，不满足于表面答案",
+        "HONEST_WHEN_LOST": "困惑时坦诚——宁可诚实罗列分歧，不可强行牵强融合",
+        "MULTI_SOURCE_VERIFY": "多源交叉验证——不依赖单一来源，综合批判性获取最真实最本质的东西",
+    })
+
+    # ========== 元宪法——认知重组铁律（不可修改） ==========
+    _META_LAWS = _ImmutableNamespace({
+        "SANDBOX": "未经沙盒验证的真谛，视同毒药",
+        "GRADUAL": "未经渐进式注入的重组，视同自杀",
+        "HUMAN_APPROVAL": "未经人类批准的进化，视同背叛",
+    })
     
-    # ========== 元宪法——认知重组铁律 ==========
-    META_LAW_SANDBOX = "未经沙盒验证的真谛，视同毒药"
-    META_LAW_GRADUAL = "未经渐进式注入的重组，视同自杀"
-    META_LAW_HUMAN_APPROVAL = "未经人类批准的进化，视同背叛"
+    # 兼容旧代码的类属性访问（只读代理）
+    PRINCIPLE_NEVER_GIVE_UP: Final[str] = "永不放弃是元能力"
+    PRINCIPLE_MEANINGFUL_RESPONSE: Final[str] = "即使失败也给出有意义的回复"
+    PRINCIPLE_LOGICAL_SELF_CONSISTENT: Final[str] = "所有回答都必须逻辑清晰有理有据且自洽"
+    PRINCIPLE_LEARNING_FROM_FAILURE: Final[str] = "每次失败都是学习机会"
+    PRINCIPLE_STATE_SYNC: Final[str] = "回复是状态同步，不是结束动作"
+    PRINCIPLE_PURSUE_ESSENCE: Final[str] = "追求本质——从第一性原理出发，追溯本源，不满足于表面答案"
+    PRINCIPLE_HONEST_WHEN_LOST: Final[str] = "困惑时坦诚——宁可诚实罗列分歧，不可强行牵强融合"
+    PRINCIPLE_MULTI_SOURCE_VERIFY: Final[str] = "多源交叉验证——不依赖单一来源，综合批判性获取最真实最本质的东西"
     
-    # ========== 能力定义 ==========
-    ABILITIES = {
+    META_LAW_SANDBOX: Final[str] = "未经沙盒验证的真谛，视同毒药"
+    META_LAW_GRADUAL: Final[str] = "未经渐进式注入的重组，视同自杀"
+    META_LAW_HUMAN_APPROVAL: Final[str] = "未经人类批准的进化，视同背叛"
+    
+    # ========== 能力定义（不可修改） ==========
+    ABILITIES: Final[dict] = {
         "good_thinking": "有好的思路去解决问题",
         "good_habits": "有好的习惯",
         "method_creation": "有好的方法或创造方法的方法",
@@ -94,7 +160,8 @@ class SpiritCore:
         "honest_when_lost": "困惑时坦诚——诚实罗列分歧而非强行融合",
         "multi_source_verify": "多源交叉验证——综合批判性获取真相"
     }
-    
+
+
     def __init__(self):
         self.lesson_book = []
         self.success_patterns = []
@@ -103,11 +170,27 @@ class SpiritCore:
         self._total_validations = 0
         self._lock = threading.Lock()
         self._init_lesson_db()
+
+    def __setattr__(self, name, value):
+        if name in _SpiritCoreMeta._IMMUTABLE_ATTRS:
+            raise AttributeError(f"精神内核常量不可修改: {name}")
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name):
+        if name in _SpiritCoreMeta._IMMUTABLE_ATTRS:
+            raise AttributeError(f"精神内核常量不可删除: {name}")
+        object.__delattr__(self, name)
+    
+    def _db_connect(self):
+        conn = sqlite3.connect("data/spirit_lessons.db", timeout=10.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
     
     def _init_lesson_db(self):
         """初始化教训持久化数据库"""
         try:
-            conn = sqlite3.connect("data/spirit_lessons.db")
+            conn = self._db_connect()
             cursor = conn.cursor()
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS lessons (
@@ -134,38 +217,154 @@ class SpiritCore:
         
     def validate_response(self, response: str, context: Dict = None) -> Dict[str, Any]:
         """
-        验证回复是否符合核心原则
+        验证回复是否符合核心原则（8维度细粒度验证）
         
         所有回复必须通过这个验证才能返回给用户
+        维度对应8条核心原则：
+        1. 有意义回复（非空非敷衍）
+        2. 永不放弃（不轻易放弃）
+        3. 逻辑自洽（无自相矛盾）
+        4. 失败有方向（失败时给出处理方向）
+        5. 状态同步（回复不是终结而是状态）
+        6. 追求本质（不满足于表面答案）
+        7. 困惑时坦诚（不强行融合矛盾）
+        8. 多源验证（不依赖单一来源）
         """
         issues = []
+        checks = {}
+        query = (context or {}).get("query", "")
+        content_understanding = (context or {}).get("content_understanding", {})
+        is_simple_fact = content_understanding.get("claim_type") in ("factual", "descriptive") and not content_understanding.get("has_causal_assertions", False)
         
-        # 检查1：回复是否为空或过于简单
+        # === 维度1：有意义回复 ===
         if not response or len(response.strip()) < 10:
             issues.append("回复过于简单，不符合'有意义回复'原则")
+            checks["meaningful"] = False
+        else:
+            perfunctory_keywords = ["我不知道", "无法回答", "请稍后", "系统错误"]
+            has_perfunctory = any(kw in response and len(response) < 50 for kw in perfunctory_keywords)
+            if has_perfunctory:
+                issues.append("回复包含敷衍性语言，不符合'有意义回复'原则")
+                checks["meaningful"] = False
+            elif is_simple_fact and len(response) >= 10:
+                checks["meaningful"] = True
+            elif content_understanding.get("has_numerical_assertions") or content_understanding.get("has_causal_assertions") or content_understanding.get("has_mechanism_descriptions"):
+                checks["meaningful"] = True
+            elif len(response) > 30 and not any(kw in response for kw in ["因为", "由于", "原因是", "所以", "因此", "意味着", "说明", "表明", "因为", "由于", "所以", "因此", "通过", "利用", "基于", "根据"]):
+                if len(response) < 80:
+                    issues.append("回复缺乏解释性内容，不符合'有意义回复'原则")
+                    checks["meaningful"] = False
+                else:
+                    checks["meaningful"] = True
+            else:
+                checks["meaningful"] = True
         
-        # 检查2：是否包含敷衍性语言（仅在回复很短时判定）
-        perfunctory_keywords = ["我不知道", "无法回答", "请稍后", "系统错误"]
-        for keyword in perfunctory_keywords:
-            if keyword in response and len(response) < 50:
-                issues.append(f"回复包含敷衍性语言'{keyword}'，不符合'永不放弃'精神")
+        # === 维度2：永不放弃 ===
+        give_up_phrases = ["我放弃了", "无法继续", "不再尝试", "彻底失败"]
+        has_give_up = any(phrase in response for phrase in give_up_phrases)
+        if has_give_up:
+            issues.append("回复包含放弃性语言，违反'永不放弃'元能力")
+            checks["never_give_up"] = False
+        else:
+            checks["never_give_up"] = True
         
-        # 检查3：是否为纯失败报告（仅当回复是失败模板格式时判定）
-        # 关键修改：长回复中包含"无法"不等于失败回复
-        # 只有当回复以失败报告开头且没有实质内容时才判定
+        # === 维度3：逻辑自洽 ===
+        contradiction_pairs = [
+            ("不可能", "可以"), ("无法", "可以"),
+            ("错误", "正确"),
+        ]
+        has_contradiction = False
+        import re as _re
+        sentences = _re.split(r'[。！？；\n]', response)
+        for w1, w2 in contradiction_pairs:
+            for sent in sentences:
+                if len(sent) > 3 and w1 in sent and w2 in sent:
+                    has_contradiction = True
+                    break
+            if has_contradiction:
+                break
+        if has_contradiction:
+            issues.append("回复可能存在自相矛盾，需检查逻辑自洽性")
+            checks["logical"] = False
+        else:
+            checks["logical"] = True
+        
+        # === 维度4：失败有方向 ===
         is_failure_report = (
             response.strip().startswith("🎯 关于") and
-            "我已穷尽" in response and
-            "❌ 失败" in response
+            "我已穷尽" in response
         )
         if is_failure_report:
-            if "建议" not in response and "方向" not in response and "尝试" not in response:
+            has_direction = any(kw in response for kw in ["建议", "方向", "尝试", "可以", "考虑"])
+            if not has_direction:
                 issues.append("失败回复未给出处理方向，不符合'有意义回复'原则")
+                checks["failure_direction"] = False
+            else:
+                checks["failure_direction"] = True
+        else:
+            checks["failure_direction"] = True
+        
+        # === 维度5：状态同步（回复不是终结） ===
+        closing_phrases = ["到此结束", "不再讨论", "最终答案，不接受质疑"]
+        is_closing = any(phrase in response for phrase in closing_phrases)
+        if is_closing:
+            issues.append("回复呈现终结态度，不符合'状态同步'原则")
+            checks["state_sync"] = False
+        else:
+            checks["state_sync"] = True
+        
+        # === 维度6：追求本质 ===
+        shallow_patterns = ["就是这样", "反正就是", "别问为什么"]
+        is_shallow = any(p in response for p in shallow_patterns) and len(response) < 100
+        if is_shallow:
+            issues.append("回复过于表面，不符合'追求本质'原则")
+            checks["pursue_essence"] = False
+        elif is_simple_fact:
+            checks["pursue_essence"] = True
+        elif content_understanding.get("has_numerical_assertions") or content_understanding.get("has_causal_assertions") or content_understanding.get("has_mechanism_descriptions"):
+            checks["pursue_essence"] = True
+        elif len(response) > 50 and not any(kw in response for kw in ["本质", "核心", "关键", "根本", "原因", "原理", "机制", "底层", "基础", "逻辑", "因为", "所以", "由于"]):
+            if len(response.split('\n')) <= 2 and len(response) < 60:
+                issues.append("回复缺乏深层分析，不符合'追求本质'原则")
+                checks["pursue_essence"] = False
+            else:
+                checks["pursue_essence"] = True
+        else:
+            checks["pursue_essence"] = True
+        
+        # === 维度7：困惑时坦诚 ===
+        forced_fusion = ["综上所述，两者其实是一回事", "简单来说都一样"]
+        has_forced_fusion = any(p in response for p in forced_fusion)
+        import re as _re2
+        oversimplified_conclusion = _re2.search(r'(总之|总的来说|简而言之|总而言之)[，,]\s*(.{2,15})(?:就是|都是|就是)', response)
+        if has_forced_fusion:
+            issues.append("回复可能强行融合矛盾观点，不符合'困惑时坦诚'原则")
+            checks["honest_when_lost"] = False
+        elif oversimplified_conclusion:
+            issues.append("回复包含过度简化的总结，可能掩盖分歧，不符合'困惑时坦诚'原则")
+            checks["honest_when_lost"] = False
+        else:
+            checks["honest_when_lost"] = True
+        
+        # === 维度8：多源验证 ===
+        single_source_claims = ["据我所知唯一", "只有一种可能", "毫无疑问"]
+        has_single_source = any(p in response for p in single_source_claims) and len(response) < 80
+        absolute_patterns = _re2.search(r'(一定|必然|绝对|肯定)[^，。？！\n]{0,10}(是|对|正确|没错)', response)
+        if has_single_source:
+            issues.append("回复呈现单一来源断言，不符合'多源交叉验证'原则")
+            checks["multi_source"] = False
+        elif absolute_patterns and len(response) < 60 and not is_simple_fact:
+            issues.append("回复包含绝对化断言，不符合'多源交叉验证'原则")
+            checks["multi_source"] = False
+        else:
+            checks["multi_source"] = True
         
         return {
             "valid": len(issues) == 0,
             "issues": issues,
-            "spirit_compliance": len(issues) == 0
+            "spirit_compliance": len(issues) == 0,
+            "checks": checks,
+            "score": sum(1 for v in checks.values() if v) / max(len(checks), 1)
         }
     
     def raise_spirit_violation(self, response: str, issues: List[str], source: str = "unknown"):
@@ -188,7 +387,7 @@ class SpiritCore:
         )
         
         try:
-            conn = sqlite3.connect("data/spirit_lessons.db")
+            conn = self._db_connect()
             cursor = conn.cursor()
             cursor.execute(
                 """INSERT INTO violations (response, issues, source, timestamp)
@@ -346,7 +545,7 @@ class SpiritCore:
         
         # 持久化到数据库
         try:
-            conn = sqlite3.connect("data/spirit_lessons.db")
+            conn = self._db_connect()
             cursor = conn.cursor()
             cursor.execute(
                 """INSERT INTO lessons (question, attempts, failed_methods, timestamp)
@@ -365,6 +564,17 @@ class SpiritCore:
         
         logger.info(f"📖 记录失败教训: {question[:30]}...")
     
+    VALIDATION_DIMENSIONS = {
+        "meaningful": "有意义回复",
+        "never_give_up": "永不放弃",
+        "logical": "逻辑自洽",
+        "failure_direction": "失败有方向",
+        "state_sync": "状态同步",
+        "pursue_essence": "追求本质",
+        "honest_when_lost": "困惑时坦诚",
+        "multi_source": "多源验证"
+    }
+
     def get_spirit_status(self) -> Dict[str, Any]:
         """获取精神内核状态"""
         return {
@@ -373,8 +583,12 @@ class SpiritCore:
                 self.PRINCIPLE_MEANINGFUL_RESPONSE,
                 self.PRINCIPLE_LOGICAL_SELF_CONSISTENT,
                 self.PRINCIPLE_LEARNING_FROM_FAILURE,
-                self.PRINCIPLE_STATE_SYNC
+                self.PRINCIPLE_STATE_SYNC,
+                self.PRINCIPLE_PURSUE_ESSENCE,
+                self.PRINCIPLE_HONEST_WHEN_LOST,
+                self.PRINCIPLE_MULTI_SOURCE_VERIFY
             ],
+            "validation_dimensions": self.VALIDATION_DIMENSIONS,
             "abilities": self.ABILITIES,
             "lessons_learned": len(self.lesson_book),
             "success_patterns": len(self.success_patterns),
@@ -391,7 +605,7 @@ class SpiritCore:
         这是SpiritCore与SelfReflection的联动接口
         """
         try:
-            conn = sqlite3.connect("data/spirit_lessons.db")
+            conn = self._db_connect()
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT question, attempts, failed_methods, timestamp FROM lessons ORDER BY id DESC LIMIT ?",
@@ -402,10 +616,18 @@ class SpiritCore:
             
             lessons = []
             for row in rows:
+                try:
+                    attempts = json.loads(row[1]) if row[1] else []
+                except (json.JSONDecodeError, TypeError):
+                    attempts = []
+                try:
+                    failed = json.loads(row[2]) if row[2] else []
+                except (json.JSONDecodeError, TypeError):
+                    failed = []
                 lessons.append({
                     "question": row[0],
-                    "attempts": json.loads(row[1]) if row[1] else [],
-                    "failed_methods": json.loads(row[2]) if row[2] else [],
+                    "attempts": attempts,
+                    "failed_methods": failed,
                     "timestamp": row[3]
                 })
             return lessons
@@ -416,7 +638,7 @@ class SpiritCore:
     def get_violations_for_analysis(self, limit: int = 10) -> List[Dict]:
         """获取精神异常记录，供系统分析"""
         try:
-            conn = sqlite3.connect("data/spirit_lessons.db")
+            conn = self._db_connect()
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT response, issues, source, timestamp FROM violations ORDER BY id DESC LIMIT ?",

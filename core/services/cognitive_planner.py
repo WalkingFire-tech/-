@@ -143,8 +143,8 @@ class CognitivePlanner:
         self.relationship_model = None
         
         try:
-            from core.memory.stereo_memory import StereoMemoryStore
-            self.stereo_store = StereoMemoryStore()
+            from core.memory.stereo_memory import get_stereo_memory
+            self.stereo_store = get_stereo_memory()
             logger.info("  ✓ 立体记忆已加载")
         except Exception as e:
             logger.error(f"❌ 立体记忆加载失败（核心组件）: {e}")
@@ -174,8 +174,8 @@ class CognitivePlanner:
             logger.warning(f"存在层加载失败: {e}")
         
         try:
-            from core.presence.self_perception import SelfPerceptionEngine
-            self.self_perception = SelfPerceptionEngine()
+            from core.presence.self_perception import get_self_perception_module
+            self.self_perception = get_self_perception_module()
             logger.info("  ✓ 自我感知引擎已加载")
         except Exception as e:
             logger.warning(f"自我感知引擎加载失败: {e}")
@@ -188,8 +188,8 @@ class CognitivePlanner:
             logger.warning(f"间隙生长引擎加载失败: {e}")
         
         try:
-            from core.presence.sleep_consolidation import SleepEngine
-            self.sleep_engine = SleepEngine()
+            from core.presence.sleep_consolidation import get_sleep_engine
+            self.sleep_engine = get_sleep_engine()
             logger.info("  ✓ 睡眠整合引擎已加载")
         except Exception as e:
             logger.warning(f"睡眠整合引擎加载失败: {e}")
@@ -213,8 +213,8 @@ class CognitivePlanner:
         self.goal_engine = None
         
         try:
-            from core.evolution.adaptive_goal import AdaptiveGoalEngine
-            self.goal_engine = AdaptiveGoalEngine()
+            from core.evolution.adaptive_goal import get_adaptive_evolution_goal
+            self.goal_engine = get_adaptive_evolution_goal()
             logger.info("  ✓ 自适应目标引擎已加载")
         except Exception as e:
             logger.warning(f"自适应目标引擎加载失败: {e}")

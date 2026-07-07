@@ -3,6 +3,7 @@
 从规则路由升级为向量检索路由
 """
 import numpy as np
+import os
 import sqlite3
 import json
 from datetime import datetime
@@ -26,6 +27,8 @@ class SemanticRouter:
         # 初始化嵌入模型
         if EMBEDDING_AVAILABLE:
             try:
+                os.environ['HF_HUB_OFFLINE'] = '1'
+                os.environ['TRANSFORMERS_OFFLINE'] = '1'
                 self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
                 logger.info("✅ 语义路由器初始化: all-MiniLM-L6-v2")
             except:

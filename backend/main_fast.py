@@ -3,6 +3,12 @@
 """
 import sys
 import os
+
+os.environ['HF_HUB_OFFLINE'] = '1'
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
+os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+import time
+import json
 import asyncio
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -14,6 +20,18 @@ from loguru import logger
 
 ROOT_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT_DIR))
+
+_log_dir = ROOT_DIR / "logs"
+_log_dir.mkdir(exist_ok=True)
+logger.add(
+    str(_log_dir / "server_{time:YYYY-MM-DD}.log"),
+    rotation="00:00",
+    retention="7 days",
+    compression="gz",
+    encoding="utf-8",
+    level="DEBUG",
+    format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {name}:{function}:{line} | {message}",
+)
 
 # 设置环境变量
 os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
@@ -70,6 +88,19 @@ async def lifespan(app: FastAPI):
         logger.info("✅ SDRS系统守护者已启动巡逻")
     except Exception as e:
         logger.warning(f"系统守护者启动失败: {e}")
+    
+    # 启动硬件监控定时记录（每30秒写入logs/hardware.log）
+    async def _periodic_hardware_log():
+        await asyncio.sleep(10)
+        while True:
+            try:
+                from infrastructure.hardware_monitor import log_hardware_stats
+                log_hardware_stats(force=True)
+            except Exception:
+                pass
+            await asyncio.sleep(30)
+    asyncio.create_task(_periodic_hardware_log())
+    logger.info("✅ 硬件监控定时记录已启动(30秒间隔)")
     
     # 启动持续自我评估（每5分钟一次，评估→诊断→修复闭环）
     async def _periodic_assessment():
@@ -147,6 +178,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"存在层启动失败: {e}")
     
+    # 认知规划器延迟初始化（不在lifespan中阻塞启动，首次请求时自动初始化）
+    app.state.cognitive_planner = None
+    async def _init_cognitive_planner_async():
+        try:
+            from core.services.cognitive_planner import get_cognitive_planner
+            cp = get_cognitive_planner()
+            status = cp.get_system_status()
+            logger.info(f"✅ 认知规划器已初始化(延迟): 对话数={status.get('conversation_count', 0)}, 组件={list(status.get('components', {}).keys())}")
+            app.state.cognitive_planner = cp
+        except Exception as e:
+            logger.warning(f"认知规划器延迟初始化失败: {e}")
+    asyncio.create_task(_init_cognitive_planner_async())
+    logger.info("✅ 认知规划器已标记为延迟初始化")
+    
     # P1-2: 启动定时任务调度器（5分钟自检/30分钟学习/24小时报告）
     try:
         from infrastructure.scheduled_tasks import scheduled_task_manager
@@ -155,11 +200,79 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"定时任务调度器启动失败: {e}")
     
+    # G1: 注册事件总线订阅（让发布的事件有人接收）
+    try:
+        from infrastructure.event_bus import bus, EventTypes
+        
+        def _on_idle_period(data):
+            try:
+                from core.presence.proactivity import get_proactivity_engine, ProactivityContext
+                from core.relationship.model import get_relationship_model
+                from core.presence.existence_layer import get_existence_layer
+                from datetime import datetime
+                engine = get_proactivity_engine()
+                rm = get_relationship_model()
+                el = get_existence_layer()
+                silence = el.metrics.silence_duration if el.metrics else 0
+                rel = rm.get_relationship_summary()
+                ctx = ProactivityContext(
+                    user_silence_duration=silence,
+                    relationship_trust=rel.get("trust_level", 0.5),
+                    recent_interactions=rel.get("total_interactions", 0),
+                    last_proactivity_time=engine.last_proactivity or datetime.now(),
+                    user_engagement_level=0.5,
+                )
+                decision = engine.evaluate(ctx)
+                if decision.should_act and decision.content:
+                    engine.execute(decision)
+                    _enqueue_proactivity({
+                        "type": "proactivity",
+                        "action_type": decision.action_type.value if decision.action_type else "unknown",
+                        "content": decision.content,
+                        "reason": decision.reason,
+                        "confidence": decision.confidence,
+                    })
+            except Exception:
+                pass
+        
+        def _on_knowledge_update(data):
+            try:
+                from core.knowledge_graph import get_knowledge_graph, NodeType
+                kg = get_knowledge_graph()
+                if isinstance(data, dict) and data.get("content"):
+                    kg.add_node(data["content"], node_type=NodeType.FACT, importance=0.6)
+            except Exception:
+                pass
+        
+        def _on_system_health(data):
+            try:
+                if isinstance(data, dict) and data.get("health", 1.0) < 0.5:
+                    import gc
+                    gc.collect()
+                    logger.info("事件驱动: 系统健康度过低，执行gc.collect()")
+            except Exception:
+                pass
+        
+        bus.subscribe(EventTypes.IdlePeriod, _on_idle_period)
+        bus.subscribe(EventTypes.KnowledgeUpdate, _on_knowledge_update)
+        bus.subscribe(EventTypes.SystemHealth, _on_system_health)
+        logger.info("✅ 事件总线订阅已注册（IdlePeriod/KnowledgeUpdate/SystemHealth）")
+    except Exception as e:
+        logger.warning(f"事件总线订阅注册失败: {e}")
+    
     # P2-1: 文件变化感知（监控monitored/目录）— 因config_manager导入卡住，暂不自动启动
     # 用户可通过 /api/folder/learn 端点手动触发文件学习
     logger.info("✅ 文件变化感知已标记为手动模式（config_manager兼容性问题）")
     
     yield
+    
+    # 关闭认知规划器
+    try:
+        if hasattr(app.state, 'cognitive_planner') and app.state.cognitive_planner:
+            app.state.cognitive_planner.shutdown()
+            logger.info("✅ 认知规划器已关闭")
+    except Exception:
+        pass
     
     # 停止存在层
     try:
@@ -195,7 +308,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="联盟拓荒者 API",
     description="生产级自我进化智能体系统 API",
-    version="3.2.0",
+    version="3.7.0",
     lifespan=lifespan
 )
 
@@ -241,7 +354,68 @@ async def root():
 @app.get("/api/health")
 async def health():
     """健康检查"""
-    return {"status": "ok", "version": "3.2.0"}
+    return {"status": "ok", "version": "3.7.0"}
+
+_proactivity_subscribers: list = []
+
+def _broadcast_proactivity(msg: dict):
+    for q in _proactivity_subscribers:
+        try:
+            q.put_nowait(msg)
+        except Exception:
+            pass
+
+@app.get("/api/proactivity/stream")
+async def proactivity_stream():
+    import asyncio as _asyncio
+    q = _asyncio.Queue(maxsize=20)
+    _proactivity_subscribers.append(q)
+    logger.info(f"🔌 SSE subscriber added (total: {len(_proactivity_subscribers)})")
+
+    async def _generator():
+        try:
+            yield f"data: {json.dumps({'type': 'connected', 'content': 'SSE连接已建立'}, ensure_ascii=False)}\n\n"
+            while True:
+                try:
+                    msg = await _asyncio.wait_for(q.get(), timeout=30.0)
+                    data = json.dumps(msg, ensure_ascii=False)
+                    logger.info(f"📨 SSE sending: type={msg.get('type') if isinstance(msg, dict) else '?'}")
+                    yield f"data: {data}\n\n"
+                except _asyncio.TimeoutError:
+                    yield f": keepalive\n\n"
+                except Exception as e:
+                    logger.warning(f"SSE generator error: {e}")
+                    await _asyncio.sleep(5)
+        finally:
+            if q in _proactivity_subscribers:
+                _proactivity_subscribers.remove(q)
+            logger.info(f"🔌 SSE subscriber removed (remaining: {len(_proactivity_subscribers)})")
+
+    return StreamingResponse(_generator(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    })
+
+def _enqueue_proactivity(msg: dict):
+    try:
+        if not _proactivity_subscribers:
+            logger.debug(f"📤 无SSE订阅者，消息丢弃: type={msg.get('type')}")
+            return
+        _broadcast_proactivity(msg)
+        logger.info(f"📤 主动性消息已广播: type={msg.get('type')} subscribers={len(_proactivity_subscribers)}")
+    except Exception as e:
+        logger.warning(f"主动性消息广播失败: {e}")
+
+@app.post("/api/proactivity/test")
+async def proactivity_test():
+    """测试端点：手动推送一条主动性消息到SSE流"""
+    _enqueue_proactivity({
+        "type": "greeting",
+        "content": "主动性SSE推送测试成功！如果你在前端看到这条消息，说明SSE端到端链路完整。",
+        "recommendations": ["继续使用系统", "查看全景面板"]
+    })
+    return {"status": "ok", "message": "测试消息已广播到SSE订阅者", "subscribers": len(_proactivity_subscribers)}
 
 @app.get("/api/resource-status")
 async def resource_status():
@@ -261,6 +435,108 @@ async def background_tasks_status():
         return get_background_controller().get_status()
     except Exception as e:
         return {"error": str(e)}
+
+@app.get("/api/introspection/report")
+async def introspection_report():
+    """获取系统内省报告"""
+    try:
+        from core.introspector import get_introspector
+        report = get_introspector().run_check()
+        return report.to_dict()
+    except Exception as e:
+        return {"error": str(e), "overall_health": 0}
+
+@app.get("/api/introspection/status")
+async def introspection_status():
+    """获取内省监控状态"""
+    try:
+        from core.introspector import get_introspector
+        return get_introspector().get_status()
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/introspection/anomalies")
+async def introspection_anomalies(limit: int = 20):
+    """获取最近的异常列表"""
+    try:
+        from core.introspector import get_introspector
+        return {"anomalies": get_introspector().get_recent_anomalies(limit)}
+    except Exception as e:
+        return {"error": str(e), "anomalies": []}
+
+@app.get("/api/alignment/stats")
+async def alignment_stats():
+    """获取思想对齐偏离统计"""
+    try:
+        from core.alignment_guard import get_alignment_guard
+        return get_alignment_guard().get_stats()
+    except Exception as e:
+        return {"error": str(e), "total": 0, "open": 0}
+
+@app.get("/api/input-processor/demo")
+async def input_processor_demo(text: str = "", memory: float = 0.5, mode: str = "normal"):
+    """输入处理器演示：展示动态提炼效果"""
+    try:
+        from core.input_processor import get_input_processor
+        if not text:
+            return {"error": "请提供text参数"}
+        processor = get_input_processor()
+        result = processor.process(text, memory_usage=memory, mode=mode)
+        return result.to_dict()
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/alignment/deviations")
+async def alignment_deviations(limit: int = 20):
+    """获取未修正的偏离记录"""
+    try:
+        from core.alignment_guard import get_alignment_guard
+        devs = get_alignment_guard().get_open_deviations(limit)
+        return {"deviations": [d.to_dict() for d in devs]}
+    except Exception as e:
+        return {"error": str(e), "deviations": []}
+
+@app.post("/api/alignment/correct/{dev_id}")
+async def alignment_correct(dev_id: int, request: dict = None):
+    """修正指定偏离"""
+    try:
+        from core.alignment_guard import get_alignment_guard
+        correction = (request or {}).get("correction", "已修正")
+        get_alignment_guard().correct_deviation(dev_id, correction)
+        return {"status": "corrected", "dev_id": dev_id}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/knowledge-graph/stats")
+async def knowledge_graph_stats():
+    """获取知识图谱统计"""
+    try:
+        from core.knowledge_graph import get_knowledge_graph
+        return get_knowledge_graph().get_stats()
+    except Exception as e:
+        return {"error": str(e), "node_count": 0, "connection_count": 0}
+
+@app.get("/api/knowledge-graph/search")
+async def knowledge_graph_search(q: str = "", top_k: int = 5):
+    """搜索知识图谱"""
+    try:
+        from core.knowledge_graph import get_knowledge_graph
+        kg = get_knowledge_graph()
+        nodes = kg.search(q, top_k)
+        return {"results": [n.to_dict() for n in nodes]}
+    except Exception as e:
+        return {"error": str(e), "results": []}
+
+@app.get("/api/knowledge-graph/clusters")
+async def knowledge_graph_clusters():
+    """获取知识图谱聚类"""
+    try:
+        from core.knowledge_graph import get_knowledge_graph
+        kg = get_knowledge_graph()
+        clusters = kg.find_clusters()
+        return {"clusters": [c.to_dict() for c in clusters], "total": len(clusters)}
+    except Exception as e:
+        return {"error": str(e), "clusters": []}
 
 @app.get("/api/stats")
 async def get_stats():
@@ -440,6 +716,7 @@ async def chat_stream(request: dict):
     """流式聊天接口 - 实时推送思考过程"""
     user_input = request.get("message", "")
     history = request.get("history", [])
+    session_id = request.get("session_id", "")
     
     # L1预防层：输入验证
     try:
@@ -460,7 +737,7 @@ async def chat_stream(request: dict):
         start_time = asyncio.get_running_loop().time()
         max_duration = 180
         try:
-            async for chunk in stream_generator(user_input, {"history": history}):
+            async for chunk in stream_generator(user_input, {"history": history, "session_id": session_id}):
                 elapsed = asyncio.get_running_loop().time() - start_time
                 if elapsed > max_duration:
                     logger.warning(f"流式生成超时({elapsed:.0f}s>{max_duration}s)，强制结束")
@@ -616,6 +893,83 @@ def generate_rule_based_response(query: str, intent_type: str) -> str:
 我会持续进化，下次遇到这个问题时，我会做得更好。"""
 
 
+# ========== 对话历史 ==========
+@app.get("/api/chat-history/sessions")
+async def get_chat_sessions(limit: int = 20, offset: int = 0):
+    """获取对话会话列表"""
+    try:
+        from infrastructure.chat_history import get_chat_history
+        ch = get_chat_history()
+        return {"sessions": ch.get_sessions(limit, offset), "stats": ch.get_stats()}
+    except Exception as e:
+        return {"error": str(e), "sessions": []}
+
+@app.get("/api/chat-history/sessions/{session_id}")
+async def get_chat_session_messages(session_id: str, limit: int = 100, before_id: int = 0):
+    """获取指定会话的消息"""
+    try:
+        from infrastructure.chat_history import get_chat_history
+        ch = get_chat_history()
+        return {"session_id": session_id, "messages": ch.get_messages(session_id, limit, before_id)}
+    except Exception as e:
+        return {"error": str(e), "messages": []}
+
+@app.post("/api/chat-history/sessions")
+async def create_chat_session(request: dict):
+    """创建新对话会话"""
+    try:
+        from infrastructure.chat_history import get_chat_history
+        ch = get_chat_history()
+        session_id = ch.create_session(
+            session_id=request.get("session_id"),
+            title=request.get("title", "")
+        )
+        return {"session_id": session_id}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.delete("/api/chat-history/sessions/{session_id}")
+async def delete_chat_session(session_id: str):
+    """删除对话会话"""
+    try:
+        from infrastructure.chat_history import get_chat_history
+        ch = get_chat_history()
+        ch.delete_session(session_id)
+        return {"status": "ok"}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/chat-history/search")
+async def search_chat_history(q: str = "", limit: int = 20):
+    """搜索对话历史"""
+    try:
+        from infrastructure.chat_history import get_chat_history
+        ch = get_chat_history()
+        return {"results": ch.search(q, limit)}
+    except Exception as e:
+        return {"error": str(e), "results": []}
+
+@app.get("/api/chat-history/stats")
+async def get_chat_history_stats():
+    """获取对话历史统计"""
+    try:
+        from infrastructure.chat_history import get_chat_history
+        return get_chat_history().get_stats()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/hardware/status")
+async def get_hardware_status():
+    """获取硬件状态（CPU/GPU/内存/磁盘/温度）"""
+    try:
+        from infrastructure.hardware_monitor import get_all_hardware_stats, log_hardware_stats
+        log_hardware_stats()
+        return get_all_hardware_stats()
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.post("/api/models/reload")
 async def models_reload():
     """重新加载模型"""
@@ -636,19 +990,28 @@ async def get_external_config():
     config_file = ROOT_DIR / "config" / "external_api.json"
     if config_file.exists():
         with open(config_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {"apis": [], "message": "未配置外置API"}
+            data = json.load(f)
+        data["success"] = True
+        return data
+    return {"success": False, "openai_api_key": "", "deepseek_api_key": "", "message": "未配置外置API"}
 
 @app.post("/api/config/external")
 async def save_external_config(config: dict):
-    """保存外置API配置"""
+    """保存外置API配置（支持部分更新）"""
     import json
     config_dir = ROOT_DIR / "config"
     config_dir.mkdir(exist_ok=True)
     config_file = config_dir / "external_api.json"
     
+    existing = {}
+    if config_file.exists():
+        with open(config_file, 'r', encoding='utf-8') as f:
+            existing = json.load(f)
+    
+    existing.update(config)
+    
     with open(config_file, 'w', encoding='utf-8') as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
+        json.dump(existing, f, indent=2, ensure_ascii=False)
     
     return {"success": True, "message": "配置已保存"}
 
@@ -1253,6 +1616,31 @@ async def get_tool_stats():
     except Exception as e:
         return {"error": str(e)}
 
+@app.get("/api/tools/history")
+async def get_tool_history(limit: int = 20):
+    """获取工具执行历史记录"""
+    try:
+        import sqlite3
+        db_path = str(ROOT_DIR / "data" / "tool_cache.db")
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute(
+            "SELECT tool_name, params_hash, created_at, quality_score, hit_count FROM tool_cache ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        records = []
+        for row in cursor.fetchall():
+            records.append({
+                "tool_name": row[0],
+                "params_hash": (row[1] or "")[:8],
+                "created_at": row[2],
+                "quality": row[3],
+                "hits": row[4] or 0,
+            })
+        conn.close()
+        return {"history": records, "total": len(records)}
+    except Exception as e:
+        return {"error": str(e), "history": []}
+
 
 @app.get("/api/events/stats")
 async def get_event_stats():
@@ -1435,9 +1823,59 @@ async def get_assessment_history():
             "loop_integrity": self_assessment.get_trend("loop_integrity"),
             "knowledge_vitality": self_assessment.get_trend("knowledge_vitality"),
             "learning_efficiency": self_assessment.get_trend("learning_efficiency"),
+            "frontend_coverage": self_assessment.get_trend("frontend_coverage"),
         }}
     except Exception as e:
         return {"error": str(e), "history": []}
+
+
+@app.get("/api/coverage/report")
+async def get_coverage_report():
+    """获取前端API覆盖率报告"""
+    try:
+        from core.coverage_auditor import CoverageAuditor
+        auditor = CoverageAuditor(str(ROOT_DIR))
+        return auditor.generate_report()
+    except Exception as e:
+        logger.error(f"覆盖率报告生成失败: {e}")
+        return {"error": str(e), "total_endpoints": 0, "coverage_rate": 0}
+
+
+@app.get("/api/coverage/gaps")
+async def get_coverage_gaps():
+    """获取前端API覆盖率缺口摘要"""
+    try:
+        from core.coverage_auditor import CoverageAuditor
+        auditor = CoverageAuditor(str(ROOT_DIR))
+        report = auditor.generate_report()
+        return {"summary": auditor.get_gaps_summary(), "report": report}
+    except Exception as e:
+        return {"error": str(e), "summary": "无法生成"}
+
+
+@app.get("/api/coverage/suggestions")
+async def get_coverage_suggestions():
+    """获取前端覆盖率补全建议（元认知闭环第二步）"""
+    try:
+        from core.coverage_auditor import CoverageAuditor
+        auditor = CoverageAuditor(str(ROOT_DIR))
+        auditor.generate_report()
+        suggestions = auditor.generate_suggestions()
+        return {"suggestions": suggestions, "total": len(suggestions)}
+    except Exception as e:
+        return {"error": str(e), "suggestions": [], "total": 0}
+
+@app.post("/api/coverage/auto-generate")
+async def auto_generate_coverage(max_endpoints: int = 10):
+    """自动生成前端代码补全缺口（元认知闭环第三步，R3: 需人类审批）"""
+    try:
+        from core.coverage_auditor import CoverageAuditor
+        auditor = CoverageAuditor(str(ROOT_DIR))
+        auditor.generate_report()
+        result = auditor.auto_generate(max_endpoints)
+        return result
+    except Exception as e:
+        return {"error": str(e), "snippets": []}
 
 
 # ========== 知识遗忘机制 ==========
@@ -1641,7 +2079,127 @@ async def force_presence_state(request: dict):
         return {"error": str(e)}
 
 
-# ========== 主动性引擎 ==========
+@app.get("/api/perception/snapshot")
+async def get_perception_snapshot(force: bool = False):
+    """获取统一感知快照"""
+    try:
+        from core.perception_snapshot import get_snapshot
+        snap = get_snapshot(force_refresh=force)
+        return {
+            "timestamp": snap.timestamp,
+            "age_seconds": snap.age_seconds(),
+            "resource": snap.resource,
+            "knowledge": snap.knowledge,
+            "interaction": snap.interaction,
+            "existence": snap.existence,
+            "health": snap.health,
+            "identity": snap.identity,
+            "action_trace": snap.action_trace,
+            "summary": snap.summary(),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ========== CBNR核心枢纽 ==========
+@app.post("/api/cbnr/process")
+async def cbnr_process(request: dict):
+    """CBNR核心枢纽处理"""
+    try:
+        from core.cbnr.hub import get_cbnr_hub
+        hub = get_cbnr_hub()
+        result = hub.process(
+            input_stream={"user_input": request.get("input", ""), "intent": request.get("intent", "")},
+            context={"resource_mode": request.get("resource_mode", "normal")}
+        )
+        return {
+            "l1": {
+                "uncertainty": result.l1_normalization.uncertainty if result.l1_normalization else 0,
+                "strength": result.l1_normalization.normalization_strength if result.l1_normalization else 0,
+                "biases_cleared": result.l1_normalization.bias_cleared if result.l1_normalization else [],
+                "principles": result.l1_normalization.principles_anchored if result.l1_normalization else [],
+                "predictions": len(result.l1_normalization.predictions) if result.l1_normalization else 0,
+            },
+            "l2": {
+                "compression_ratio": result.l2_bottleneck.compression_ratio if result.l2_bottleneck else 0,
+                "conflict_delta": result.l2_bottleneck.conflict_delta if result.l2_bottleneck else 0,
+                "conflict_mode": result.l2_bottleneck.conflict_mode.value if result.l2_bottleneck else "unknown",
+                "topic": result.l2_bottleneck.core_essence.get("topic", "") if result.l2_bottleneck else "",
+            },
+            "l3": {
+                "reuse_rate": result.l3_residual.state_reuse_rate if result.l3_residual else 0,
+                "search_tree_size": result.l3_residual.search_tree_size if result.l3_residual else 0,
+                "fallback_used": result.l3_residual.fallback_used if result.l3_residual else False,
+            },
+            "processing_time_ms": result.processing_time_ms,
+            "questions": result.questions_asked,
+            "final_output": result.final_output,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/cbnr/stats")
+async def cbnr_stats():
+    """CBNR核心枢纽统计"""
+    try:
+        from core.cbnr.hub import get_cbnr_hub
+        hub = get_cbnr_hub()
+        return hub.get_stats()
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/ratchet/stats")
+async def ratchet_stats():
+    """棘轮门控全链路统计"""
+    try:
+        from infrastructure.ratchet_gate import ratchet_gate
+        return ratchet_gate.get_stats()
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/world-model/stats")
+async def world_model_stats():
+    """世界模型因果预演统计"""
+    try:
+        from core.world_model import get_world_model
+        return get_world_model().get_stats()
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/api/world-model/predict")
+async def world_model_predict(request: dict):
+    """世界模型因果预测"""
+    try:
+        from core.world_model import get_world_model
+        wm = get_world_model()
+        state = request.get("state", {})
+        intent = request.get("intent", "")
+        pred = wm.predict(state, intent)
+        return {
+            "predicted_state": pred.predicted_state,
+            "probability": pred.probability,
+            "confidence": pred.confidence,
+            "causal_path": pred.causal_path,
+            "alternatives": pred.alternatives,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/api/world-model/pre-enact")
+async def world_model_pre_enact(request: dict):
+    """世界模型因果预演"""
+    try:
+        from core.world_model import get_world_model
+        wm = get_world_model()
+        state = request.get("state", {})
+        actions = request.get("actions", [])
+        intent = request.get("intent", "")
+        result = wm.pre_enact(state, actions, intent)
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/api/proactivity/evaluate")
 async def evaluate_proactivity():
     """评估是否应该主动互动"""

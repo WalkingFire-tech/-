@@ -99,6 +99,29 @@ class AdaptiveGovernor:
         mode = self.health_monitor.get_operating_mode()
         context = context or {}
 
+        try:
+            from infrastructure.hardware_monitor import get_gpu_throttle
+            if action == ActionType.OLLAMA_INFERENCE:
+                throttle = get_gpu_throttle()
+                if throttle["level"] == "critical":
+                    self._log_decision(action, True, mode.value, f"gpu_throttle_critical:delay={throttle['delay_seconds']}s")
+                    return ActionDecision(
+                        allowed=True, mode=mode.value,
+                        message=f"GPU过热({throttle['temperature']}°C)，建议延迟{throttle['delay_seconds']}秒后短推理",
+                        suggestions=["优先使用外部API", f"推理token限制{throttle['max_tokens']}"],
+                        degraded_to="external_api_first",
+                    )
+                if throttle["level"] in ("hot", "warm"):
+                    self._log_decision(action, True, mode.value, f"gpu_throttle_{throttle['level']}:delay={throttle['delay_seconds']}s")
+                    return ActionDecision(
+                        allowed=True, mode=mode.value,
+                        message=f"GPU偏热({throttle['temperature']}°C)，建议延迟{throttle['delay_seconds']}秒",
+                        suggestions=[f"推理token限制{throttle['max_tokens']}"],
+                        degraded_to="throttled_inference",
+                    )
+        except Exception:
+            pass
+
         if mode == OperatingMode.EMERGENCY:
             if action in self._emergency_blocked:
                 self._log_decision(action, False, mode.value, "emergency_block")

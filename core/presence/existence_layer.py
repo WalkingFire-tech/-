@@ -337,6 +337,23 @@ class ExistenceLayer:
         self.state = PresenceState.AWAKE
         logger.debug("👤 用户交互，切换到清醒状态")
     
+    def receive_perception_signal(self, signal_data: Dict[str, Any]):
+        """接收主动感知引擎的信号，驱动存在层状态调整"""
+        self.pending_signals.append(signal_data)
+        if len(self.pending_signals) > 50:
+            self.pending_signals = self.pending_signals[-50:]
+        
+        signal_type = signal_data.get("signal", "unknown")
+        confidence = signal_data.get("confidence", 0.5)
+        
+        if signal_type in ("emotion_shift", "need_emergence") and confidence > 0.6:
+            self.state = PresenceState.AWAKE
+            self.metrics.last_user_interaction = datetime.now()
+            logger.info(f"👁️ 感知信号驱动状态切换: {signal_type} → AWAKE")
+        elif signal_type == "silence_break" and confidence > 0.7:
+            self.state = PresenceState.AWAKE
+            logger.info(f"👁️ 沉默打破信号: 切换到AWAKE")
+    
     def register_state_callback(self, callback: Callable):
         """注册状态回调"""
         self.state_callbacks.append(callback)

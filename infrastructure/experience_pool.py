@@ -1,16 +1,27 @@
 ﻿import sqlite3
 import json
+import threading
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
 from loguru import logger
 
+_write_lock = threading.Lock()
+
+
 class ExperiencePool:
     def __init__(self, db_path: str = "experience_pool.db"):
         self.db_path = db_path
+        self._lock = _write_lock
         self._init_db()
 
+    def _connect(self):
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+
     def _init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS experiences (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,7 +63,13 @@ class ExperiencePool:
                        model_name: str, quality_score: int, user_feedback: int,
                        success: bool, duration: float, response: str = "") -> int:
         """添加经验并返回ID"""
-        with sqlite3.connect(self.db_path) as conn:
+        try:
+            from infrastructure.ratchet_gate import guard_change
+            q = min(1.0, quality_score / 100.0)
+            guard_change("experience", q, f"exp: {intent_type} q={quality_score}")
+        except Exception:
+            pass
+        with self._connect() as conn:
             cur = conn.execute('''
                 INSERT INTO experiences (timestamp, intent_type, raw_input, plan, model_name,
                                          quality_score, user_feedback, success, duration, response)
@@ -63,11 +80,24 @@ class ExperiencePool:
             experience_id = cur.lastrowid
         
         logger.debug(f"经验已存储: {intent_type}, 质量 {quality_score}, ID {experience_id}")
+        
+        try:
+            from core.world_model import get_world_model
+            wm = get_world_model()
+            wm.learn_from_experience({
+                "intent_type": intent_type,
+                "model_name": model_name,
+                "success": success,
+                "quality_score": quality_score,
+            })
+        except Exception:
+            pass
+        
         return experience_id
     
     def update_feedback(self, experience_id: int, feedback: int):
         """更新经验的用户反馈"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute('''
                 UPDATE experiences
                 SET user_feedback = ?
@@ -78,7 +108,7 @@ class ExperiencePool:
     
     def get_last_experience_id(self, model_name: str, intent_type: str) -> Optional[int]:
         """获取最近一次经验的ID"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             cur = conn.execute('''
                 SELECT id FROM experiences
                 WHERE model_name = ? AND intent_type = ?
@@ -102,7 +132,7 @@ class ExperiencePool:
         query += ' ORDER BY quality_score DESC LIMIT ?'
         params.append(limit)
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cur = conn.execute(query, params)
             return [dict(row) for row in cur.fetchall()]
@@ -121,7 +151,23 @@ class ExperiencePool:
         query += ' ORDER BY quality_score ASC LIMIT ?'
         params.append(limit)
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cur = conn.execute(query, params)
             return [dict(row) for row in cur.fetchall()]
+
+
+_experience_pool_instance = None
+_experience_pool_lock = threading.Lock()
+
+
+def get_experience_pool() -> "ExperiencePool":
+    global _experience_pool_instance
+    if _experience_pool_instance is None:
+        with _experience_pool_lock:
+            if _experience_pool_instance is None:
+                _experience_pool_instance = ExperiencePool(db_path="data/experience_pool.db")
+    return _experience_pool_instance
+
+
+experience_pool = get_experience_pool

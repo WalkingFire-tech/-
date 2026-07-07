@@ -273,7 +273,7 @@ class ToolManager:
             start_time = time.time()
             
             try:
-                if signal is not None:
+                if signal is not None and hasattr(signal, 'SIGALRM'):
                     def timeout_handler(signum, frame):
                         raise TimeoutError(f"工具执行超时 ({self.EXECUTION_TIMEOUT}秒)")
                     

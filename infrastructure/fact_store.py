@@ -1,12 +1,18 @@
 """
-客观事实锚点存储层
-用于存储和验证确定性知识的三元组
+统一事实锚点存储层
 
-核心理念：让系统具备"客观是非观"，不再唯用户情绪马首是瞻
+整合V1查询能力 + V2衰减/优先级 + V3版本控制/回滚
+数据库: data/fact_assertions.db（兼容V1数据）
+
+核心能力：
+- V1: search_by_keywords(中文NLP) + extract_and_store(自动三元组) + get_negations
+- V2: apply_decay(置信度衰减) + mark_used(使用追踪) + _should_override(7级来源优先级)
+- V3: rollback_to_version(版本回滚) + superseded_by链式引用
 """
 import sqlite3
 import hashlib
 import json
+import threading
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
@@ -16,6 +22,8 @@ try:
 except ImportError:
     import logging
     logger = logging.getLogger(__name__)
+
+_write_lock = threading.Lock()
 
 
 class FactStore:
@@ -28,24 +36,54 @@ class FactStore:
     
     def __init__(self, db_path: str = "data/fact_assertions.db"):
         self.db_path = db_path
+        self._lock = _write_lock
         self._init_database()
         logger.info(f"📚 事实锚点库已初始化: {db_path}")
+    
+    def _connect(self):
+        """获取线程安全的数据库连接（WAL模式）"""
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+    
+    def _write_op(self, func, *args, **kwargs):
+        """线程安全的写操作"""
+        with self._lock:
+            conn = self._connect()
+            try:
+                result = func(conn, *args, **kwargs)
+                conn.commit()
+                return result
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
     
     def _init_database(self):
         """初始化数据库表结构"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS fact_assertions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     question_hash TEXT NOT NULL,
+                    question TEXT DEFAULT '',
                     subject TEXT NOT NULL,
                     predicate TEXT NOT NULL,
                     object TEXT NOT NULL,
                     source TEXT DEFAULT 'manual_seed',
                     confidence REAL DEFAULT 0.9,
                     is_negation BOOLEAN DEFAULT 0,
+                    is_seed BOOLEAN DEFAULT 0,
+                    version INTEGER DEFAULT 1,
+                    is_active BOOLEAN DEFAULT 1,
+                    superseded_by INTEGER DEFAULT NULL,
+                    last_used TIMESTAMP,
+                    use_count INTEGER DEFAULT 0,
+                    decay_factor REAL DEFAULT 1.0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -55,6 +93,44 @@ class FactStore:
             conn.execute('CREATE INDEX IF NOT EXISTS idx_subject ON fact_assertions(subject)')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_predicate ON fact_assertions(predicate)')
             
+            try:
+                conn.execute('ALTER TABLE fact_assertions ADD COLUMN question TEXT DEFAULT ""')
+            except Exception:
+                pass
+            try:
+                conn.execute('ALTER TABLE fact_assertions ADD COLUMN is_seed BOOLEAN DEFAULT 0')
+            except Exception:
+                pass
+            try:
+                conn.execute('ALTER TABLE fact_assertions ADD COLUMN version INTEGER DEFAULT 1')
+            except Exception:
+                pass
+            try:
+                conn.execute('ALTER TABLE fact_assertions ADD COLUMN is_active BOOLEAN DEFAULT 1')
+            except Exception:
+                pass
+            try:
+                conn.execute('ALTER TABLE fact_assertions ADD COLUMN superseded_by INTEGER DEFAULT NULL')
+            except Exception:
+                pass
+            try:
+                conn.execute('ALTER TABLE fact_assertions ADD COLUMN last_used TIMESTAMP')
+            except Exception:
+                pass
+            try:
+                conn.execute('ALTER TABLE fact_assertions ADD COLUMN use_count INTEGER DEFAULT 0')
+            except Exception:
+                pass
+            try:
+                conn.execute('ALTER TABLE fact_assertions ADD COLUMN decay_factor REAL DEFAULT 1.0')
+            except Exception:
+                pass
+            
+            try:
+                conn.execute('CREATE INDEX IF NOT EXISTS idx_active ON fact_assertions(is_active)')
+            except Exception:
+                pass
+            
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS correction_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,6 +138,19 @@ class FactStore:
                     old_assertion TEXT,
                     new_assertion TEXT,
                     correction_source TEXT,
+                    old_assertion_id INTEGER,
+                    new_assertion_id INTEGER,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS confidence_decay_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    assertion_id INTEGER NOT NULL,
+                    old_confidence REAL,
+                    new_confidence REAL,
+                    reason TEXT,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -83,33 +172,17 @@ class FactStore:
         confidence: float = 0.9,
         is_negation: bool = False
     ) -> int:
-        """
-        添加事实断言
-        
-        Args:
-            question: 关联的问题
-            subject: 主语 (如 "冰雹")
-            predicate: 谓语/关系 (如 "形成原因")
-            obj: 宾语/值 (如 "过冷水滴冻结")
-            source: 来源标识
-            confidence: 置信度
-            is_negation: 是否为否定性断言（纠错）
-        
-        Returns:
-            插入的记录ID
-        """
         question_hash = self.hash_question(question)
-        
-        with sqlite3.connect(self.db_path) as conn:
+
+        def _do(conn):
             cursor = conn.execute('''
                 INSERT INTO fact_assertions 
                 (question_hash, subject, predicate, object, source, confidence, is_negation)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (question_hash, subject, predicate, obj, source, confidence, is_negation))
-            
-            assertion_id = cursor.lastrowid
-            conn.commit()
-        
+            return cursor.lastrowid
+
+        assertion_id = self._write_op(_do)
         logger.info(f"✅ 添加事实断言: ({subject}, {predicate}, {obj}) <- {source}")
         return assertion_id
     
@@ -124,44 +197,36 @@ class FactStore:
         new_obj: str,
         correction_source: str = "user_correction"
     ):
-        """
-        添加纠错断言
-        
-        将旧断言标记为否定，添加新断言
-        """
         question_hash = self.hash_question(question)
-        
-        with sqlite3.connect(self.db_path) as conn:
+
+        def _do(conn):
             conn.execute('''
                 INSERT INTO fact_assertions 
                 (question_hash, subject, predicate, object, source, confidence, is_negation)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (question_hash, old_subject, old_predicate, old_obj, correction_source, 0.0, True))
-            
             conn.execute('''
                 INSERT INTO fact_assertions 
                 (question_hash, subject, predicate, object, source, confidence, is_negation)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (question_hash, new_subject, new_predicate, new_obj, correction_source, 0.95, False))
-            
             conn.execute('''
                 INSERT INTO correction_history
                 (question_hash, old_assertion, new_assertion, correction_source)
                 VALUES (?, ?, ?, ?)
-            ''', (question_hash, 
+            ''', (question_hash,
                   f"({old_subject}, {old_predicate}, {old_obj})",
                   f"({new_subject}, {new_predicate}, {new_obj})",
                   correction_source))
-            
-            conn.commit()
-        
+
+        self._write_op(_do)
         logger.info(f"🔧 纠错已记录: ({old_subject}, {old_predicate}, {old_obj}) → ({new_subject}, {new_predicate}, {new_obj})")
     
     def get_assertions(self, question: str) -> List[Dict]:
         """获取问题关联的所有事实断言"""
         question_hash = self.hash_question(question)
         
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute('''
                 SELECT subject, predicate, object, source, confidence, is_negation
@@ -176,7 +241,7 @@ class FactStore:
         """获取问题关联的否定性断言（错误示例）"""
         question_hash = self.hash_question(question)
         
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute('''
                 SELECT subject, predicate, object, source
@@ -196,7 +261,7 @@ class FactStore:
         """检查断言是否已存在"""
         question_hash = self.hash_question(question)
         
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             cursor = conn.execute('''
                 SELECT COUNT(*) FROM fact_assertions
                 WHERE question_hash = ? AND subject = ? AND predicate = ? AND object = ?
@@ -231,7 +296,7 @@ class FactStore:
         
         results = []
         seen_keys = set()
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             for kw in keywords[:10]:
                 cursor = conn.execute('''
@@ -252,7 +317,7 @@ class FactStore:
                         if len(results) >= limit:
                             return results
         return results
-        return results
+
 
     def extract_and_store(self, question: str, response: str, source: str = "auto_extract") -> int:
         """从高质量回复中自动提取事实三元组并存储"""
@@ -273,7 +338,13 @@ class FactStore:
         noise_prefixes = ['确定', '很可能', '推论', '推理', '反面', '确定性', '第一步', '第二步', '第三步', 
                           '第四步', '综合', '最终', '区分', '事实', '反面观点', '我们', '这', '以上',
                           '当', '原本', '结果', '其中', '而', '但', '由于', '如果', '虽然', '因此',
-                          '所以', '然而', '不过', '同时', '此外', '另外', '即', '例如', '如']
+                          '所以', '然而', '不过', '同时', '此外', '另外', '即', '例如', '如',
+                          '关键', '核心', '重要', '基本', '根本', '主要', '前提', '结论', '总结',
+                          '逻辑', '推论', '支持', '反对', '注意', '需要', '应该', '必须', '可以',
+                          '能够', '可能', '一定', '必然', '显然', '当然', '确实', '实际上',
+                          '换句话', '也就是说', '换言之', '简而言之', '总而言之']
+        
+        markdown_chars = ['**', '##', '###', '- ', '* ', '> ', '|', '```', '---', '💡', '⚠️', '✅', '❌']
         
         for sent in sentences:
             sent = sent.strip()
@@ -282,6 +353,9 @@ class FactStore:
                 continue
             
             if any(sent.startswith(p) for p in noise_prefixes):
+                continue
+            
+            if any(mc in sent for mc in markdown_chars):
                 continue
             
             patterns = [
@@ -293,7 +367,6 @@ class FactStore:
                 (r'^([^，。、：：\s]{2,8})包括([^，。！？\s]{2,20})$', '包括'),
                 (r'^([^，。、：：\s]{2,8})会导致([^，。！？\s]{2,25})$', '导致'),
                 (r'^([^，。、：：\s]{2,8})因为([^，。！？\s]{2,25})$', '因为'),
-                (r'^([^，。、：：\s]{2,8})是([^，。！？\s]{2,25})$', '是'),
                 (r'^([^，。、：：\s]{2,8})可以([^，。！？\s]{2,20})$', '可以'),
             ]
             
@@ -323,6 +396,9 @@ class FactStore:
                         )
                         stored += 1
                     break
+            
+            if stored >= 1:
+                break
         
         if stored > 0:
             logger.info(f"📚 自动提取{stored}条事实三元组: {question[:30]}")
@@ -330,18 +406,134 @@ class FactStore:
 
     def get_stats(self) -> Dict:
         """获取统计信息"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             total = conn.execute('SELECT COUNT(*) FROM fact_assertions').fetchone()[0]
             positive = conn.execute('SELECT COUNT(*) FROM fact_assertions WHERE is_negation = 0').fetchone()[0]
             negations = conn.execute('SELECT COUNT(*) FROM fact_assertions WHERE is_negation = 1').fetchone()[0]
             corrections = conn.execute('SELECT COUNT(*) FROM correction_history').fetchone()[0]
+            by_source = {}
+            for row in conn.execute('SELECT source, COUNT(*) FROM fact_assertions GROUP BY source'):
+                by_source[row[0]] = row[1]
             
             return {
                 'total': total,
                 'positive': positive,
                 'negations': negations,
-                'corrections': corrections
+                'corrections': corrections,
+                'by_source': by_source,
             }
+
+    def mark_used(self, assertion_id: int):
+        def _do(conn):
+            conn.execute(
+                'UPDATE fact_assertions SET use_count = use_count + 1, last_used = ? WHERE id = ?',
+                (datetime.now().isoformat(), assertion_id)
+            )
+        self._write_op(_do)
+
+    def apply_decay(self, days_unused: int = 30, decay_rate: float = 0.95):
+        cutoff = datetime.now().timestamp() - days_unused * 86400
+        decayed = 0
+
+        def _do(conn):
+            nonlocal decayed
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                'SELECT id, confidence, use_count, last_used FROM fact_assertions WHERE is_negation = 0 AND is_active = 1'
+            ).fetchall()
+            for row in rows:
+                last = row['last_used']
+                if last:
+                    try:
+                        last_ts = datetime.fromisoformat(last).timestamp()
+                        if last_ts < cutoff:
+                            use_boost = min(row['use_count'] * 0.01, 0.1)
+                            new_conf = max(0.1, row['confidence'] * decay_rate + use_boost)
+                            if new_conf < row['confidence']:
+                                conn.execute(
+                                    'UPDATE fact_assertions SET confidence = ?, decay_factor = ? WHERE id = ?',
+                                    (new_conf, decay_rate, row['id'])
+                                )
+                                conn.execute(
+                                    'INSERT INTO confidence_decay_log (assertion_id, old_confidence, new_confidence, reason) VALUES (?, ?, ?, ?)',
+                                    (row['id'], row['confidence'], new_conf, f'unused_{days_unused}d')
+                                )
+                                decayed += 1
+                    except Exception:
+                        pass
+
+        self._write_op(_do)
+        if decayed > 0:
+            logger.info(f"📉 置信度衰减: {decayed}条断言已衰减")
+        return decayed
+
+    def _should_override(self, existing_conf: float, existing_source: str,
+                         new_conf: float, new_source: str) -> bool:
+        """7级来源优先级覆盖判断（V2能力）"""
+        priority = {
+            'user_correction': 7,
+            'manual_seed': 6,
+            'verified_source': 5,
+            'chat_auto': 4,
+            'auto_extract': 3,
+            'external_search': 2,
+            'unknown': 1,
+        }
+        existing_prio = priority.get(existing_source, 1)
+        new_prio = priority.get(new_source, 1)
+        if new_prio > existing_prio:
+            return True
+        if new_prio == existing_prio and new_conf > existing_conf:
+            return True
+        return False
+
+    def get_active_assertions(self, question: str) -> List[Dict]:
+        """获取有效断言（V3能力，版本感知）"""
+        question_hash = self.hash_question(question)
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute('''
+                SELECT id, subject, predicate, object, source, confidence, version, is_negation
+                FROM fact_assertions
+                WHERE question_hash = ? AND is_active = 1 AND is_negation = 0
+                ORDER BY confidence DESC
+            ''', (question_hash,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_assertion_history(self, question: str, subject: str, predicate: str) -> List[Dict]:
+        """断言历史版本（V3能力）"""
+        question_hash = self.hash_question(question)
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute('''
+                SELECT id, object, source, confidence, version, is_active, superseded_by, created_at
+                FROM fact_assertions
+                WHERE question_hash = ? AND subject = ? AND predicate = ?
+                ORDER BY version DESC
+            ''', (question_hash, subject, predicate))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def rollback_to_version(self, assertion_id: int, target_version: int) -> bool:
+        def _do(conn):
+            conn.row_factory = sqlite3.Row
+            current = conn.execute('SELECT id, question_hash, subject, predicate FROM fact_assertions WHERE id = ?', (assertion_id,)).fetchone()
+            if not current:
+                return False
+            target = conn.execute(
+                'SELECT id FROM fact_assertions WHERE question_hash = ? AND subject = ? AND predicate = ? AND version = ?',
+                (current['question_hash'], current['subject'], current['predicate'], target_version)
+            ).fetchone()
+            if not target:
+                return False
+            conn.execute('UPDATE fact_assertions SET is_active = 0 WHERE question_hash = ? AND subject = ? AND predicate = ? AND id != ?',
+                         (current['question_hash'], current['subject'], current['predicate'], target['id']))
+            conn.execute('UPDATE fact_assertions SET is_active = 1 WHERE id = ?', (target['id'],))
+            return True
+
+        result = self._write_op(_do)
+        if result:
+            logger.info(f"🔄 断言回滚: id={assertion_id} → version={target_version}")
+        return result
 
 
 fact_store = FactStore()

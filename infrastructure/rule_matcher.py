@@ -33,7 +33,7 @@ class RuleMatcher:
         if not condition or not condition.strip():
             return False
         if re.search(r'[\u4e00-\u9fff]', condition):
-            if not re.search(r'\w+\s*[<>=!]+\s*["\']', condition):
+            if not re.search(r'\w+\s*[<>=!]+\s*["\']', condition) and not re.search(r'\b(and|or|not|in|contains|LIKE)\b', condition, re.IGNORECASE):
                 return False
         if not re.search(r'[<>=!]', condition) and not re.search(r'\b(and|or|not|in|contains|LIKE)\b', condition, re.IGNORECASE):
             return False
@@ -46,16 +46,16 @@ class RuleMatcher:
         result = condition
         
         like_pattern = r"(\w+)\s+LIKE\s+'%([^%]+)%'"
-        result = re.sub(like_pattern, r"'\2' in \1", result, flags=re.IGNORECASE)
+        result = re.sub(like_pattern, r"'\2' in str(\1)", result, flags=re.IGNORECASE)
         
         like_pattern2 = r"(\w+)\s+LIKE\s+'([^%]+)%'"
-        result = re.sub(like_pattern2, r"\1.startswith('\2')", result, flags=re.IGNORECASE)
+        result = re.sub(like_pattern2, r"str(\1).startswith('\2')", result, flags=re.IGNORECASE)
         
         like_pattern3 = r"(\w+)\s+LIKE\s+'%([^%]+)'"
-        result = re.sub(like_pattern3, r"\1.endswith('\2')", result, flags=re.IGNORECASE)
+        result = re.sub(like_pattern3, r"str(\1).endswith('\2')", result, flags=re.IGNORECASE)
         
         contains_pattern = r"(\w+)\s+contains\s+'([^']+)'"
-        result = re.sub(contains_pattern, r"'\2' in \1", result, flags=re.IGNORECASE)
+        result = re.sub(contains_pattern, r"'\2' in str(\1)", result, flags=re.IGNORECASE)
         
         return result
     

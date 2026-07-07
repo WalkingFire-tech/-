@@ -42,9 +42,17 @@
 - [ ] 已添加类型注解
 - [ ] 已添加文档字符串
 - [ ] 已添加单元测试
-- [ ] 所有测试通过
+- [ ] 所有测试通过（`python -m pytest tests/unit/ -v`）
 - [ ] 已更新相关文档
 - [ ] 已更新CHANGELOG.md
+
+### 安全性检查
+
+- [ ] SpiritCore核心常量不可变性未被破坏（`pytest tests/unit/test_spirit_core.py`）
+- [ ] SQLite写操作使用`_write_op()`包装（线程安全+WAL模式）
+- [ ] 无裸`except:`（应为`except Exception:`）
+- [ ] 关键路径超时有SSE反馈（`status: "timeout"`）
+- [ ] 无硬编码密钥或敏感信息
 
 ## 截图
 

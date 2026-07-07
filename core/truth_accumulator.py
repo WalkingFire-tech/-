@@ -277,6 +277,15 @@ class TruthAccumulator:
 
     def _save_truth(self, name: str, level: str, domain: str, statement: str, source: str):
         """保存真谛"""
+        truth_quality = 0.8 if level in ("L3", "L4") else 0.6
+        try:
+            from infrastructure.ratchet_gate import guard_change
+            proceed, decision = guard_change("truth", truth_quality, f"truth: {name} L={level} D={domain}", block_on_reject=True)
+            if not proceed:
+                logger.warning(f"真谛注入被棘轮门控拒绝: {name} | {decision.reason}")
+                return
+        except Exception:
+            pass
         try:
             conn = sqlite3.connect(self.db_path)
             c = conn.cursor()
@@ -288,6 +297,14 @@ class TruthAccumulator:
             conn.close()
             logger.info(f"💎 真谛沉淀: {name} ({level}) — {statement[:50]}")
         except:
+            pass
+
+        try:
+            from core.knowledge_graph import get_knowledge_graph, NodeType, ConnectionType
+            kg = get_knowledge_graph()
+            node = kg.add_node(statement, NodeType.TRUTH, 0.8 if level in ("L3", "L4") else 0.6, {"domain": domain, "level": level, "name": name})
+            kg.auto_connect(node.id, threshold=0.2)
+        except Exception:
             pass
 
     def analogize(self, query: str, domain: str = "") -> List[dict]:
@@ -782,19 +799,26 @@ class TruthAccumulator:
             if total_truths > 0:
                 entropy["truth_conflict_rate"] = round(weak_truths / total_truths, 3)
 
-            # 基因安全违规数：从GenePool读取
+            # 基因安全违规：近期违规率（最近1小时），而非累计总数
             try:
                 from core.task_queue import gene_pool
-                violations = gene_pool.get_safety_violations()
-                entropy["gene_safety_violations"] = violations.get("total", 0)
+                conn_v = sqlite3.connect(gene_pool.db_path)
+                one_hour_ago = (datetime.now() - __import__('datetime').timedelta(hours=1)).isoformat()
+                recent_violations = conn_v.execute(
+                    "SELECT COUNT(*) FROM safety_violations WHERE timestamp > ?", (one_hour_ago,)
+                ).fetchone()[0]
+                conn_v.close()
+                entropy["gene_safety_violations"] = gene_pool.get_safety_violations().get("total", 0)
+                entropy["recent_safety_violations"] = recent_violations
             except:
-                pass
+                entropy["gene_safety_violations"] = 0
+                entropy["recent_safety_violations"] = 0
 
             # 综合熵值评分（0-1，越低越健康）
             entropy_score = (
                 entropy["contradiction_rate"] * 0.5 +
                 entropy["truth_conflict_rate"] * 0.15 +
-                min(entropy["gene_safety_violations"] / 10.0, 0.2)
+                min(entropy.get("recent_safety_violations", 0) / 5.0, 0.2)
             )
             entropy_score = min(entropy_score, 1.0)
             entropy["entropy_score"] = round(entropy_score, 3)

@@ -2,6 +2,7 @@
 向量存储 - 基于ChromaDB的语义向量检索
 """
 import hashlib
+import os
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from loguru import logger
@@ -44,6 +45,8 @@ class VectorStore:
                 self.collection = self.client.get_or_create_collection("knowledge")
                 
                 logger.info("加载句子编码模型...")
+                os.environ['HF_HUB_OFFLINE'] = '1'
+                os.environ['TRANSFORMERS_OFFLINE'] = '1'
                 self.model = SentenceTransformer('all-MiniLM-L6-v2')
                 logger.info(f"向量存储已初始化: {persist_dir}")
             except Exception as e:

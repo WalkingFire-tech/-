@@ -6,10 +6,16 @@ LLM适配器模块
 
 from .ollama_adapter import OllamaAdapter
 from .openai_adapter import OpenAIAdapter
-from .local_qwen_adapter import LocalQwenAdapter
+try:
+    from .local_qwen_adapter import LocalQwenAdapter
+except ImportError:
+    LocalQwenAdapter = None
 from .mock_adapter import MockAdapter
 from .remote_adapter import RemoteAdapter
-from .lora_adapter import LoRAAdapter
+try:
+    from .lora_adapter import LoRAAdapter
+except ImportError:
+    LoRAAdapter = None
 
 __all__ = [
     'OllamaAdapter',

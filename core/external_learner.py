@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 from loguru import logger
+from adapters.llm.ollama_adapter import ollama_chat_request
 
 
 class ExternalLearner:
@@ -156,8 +157,6 @@ class ExternalLearner:
     def _ask_local_ollama(self, prompt: str, system_prompt: str = None) -> str:
         """使用本地Ollama模型进行推理"""
         try:
-            import requests
-            
             model = self._get_ollama_model()
             if not model:
                 return json.dumps({
@@ -167,20 +166,19 @@ class ExternalLearner:
                     "experience_notes": "无法获取深度分析"
                 }, ensure_ascii=False)
             
-            full_prompt = prompt
-            if system_prompt:
-                full_prompt = f"{system_prompt}\n\n{prompt}"
-            
-            response = requests.post(
-                "http://localhost:11434/api/generate",
-                json={"model": model, "prompt": full_prompt, "stream": False},
+            result = ollama_chat_request(
+                base_url="http://localhost:11434",
+                model=model,
+                prompt=prompt,
+                system_prompt=system_prompt,
                 timeout=30
             )
             
-            if response.status_code == 200:
-                return response.json().get("response", "")
+            content = result.get("content", "")
+            if content:
+                return content
             else:
-                logger.debug(f"Ollama推理失败: {response.status_code}")
+                logger.debug("Ollama推理失败: 返回空内容")
         except Exception as e:
             logger.debug(f"Ollama推理失败: {e}")
         

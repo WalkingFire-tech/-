@@ -13,6 +13,7 @@ import time
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from loguru import logger
+from adapters.llm.ollama_adapter import ollama_chat_request
 
 class MetacognitiveExecutor:
     """
@@ -322,8 +323,8 @@ class MetacognitiveExecutor:
         
         try:
             # 尝试从向量库检索
-            from core.vector_retriever import vector_retriever
-            results = vector_retriever.hybrid_search(
+            from infrastructure.vector_retriever import vector_retriever
+            results = vector_retriever.search_similar(
                 query=f"元认知: {query}",
                 top_k=3
             )
@@ -523,22 +524,22 @@ class MetacognitiveExecutor:
             
             if selected_model:
                 logger.info(f"  🤖 使用模型: {selected_model}")
-                response = await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     loop.run_in_executor(
                         None,
-                        lambda: requests.post(
-                            "http://localhost:11434/api/generate",
-                            json={"model": selected_model, "prompt": query, "stream": False},
+                        lambda: ollama_chat_request(
+                            base_url="http://localhost:11434",
+                            model=selected_model,
+                            prompt=query,
                             timeout=30
                         )
                     ),
                     timeout=35
                 )
-                if response.status_code == 200:
-                    answer = response.json().get("response", "")
-                    if answer and len(answer) > 10:
-                        logger.info(f"  ✅ 模型推理完成: {len(answer)}字")
-                        return answer
+                content = result.get("content", "")
+                if content and len(content) > 10:
+                    logger.info(f"  ✅ 模型推理完成: {len(content)}字")
+                    return content
         except Exception as e:
             logger.debug(f"Ollama推理失败: {e}")
         

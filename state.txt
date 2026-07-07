@@ -1,0 +1,20 @@
+Overall: 0.849 thriving
+
+loop_integrity: 0.875
+knowledge_vitality: 0.571
+learning_efficiency: 0.77
+behavior_deviation: 1.0
+adaptation_speed: 1.0
+frontend_coverage: 0.86
+
+Recommendations:
+  [medium] loop_integrity: 闭环阶段降级: reflection_to_rules
+
+Knowledge vitality detail:
+  score: 0.5714285714285714
+  dormant_count: 5
+  metrics: {'recent_experiences_7d': 248, 'experience_total': 759, 'experience_activity': 0.32674571805006586, 'used_active_rules': 2, 'active_rules': 7, 'rule_usage_rate': 0.2857142857142857, 'avg_rule_apply': 12.1}
+
+Learning efficiency detail:
+  score: 0.7704034582132565
+  metrics: {'success_count': 660, 'failure_count': 34, 'success_rate': 0.9510086455331412, 'pending_rules': 0, 'active_rules': 7, 'rule_conversion_rate': 1.0}

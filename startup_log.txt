@@ -1,0 +1,307 @@
+﻿python : INFO:     Started server process [15952]
+所在位置 行:1 字符: 185
++ ... TY='error'; python -m uvicorn backend.main_fast:app --host 0.0.0.0 -- ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (INFO:     Started server process [15952]:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+INFO:     Waiting for application startup.
+2026-07-07 22:01:45.648 | INFO     | backend.main_fast:lifespan:45 - 馃殌 鍚姩鍚庣鏈嶅姟...
+2026-07-07 22:01:47.306 | DEBUG    | core.resource_awareness.health_monitor:_correct_vram:202 - VRAM淇: Radeon RX 580 
+Series WMI鎶ュ憡4.0GB鈫掑疄闄?.0GB
+2026-07-07 22:01:47.306 | INFO     | core.resource_awareness.health_monitor:__init__:234 - 馃枼锔?纭欢妫€娴? RAM=31.9GB, GPU=
+Radeon RX 580 Series (8.0GB VRAM), CPU=6鏍?
+2026-07-07 22:01:47.306 | INFO     | core.resource_awareness.health_monitor:__init__:244 - 馃珋 绯荤粺鍋ュ悍鐩戞祴鍣ㄥ凡鍒涘缓 (闃堝€? MEM
+ warn=75% critical=88%)
+2026-07-07 22:01:47.424 | INFO     | backend.main_fast:lifespan:54 - 馃珋 璧勬簮鎰熺煡宸插惎鍔? MEM=29.6%, Threads=1, Mode=normal
+2026-07-07 22:01:47.424 | INFO     | core.resource_awareness.adaptive_governor:__init__:95 - 鈿栵笍 鑷€傚簲璋冭妭鍣ㄥ凡鍒涘缓
+2026-07-07 22:01:47.424 | INFO     | core.resource_awareness.background_controller:__init__:95 - 馃帥锔?鍚庡彴浠诲姟鎺у埗鍣ㄥ凡鍒涘缓锛?4
+涓凡鐭ヤ换鍔★級
+2026-07-07 22:01:48.941 | INFO     | infrastructure.vector_retriever:__init__:260 - 姒傜巼鍖栧悜閲忔绱㈠櫒鍒濆鍖? TF-IDF灏辩华, ST寰呭姞杞
+? 姒傜巼鏍″噯灏辩华
+2026-07-07 22:01:48.958 | INFO     | infrastructure.vector_retriever:load_index:555 - 鍚戦噺绱㈠紩宸插姞杞? 578鏉¤褰?
+2026-07-07 22:01:48.958 | INFO     | backend.main_fast:lifespan:64 - 鉁?鍚戦噺妫€绱㈢储寮曞凡鍔犺浇: 578鏉¤褰?
+2026-07-07 22:01:49.141 | INFO     | infrastructure.config_manager:_load_config:72 - 閰嶇疆鏂囦欢鍔犺浇鎴愬姛: C:\Users\Administrat
+or\alliance_pioneer\config\settings.yaml (澶у皬: 6688瀛楄妭)
+2026-07-07 22:01:56.583 | INFO     | adapters.input.file_adapter:__init__:39 - 鏂囦欢杈撳叆閫傞厤鍣ㄥ垵濮嬪寲瀹屾垚 (娌欑洅鐩綍: C:\Users\Adm
+inistrator\alliance_pioneer)
+2026-07-07 22:01:56.583 | INFO     | backend.main_fast:lifespan:72 - 鉁?鎸佷箙鍖栦换鍔￠槦鍒梬orker宸插惎鍔?
+2026-07-07 22:01:56.583 | INFO     | backend.main_fast:lifespan:78 - 鉁?鍙嶆€濈閬撳凡鏍囪涓哄欢杩熷垵濮嬪寲
+2026-07-07 22:01:56.603 | INFO     | backend.main_fast:lifespan:84 - 鉁?SDRS绯荤粺瀹堟姢鑰呭凡鍚姩宸￠€?
+2026-07-07 22:01:56.603 | INFO     | backend.main_fast:lifespan:99 - 鉁?纭欢鐩戞帶瀹氭椂璁板綍宸插惎鍔?30绉掗棿闅?
+2026-07-07 22:01:56.603 | INFO     | backend.main_fast:lifespan:158 - 鉁?鎸佺画鑷垜璇勪及宸插惎鍔?
+2026-07-07 22:01:56.603 | INFO     | infrastructure.tool_cache:_init_db:50 - 宸ュ叿缂撳瓨鏁版嵁搴撳垵濮嬪寲瀹屾垚: data/tool_cache.db
+2026-07-07 22:01:56.603 | INFO     | core.tool_registry:__init__:217 - 宸ュ叿鎵ц鍣ㄧ紦瀛樺凡鍚敤
+2026-07-07 22:01:56.603 | DEBUG    | core.tool_registry:register:149 - 宸ュ叿宸叉敞鍐? web_search (鍒嗙被:search, 瓒呮椂:15.0s)
+2026-07-07 22:01:56.603 | INFO     | core.tool_registry:register_builtin_tools:353 - 鍐呯疆宸ュ叿宸叉敞鍐? web_search
+2026-07-07 22:01:56.603 | DEBUG    | core.tool_registry:register:149 - 宸ュ叿宸叉敞鍐? calculator (鍒嗙被:computation, 瓒呮椂:5.0s)
+2026-07-07 22:01:56.603 | INFO     | core.tool_registry:register_builtin_tools:353 - 鍐呯疆宸ュ叿宸叉敞鍐? calculator
+2026-07-07 22:01:56.603 | DEBUG    | core.tool_registry:register:149 - 宸ュ叿宸叉敞鍐? code_executor (鍒嗙被:computation, 瓒呮椂:12.
+0s)
+2026-07-07 22:01:56.603 | INFO     | core.tool_registry:register_builtin_tools:353 - 鍐呯疆宸ュ叿宸叉敞鍐? code_executor
+2026-07-07 22:01:56.603 | DEBUG    | core.tool_registry:register:149 - 宸ュ叿宸叉敞鍐? knowledge_lookup (鍒嗙被:knowledge, 瓒呮椂:8.
+0s)
+2026-07-07 22:01:56.603 | INFO     | core.tool_registry:register_builtin_tools:353 - 鍐呯疆宸ュ叿宸叉敞鍐? knowledge_lookup
+2026-07-07 22:01:56.603 | DEBUG    | core.tool_registry:register:149 - 宸ュ叿宸叉敞鍐? fact_check (鍒嗙被:verification, 瓒呮椂:5.0s)
+2026-07-07 22:01:56.603 | INFO     | core.tool_registry:register_builtin_tools:353 - 鍐呯疆宸ュ叿宸叉敞鍐? fact_check
+2026-07-07 22:01:56.603 | DEBUG    | core.tool_registry:register:149 - 宸ュ叿宸叉敞鍐? project_scanner (鍒嗙被:analysis, 瓒呮椂:15.0
+s)
+2026-07-07 22:01:56.603 | INFO     | core.tool_registry:register_builtin_tools:353 - 鍐呯疆宸ュ叿宸叉敞鍐? project_scanner
+2026-07-07 22:01:56.603 | DEBUG    | core.tool_registry:register:149 - 宸ュ叿宸叉敞鍐? code_indexer (鍒嗙被:analysis, 瓒呮椂:15.0s)
+2026-07-07 22:01:56.603 | INFO     | core.tool_registry:register_builtin_tools:353 - 鍐呯疆宸ュ叿宸叉敞鍐? code_indexer
+2026-07-07 22:01:56.603 | DEBUG    | core.tool_registry:register:149 - 宸ュ叿宸叉敞鍐? dependency_analyzer (鍒嗙被:analysis, 瓒呮椂:
+20.0s)
+2026-07-07 22:01:56.603 | INFO     | core.tool_registry:register_builtin_tools:353 - 鍐呯疆宸ュ叿宸叉敞鍐? dependency_analyzer
+2026-07-07 22:01:56.603 | DEBUG    | core.tool_registry:register:149 - 宸ュ叿宸叉敞鍐? file_reader (鍒嗙被:knowledge, 瓒呮椂:8.0s)
+2026-07-07 22:01:56.603 | INFO     | core.tool_registry:register_builtin_tools:353 - 鍐呯疆宸ュ叿宸叉敞鍐? file_reader
+2026-07-07 22:01:56.616 | INFO     | core.tool_manager:__init__:74 - 宸ュ叿绠＄悊鍣ㄥ凡鍒濆鍖栵紝宸ュ叿鐩綍: data\auto_tools
+2026-07-07 22:01:56.616 | DEBUG    | core.tool_registry:register:149 - 宸ュ叿宸叉敞鍐? user_test_tool (鍒嗙被:user, 瓒呮椂:15.0s)
+2026-07-07 22:01:56.616 | DEBUG    | core.tool_registry:register:149 - 宸ュ叿宸叉敞鍐? user_test_sum (鍒嗙被:user, 瓒呮椂:15.0s)
+2026-07-07 22:01:56.765 | DEBUG    | core.tool_registry:register:149 - 宸ュ叿宸叉敞鍐? user_test_multiply (鍒嗙被:user, 瓒呮椂:15.0s
+)
+2026-07-07 22:01:56.765 | INFO     | core.tool_registry:register_builtin_tools:377 - 宸ュ叿娉ㄥ唽瀹屾垚: 12涓伐鍏?
+2026-07-07 22:01:56.765 | INFO     | backend.main_fast:lifespan:164 - 鉁?宸ュ叿璋冪敤妗嗘灦宸插垵濮嬪寲
+2026-07-07 22:01:56.765 | INFO     | core.presence.self_perception:__init__:103 - 馃憗锔?鑷垜鎰熺煡妯″潡宸插垵濮嬪寲
+2026-07-07 22:01:56.765 | INFO     | core.presence.self_perception:start:114 - 馃憗锔?鑷垜鎰熺煡鐩戞帶宸插惎鍔?
+2026-07-07 22:01:56.765 | INFO     | core.presence.existence_layer:_init_components:111 -   鉁?鑷垜鎰熺煡妯″潡宸插姞杞藉苟鍚姩
+2026-07-07 22:01:56.765 | INFO     | core.presence.gap_growth:__init__:123 - 馃尶 闂撮殭鐢熼暱寮曟搸宸插垱寤?
+2026-07-07 22:01:56.782 | INFO     | core.presence.gap_growth:start:139 - 馃尶 闂撮殭鐢熼暱寮曟搸宸插惎鍔?
+2026-07-07 22:01:56.782 | INFO     | core.presence.existence_layer:_init_components:119 -   鉁?闂撮殭鐢熼暱妯″潡宸插姞杞藉苟鍚姩
+2026-07-07 22:01:56.782 | DEBUG    | core.presence.sleep_consolidation:_init_database:153 - 鐫＄湢鏁村悎鏁版嵁搴撳垵濮嬪寲鎴愬姛
+2026-07-07 22:01:56.782 | INFO     | core.presence.sleep_consolidation:__init__:119 - 馃挙 鐫＄湢鏁村悎寮曟搸宸插垱寤?
+2026-07-07 22:01:56.782 | INFO     | core.presence.sleep_consolidation:start:163 - 馃挙 鐫＄湢鏁村悎寮曟搸宸插惎鍔?
+2026-07-07 22:01:56.782 | INFO     | core.presence.existence_layer:_init_components:127 -   鉁?鐫＄湢鏁村悎妯″潡宸插姞杞藉苟鍚姩
+2026-07-07 22:01:56.782 | INFO     | core.presence.existence_layer:__init__:99 - 馃専 绗浂灞傦紙瀛樺湪灞傦級宸插垵濮嬪寲
+2026-07-07 22:01:56.782 | INFO     | core.presence.existence_layer:start:141 - 馃専 瀛樺湪灞傚凡鍚姩 (蹇冭烦闂撮殧: 10.0绉?
+2026-07-07 22:01:56.782 | INFO     | backend.main_fast:lifespan:173 - 鉁?瀛樺湪灞傚凡鍚姩锛堝績璺?鐢熼暱/浼戞伅/鐫＄湢鍥涢樁娈靛惊鐜級
+2026-07-07 22:01:56.782 | INFO     | meta.induction:__init__:29 - 妯″紡鎸栨帢鍣ㄥ垵濮嬪寲瀹屾垚
+2026-07-07 22:01:56.782 | INFO     | meta.induction:__init__:211 - 瑙勫垯鐢熸垚鍣ㄥ垵濮嬪寲瀹屾垚
+2026-07-07 22:01:56.782 | INFO     | infrastructure.rule_trial_manager:__init__:21 - 瑙勫垯璇曠敤鏈熺鐞嗗櫒宸插垵濮嬪寲
+2026-07-07 22:01:56.782 | INFO     | meta.induction:__init__:349 - 璇曠敤鏈熺鐞嗗櫒宸插姞杞?
+2026-07-07 22:01:56.782 | INFO     | meta.induction:__init__:353 - 褰掔撼璋冨害鍣ㄥ垵濮嬪寲瀹屾垚
+2026-07-07 22:01:56.782 | INFO     | meta.meta_induction:__init__:26 - 鍏冨綊绾冲櫒宸插惎鍔紝褰撳墠鍙傛暟: {'min_support': 3, 'min_conf
+idence': 0.7, 'quality_threshold': 50, 'max_rules_per_run': 10, 'rule_types': {'prefer_model': {'enabled': True, 'prior
+ity': 5}, 'reroute': {'enabled': True, 'priority': 6}, 'avoid_model': {'enabled': True, 'priority': 4}, 'ask_user': {'e
+nabled': False, 'priority': 2}}, 'meta': {'optimization_interval_days': 7, 'success_rate_threshold': 0.6, 'adjustment_f
+actor': 0.1}}
+2026-07-07 22:01:56.782 | WARNING  | core.services.planner:<module>:25 - 璐濆彾鏂紭鍖栧櫒鍔犺浇澶辫触: cannot import name 'MetaInduc
+tion' from 'meta.meta_induction' (C:\Users\Administrator\alliance_pioneer\meta\meta_induction.py)
+2026-07-07 22:01:56.782 | WARNING  | core.services.planner:<module>:40 - 褰掔撼鎬荤粨鍣ㄥ姞杞藉け璐? cannot import name 'MetaInducti
+on' from 'meta.meta_induction' (C:\Users\Administrator\alliance_pioneer\meta\meta_induction.py)
+2026-07-07 22:01:56.799 | INFO     | infrastructure.recurrent_reasoner:__init__:37 - 寰幆鎺ㄧ悊鍣ㄥ垵濮嬪寲: max_iter=4, converge
+nce=0.95, stability=0.9
+2026-07-07 22:01:56.799 | INFO     | infrastructure.problem_analyzer:__init__:23 - 闂鍒嗘瀽鍣ㄥ垵濮嬪寲瀹屾垚
+2026-07-07 22:01:56.799 | INFO     | infrastructure.causal_reasoner:__init__:23 - 鍥犳灉鎺ㄧ悊鍣ㄥ垵濮嬪寲瀹屾垚
+2026-07-07 22:01:56.799 | INFO     | infrastructure.plan_generator:__init__:35 - 瑙勫垝鐢熸垚鍣ㄥ垵濮嬪寲瀹屾垚
+2026-07-07 22:01:56.799 | INFO     | infrastructure.uncertainty_estimator:__init__:24 - 涓嶇‘瀹氭€ц瘎浼板櫒鍒濆鍖栧畬鎴?
+2026-07-07 22:01:56.799 | INFO     | infrastructure.cognitive_layer:__init__:22 - 璁ょ煡灞傚垵濮嬪寲瀹屾垚
+2026-07-07 22:01:56.849 | INFO     | core.shared_embedding:get_embedding_model:33 - 鍔犺浇鍏变韩宓屽叆妯″瀷: paraphrase-multilingu
+al-MiniLM-L12-v2
+2026-07-07 22:02:01.587 | INFO     | core.shared_embedding:get_embedding_model:39 - 鉁?鍏变韩宓屽叆妯″瀷宸插姞杞?
+2026-07-07 22:02:01.587 | INFO     | infrastructure.cognitive_evolution_adapter:__init__:30 - 鉁?v2.0璁ょ煡杩涘寲鏋舵瀯宸插惎鐢?
+2026-07-07 22:02:01.587 | WARNING  | core.services.cognitive_planner:__init__:62 - 鏈壘鍒板叏灞€planner锛屽皢浣跨敤闄嶇骇鍝嶅簲
+2026-07-07 22:02:01.602 | INFO     | core.config.unified_config:_load_config:111 - 鉁?閰嶇疆鏂囦欢宸插姞杞? config\system_config.j
+son
+2026-07-07 22:02:01.602 | INFO     | core.config.unified_config:__init__:43 - 鈿欙笍 缁熶竴閰嶇疆绠＄悊鍣ㄥ凡鍒濆鍖?
+2026-07-07 22:02:01.603 | INFO     | core.introspection.heartbeat:__init__:86 - 鉂わ笍 蹇冭烦绠＄悊鍣ㄥ凡鍒濆鍖?
+2026-07-07 22:02:01.603 | INFO     | core.introspection.heartbeat:register_layer:93 - 鉂わ笍 宸叉敞鍐屽眰: L0
+2026-07-07 22:02:01.603 | INFO     | core.introspection.heartbeat:register_layer:93 - 鉂わ笍 宸叉敞鍐屽眰: L1
+2026-07-07 22:02:01.603 | INFO     | core.introspection.heartbeat:register_layer:93 - 鉂わ笍 宸叉敞鍐屽眰: L2
+2026-07-07 22:02:01.603 | INFO     | core.introspection.heartbeat:register_layer:93 - 鉂わ笍 宸叉敞鍐屽眰: L3
+2026-07-07 22:02:01.603 | INFO     | core.introspection.heartbeat:register_layer:93 - 鉂わ笍 宸叉敞鍐屽眰: L4
+2026-07-07 22:02:01.603 | INFO     | core.introspection.heartbeat:register_layer:93 - 鉂わ笍 宸叉敞鍐屽眰: L5
+2026-07-07 22:02:01.603 | INFO     | core.introspection.heartbeat:register_layer:93 - 鉂わ笍 宸叉敞鍐屽眰: L6
+2026-07-07 22:02:01.619 | INFO     | core.introspection.heartbeat:start_background:212 - 鉂わ笍 蹇冭烦鏈嶅姟宸插惎鍔?
+2026-07-07 22:02:01.619 | INFO     | core.reporting.state_collector:_init_heartbeat:90 - 鉂わ笍 蹇冭烦鏈嶅姟宸茶嚜鍔ㄥ惎鍔?
+2026-07-07 22:02:01.620 | INFO     | core.reporting.state_collector:__init__:74 - 馃搳 鐘舵€佹敹闆嗗櫒宸插垵濮嬪寲
+2026-07-07 22:02:01.620 | INFO     | core.reporting.state_collector:register_layer:293 - 馃搳 宸叉敞鍐屽眰: L2
+2026-07-07 22:02:01.620 | INFO     | core.layers.l2_learning:__init__:73 - 馃摎 L2瀛︿範灞傚凡鍒濆鍖栵紙鍚姸鎬佹姤鍛婏級
+2026-07-07 22:02:01.620 | INFO     | core.services.cognitive_planner:_init_layers:108 -   鉁?L2瀛︿範灞傚凡鍔犺浇
+2026-07-07 22:02:01.620 | INFO     | core.reporting.state_collector:register_layer:293 - 馃搳 宸叉敞鍐屽眰: L3
+2026-07-07 22:02:01.620 | INFO     | core.layers.l3_integration:__init__:108 - 馃З L3鏁村悎灞傚凡鍒濆鍖栵紙鍚姸鎬佹姤鍛婏級
+2026-07-07 22:02:01.637 | INFO     | core.services.cognitive_planner:_init_layers:115 -   鉁?L3鏁村悎灞傚凡鍔犺浇
+2026-07-07 22:02:01.637 | INFO     | core.reporting.state_collector:register_layer:293 - 馃搳 宸叉敞鍐屽眰: L4
+2026-07-07 22:02:01.637 | INFO     | core.layers.l4_validation:__init__:118 - 馃攳 L4鏍￠獙灞傚凡鍒濆鍖栵紙鍚姸鎬佹姤鍛?+ 鑷垜璐ㄧ枒鏈哄埗锛?
+2026-07-07 22:02:01.637 | INFO     | core.services.cognitive_planner:_init_layers:122 -   鉁?L4鏍￠獙灞傚凡鍔犺浇
+2026-07-07 22:02:01.637 | INFO     | core.reporting.state_collector:register_layer:293 - 馃搳 宸叉敞鍐屽眰: L5
+2026-07-07 22:02:01.653 | INFO     | core.layers.l5_evolution:__init__:157 - 馃К L5杩涘寲灞傚凡鍒濆鍖栵紙鍚姸鎬佹姤鍛?+ 澶氱淮搴﹂€傚簲搴︼級
+2026-07-07 22:02:01.653 | INFO     | core.services.cognitive_planner:_init_layers:129 -   鉁?L5杩涘寲灞傚凡鍔犺浇
+2026-07-07 22:02:01.653 | INFO     | core.reporting.state_collector:register_layer:293 - 馃搳 宸叉敞鍐屽眰: L6
+2026-07-07 22:02:01.653 | INFO     | core.layers.l6_introspection:__init__:158 - 馃攳 L6鍐呯渷灞傚凡鍒濆鍖栵紙鍚姸鎬佹姤鍛?+ 鑷姩淇锛?
+2026-07-07 22:02:01.670 | INFO     | core.services.cognitive_planner:_init_layers:136 -   鉁?L6鍐呯渷灞傚凡鍔犺浇
+2026-07-07 22:02:01.674 | ERROR    | core.services.cognitive_planner:_init_memory:150 - 鉂?绔嬩綋璁板繂鍔犺浇澶辫触锛堟牳蹇冪粍浠讹級: cannot
+ import name 'StereoMemoryStore' from 'core.memory.stereo_memory' (C:\Users\Administrator\alliance_pioneer\core\memory\
+stereo_memory.py)
+2026-07-07 22:02:01.678 | INFO     | core.services.cognitive_planner:_init_memory:155 -   鉁?鍏崇郴妯″瀷宸插姞杞?
+2026-07-07 22:02:01.678 | INFO     | core.presence.self_perception:__init__:103 - 馃憗锔?鑷垜鎰熺煡妯″潡宸插垵濮嬪寲
+2026-07-07 22:02:01.679 | INFO     | core.presence.self_perception:start:114 - 馃憗锔?鑷垜鎰熺煡鐩戞帶宸插惎鍔?
+2026-07-07 22:02:01.679 | INFO     | core.presence.existence_layer:_init_components:111 -   鉁?鑷垜鎰熺煡妯″潡宸插姞杞藉苟鍚姩
+2026-07-07 22:02:01.679 | INFO     | core.presence.gap_growth:__init__:123 - 馃尶 闂撮殭鐢熼暱寮曟搸宸插垱寤?
+2026-07-07 22:02:01.682 | INFO     | core.presence.gap_growth:start:139 - 馃尶 闂撮殭鐢熼暱寮曟搸宸插惎鍔?
+2026-07-07 22:02:01.682 | INFO     | core.presence.existence_layer:_init_components:119 -   鉁?闂撮殭鐢熼暱妯″潡宸插姞杞藉苟鍚姩
+2026-07-07 22:02:01.683 | DEBUG    | core.presence.sleep_consolidation:_init_database:153 - 鐫＄湢鏁村悎鏁版嵁搴撳垵濮嬪寲鎴愬姛
+2026-07-07 22:02:01.683 | INFO     | core.presence.sleep_consolidation:__init__:119 - 馃挙 鐫＄湢鏁村悎寮曟搸宸插垱寤?
+2026-07-07 22:02:01.683 | INFO     | core.presence.sleep_consolidation:start:163 - 馃挙 鐫＄湢鏁村悎寮曟搸宸插惎鍔?
+2026-07-07 22:02:01.683 | INFO     | core.presence.existence_layer:_init_components:127 -   鉁?鐫＄湢鏁村悎妯″潡宸插姞杞藉苟鍚姩
+2026-07-07 22:02:01.684 | INFO     | core.presence.existence_layer:__init__:99 - 馃専 绗浂灞傦紙瀛樺湪灞傦級宸插垵濮嬪寲
+2026-07-07 22:02:01.684 | INFO     | core.services.cognitive_planner:_init_presence:172 -   鉁?瀛樺湪灞傚凡鍔犺浇
+2026-07-07 22:02:01.684 | WARNING  | core.services.cognitive_planner:_init_presence:181 - 鑷垜鎰熺煡寮曟搸鍔犺浇澶辫触: cannot impor
+t name 'SelfPerceptionEngine' from 'core.presence.self_perception' (C:\Users\Administrator\alliance_pioneer\core\presen
+ce\self_perception.py)
+2026-07-07 22:02:01.684 | INFO     | core.presence.gap_growth:__init__:123 - 馃尶 闂撮殭鐢熼暱寮曟搸宸插垱寤?
+2026-07-07 22:02:01.684 | INFO     | core.services.cognitive_planner:_init_presence:186 -   鉁?闂撮殭鐢熼暱寮曟搸宸插姞杞?
+2026-07-07 22:02:01.684 | WARNING  | core.services.cognitive_planner:_init_presence:195 - 鐫＄湢鏁村悎寮曟搸鍔犺浇澶辫触: cannot impor
+t name 'SleepEngine' from 'core.presence.sleep_consolidation' (C:\Users\Administrator\alliance_pioneer\core\presence\sl
+eep_consolidation.py)
+2026-07-07 22:02:01.685 | INFO     | core.services.cognitive_planner:_init_presence:200 -   鉁?涓诲姩鎬у紩鎿庡凡鍔犺浇
+2026-07-07 22:02:01.688 | DEBUG    | core.presence.self_review:_load_history:401 - 馃摑 鍔犺浇浜?35 鏉¤瘎浼板巻鍙?
+2026-07-07 22:02:01.688 | INFO     | core.presence.self_review:__init__:124 - 馃摑 鑷垜璇勪及寮曟搸宸插垱寤?
+2026-07-07 22:02:01.688 | INFO     | core.services.cognitive_planner:_init_presence:207 -   鉁?鑷垜璇勪及寮曟搸宸插姞杞?
+2026-07-07 22:02:01.697 | WARNING  | core.services.cognitive_planner:_init_evolution:220 - 鑷€傚簲鐩爣寮曟搸鍔犺浇澶辫触: cannot im
+port name 'AdaptiveGoalEngine' from 'core.evolution.adaptive_goal' (C:\Users\Administrator\alliance_pioneer\core\evolut
+ion\adaptive_goal.py)
+2026-07-07 22:02:01.697 | INFO     | core.services.cognitive_planner:_init_horizontal:230 -   鉁?鐘舵€佹敹闆嗗櫒宸插姞杞?
+2026-07-07 22:02:01.697 | INFO     | core.services.cognitive_planner:_init_horizontal:237 -   鉁?蹇冭烦绠＄悊鍣ㄥ凡鍔犺浇
+2026-07-07 22:02:01.697 | ERROR    | core.services.cognitive_planner:_validate_components:304 - 鉂?鏍稿績缁勪欢缂哄け: stereo_sto
+re
+2026-07-07 22:02:01.697 | WARNING  | core.services.cognitive_planner:_validate_components:313 - 鈿狅笍 閮ㄥ垎鏍稿績缁勪欢缂哄け锛岀郴缁熷彲鑳
+藉姛鑳藉彈闄?
+2026-07-07 22:02:01.697 | INFO     | core.services.cognitive_planner:_start_all_components:243 - 馃殌 鍚姩鎵€鏈夌郴缁熺粍浠?..
+2026-07-07 22:02:01.698 | INFO     | core.presence.existence_layer:start:141 - 馃専 瀛樺湪灞傚凡鍚姩 (蹇冭烦闂撮殧: 10.0绉?
+2026-07-07 22:02:01.698 | INFO     | core.services.cognitive_planner:_start_all_components:248 -   鉁?瀛樺湪灞傚凡鍚姩
+2026-07-07 22:02:01.698 | INFO     | core.presence.gap_growth:start:139 - 馃尶 闂撮殭鐢熼暱寮曟搸宸插惎鍔?
+2026-07-07 22:02:01.698 | INFO     | core.services.cognitive_planner:_start_all_components:262 -   鉁?闂撮殭鐢熼暱寮曟搸宸插惎鍔?
+2026-07-07 22:02:01.698 | INFO     | core.services.cognitive_planner:_start_all_components:283 -   鉁?蹇冭烦绠＄悊鍣ㄥ凡鍚姩
+2026-07-07 22:02:01.698 | INFO     | core.services.cognitive_planner:_start_all_components:287 - 鉁?鎵€鏈夌粍浠跺凡鍚姩
+2026-07-07 22:02:01.698 | INFO     | core.services.cognitive_planner:__init__:94 - 馃 璁ょ煡瑙勫垝鍣ㄥ畬鏁村垵濮嬪寲瀹屾垚
+2026-07-07 22:02:01.698 | INFO     | backend.main_fast:lifespan:182 - 鉁?璁ょ煡瑙勫垝鍣ㄥ凡鍒濆鍖? 瀵硅瘽鏁?0, 缁勪欢=['existence', 'gap_g
+rowth', 'proactivity']
+2026-07-07 22:02:01.699 | DEBUG    | infrastructure.scheduled_tasks:register_job:58 - 瀹氭椂浠诲姟宸叉敞鍐? self_check (闂撮殧300.0s
+)
+2026-07-07 22:02:01.699 | DEBUG    | infrastructure.scheduled_tasks:register_job:58 - 瀹氭椂浠诲姟宸叉敞鍐? periodic_learning (闂撮
+殧1800.0s)
+2026-07-07 22:02:01.699 | DEBUG    | infrastructure.scheduled_tasks:register_job:58 - 瀹氭椂浠诲姟宸叉敞鍐? daily_report (闂撮殧8640
+0.0s)
+2026-07-07 22:02:01.699 | DEBUG    | infrastructure.scheduled_tasks:register_job:58 - 瀹氭椂浠诲姟宸叉敞鍐? memory_decay (闂撮殧3600
+.0s)
+2026-07-07 22:02:01.700 | DEBUG    | infrastructure.scheduled_tasks:register_job:58 - 瀹氭椂浠诲姟宸叉敞鍐? layered_memory_sync (
+闂撮殧3600.0s)
+2026-07-07 22:02:01.700 | DEBUG    | infrastructure.scheduled_tasks:register_job:58 - 瀹氭椂浠诲姟宸叉敞鍐? slow_evolution (闂撮殧36
+00.0s)
+2026-07-07 22:02:01.700 | DEBUG    | infrastructure.scheduled_tasks:register_job:58 - 瀹氭椂浠诲姟宸叉敞鍐? proactivity_check (闂撮
+殧600.0s)
+2026-07-07 22:02:01.700 | DEBUG    | infrastructure.scheduled_tasks:register_job:58 - 瀹氭椂浠诲姟宸叉敞鍐? introspection (闂撮殧300
+.0s)
+2026-07-07 22:02:01.700 | DEBUG    | infrastructure.scheduled_tasks:register_job:58 - 瀹氭椂浠诲姟宸叉敞鍐? deferred_deep_process
+ (闂撮殧600.0s)
+2026-07-07 22:02:01.700 | DEBUG    | infrastructure.scheduled_tasks:register_job:58 - 瀹氭椂浠诲姟宸叉敞鍐? sleep_consolidation (
+闂撮殧3600.0s)
+2026-07-07 22:02:01.700 | INFO     | infrastructure.scheduled_tasks:start:70 - 鈴?瀹氭椂浠诲姟璋冨害鍣ㄥ凡鍚姩 (10涓换鍔?
+2026-07-07 22:02:01.700 | INFO     | backend.main_fast:lifespan:191 - 鉁?瀹氭椂浠诲姟璋冨害鍣ㄥ凡鍚姩
+2026-07-07 22:02:01.700 | DEBUG    | infrastructure.event_bus:subscribe:41 - 璁㈤槄浜嬩欢: IdlePeriod
+2026-07-07 22:02:01.700 | DEBUG    | infrastructure.event_bus:subscribe:41 - 璁㈤槄浜嬩欢: KnowledgeUpdate
+2026-07-07 22:02:01.700 | DEBUG    | infrastructure.event_bus:subscribe:41 - 璁㈤槄浜嬩欢: SystemHealth
+2026-07-07 22:02:01.701 | INFO     | backend.main_fast:lifespan:251 - 鉁?浜嬩欢鎬荤嚎璁㈤槄宸叉敞鍐岋紙IdlePeriod/KnowledgeUpdate/Syste
+mHealth锛?
+2026-07-07 22:02:01.701 | INFO     | backend.main_fast:lifespan:257 - 鉁?鏂囦欢鍙樺寲鎰熺煡宸叉爣璁颁负鎵嬪姩妯″紡锛坈onfig_manager鍏煎鎬ч棶棰橈級
+2026-07-07 22:02:01.701 | INFO     | core.task_queue:start_worker:607 - 馃攧 鎸佷箙鍖栦换鍔￠槦鍒梬orker宸插惎鍔紙璁ょ煡鏃跺樊妯″紡锛?
+2026-07-07 22:02:01.703 | DEBUG    | infrastructure.scheduled_tasks:_job_self_check:133 - 鈴?绯荤粺鑷: 鎵€鏈夋ā鍧楀仴搴?鉁?
+2026-07-07 22:02:01.703 | INFO     | infrastructure.scheduled_tasks:_execute_job:120 - 鈴?瀹氭椂浠诲姟鎵ц: self_check (绗?娆? 闂撮
+殧300.0s)
+2026-07-07 22:02:01.704 | INFO     | infrastructure.scheduled_tasks:_job_periodic_learning:146 - 鈴?瀹氭椂瀛︿範: 宸插彂甯僆dlePeri
+od浜嬩欢瑙﹀彂鐭ヨ瘑鏁村悎
+2026-07-07 22:02:01.704 | INFO     | infrastructure.scheduled_tasks:_execute_job:120 - 鈴?瀹氭椂浠诲姟鎵ц: periodic_learning (
+绗?娆? 闂撮殧1800.0s)
+2026-07-07 22:02:01.704 | INFO     | core.defense.guardian:start_patrol:45 - 馃洝锔?绯荤粺瀹堟姢鑰呭惎鍔ㄥ贰閫?(闂撮殧60绉?
+2026-07-07 22:02:01.704 | INFO     | infrastructure.scheduled_tasks:_job_daily_report:155 - 鈴?姣忔棩鎶ュ憡: 鐘舵€?awake, 杩愯=5s
+, 蹇冭烦=0, 鏁村悎璁板繂=0
+2026-07-07 22:02:01.704 | INFO     | infrastructure.scheduled_tasks:_execute_job:120 - 鈴?瀹氭椂浠诲姟鎵ц: daily_report (绗?娆? 
+闂撮殧86400.0s)
+2026-07-07 22:02:01.704 | INFO     | infrastructure.scheduled_tasks:_job_memory_decay:170 - 鈴?璁板繂琛板噺: 瑙勫垯娣″寲0+娓呴櫎0+婵€娲?
+, 缁忛獙娣″寲0+娓呴櫎0
+2026-07-07 22:02:01.704 | INFO     | infrastructure.scheduled_tasks:_execute_job:120 - 鈴?瀹氭椂浠诲姟鎵ц: memory_decay (绗?娆? 
+闂撮殧3600.0s)
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-07-07 22:02:01.720 | INFO     | core.memory.layered_memory:sync_strategic_memory:146 - 鎴樼暐璁板繂鍚屾瀹屾垚: 150鏉?
+2026-07-07 22:02:01.737 | INFO     | core.memory.layered_memory:sync_procedural_memory:179 - 绋嬪簭璁板繂鍚屾瀹屾垚: 0鏉?
+2026-07-07 22:02:01.737 | INFO     | core.memory.layered_memory:sync_tool_memory:211 - 宸ュ叿璁板繂鍚屾瀹屾垚: 0鏉?
+2026-07-07 22:02:01.737 | INFO     | infrastructure.scheduled_tasks:_job_layered_memory_sync:185 - 鈴?鍒嗗眰璁板繂鍚屾: 鎴樼暐+150
+/绋嬪簭+0/宸ュ叿+0, 琛板噺: 鎴樼暐-0/绋嬪簭-0/宸ュ叿-5, 鎬昏348鏉?
+2026-07-07 22:02:01.737 | INFO     | infrastructure.scheduled_tasks:_execute_job:120 - 鈴?瀹氭椂浠诲姟鎵ц: layered_memory_sync
+ (绗?娆? 闂撮殧3600.0s)
+2026-07-07 22:02:01.737 | INFO     | core.genome_evolver:__init__:29 - 鍩哄洜婕斿寲寮曟搸宸插垵濮嬪寲锛屾椿璺冨熀鍥犵粍: 1
+2026-07-07 22:02:01.754 | INFO     | core.genome_evolver:evolve:282 - 杩涘寲浜х敓鏂板熀鍥犵粍: 424, 425 (绗?浠?
+2026-07-07 22:02:01.754 | INFO     | core.genome_evolver:evaluate_fitness:222 - 閫傚簲搴﹁瘎浼? 0.350 (鐐硅禐=0.50, 鍛戒腑=0.50)
+2026-07-07 22:02:01.770 | INFO     | infrastructure.ratchet_gate:validate:157 - 妫樿疆闂ㄩ€氳繃: genome score=0.3500 ratchet=0
+.3500 (寰皬鍥為€€0.0000鍦ㄥ蹇嶈寖鍥村唴)
+2026-07-07 22:02:01.770 | INFO     | core.genome_evolver:evaluate_fitness:222 - 閫傚簲搴﹁瘎浼? 0.350 (鐐硅禐=0.50, 鍛戒腑=0.50)
+2026-07-07 22:02:01.782 | INFO     | infrastructure.ratchet_gate:validate:157 - 妫樿疆闂ㄩ€氳繃: genome score=0.3500 ratchet=0
+.3500 (寰皬鍥為€€0.0000鍦ㄥ蹇嶈寖鍥村唴)
+2026-07-07 22:02:01.787 | INFO     | infrastructure.dual_speed_evolution:run_slow_loop:149 - 鎱㈠惊鐜畬鎴?绗?娆?: 鐥涚偣=0, 鍩哄洜=o
+k, 绛栫暐=ok, 鐭ヨ瘑=ok, 妫樿疆=ok
+2026-07-07 22:02:01.787 | INFO     | infrastructure.scheduled_tasks:_job_slow_evolution:197 - 鈴?鎱㈠惊鐜繘鍖? 绗?娆? 鐥涚偣=0, 鍩哄
+洜=ok, 妫樿疆=ok
+2026-07-07 22:02:01.787 | INFO     | infrastructure.scheduled_tasks:_execute_job:120 - 鈴?瀹氭椂浠诲姟鎵ц: slow_evolution (绗?娆
+? 闂撮殧3600.0s)
+2026-07-07 22:02:01.845 | DEBUG    | infrastructure.scheduled_tasks:_job_proactivity_check:278 - 涓诲姩鎬ф鏌? 鏆傛棤琛屽姩 (silen
+ce=4s)
+2026-07-07 22:02:01.845 | INFO     | infrastructure.scheduled_tasks:_execute_job:120 - 鈴?瀹氭椂浠诲姟鎵ц: proactivity_check (
+绗?娆? 闂撮殧600.0s)
+2026-07-07 22:02:01.854 | INFO     | core.introspector:run_check:172 - 鍐呯渷妫€娴? [minor] 璇箟妫€绱笉鍙敤 - sentence_transform
+ers妯″瀷鏈姞杞斤紝浣跨敤TF-IDF闄嶇骇
+2026-07-07 22:02:01.854 | WARNING  | core.introspector:run_check:172 - 鍐呯渷妫€娴? [major] 瀛樺湪9涓湭淇鐨勬€濇兂鍋忕 - 鍋忕绫诲瀷鍒嗗竷: 
+{'mechanism': 1, 'position': 9, 'value': 8}
+2026-07-07 22:02:01.854 | DEBUG    | backend.main_fast:_enqueue_proactivity:395 - 馃摛 鏃燬SE璁㈤槄鑰咃紝娑堟伅涓㈠純: type=system_anom
+aly
+2026-07-07 22:02:01.854 | DEBUG    | infrastructure.scheduled_tasks:_auto_repair:366 - 鑷姩淇璺宠繃: 'dict' object has no 
+attribute 'category'
+2026-07-07 22:02:01.854 | INFO     | infrastructure.scheduled_tasks:_execute_job:120 - 鈴?瀹氭椂浠诲姟鎵ц: introspection (绗?娆?
+ 闂撮殧300.0s)
+2026-07-07 22:02:01.854 | INFO     | infrastructure.scheduled_tasks:_execute_job:120 - 鈴?瀹氭椂浠诲姟鎵ц: deferred_deep_proce
+ss (绗?娆? 闂撮殧600.0s)
+2026-07-07 22:02:01.870 | INFO     | infrastructure.scheduled_tasks:_job_sleep_consolidation:487 - 鐫＄湢宸╁浐: 寮哄寲652鏉￠珮浠峰€
+肩粡楠? 閬楀繕0鏉′綆璐ㄩ噺缁忛獙, 娓呯悊0鏉℃棤鐢ㄨ鍒?
+2026-07-07 22:02:01.870 | INFO     | infrastructure.scheduled_tasks:_execute_job:120 - 鈴?瀹氭椂浠诲姟鎵ц: sleep_consolidation
+ (绗?娆? 闂撮殧3600.0s)
+2026-07-07 22:02:06.898 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #1 | 鐘舵€? perceiving | 鍋ュ悍: 
+1.00 | 鑳介噺: 0.56
+2026-07-07 22:02:11.700 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #1 | 鐘舵€? perceiving | 鍋ュ悍: 
+1.00 | 鑳介噺: 0.56
+2026-07-07 22:02:11.730 | INFO     | infrastructure.hardware_monitor:_init_gpu:44 - GPU鐩戞帶宸插惎鐢? b'Radeon RX 580 Series'
+2026-07-07 22:02:16.902 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #2 | 鐘舵€? perceiving | 鍋ュ悍: 
+1.00 | 鑳介噺: 0.56
+2026-07-07 22:02:21.704 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #2 | 鐘舵€? perceiving | 鍋ュ悍: 
+1.00 | 鑳介噺: 0.56
+2026-07-07 22:02:26.906 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #3 | 鐘舵€? growing | 鍋ュ悍: 1.0
+0 | 鑳介噺: 0.56
+2026-07-07 22:02:31.707 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #3 | 鐘舵€? growing | 鍋ュ悍: 1.0
+0 | 鑳介噺: 0.56
+2026-07-07 22:02:36.909 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #4 | 鐘舵€? growing | 鍋ュ悍: 1.0
+0 | 鑳介噺: 0.56
+2026-07-07 22:02:41.711 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #4 | 鐘舵€? growing | 鍋ュ悍: 1.0
+0 | 鑳介噺: 0.56
+2026-07-07 22:02:46.912 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #5 | 鐘舵€? growing | 鍋ュ悍: 1.0
+0 | 鑳介噺: 0.56
+2026-07-07 22:02:51.714 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #5 | 鐘舵€? growing | 鍋ュ悍: 1.0
+0 | 鑳介噺: 0.56
+2026-07-07 22:02:56.916 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #6 | 鐘舵€? growing | 鍋ュ悍: 1.0
+0 | 鑳介噺: 0.56
+2026-07-07 22:03:01.717 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #6 | 鐘舵€? growing | 鍋ュ悍: 1.0
+0 | 鑳介噺: 0.56
+2026-07-07 22:03:06.919 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #7 | 鐘舵€? growing | 鍋ュ悍: 1.0
+0 | 鑳介噺: 0.56
+2026-07-07 22:03:11.720 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #7 | 鐘舵€? growing | 鍋ュ悍: 1.0
+0 | 鑳介噺: 0.56
+2026-07-07 22:03:16.923 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #8 | 鐘舵€? growing | 鍋ュ悍: 1.0
+0 | 鑳介噺: 0.56
+2026-07-07 22:03:21.724 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #8 | 鐘舵€? growing | 鍋ュ悍: 1.0
+0 | 鑳介噺: 0.56
+2026-07-07 22:03:26.926 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #9 | 鐘舵€? growing | 鍋ュ悍: 1.0
+0 | 鑳介噺: 0.56
+2026-07-07 22:03:31.727 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #9 | 鐘舵€? growing | 鍋ュ悍: 1.0
+0 | 鑳介噺: 0.56
+2026-07-07 22:03:36.929 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #10 | 鐘舵€? growing | 鍋ュ悍: 1.
+00 | 鑳介噺: 0.56
+2026-07-07 22:03:41.730 | DEBUG    | core.presence.existence_layer:_heartbeat:225 - 馃挀 蹇冭烦 #10 | 鐘舵€? growing | 鍋ュ悍: 1.
+00 | 鑳介噺: 0.56

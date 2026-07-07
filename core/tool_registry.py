@@ -338,9 +338,15 @@ def register_builtin_tools():
     from core.tools.code_executor_tool import CodeExecutorTool
     from core.tools.knowledge_lookup_tool import KnowledgeLookupTool
     from core.tools.fact_check_tool import FactCheckTool
+    from core.tools.project_scanner_tool import ProjectScannerTool
+    from core.tools.code_indexer_tool import CodeIndexerTool
+    from core.tools.dependency_analyzer_tool import DependencyAnalyzerTool
+    from core.tools.file_reader_tool import FileReaderTool
 
     for tool_cls in [WebSearchTool, CalculatorTool, CodeExecutorTool,
-                     KnowledgeLookupTool, FactCheckTool]:
+                     KnowledgeLookupTool, FactCheckTool,
+                     ProjectScannerTool, CodeIndexerTool, DependencyAnalyzerTool,
+                     FileReaderTool]:
         try:
             tool = tool_cls()
             tool_registry.register(tool)
@@ -351,9 +357,18 @@ def register_builtin_tools():
     try:
         from core.tool_manager import tool_manager
         user_tools = tool_manager.list_tools(include_disabled=False)
+        registered_count = 0
+        MAX_USER_TOOLS = 20
         for ut in user_tools:
+            if registered_count >= MAX_USER_TOOLS:
+                logger.warning(f"用户工具注册已达上限({MAX_USER_TOOLS})，跳过剩余{len(user_tools)-registered_count}个")
+                break
+            usage = ut.get("usage_count", 0)
+            if usage == 0 and ut.get("name", "").startswith("auto_tool_"):
+                continue
             try:
                 _register_user_tool(ut["name"])
+                registered_count += 1
             except Exception as e:
                 logger.debug(f"用户工具注册跳过 {ut['name']}: {e}")
     except Exception:

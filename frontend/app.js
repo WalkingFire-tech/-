@@ -1,13 +1,14 @@
 // ==================== 版本信息 ====================
-// Version: 3.5.0
-// Last Update: 2026-06-28
+// Version: 3.6.0
+// Last Update: 2026-07-04
 // ==================== 全局配置 ====================
 const API_BASE = 'http://localhost:8000';
-const APP_VERSION = '3.5.0';
+const APP_VERSION = '3.6.0';
 
 // ==================== 全局变量 ====================
 let selectedModel = 'auto';
 let conversationHistory = [];
+let currentSessionId = '';
 
 // ==================== 工具函数 ====================
 function renderMarkdown(text) {
@@ -153,6 +154,7 @@ async function sendMessage() {
         conversationHistory.push({ role: 'user', content: message });
         const requestBody = { message, history: conversationHistory.slice(-10) };
         if (selectedModel !== 'auto') requestBody.model = selectedModel;
+        if (currentSessionId) requestBody.session_id = currentSessionId;
 
         const controller = new AbortController();
         const streamTimeout = setTimeout(() => {
@@ -223,6 +225,12 @@ async function sendMessage() {
                             currentStepEl.style.marginTop = '4px';
                             currentStepEl.innerHTML = `<span class="step-icon">⏳</span> <strong>${phase}</strong> - ${detail}`;
                             stepsContainer.appendChild(currentStepEl);
+                        } else if (status === 'timeout') {
+                            if (currentStepEl) {
+                                currentStepEl.innerHTML = `<span class="step-icon">⏱️</span> <strong>${phase}</strong> - ${detail}`;
+                                currentStepEl.style.opacity = '0.7';
+                            }
+                            currentStepEl = null;
                         } else if (status === 'done') {
                             if (currentStepEl) {
                                 const icon = currentStepEl.querySelector('.step-icon');
@@ -233,6 +241,9 @@ async function sendMessage() {
                         }
                     } else if (event.type === 'result') {
                         finalResult = event;
+                        if (event.session_id && !currentSessionId) {
+                            currentSessionId = event.session_id;
+                        }
                     }
                 } catch (e) {
                     // JSON解析失败，忽略
@@ -277,6 +288,10 @@ async function sendMessage() {
         // 显示最终回复
         if (finalResult && finalResult.response) {
             conversationHistory.push({ role: 'assistant', content: finalResult.response });
+            if (finalResult.session_id && !currentSessionId) {
+                currentSessionId = finalResult.session_id;
+            }
+            refreshChatHistory();
             const responseHtml = formatResponseEnhanced(finalResult.response);
             const messageDiv = document.createElement('div');
             messageDiv.className = 'message assistant';
@@ -372,7 +387,83 @@ function clearMessages() {
     if (messagesDiv) {
         messagesDiv.innerHTML = '';
         conversationHistory = [];
+        currentSessionId = '';
         addMessage('system', '👋 消息已清空，继续对话吧！');
+    }
+}
+
+async function refreshChatHistory() {
+    try {
+        const resp = await fetch(`${API_BASE}/api/chat-history/sessions?limit=15`);
+        const data = await resp.json();
+        const list = document.getElementById('chat-history-list');
+        if (!data.sessions || data.sessions.length === 0) {
+            list.innerHTML = '<p style="color:#999;font-size:11px;">暂无历史记录</p>';
+            return;
+        }
+        list.innerHTML = data.sessions.map(s => {
+            const time = s.updated_at ? s.updated_at.slice(0, 16).replace('T', ' ') : '';
+            const active = s.id === currentSessionId ? 'font-weight:bold;background:#e3f2fd;' : '';
+            return `<div style="padding:4px 6px;margin:2px 0;border-radius:4px;cursor:pointer;${active}" onclick="loadChatSession('${s.id}')" title="${s.title||''}">` +
+                `<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${s.title||'对话'}</div>` +
+                `<div style="font-size:10px;color:#888;">${time} · ${s.message_count||0}条</div></div>`;
+        }).join('');
+    } catch (e) {
+        console.warn('对话历史加载失败:', e);
+    }
+}
+
+async function loadChatSession(sessionId) {
+    try {
+        const resp = await fetch(`${API_BASE}/api/chat-history/sessions/${sessionId}?limit=200`);
+        const data = await resp.json();
+        if (!data.messages || data.messages.length === 0) return;
+        const messagesDiv = document.getElementById('messages');
+        messagesDiv.innerHTML = '';
+        conversationHistory = [];
+        currentSessionId = sessionId;
+        for (const msg of data.messages) {
+            if (msg.role === 'user') {
+                conversationHistory.push({ role: 'user', content: msg.content });
+                addMessage('user', msg.content);
+            } else if (msg.role === 'assistant') {
+                conversationHistory.push({ role: 'assistant', content: msg.content });
+                const div = document.createElement('div');
+                div.className = 'message assistant';
+                const content = document.createElement('div');
+                content.className = 'message-content';
+                content.innerHTML = formatResponseEnhanced(msg.content);
+                div.appendChild(content);
+                messagesDiv.appendChild(div);
+            }
+        }
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        refreshChatHistory();
+    } catch (e) {
+        console.warn('加载会话失败:', e);
+    }
+}
+
+async function searchChatHistory() {
+    const q = document.getElementById('chat-history-search').value.trim();
+    if (!q) { refreshChatHistory(); return; }
+    try {
+        const resp = await fetch(`${API_BASE}/api/chat-history/search?q=${encodeURIComponent(q)}&limit=15`);
+        const data = await resp.json();
+        const list = document.getElementById('chat-history-list');
+        if (!data.results || data.results.length === 0) {
+            list.innerHTML = '<p style="color:#999;font-size:11px;">无搜索结果</p>';
+            return;
+        }
+        list.innerHTML = data.results.map(r => {
+            const time = r.timestamp ? r.timestamp.slice(0, 16).replace('T', ' ') : '';
+            const preview = (r.content || '').slice(0, 40);
+            return `<div style="padding:4px 6px;margin:2px 0;border-radius:4px;cursor:pointer;background:#fff8e1;" onclick="loadChatSession('${r.session_id}')" title="${r.title||''}">` +
+                `<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${preview}...</div>` +
+                `<div style="font-size:10px;color:#888;">${time} · ${r.title||''}</div></div>`;
+        }).join('');
+    } catch (e) {
+        console.warn('搜索失败:', e);
     }
 }
 
@@ -538,6 +629,14 @@ async function loadKnowledgeHealth() {
                 document.getElementById('bar-quality').style.width = `${score.quality}%`;
                 document.getElementById('bar-memory').style.width = `${score.memory}%`;
                 document.getElementById('bar-skills').style.width = `${score.skills}%`;
+                const vc = document.getElementById('val-coverage');
+                const vq = document.getElementById('val-quality');
+                const vm = document.getElementById('val-memory');
+                const vs = document.getElementById('val-skills');
+                if (vc) vc.textContent = Math.round(score.coverage) + '%';
+                if (vq) vq.textContent = Math.round(score.quality) + '%';
+                if (vm) vm.textContent = Math.round(score.memory) + '%';
+                if (vs) vs.textContent = Math.round(score.skills) + '%';
             }
         }
     } catch (error) {
@@ -1308,11 +1407,11 @@ async function loadExternalModelConfig() {
             const openaiKey = document.getElementById('openai-key');
             const deepseekKey = document.getElementById('deepseek-key');
             
-            if (openaiKey && data.openai_key) {
-                openaiKey.value = data.openai_key.substring(0, 10) + '...';
+            if (openaiKey && data.openai_api_key) {
+                openaiKey.value = data.openai_api_key.substring(0, 10) + '...';
             }
-            if (deepseekKey && data.deepseek_key) {
-                deepseekKey.value = data.deepseek_key.substring(0, 10) + '...';
+            if (deepseekKey && data.deepseek_api_key) {
+                deepseekKey.value = data.deepseek_api_key.substring(0, 10) + '...';
             }
         }
     } catch (error) {
@@ -1325,8 +1424,16 @@ async function saveExternalModelConfig() {
     const deepseekKey = document.getElementById('deepseek-key').value.trim();
     const statusDiv = document.getElementById('external-model-status');
     
-    if (!openaiKey && !deepseekKey) {
-        if (statusDiv) statusDiv.innerHTML = '<p style="color: red;">请至少输入一个API Key</p>';
+    const payload = {};
+    if (openaiKey && !openaiKey.endsWith('...')) {
+        payload.openai_api_key = openaiKey;
+    }
+    if (deepseekKey && !deepseekKey.endsWith('...')) {
+        payload.deepseek_api_key = deepseekKey;
+    }
+    
+    if (!payload.openai_api_key && !payload.deepseek_api_key) {
+        if (statusDiv) statusDiv.innerHTML = '<p style="color: #888;">配置未变更</p>';
         return;
     }
     
@@ -1334,10 +1441,7 @@ async function saveExternalModelConfig() {
         const response = await fetch(`${API_BASE}/api/config/external`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                openai_api_key: openaiKey,
-                deepseek_api_key: deepseekKey
-            })
+            body: JSON.stringify(payload)
         });
         
         const data = await response.json();
@@ -1417,16 +1521,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (healthSuccess) {
         loadStats();
         loadModels();
+        refreshChatHistory();
     }
     // 定时刷新
     setInterval(checkHealth, 30000);
     setInterval(loadStats, 60000);
     setInterval(refreshProbabilityCloud, 30000);
     setInterval(refreshResourceStatus, 30000);
+    setInterval(refreshHardwareStatus, 10000);
     // 自动检测新模型（每30秒）
     startAutoRefresh(30);
     refreshProbabilityCloud();
     refreshResourceStatus();
+    refreshHardwareStatus();
 });
 
 async function refreshProbabilityCloud() {
@@ -1569,5 +1676,1367 @@ async function refreshResourceStatus() {
         }
     } catch (e) {
         // silently fail
+    }
+}
+
+async function refreshHardwareStatus() {
+    try {
+        const resp = await fetch(`${API_BASE}/api/hardware/status`);
+        const data = await resp.json();
+        if (data.error) return;
+
+        const gpu = data.gpu || {};
+        const cpu = data.cpu || {};
+        const mem = data.memory || {};
+
+        if (gpu.available) {
+            const gpuTemp = gpu.temperature;
+            const gpuTempEl = document.getElementById('hw-gpu-temp');
+            if (gpuTempEl) {
+                gpuTempEl.textContent = gpuTemp + '°C';
+                gpuTempEl.style.color = gpuTemp > 85 ? '#F44336' : gpuTemp > 70 ? '#FF9800' : '#4CAF50';
+            }
+            const gpuBar = document.getElementById('hw-gpu-bar');
+            if (gpuBar) {
+                const pct = Math.min(gpuTemp / 100 * 100, 100);
+                gpuBar.style.width = pct + '%';
+                gpuBar.style.background = gpuTemp > 85 ? '#F44336' : gpuTemp > 70 ? '#FF9800' : '#2196F3';
+            }
+            const gpuUsageEl = document.getElementById('hw-gpu-usage');
+            if (gpuUsageEl) gpuUsageEl.textContent = (gpu.usage != null ? gpu.usage + '%' : '--');
+            const gpuClockEl = document.getElementById('hw-gpu-clock');
+            if (gpuClockEl) gpuClockEl.textContent = (gpu.engine_clock || '--') + 'MHz';
+            const gpuFanEl = document.getElementById('hw-gpu-fan');
+            if (gpuFanEl) gpuFanEl.textContent = (gpu.fan_speed != null ? gpu.fan_speed + '%' : '--');
+        }
+
+        if (cpu.available) {
+            const cpuUsage = cpu.usage;
+            const cpuTempEl = document.getElementById('hw-cpu-temp');
+            if (cpuTempEl) {
+                cpuTempEl.textContent = cpuUsage.toFixed(0) + '%';
+                cpuTempEl.style.color = cpuUsage > 90 ? '#F44336' : cpuUsage > 70 ? '#FF9800' : '#4CAF50';
+            }
+            const cpuBar = document.getElementById('hw-cpu-bar');
+            if (cpuBar) {
+                cpuBar.style.width = cpuUsage + '%';
+                cpuBar.style.background = cpuUsage > 90 ? '#F44336' : cpuUsage > 70 ? '#FF9800' : '#4CAF50';
+            }
+        }
+
+        const thermal = data.thermal || {};
+        if (thermal.available && thermal.zones && thermal.zones.length > 0) {
+            const cpuTempEl = document.getElementById('hw-cpu-temp');
+            if (cpuTempEl && thermal.zones[0].temp_celsius != null) {
+                const t = thermal.zones[0].temp_celsius;
+                cpuTempEl.textContent = t + '°C';
+                cpuTempEl.style.color = t > 85 ? '#F44336' : t > 70 ? '#FF9800' : '#4CAF50';
+                const cpuBar = document.getElementById('hw-cpu-bar');
+                if (cpuBar) {
+                    cpuBar.style.width = Math.min(t / 100 * 100, 100) + '%';
+                    cpuBar.style.background = t > 85 ? '#F44336' : t > 70 ? '#FF9800' : '#4CAF50';
+                }
+            }
+        }
+    } catch (e) {
+        // silently fail
+    }
+}
+
+let _currentPanoramaTab = '';
+
+function switchPanoramaTab(tab) {
+    _currentPanoramaTab = tab;
+    document.querySelectorAll('[id^="pan-tab-"]').forEach(btn => {
+        btn.style.background = '#e0e0e0';
+        btn.style.color = '#333';
+        btn.style.fontWeight = 'normal';
+    });
+    const activeBtn = document.getElementById('pan-tab-' + tab);
+    if (activeBtn) {
+        activeBtn.style.background = '#1976D2';
+        activeBtn.style.color = 'white';
+        activeBtn.style.fontWeight = 'bold';
+    }
+    refreshSystemPanorama();
+}
+
+async function refreshSystemPanorama() {
+    const container = document.getElementById('panorama-content');
+    if (!container) return;
+    if (!_currentPanoramaTab) {
+        container.innerHTML = '<p style="color:#999;font-size:11px;">点击标签查看子系统状态</p>';
+        return;
+    }
+    container.innerHTML = '<p style="color:#999;font-size:11px;">加载中...</p>';
+    try {
+        if (_currentPanoramaTab === 'defense') {
+            const [statusResp, anomaliesResp, metricsResp] = await Promise.all([
+                fetch('/api/defense/status'),
+                fetch('/api/defense/anomalies'),
+                fetch('/api/defense/health/metrics')
+            ]);
+            const data = await statusResp.json();
+            const anomaliesData = await anomaliesResp.json();
+            const metricsData = await metricsResp.json();
+            let html = '';
+            if (data.error) {
+                html = '<p style="color:#F44336;font-size:11px;">错误: ' + data.error + '</p>';
+            } else {
+                const running = data.running !== false;
+                html += '<div style="margin-bottom:6px;"><b>守护者:</b> <span style="color:' + (running ? '#4CAF50' : '#F44336') + ';">' + (running ? '运行中' : '已停止') + '</span>';
+                if (data.patrol_count != null) html += ' | 巡逻: ' + data.patrol_count + '次';
+                html += '</div>';
+                if (data.last_patrol) {
+                    html += '<div style="font-size:10px;color:#888;margin-bottom:6px;">最近巡逻: ' + data.last_patrol.replace('T', ' ').substring(0, 19) + '</div>';
+                }
+                const hs = data.health_snapshot || {};
+                if (hs.error_rate) {
+                    const er = hs.error_rate;
+                    const pct = (er.current * 100).toFixed(1);
+                    const erColor = er.current > 0.1 ? '#F44336' : er.current > 0.05 ? '#FF9800' : '#4CAF50';
+                    html += '<div style="margin:4px 0;padding:4px 6px;background:#f5f5f5;border-radius:3px;">';
+                    html += '<b>错误率:</b> <span style="color:' + erColor + ';">' + pct + '%</span>';
+                    if (er.trend) html += ' | 趋势: ' + (er.trend === 'stable' ? '稳定' : er.trend === 'increasing' ? '上升' : '下降');
+                    html += '</div>';
+                }
+                const cb = data.circuit_breakers || {};
+                const im = data.isolated_modules || {};
+                const hs2 = data.healing_statuses || {};
+                html += '<div style="margin:4px 0;padding:4px 6px;background:#f5f5f5;border-radius:3px;">';
+                html += '<b>L2-熔断保护:</b> ' + (Object.keys(cb).length === 0 ? '<span style="color:#4CAF50;">全部正常</span>' : Object.keys(cb).length + '个熔断');
+                html += '</div>';
+                html += '<div style="margin:4px 0;padding:4px 6px;background:#f5f5f5;border-radius:3px;">';
+                html += '<b>L3-故障隔离:</b> ' + (Object.keys(im).length === 0 ? '<span style="color:#4CAF50;">无隔离</span>' : Object.keys(im).length + '个隔离');
+                html += '</div>';
+                html += '<div style="margin:4px 0;padding:4px 6px;background:#f5f5f5;border-radius:3px;">';
+                html += '<b>L4-认知自修复:</b> ' + (Object.keys(hs2).length === 0 ? '<span style="color:#4CAF50;">无修复中</span>' : Object.keys(hs2).length + '个修复中');
+                html += '</div>';
+                const anomalies = data.recent_anomalies || [];
+                html += '<div style="margin:4px 0;padding:4px 6px;background:#f5f5f5;border-radius:3px;">';
+                html += '<b>L1-异常检测:</b> ' + (anomalies.length === 0 ? '<span style="color:#4CAF50;">无异常</span>' : anomalies.length + '个异常');
+                html += '</div>';
+                const es = data.exception_stats || {};
+                if (es.total_suppressed > 0) {
+                    html += '<div style="font-size:10px;color:#FF9800;margin-top:4px;">已抑制异常: ' + es.total_suppressed + ' | 类型: ' + es.unique_types + '</div>';
+                }
+                if (anomaliesData && !anomaliesData.error) {
+                    const anomList = anomaliesData.anomalies || anomaliesData.recent_anomalies || [];
+                    html += '<div style="margin:4px 0;padding:4px 6px;background:#f5f5f5;border-radius:3px;">';
+                    html += '<b>异常详情:</b> ' + (anomList.length === 0 ? '<span style="color:#4CAF50;">无异常</span>' : anomList.length + '个');
+                    for (const a of anomList.slice(0, 3)) {
+                        html += '<div style="font-size:9px;color:#666;margin:1px 0;">• ' + (a.type || a.module || '') + ': ' + (a.description || a.message || '').substring(0, 50) + '</div>';
+                    }
+                    html += '</div>';
+                }
+                if (metricsData && !metricsData.error) {
+                    const mKeys = Object.keys(metricsData).filter(k => typeof metricsData[k] === 'number');
+                    if (mKeys.length > 0) {
+                        html += '<div style="margin:4px 0;padding:4px 6px;background:#f5f5f5;border-radius:3px;">';
+                        html += '<b>健康指标:</b> ';
+                        for (const k of mKeys.slice(0, 5)) {
+                            html += '<span style="font-size:9px;margin-right:6px;">' + k + ': ' + (metricsData[k] * 100).toFixed(0) + '%</span>';
+                        }
+                        html += '</div>';
+                    }
+                }
+                html += '<div style="margin-top:8px;border-top:1px solid #eee;padding-top:6px;"><b>操作:</b></div>';
+                html += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;">';
+                html += '<button onclick="defenseAction(\'repair\')" style="font-size:10px;padding:2px 6px;background:#4CAF50;color:white;border:none;border-radius:3px;cursor:pointer;">认知修复</button>';
+                if (Object.keys(cb).length > 0) {
+                    html += '<button onclick="defenseAction(\'circuit_reset\')" style="font-size:10px;padding:2px 6px;background:#FF9800;color:white;border:none;border-radius:3px;cursor:pointer;">重置熔断</button>';
+                }
+                if (Object.keys(im).length > 0) {
+                    html += '<button onclick="defenseAction(\'isolation_release\')" style="font-size:10px;padding:2px 6px;background:#2196F3;color:white;border:none;border-radius:3px;cursor:pointer;">解除隔离</button>';
+                }
+                html += '</div>';
+            }
+            container.innerHTML = html || '<p style="color:#999;font-size:11px;">暂无防御数据</p>';
+        } else if (_currentPanoramaTab === 'presence') {
+            const [presResp, forgetResp, percResp] = await Promise.all([
+                fetch('/api/presence/status'),
+                fetch('/api/forgetting/evaluate'),
+                fetch('/api/perception/snapshot')
+            ]);
+            const data = await presResp.json();
+            const forgetData = await forgetResp.json();
+            let percData = {};
+            try { percData = await percResp.json(); } catch(e) {}
+            let html = '';
+            if (data.error) {
+                html = '<p style="color:#F44336;font-size:11px;">错误: ' + data.error + '</p>';
+            } else {
+                const stateColors = {awake: '#4CAF50', drowsy: '#FF9800', asleep: '#9C27B0', sleeping: '#9C27B0', deep_sleep: '#673AB7'};
+                const stateLabels = {awake: '清醒', drowsy: '困倦', asleep: '睡眠', sleeping: '睡眠', deep_sleep: '深睡'};
+                const st = data.state || 'awake';
+                html += '<div style="text-align:center;margin-bottom:8px;">';
+                html += '<div style="font-size:20px;font-weight:bold;color:' + (stateColors[st] || '#666') + ';">' + (stateLabels[st] || st) + '</div>';
+                html += '</div>';
+                const metrics = [
+                    ['运行时间', data.uptime_seconds != null ? Math.floor(data.uptime_seconds / 60) + '分' : null],
+                    ['总周期', data.total_cycles],
+                    ['清醒周期', data.awake_cycles],
+                    ['生长周期', data.growing_cycles],
+                    ['休息周期', data.resting_cycles],
+                    ['待处理信号', data.signals_pending],
+                    ['已处理信号', data.signals_processed],
+                    ['整合记忆', data.memories_consolidated],
+                ];
+                for (const [label, val] of metrics) {
+                    if (val != null) {
+                        html += '<div style="display:flex;justify-content:space-between;font-size:11px;margin:2px 0;">';
+                        html += '<span style="color:#666;">' + label + '</span><span>' + val + '</span></div>';
+                    }
+                }
+                const lp = data.last_perception || {};
+                if (Object.keys(lp).length > 0) {
+                    html += '<div style="margin-top:6px;padding-top:4px;border-top:1px solid #eee;"><b>最近感知:</b></div>';
+                    const percLabels = {health: '健康度', confidence: '置信度', energy: '能量'};
+                    for (const [k, v] of Object.entries(lp)) {
+                        const pct = (v * 100).toFixed(0);
+                        const color = v > 0.7 ? '#4CAF50' : v > 0.4 ? '#FF9800' : '#F44336';
+                        html += '<div style="margin:2px 0;"><span style="font-size:10px;color:#888;">' + (percLabels[k] || k) + '</span>';
+                        html += '<div style="height:4px;background:#e0e0e0;border-radius:2px;"><div style="height:4px;width:' + pct + '%;background:' + color + ';border-radius:2px;"></div></div></div>';
+                    }
+                }
+                if (data.silence_duration != null) {
+                    const silMins = Math.floor(data.silence_duration / 60);
+                    html += '<div style="margin-top:4px;font-size:10px;color:#aaa;">静默: ' + silMins + '分</div>';
+                }
+            }
+                if (percData && !percData.error && percData.summary) {
+                    html += '<div style="margin-top:6px;border-top:1px solid #eee;padding-top:4px;">';
+                    html += '<div style="font-size:10px;font-weight:bold;color:#607D8B;margin-bottom:2px;">统一感知</div>';
+                    html += '<div style="font-size:10px;color:#666;">' + percData.summary + '</div>';
+                    if (percData.knowledge) {
+                        const k = percData.knowledge;
+                        html += '<div style="font-size:9px;color:#999;margin-top:2px;">经验:' + (k.experience_count||0) + ' 真谛:' + (k.truth_count||0) + ' 图谱:' + (k.graph_nodes||0) + '节点</div>';
+                    }
+                    html += '</div>';
+                }
+                html += '<div style="margin-top:6px;border-top:1px solid #eee;padding-top:4px;">';
+                html += '<button onclick="evalProactivity()" style="font-size:10px;padding:2px 6px;background:#9C27B0;color:white;border:none;border-radius:3px;cursor:pointer;margin-right:4px;">主动性评估</button>';
+                html += '<button onclick="testProactivity()" style="font-size:10px;padding:2px 6px;background:#FF9800;color:white;border:none;border-radius:3px;cursor:pointer;margin-right:4px;">主动性测试</button>';
+                html += '<button onclick="closedLoopOrchestrate()" style="font-size:10px;padding:2px 6px;background:#2196F3;color:white;border:none;border-radius:3px;cursor:pointer;margin-right:4px;">闭环编排</button>';
+                html += '<button onclick="executeForgetting()" style="font-size:10px;padding:2px 6px;background:#795548;color:white;border:none;border-radius:3px;cursor:pointer;margin-right:4px;">执行遗忘</button>';
+                html += '<button onclick="sendPresenceSignal()" style="font-size:10px;padding:2px 6px;background:#009688;color:white;border:none;border-radius:3px;cursor:pointer;margin-right:4px;">发送信号</button>';
+                html += '<select id="force-state-select" style="font-size:10px;padding:1px 3px;border-radius:3px;margin-right:2px;"><option value="awake">清醒</option><option value="drowsy">困倦</option><option value="asleep">睡眠</option></select>';
+                html += '<button onclick="forcePresenceState()" style="font-size:10px;padding:2px 6px;background:#E91E63;color:white;border:none;border-radius:3px;cursor:pointer;">切换状态</button>';
+                html += '<div id="presence-action-result" style="margin-top:4px;font-size:10px;"></div>';
+                html += '</div>';
+            container.innerHTML = html || '<p style="color:#999;font-size:11px;">暂无存在层数据</p>';
+        } else if (_currentPanoramaTab === 'assessment') {
+            const [assessResp, historyResp, attrResp, deltaResp, covResp, gapsResp, suggResp] = await Promise.all([
+                fetch('/api/self-assessment'),
+                fetch('/api/self-assessment/history'),
+                fetch('/api/attributions'),
+                fetch('/api/delta-stats'),
+                fetch('/api/coverage/report'),
+                fetch('/api/coverage/gaps'),
+                fetch('/api/coverage/suggestions')
+            ]);
+            const data = await assessResp.json();
+            const historyData = await historyResp.json();
+            const attrData = await attrResp.json();
+            const deltaData = await deltaResp.json();
+            const covReport = await covResp.json();
+            const covGaps = await gapsResp.json();
+            const covSugg = await suggResp.json();
+            let html = '';
+            if (data.error) {
+                html = '<p style="color:#F44336;font-size:11px;">错误: ' + data.error + '</p>';
+            } else {
+                if (data.overall) {
+                    const score = data.overall.score || 0;
+                    const level = data.overall.level || '--';
+                    const scorePct = (score * 100).toFixed(1);
+                    const scoreColor = score >= 0.8 ? '#4CAF50' : score >= 0.6 ? '#FF9800' : '#F44336';
+                    const levelLabels = {thriving: '繁荣', healthy: '健康', degraded: '退化', critical: '危急'};
+                    html += '<div style="text-align:center;margin-bottom:8px;">';
+                    html += '<div style="font-size:28px;font-weight:bold;color:' + scoreColor + ';">' + scorePct + '</div>';
+                    html += '<div style="font-size:11px;color:#888;">' + (levelLabels[level] || level) + '</div>';
+                    html += '</div>';
+                    const dimScores = data.overall.dimension_scores || {};
+                    const dimLabels = {loop_integrity: '闭环完整性', knowledge_vitality: '知识活力', learning_efficiency: '学习效率', behavior_deviation: '行为偏差', adaptation_speed: '适应速度', frontend_coverage: '前端覆盖率'};
+                    const dimColors = {loop_integrity: '#2196F3', knowledge_vitality: '#4CAF50', learning_efficiency: '#FF9800', behavior_deviation: '#9C27B0', adaptation_speed: '#E91E63', frontend_coverage: '#00BCD4'};
+                    if (Object.keys(dimScores).length > 0) {
+                        html += '<div><b>六维评估:</b></div>';
+                        for (const [key, val] of Object.entries(dimScores)) {
+                            const pct = Math.min(100, Math.max(0, val * 100)).toFixed(0);
+                            const label = dimLabels[key] || key;
+                            const color = dimColors[key] || '#2196F3';
+                            html += '<div style="margin:4px 0;">';
+                            html += '<div style="display:flex;justify-content:space-between;font-size:11px;"><span>' + label + '</span><span>' + pct + '%</span></div>';
+                            html += '<div style="height:6px;background:#e0e0e0;border-radius:3px;"><div style="height:6px;width:' + pct + '%;background:' + color + ';border-radius:3px;"></div></div>';
+                            html += '</div>';
+                        }
+                    }
+                    const fc = data.frontend_coverage || {};
+                    if (fc.metrics && fc.metrics.coverage_rate != null) {
+                        html += '<div style="margin-top:6px;padding-top:4px;border-top:1px solid #eee;">';
+                        html += '<div style="font-size:10px;color:#00BCD4;">前端覆盖率: ' + (fc.metrics.coverage_rate * 100).toFixed(1) + '% (' + fc.metrics.covered_endpoints + '/' + fc.metrics.total_endpoints + ')</div>';
+                        if (fc.metrics.high_priority_gaps_count > 0) {
+                            html += '<div style="font-size:9px;color:#F44336;">高优先级缺口: ' + fc.metrics.high_priority_gaps_count + '个</div>';
+                        }
+                        html += '</div>';
+                    }
+                }
+                const recs = data.recommendations || [];
+                if (recs.length > 0) {
+                    html += '<div style="margin-top:6px;"><b>建议:</b></div>';
+                    for (const r of recs.slice(0, 3)) {
+                        const priColor = r.priority === 'high' ? '#F44336' : r.priority === 'medium' ? '#FF9800' : '#4CAF50';
+                        html += '<div style="font-size:10px;margin:2px 0;padding:2px 4px;border-left:3px solid ' + priColor + ';">' + (r.area || '') + ': ' + (r.action || '') + '</div>';
+                    }
+                }
+                if (historyData && historyData.trends) {
+                    html += '<div style="margin-top:6px;padding-top:4px;border-top:1px solid #eee;font-size:10px;color:#888;">';
+                    html += '<b>趋势:</b> ';
+                    for (const [dim, trend] of Object.entries(historyData.trends)) {
+                        const tLabel = {overall: '总体', loop_integrity: '闭环', knowledge_vitality: '知识', learning_efficiency: '学习', frontend_coverage: '覆盖'}[dim] || dim;
+                        const tIcon = trend === 'improving' ? '↑' : trend === 'declining' ? '↓' : '→';
+                        html += tLabel + tIcon + ' ';
+                    }
+                    html += '</div>';
+                }
+                if (data.timestamp) {
+                    html += '<div style="margin-top:4px;font-size:10px;color:#aaa;">评估时间: ' + data.timestamp.replace('T', ' ').substring(0, 19) + '</div>';
+                }
+                if (covGaps && covGaps.uncovered_endpoints && covGaps.uncovered_endpoints.length > 0) {
+                    html += '<div style="margin-top:6px;border-top:1px solid #eee;padding-top:4px;"><b>未覆盖端点:</b></div>';
+                    for (const ep of covGaps.uncovered_endpoints.slice(0, 6)) {
+                        html += '<div style="font-size:10px;color:#F44336;margin:1px 0;">' + ep + '</div>';
+                    }
+                    html += '<button onclick="autoGenerateCoverage()" style="font-size:10px;padding:2px 6px;background:#009688;color:white;border:none;border-radius:3px;cursor:pointer;margin-top:4px;">自动生成覆盖</button>';
+                }
+                if (covSugg && covSugg.suggestions && covSugg.suggestions.length > 0) {
+                    html += '<div style="margin-top:4px;border-top:1px solid #eee;padding-top:4px;"><b>覆盖建议:</b></div>';
+                    for (const s of covSugg.suggestions.slice(0, 3)) {
+                        html += '<div style="font-size:10px;color:#666;margin:1px 0;">' + (s.endpoint || s) + '</div>';
+                    }
+                }
+            }
+            container.innerHTML = html || '<p style="color:#999;font-size:11px;">暂无评估数据</p>';
+        } else if (_currentPanoramaTab === 'genes') {
+            const resp = await fetch('/api/genes');
+            const data = await resp.json();
+            let html = '';
+            if (data.error) {
+                html = '<p style="color:#F44336;font-size:11px;">错误: ' + data.error + '</p>';
+            } else {
+                const genes = data.genes || {};
+                const personality = data.personality || '未定型';
+                html += '<div style="margin-bottom:8px;"><b>性格类型:</b> <span style="color:#1976D2;">' + personality + '</span></div>';
+                if (Object.keys(genes).length > 0) {
+                    html += '<div><b>基因参数:</b></div>';
+                    const geneColors = ['#2196F3', '#4CAF50', '#FF9800', '#9C27B0', '#E91E63', '#00BCD4', '#FF5722', '#607D8B'];
+                    let gi = 0;
+                    for (const [name, value] of Object.entries(genes)) {
+                        const val = typeof value === 'number' ? value : parseFloat(value) || 0;
+                        const pct = Math.min(100, Math.max(0, val * 100));
+                        const color = geneColors[gi % geneColors.length];
+                        html += '<div style="margin:3px 0;">';
+                        html += '<div style="display:flex;justify-content:space-between;font-size:11px;"><span>' + name + '</span><span>' + (val * 100).toFixed(1) + '%</span></div>';
+                        html += '<div style="height:5px;background:#e0e0e0;border-radius:3px;"><div style="height:5px;width:' + pct + '%;background:' + color + ';border-radius:3px;"></div></div>';
+                        html += '</div>';
+                        gi++;
+                    }
+                }
+                if (data.radar && Object.keys(data.radar).length > 0) {
+                    html += '<div style="margin-top:8px;"><b>雷达维度:</b></div>';
+                    for (const [k, v] of Object.entries(data.radar)) {
+                        html += '<span style="display:inline-block;font-size:10px;background:#e3f2fd;padding:1px 4px;border-radius:2px;margin:1px;">' + k + ': ' + (typeof v === 'number' ? v.toFixed(2) : v) + '</span>';
+                    }
+                }
+                if (data.mutation_history && data.mutation_history.length > 0) {
+                    html += '<div style="margin-top:8px;"><b>最近突变:</b></div>';
+                    for (const m of data.mutation_history.slice(0, 5)) {
+                        const delta = m.delta != null ? (m.delta > 0 ? '+' : '') + m.delta.toFixed(2) : '';
+                        html += '<div style="font-size:10px;color:#666;margin:1px 0;">' + (m.key || '?') + ': ' + (m.old != null ? m.old.toFixed(2) : '') + ' → ' + (m.new != null ? m.new.toFixed(2) : '') + ' <span style="color:' + (m.delta > 0 ? '#4CAF50' : '#F44336') + ';">' + delta + '</span> <span style="color:#aaa;">(' + (m.trigger || '') + ')</span></div>';
+                    }
+                }
+            }
+            container.innerHTML = html || '<p style="color:#999;font-size:11px;">暂无基因数据</p>';
+        } else if (_currentPanoramaTab === 'cognitive') {
+            const [entropyResp, truthsResp, probResp, reflResp, eventsResp] = await Promise.all([
+                fetch('/api/truths/entropy'),
+                fetch('/api/truths'),
+                fetch('/api/probability-field'),
+                fetch('/api/reflection/stats'),
+                fetch('/api/events/stats')
+            ]);
+            const entropy = await entropyResp.json();
+            const truths = await truthsResp.json();
+            const prob = await probResp.json();
+            let html = '';
+            html += '<div style="text-align:center;margin-bottom:8px;">';
+            const eScore = entropy.entropy_score || 0;
+            const eColor = eScore < 0.3 ? '#4CAF50' : eScore < 0.6 ? '#FF9800' : '#F44336';
+            const eStatus = entropy.status || 'unknown';
+            const statusLabels = {healthy: '健康', warning: '警告', critical: '危急', unknown: '未知'};
+            html += '<div style="font-size:24px;font-weight:bold;color:' + eColor + ';">' + (eScore * 100).toFixed(1) + '</div>';
+            html += '<div style="font-size:11px;color:#888;">认知熵 | ' + (statusLabels[eStatus] || eStatus) + '</div>';
+            html += '</div>';
+            html += '<div style="margin:4px 0;padding:4px 6px;background:#f5f5f5;border-radius:3px;">';
+            html += '<b>真谛沉淀:</b> ' + (truths.total_truths || 0) + '条';
+            if (truths.by_level) {
+                const levels = Object.entries(truths.by_level);
+                html += ' | ' + levels.map(([l, c]) => l + ':' + c).join(' ');
+            }
+            html += '</div>';
+            html += '<div style="margin:4px 0;padding:4px 6px;background:#f5f5f5;border-radius:3px;">';
+            html += '<b>重组候选:</b> ' + (truths.reorganization_candidates || 0) + '个';
+            html += '</div>';
+            html += '<div style="margin-top:6px;border-top:1px solid #eee;padding-top:4px;">';
+                html += '<button onclick="truthsReorg(\'propose\')" style="font-size:10px;padding:2px 6px;background:#2196F3;color:white;border:none;border-radius:3px;cursor:pointer;margin-right:4px;">提议重组</button>';
+                html += '<button onclick="truthsReorg(\'approve\')" style="font-size:10px;padding:2px 6px;background:#4CAF50;color:white;border:none;border-radius:3px;cursor:pointer;margin-right:4px;">批准重组</button>';
+                html += '<button onclick="truthsReorg(\'execute\')" style="font-size:10px;padding:2px 6px;background:#FF9800;color:white;border:none;border-radius:3px;cursor:pointer;margin-right:4px;">执行重组</button>';
+                html += '<button onclick="runReorganization()" style="font-size:10px;padding:2px 6px;background:#9C27B0;color:white;border:none;border-radius:3px;cursor:pointer;">自动重组</button>';
+            html += '<div id="reorg-result" style="margin-top:4px;font-size:10px;"></div>';
+            html += '</div>';
+            const entMetrics = [
+                ['矛盾率', entropy.contradiction_rate, '%'],
+                ['真谛冲突率', entropy.truth_conflict_rate, '%'],
+                ['基因安全违规', entropy.gene_safety_violations, ''],
+            ];
+            for (const [label, val, unit] of entMetrics) {
+                if (val != null) {
+                    const display = unit === '%' ? (val * 100).toFixed(1) + unit : val;
+                    const color = unit === '%' ? (val > 0.5 ? '#F44336' : val > 0.2 ? '#FF9800' : '#4CAF50') : (val > 100 ? '#F44336' : val > 10 ? '#FF9800' : '#4CAF50');
+                    html += '<div style="display:flex;justify-content:space-between;font-size:11px;margin:2px 0;">';
+                    html += '<span style="color:#666;">' + label + '</span><span style="color:' + color + ';">' + display + '</span></div>';
+                }
+            }
+            if (prob.distribution) {
+                html += '<div style="margin-top:6px;padding-top:4px;border-top:1px solid #eee;"><b>概率场:</b></div>';
+                const dist = prob.distribution;
+                if (dist.entropy != null) {
+                    html += '<div style="font-size:11px;color:#666;">分布熵: ' + dist.entropy.toFixed(3) + ' | 置信: ' + (dist.confidence_level || '--') + '</div>';
+                }
+                if (dist.top) {
+                    html += '<div style="font-size:11px;">最可靠: <span style="color:#1976D2;">' + (dist.top.source || '--') + '</span> (' + ((dist.top.probability || 0) * 100).toFixed(1) + '%)</div>';
+                }
+                if (dist.candidates) {
+                    for (const [id, cand] of Object.entries(dist.candidates)) {
+                        const pct = ((cand.probability || 0) * 100).toFixed(1);
+                        html += '<div style="margin:2px 0;">';
+                        html += '<div style="display:flex;justify-content:space-between;font-size:10px;"><span>' + (cand.source || id) + '</span><span>' + pct + '%</span></div>';
+                        html += '<div style="height:4px;background:#e0e0e0;border-radius:2px;"><div style="height:4px;width:' + pct + '%;background:#2196F3;border-radius:2px;"></div></div>';
+                        html += '</div>';
+                    }
+                }
+            }
+            if (prob.gap_stats && prob.gap_stats.total_gaps > 0) {
+                html += '<div style="margin-top:6px;"><b>知识缺口:</b> ' + prob.gap_stats.total_gaps + '个';
+                if (prob.gap_stats.top_gap) html += ' | 最大: ' + prob.gap_stats.top_gap;
+                html += '</div>';
+            }
+            try {
+                const reflData = await reflResp.json();
+                if (reflData && !reflData.error) {
+                    html += '<div style="margin-top:6px;padding-top:4px;border-top:1px solid #eee;"><b>反思统计:</b> ' + (reflData.total_reflections || 0) + '次 | 成功率: ' + ((reflData.success_rate || 0) * 100).toFixed(0) + '%</div>';
+                }
+            } catch(e) {}
+            try {
+                const evData = await eventsResp.json();
+                if (evData && !evData.error) {
+                    html += '<div style="margin-top:4px;"><b>事件统计:</b> ' + (evData.total_events || 0) + '个事件</div>';
+                }
+            } catch(e) {}
+            container.innerHTML = html || '<p style="color:#999;font-size:11px;">暂无认知数据</p>';
+        } else if (_currentPanoramaTab === 'agents') {
+            const resp = await fetch('/api/agent/status');
+            const data = await resp.json();
+            let html = '';
+            if (data.error) {
+                html = '<p style="color:#F44336;font-size:11px;">错误: ' + data.error + '</p>';
+            } else {
+                const coord = data.coordinator || {};
+                html += '<div style="margin-bottom:6px;"><b>协调器:</b> 迭代 ' + (coord.iteration_count || 0) + '/' + (coord.max_iterations || 3) + ' | 质量阈值: ' + (coord.quality_threshold || 50) + '</div>';
+                const roleLabels = {planner: '规划者', executor: '执行者', reflector: '反思者'};
+                const roleColors = {planner: '#2196F3', executor: '#4CAF50', reflector: '#FF9800'};
+                const roleIcons = {planner: '🧭', executor: '⚡', reflector: '🔍'};
+                const agentKeys = ['planner', 'executor', 'reflector'];
+                for (const key of agentKeys) {
+                    const agent = data[key];
+                    if (agent) {
+                        const stateColors = {idle: '#999', working: '#4CAF50', waiting: '#FF9800', error: '#F44336'};
+                        const stateLabels = {idle: '空闲', working: '工作中', waiting: '等待', error: '错误'};
+                        const st = agent.state || 'idle';
+                        const label = roleLabels[agent.role || key] || key;
+                        const color = roleColors[agent.role || key] || '#666';
+                        const icon = roleIcons[agent.role || key] || '🤖';
+                        html += '<div style="margin:4px 0;padding:6px;background:#f5f5f5;border-radius:4px;border-left:3px solid ' + color + ';">';
+                        html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+                        html += '<span><b>' + icon + ' ' + label + '</b></span>';
+                        html += '<span style="font-size:10px;padding:1px 4px;border-radius:2px;background:' + (stateColors[st] || '#999') + ';color:white;">' + (stateLabels[st] || st) + '</span>';
+                        html += '</div>';
+                        html += '<div style="font-size:10px;color:#888;margin-top:2px;">';
+                        html += '发送: ' + (agent.messages_sent || 0) + ' | 接收: ' + (agent.messages_received || 0);
+                        if (agent.errors > 0) html += ' | <span style="color:#F44336;">错误: ' + agent.errors + '</span>';
+                        html += '</div>';
+                        html += '</div>';
+                    }
+                }
+                html += '<div style="margin-top:8px;border-top:1px solid #eee;padding-top:6px;">';
+                html += '<input id="agent-query-input" type="text" placeholder="输入问题触发协作..." style="width:100%;font-size:11px;padding:3px 6px;border:1px solid #ddd;border-radius:3px;box-sizing:border-box;">';
+                html += '<button onclick="triggerAgentCollab()" style="font-size:10px;padding:2px 8px;margin-top:4px;background:#2196F3;color:white;border:none;border-radius:3px;cursor:pointer;">触发协作</button>';
+                html += '<div id="agent-collab-result" style="margin-top:4px;max-height:120px;overflow-y:auto;font-size:10px;"></div>';
+                html += '</div>';
+                const lastResult = data.last_collaboration;
+                if (lastResult) {
+                    html += '<div style="margin-top:6px;border-top:1px solid #eee;padding-top:4px;"><b>最近协作:</b></div>';
+                    html += '<div style="font-size:10px;color:#666;">质量: ' + ((lastResult.quality || 0) * 100).toFixed(0) + '% | 迭代: ' + (lastResult.iterations || 0) + '次</div>';
+                    if (lastResult.improvement) html += '<div style="font-size:10px;color:#4CAF50;">提升: +' + ((lastResult.improvement || 0) * 100).toFixed(0) + '%</div>';
+                }
+            }
+            container.innerHTML = html || '<p style="color:#999;font-size:11px;">暂无协作数据</p>';
+        } else if (_currentPanoramaTab === 'facts') {
+            const resp = await fetch('/api/facts/stats');
+            const data = await resp.json();
+            let html = '<div style="text-align:center;margin-bottom:8px;">';
+            html += '<div style="font-size:24px;font-weight:bold;color:#2196F3;">' + (data.total || 0) + '</div>';
+            html += '<div style="font-size:11px;color:#888;">事实锚点</div></div>';
+            html += '<div style="display:flex;gap:6px;justify-content:center;margin-bottom:8px;">';
+            html += '<div style="padding:4px 8px;background:#E8F5E9;border-radius:3px;font-size:11px;">✓ ' + (data.positive || 0) + ' 正向</div>';
+            html += '<div style="padding:4px 8px;background:#FFF3E0;border-radius:3px;font-size:11px;">✗ ' + (data.negations || 0) + ' 否定</div>';
+            html += '<div style="padding:4px 8px;background:#E3F2FD;border-radius:3px;font-size:11px;">↻ ' + (data.corrections || 0) + ' 纠正</div>';
+            html += '</div>';
+            html += '<div style="margin-top:6px;border-top:1px solid #eee;padding-top:6px;">';
+            html += '<input id="fact-search-input" type="text" placeholder="搜索事实..." style="width:100%;font-size:11px;padding:3px 6px;border:1px solid #ddd;border-radius:3px;box-sizing:border-box;">';
+            html += '<button onclick="searchFacts()" style="font-size:10px;padding:2px 8px;margin-top:4px;background:#2196F3;color:white;border:none;border-radius:3px;cursor:pointer;">搜索</button>';
+            html += '<div id="fact-search-results" style="margin-top:4px;max-height:120px;overflow-y:auto;"></div>';
+            html += '</div>';
+            html += '<div style="margin-top:6px;border-top:1px solid #eee;padding-top:6px;">';
+            html += '<input id="fact-add-input" type="text" placeholder="添加新事实..." style="width:100%;font-size:11px;padding:3px 6px;border:1px solid #ddd;border-radius:3px;box-sizing:border-box;">';
+            html += '<button onclick="addFact()" style="font-size:10px;padding:2px 8px;margin-top:4px;background:#4CAF50;color:white;border:none;border-radius:3px;cursor:pointer;">添加</button>';
+            html += '</div>';
+            container.innerHTML = html;
+        } else if (_currentPanoramaTab === 'memory') {
+            const resp = await fetch('/api/memory/stats');
+            const data = await resp.json();
+            let html = '<div style="text-align:center;margin-bottom:8px;">';
+            html += '<div style="font-size:24px;font-weight:bold;color:#9C27B0;">' + (data.total_memories || 0) + '</div>';
+            html += '<div style="font-size:11px;color:#888;">立体记忆</div></div>';
+            const byType = data.by_type || {};
+            const typeLabels = {conversation: '对话', knowledge: '知识', experience: '经验', emotion: '情感', relationship: '关系', skill: '技能'};
+            const typeColors = {conversation: '#2196F3', knowledge: '#4CAF50', experience: '#FF9800', emotion: '#E91E63', relationship: '#9C27B0', skill: '#00BCD4'};
+            for (const [k, v] of Object.entries(byType)) {
+                if (v > 0) {
+                    const pct = ((v / (data.total_memories || 1)) * 100).toFixed(0);
+                    html += '<div style="margin:3px 0;">';
+                    html += '<div style="display:flex;justify-content:space-between;font-size:11px;"><span>' + (typeLabels[k] || k) + '</span><span>' + v + ' (' + pct + '%)</span></div>';
+                    html += '<div style="height:5px;background:#e0e0e0;border-radius:3px;"><div style="height:5px;width:' + pct + '%;background:' + (typeColors[k] || '#666') + ';border-radius:3px;"></div></div>';
+                    html += '</div>';
+                }
+            }
+            html += '<div style="margin-top:6px;font-size:10px;color:#888;">平均重要度: ' + ((data.avg_importance || 0) * 100).toFixed(0) + '% | 平均访问: ' + (data.avg_access_count || 0).toFixed(2) + '</div>';
+            html += '<div style="margin-top:6px;border-top:1px solid #eee;padding-top:6px;">';
+            html += '<input id="memory-search-input" type="text" placeholder="搜索记忆..." style="width:100%;font-size:11px;padding:3px 6px;border:1px solid #ddd;border-radius:3px;box-sizing:border-box;">';
+            html += '<button onclick="searchMemories()" style="font-size:10px;padding:2px 8px;margin-top:4px;background:#9C27B0;color:white;border:none;border-radius:3px;cursor:pointer;">搜索</button>';
+            html += '<div id="memory-search-results" style="margin-top:4px;max-height:120px;overflow-y:auto;"></div>';
+            html += '</div>';
+            container.innerHTML = html;
+        } else if (_currentPanoramaTab === 'relation') {
+            const [summaryResp, metricsResp] = await Promise.all([
+                fetch('/api/relationship/summary'),
+                fetch('/api/relationship/metrics')
+            ]);
+            const data = await summaryResp.json();
+            const metricsData = await metricsResp.json();
+            let html = '';
+            const metrics = [
+                ['信任度', data.trust_level, data.trust_trend],
+                ['亲密度', data.intimacy_level, data.intimacy_trend],
+                ['理解度', data.understanding_level, null],
+            ];
+            for (const [label, val, trend] of metrics) {
+                if (val != null) {
+                    const pct = (val * 100).toFixed(0);
+                    const color = val > 0.7 ? '#4CAF50' : val > 0.4 ? '#FF9800' : '#F44336';
+                    const trendIcon = trend === 'rising' ? '↑' : trend === 'declining' ? '↓' : '→';
+                    html += '<div style="margin:4px 0;">';
+                    html += '<div style="display:flex;justify-content:space-between;font-size:11px;"><span>' + label + '</span><span style="color:' + color + ';">' + pct + '% ' + trendIcon + '</span></div>';
+                    html += '<div style="height:6px;background:#e0e0e0;border-radius:3px;"><div style="height:6px;width:' + pct + '%;background:' + color + ';border-radius:3px;"></div></div>';
+                    html += '</div>';
+                }
+            }
+            html += '<div style="margin-top:6px;font-size:10px;color:#888;">互动: ' + (data.total_interactions || 0) + '次 | 风格: ' + (data.communication_style || '--') + '</div>';
+            container.innerHTML = html || '<p style="color:#999;font-size:11px;">暂无关系数据</p>';
+        } else if (_currentPanoramaTab === 'system') {
+            const [sched, traj, tools, modHealth, trajSearch, bgTasks] = await Promise.all([
+                fetch('/api/scheduled-tasks/status'),
+                fetch('/api/trajectory/stats'),
+                fetch('/api/tools/stats'),
+                fetch('/api/module/health'),
+                fetch('/api/trajectory/search?limit=5'),
+                fetch('/api/background-tasks')
+            ]);
+            const schedData = await sched.json();
+            const trajData = await traj.json();
+            const toolsData = await tools.json();
+            const modHealthData = await modHealth.json();
+            let html = '';
+            html += '<div style="margin-bottom:6px;"><b>定时任务:</b> ' + (schedData.running ? '<span style="color:#4CAF50;">运行中</span>' : '<span style="color:#F44336;">已停止</span>') + '</div>';
+            const jobs = schedData.jobs || {};
+            for (const [name, info] of Object.entries(jobs)) {
+                if (info.enabled) {
+                    html += '<div style="font-size:10px;color:#666;margin:1px 0;">' + name + ': ' + (info.run_count || 0) + '次 | 间隔' + (info.interval_seconds || 0) + 's</div>';
+                }
+            }
+            html += '<div style="margin-top:6px;padding-top:4px;border-top:1px solid #eee;"><b>轨迹进化:</b> ' + (trajData.total_trajectories || 0) + '条 | 活跃: ' + (trajData.live_trajectories || 0) + ' | 适应度: ' + (trajData.avg_fitness || 0).toFixed(1) + '</div>';
+            html += '<div style="margin-top:6px;padding-top:4px;border-top:1px solid #eee;"><b>工具框架:</b> ' + (toolsData.total_tools || 0) + '个工具</div>';
+            if (modHealthData && !modHealthData.error) {
+                const mods = modHealthData.modules || [];
+                const healthy = mods.filter(m => m.status === 'healthy').length;
+                html += '<div style="margin-top:6px;padding-top:4px;border-top:1px solid #eee;"><b>模块健康:</b> <span style="color:#4CAF50;">' + healthy + '/' + mods.length + '</span> 健康</div>';
+            }
+            container.innerHTML = html || '<p style="color:#999;font-size:11px;">暂无系统数据</p>';
+        } else if (_currentPanoramaTab === 'introspection') {
+            const [reportResp, statusResp, anomaliesResp] = await Promise.all([
+                fetch('/api/introspection/report'),
+                fetch('/api/introspection/status'),
+                fetch('/api/introspection/anomalies')
+            ]);
+            const report = await reportResp.json();
+            const status = await statusResp.json();
+            const anomaliesData = await anomaliesResp.json();
+            let html = '';
+            const healthColor = report.overall_health > 0.8 ? '#4CAF50' : report.overall_health > 0.5 ? '#FF9800' : '#F44336';
+            html += '<div style="margin-bottom:6px;"><b>系统健康度:</b> <span style="color:' + healthColor + ';font-weight:bold;">' + (report.overall_health * 100).toFixed(0) + '%</span></div>';
+            html += '<div style="margin-bottom:4px;font-size:10px;">检查次数: ' + (status.check_count || 0) + ' | 异常: ' + (report.anomaly_count || 0) + ' | 严重: ' + (report.critical_count || 0) + ' | 重要: ' + (report.major_count || 0) + '</div>';
+            if (report.anomalies && report.anomalies.length > 0) {
+                html += '<div style="margin-top:4px;border-top:1px solid #eee;padding-top:4px;"><b>异常列表:</b></div>';
+                for (const a of report.anomalies.slice(0, 5)) {
+                    const sevColor = a.severity === 'critical' ? '#F44336' : a.severity === 'major' ? '#FF9800' : '#999';
+                    html += '<div style="font-size:10px;margin:2px 0;"><span style="color:' + sevColor + ';">[' + a.severity + ']</span> ' + (a.title || a.description || '').substring(0, 50) + '</div>';
+                }
+            }
+            if (report.recommendations && report.recommendations.length > 0) {
+                html += '<div style="margin-top:4px;border-top:1px solid #eee;padding-top:4px;"><b>建议:</b></div>';
+                for (const r of report.recommendations) {
+                    html += '<div style="font-size:10px;color:#666;margin:1px 0;">• ' + r + '</div>';
+                }
+            }
+            if (anomaliesData && !anomaliesData.error) {
+                const anomList = anomaliesData.anomalies || anomaliesData.recent || [];
+                html += '<div style="margin-top:4px;border-top:1px solid #eee;padding-top:4px;"><b>异常详情:</b> ' + (anomList.length === 0 ? '<span style="color:#4CAF50;">无</span>' : anomList.length + '个') + '</div>';
+            }
+            container.innerHTML = html || '<p style="color:#999;font-size:11px;">暂无内省数据</p>';
+        } else if (_currentPanoramaTab === 'knowledgegraph') {
+            const resp = await fetch('/api/knowledge-graph/stats');
+            const data = await resp.json();
+            let html = '';
+            html += '<div style="margin-bottom:6px;"><b>知识图谱:</b> ' + (data.node_count || 0) + '个节点 | ' + (data.connection_count || 0) + '条连接</div>';
+            if (data.node_type_distribution) {
+                html += '<div style="font-size:10px;color:#666;">节点类型: ';
+                const types = Object.entries(data.node_type_distribution);
+                html += types.map(([t, c]) => t + ':' + c).join(' | ');
+                html += '</div>';
+            }
+            if (data.connection_type_distribution) {
+                html += '<div style="font-size:10px;color:#666;">连接类型: ';
+                const ctypes = Object.entries(data.connection_type_distribution);
+                html += ctypes.map(([t, c]) => t + ':' + c).join(' | ');
+                html += '</div>';
+            }
+            html += '<div style="margin-top:4px;font-size:10px;color:#888;">平均重要度: ' + (data.avg_importance || 0).toFixed(3) + '</div>';
+            const clusterResp = await fetch('/api/knowledge-graph/clusters');
+            const clusterData = await clusterResp.json();
+            const searchResp = await fetch('/api/knowledge-graph/search?query=');
+            const searchData = await searchResp.json();
+            if (clusterData.clusters && clusterData.clusters.length > 0) {
+                html += '<div style="margin-top:4px;border-top:1px solid #eee;padding-top:4px;"><b>知识群落:</b> ' + clusterData.clusters.length + '个</div>';
+                for (const c of clusterData.clusters.slice(0, 5)) {
+                    html += '<div style="font-size:10px;color:#666;margin:1px 0;">• ' + c.dominant_type + ': ' + c.size + '个节点</div>';
+                }
+            }
+            if (searchData && !searchData.error) {
+                const results = searchData.results || searchData.nodes || [];
+                html += '<div style="margin-top:4px;font-size:10px;color:#888;">搜索可用: ' + results.length + '条结果</div>';
+            }
+            container.innerHTML = html || '<p style="color:#999;font-size:11px;">暂无图谱数据</p>';
+        } else if (_currentPanoramaTab === 'alignment') {
+            const [statsResp, devsResp] = await Promise.all([
+                fetch('/api/alignment/stats'),
+                fetch('/api/alignment/deviations?limit=10')
+            ]);
+            const stats = await statsResp.json();
+            const devs = await devsResp.json();
+            let html = '';
+            const openCount = stats.open || 0;
+            const statusColor = openCount === 0 ? '#4CAF50' : openCount > 3 ? '#F44336' : '#FF9800';
+            html += '<div style="margin-bottom:6px;"><b>思想对齐状态:</b> <span style="color:' + statusColor + ';font-weight:bold;">' + (openCount === 0 ? '对齐' : openCount + '个偏离') + '</span></div>';
+            html += '<div style="font-size:10px;color:#666;">总记录: ' + (stats.total || 0) + ' | 已修正: ' + (stats.corrected || 0) + '</div>';
+            if (stats.by_type && Object.keys(stats.by_type).length > 0) {
+                html += '<div style="margin-top:4px;font-size:10px;">偏离类型: ';
+                html += Object.entries(stats.by_type).map(([t, c]) => t + ':' + c).join(' | ');
+                html += '</div>';
+            }
+            if (devs.deviations && devs.deviations.length > 0) {
+                html += '<div style="margin-top:4px;border-top:1px solid #eee;padding-top:4px;"><b>未修正偏离:</b></div>';
+                for (const d of devs.deviations) {
+                    const sevColor = d.severity === 'critical' ? '#F44336' : d.severity === 'major' ? '#FF9800' : '#999';
+                    html += '<div style="font-size:10px;margin:2px 0;"><span style="color:' + sevColor + ';">[' + d.severity + ']</span> ' + d.module + ': ' + (d.description || '').substring(0, 40);
+                    html += ' <button onclick="correctDeviation(' + d.id + ')" style="font-size:9px;padding:1px 4px;background:#4CAF50;color:white;border:none;border-radius:2px;cursor:pointer;">修正</button>';
+                    html += '</div>';
+                }
+            } else {
+                html += '<div style="margin-top:4px;font-size:10px;color:#4CAF50;">✅ 所有模块与核心思想对齐</div>';
+            }
+            html += '<div style="margin-top:6px;border-top:1px solid #eee;padding-top:4px;font-size:9px;color:#aaa;">审查标准: 闭环适配 / SpiritCore / 可塑性 / 同行者 / 能力关系</div>';
+            container.innerHTML = html || '<p style="color:#999;font-size:11px;">暂无对齐数据</p>';
+        } else if (_currentPanoramaTab === 'tools') {
+            const [toolsResp, statsResp, histResp] = await Promise.all([
+                fetch('/api/tools'),
+                fetch('/api/tools/stats'),
+                fetch('/api/tools/history?limit=10')
+            ]);
+            const tools = await toolsResp.json();
+            const stats = await statsResp.json();
+            const histData = await histResp.json();
+            let html = '';
+            html += '<div style="margin-bottom:6px;"><b>工具框架:</b> ' + (stats.total_tools || 0) + '个工具</div>';
+            const toolList = tools.tools || [];
+            if (toolList.length > 0) {
+                for (const t of toolList) {
+                    const catColors = {search: '#2196F3', computation: '#4CAF50', knowledge: '#FF9800', verification: '#9C27B0', user: '#00BCD4'};
+                    const color = catColors[t.category] || '#666';
+                    html += '<div style="margin:3px 0;padding:4px 6px;background:#f5f5f5;border-radius:3px;border-left:3px solid ' + color + ';">';
+                    html += '<div style="display:flex;justify-content:space-between;font-size:11px;">';
+                    html += '<span><b>' + t.name + '</b></span>';
+                    html += '<span style="font-size:9px;color:#888;">' + (t.category || '') + '</span>';
+                    html += '</div>';
+                    if (t.description) html += '<div style="font-size:10px;color:#666;">' + t.description.substring(0, 60) + '</div>';
+                    html += '</div>';
+                }
+            } else {
+                html += '<div style="font-size:10px;color:#999;">暂无工具</div>';
+            }
+            html += '<div style="margin-top:8px;border-top:1px solid #eee;padding-top:6px;">';
+            html += '<div style="font-size:10px;color:#888;margin-bottom:4px;">执行工具:</div>';
+            html += '<select id="tool-select" style="width:100%;font-size:11px;padding:3px;border:1px solid #ddd;border-radius:3px;box-sizing:border-box;">';
+            for (const t of toolList) {
+                html += '<option value="' + t.name + '">' + t.name + ' - ' + (t.description || '').substring(0, 40) + '</option>';
+            }
+            html += '</select>';
+            html += '<input id="tool-args-input" type="text" placeholder="参数 (JSON)" style="width:100%;font-size:11px;padding:3px 6px;border:1px solid #ddd;border-radius:3px;box-sizing:border-box;margin-top:4px;">';
+            html += '<button onclick="executeTool()" style="font-size:10px;padding:2px 8px;margin-top:4px;background:#2196F3;color:white;border:none;border-radius:3px;cursor:pointer;">执行</button>';
+            html += '<div id="tool-execute-result" style="margin-top:4px;max-height:100px;overflow-y:auto;font-size:10px;"></div>';
+            html += '</div>';
+            if (histData.history && histData.history.length > 0) {
+                html += '<div style="margin-top:8px;border-top:1px solid #eee;padding-top:6px;"><b>执行历史:</b> ' + histData.history.length + '条</div>';
+                for (const h of histData.history.slice(0, 8)) {
+                    const succColor = h.success ? '#4CAF50' : '#F44336';
+                    html += '<div style="font-size:9px;margin:2px 0;padding:2px 4px;background:#f5f5f5;border-radius:2px;">';
+                    html += '<span style="color:' + succColor + ';">' + (h.success ? '✓' : '✗') + '</span> ' + h.tool_name;
+                    if (h.duration_ms) html += ' <span style="color:#888;">' + h.duration_ms + 'ms</span>';
+                    html += '</div>';
+                }
+            }
+            container.innerHTML = html;
+        } else if (_currentPanoramaTab === 'audit') {
+            const resp = await fetch('/api/system/audit');
+            const data = await resp.json();
+            let html = '';
+            if (data.error) {
+                html = '<p style="color:#F44336;font-size:11px;">错误: ' + data.error + '</p>';
+            } else {
+                const gaps = data.gaps || [];
+                const score = data.overall_score || 0;
+                const scoreColor = score > 0.8 ? '#4CAF50' : score > 0.5 ? '#FF9800' : '#F44336';
+                html += '<div style="text-align:center;margin-bottom:8px;">';
+                html += '<div style="font-size:24px;font-weight:bold;color:' + scoreColor + ';">' + (score * 100).toFixed(0) + '%</div>';
+                html += '<div style="font-size:11px;color:#888;">系统审核评分</div></div>';
+                if (gaps.length > 0) {
+                    html += '<div style="margin-bottom:4px;"><b>差距列表 (' + gaps.length + '):</b></div>';
+                    for (const g of gaps.slice(0, 8)) {
+                        const sevColor = g.severity === 'critical' ? '#F44336' : g.severity === 'major' ? '#FF9800' : '#999';
+                        html += '<div style="font-size:10px;margin:2px 0;padding:2px 4px;border-left:2px solid ' + sevColor + ';">';
+                        html += (g.module || '') + ': ' + (g.description || '').substring(0, 50);
+                        html += '</div>';
+                    }
+                } else {
+                    html += '<div style="color:#4CAF50;font-size:11px;">系统审核通过，无差距</div>';
+                }
+                if (data.recommendations && data.recommendations.length > 0) {
+                    html += '<div style="margin-top:4px;border-top:1px solid #eee;padding-top:4px;"><b>建议:</b></div>';
+                    for (const r of data.recommendations.slice(0, 3)) {
+                        html += '<div style="font-size:10px;color:#666;margin:1px 0;">• ' + r + '</div>';
+                    }
+                }
+            }
+            container.innerHTML = html || '<p style="color:#999;font-size:11px;">暂无审核数据</p>';
+        } else if (_currentPanoramaTab === 'cbnr') {
+            let html = '';
+            html += '<div style="text-align:center;margin-bottom:8px;">';
+            html += '<div style="font-size:16px;font-weight:bold;color:#9C27B0;">CBNR 核心枢纽</div>';
+            html += '<div style="font-size:10px;color:#888;">认知规范化 · 瓶颈 · 残差</div></div>';
+            html += '<div style="margin-bottom:6px;">';
+            html += '<input id="cbnr-input" type="text" placeholder="输入测试文本" style="font-size:11px;padding:3px 6px;width:60%;border:1px solid #ddd;border-radius:3px;">';
+            html += '<button onclick="testCBNR()" style="font-size:10px;padding:2px 8px;background:#9C27B0;color:white;border:none;border-radius:3px;cursor:pointer;margin-left:4px;">处理</button>';
+            html += '</div>';
+            html += '<div id="cbnr-result" style="font-size:10px;color:#666;">点击"处理"测试CBNR三层管道</div>';
+            html += '<div style="margin-top:8px;border-top:1px solid #eee;padding-top:4px;">';
+            html += '<div style="font-size:10px;font-weight:bold;color:#607D8B;margin-bottom:4px;">三层关键问句</div>';
+            html += '<div style="font-size:9px;color:#666;margin:2px 0;padding:2px 4px;background:#f5f5f5;border-radius:2px;">L1 规范化：我是否已重置到正确的基准状态？</div>';
+            html += '<div style="font-size:9px;color:#666;margin:2px 0;padding:2px 4px;background:#f5f5f5;border-radius:2px;">L2 瓶颈：这个问题的本质是什么？我可以安全地忽略什么？</div>';
+            html += '<div style="font-size:9px;color:#666;margin:2px 0;padding:2px 4px;background:#f5f5f5;border-radius:2px;">L3 残差：这个问题与哪些已处理问题相似？我能在旧方案上只调整差异？</div>';
+            html += '</div>';
+            try {
+                const statsResp = await fetch('/api/cbnr/stats');
+                const stats = await statsResp.json();
+                if (!stats.error) {
+                    html += '<div style="margin-top:6px;border-top:1px solid #eee;padding-top:4px;">';
+                    html += '<div style="font-size:10px;font-weight:bold;color:#607D8B;">统计</div>';
+                    html += '<div style="font-size:9px;color:#888;">处理次数: ' + (stats.process_count||0) + ' | 平均耗时: ' + ((stats.avg_processing_time_ms||0).toFixed(1)) + 'ms</div>';
+                    html += '</div>';
+                }
+            } catch(e) {}
+            container.innerHTML = html;
+        }
+    } catch (e) {
+        container.innerHTML = '<p style="color:#F44336;font-size:11px;">加载失败: ' + e.message + '</p>';
+    }
+}
+
+// ==================== 主动性SSE订阅 ====================
+
+// ==================== 全景Tab辅助函数 ====================
+async function defenseAction(action) {
+    const urls = {
+        repair: '/api/defense/repair/run',
+        circuit_reset: '/api/defense/circuit/reset',
+        isolation_release: '/api/defense/isolation/release'
+    };
+    try {
+        const resp = await fetch(urls[action], {method: 'POST'});
+        const data = await resp.json();
+        if (data.error) {
+            alert('操作失败: ' + data.error);
+        } else {
+            alert('操作成功');
+            refreshSystemPanorama();
+        }
+    } catch (e) {
+        alert('请求失败: ' + e.message);
+    }
+}
+
+async function searchFacts() {
+    const query = document.getElementById('fact-search-input')?.value;
+    if (!query) return;
+    const resultsDiv = document.getElementById('fact-search-results');
+    if (!resultsDiv) return;
+    try {
+        const resp = await fetch('/api/facts/search?query=' + encodeURIComponent(query));
+        const data = await resp.json();
+        const results = data.results || data.facts || [];
+        if (results.length === 0) {
+            resultsDiv.innerHTML = '<div style="font-size:10px;color:#999;">无结果</div>';
+        } else {
+            let html = '';
+            for (const f of results.slice(0, 10)) {
+                html += '<div style="font-size:10px;margin:2px 0;padding:2px 4px;background:#f5f5f5;border-radius:2px;">' + (f.content || f.text || JSON.stringify(f)).substring(0, 80) + '</div>';
+            }
+            resultsDiv.innerHTML = html;
+        }
+    } catch (e) {
+        resultsDiv.innerHTML = '<div style="font-size:10px;color:#F44336;">搜索失败</div>';
+    }
+}
+
+async function addFact() {
+    const content = document.getElementById('fact-add-input')?.value;
+    if (!content) return;
+    try {
+        const resp = await fetch('/api/facts/add', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({content: content, type: 'positive'})
+        });
+        const data = await resp.json();
+        if (data.error) {
+            alert('添加失败: ' + data.error);
+        } else {
+            document.getElementById('fact-add-input').value = '';
+            alert('事实已添加');
+            refreshSystemPanorama();
+        }
+    } catch (e) {
+        alert('请求失败: ' + e.message);
+    }
+}
+
+async function correctFact() {
+    const original = document.getElementById('fact-correct-original')?.value;
+    const corrected = document.getElementById('fact-correct-new')?.value;
+    if (!original || !corrected) return;
+    try {
+        const resp = await fetch('/api/facts/correct', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({original: original, corrected: corrected})
+        });
+        const data = await resp.json();
+        if (data.error) {
+            alert('纠正失败: ' + data.error);
+        } else {
+            alert('事实已纠正');
+            refreshSystemPanorama();
+        }
+    } catch (e) {
+        alert('请求失败: ' + e.message);
+    }
+}
+
+async function searchMemories() {
+    const query = document.getElementById('memory-search-input')?.value;
+    if (!query) return;
+    const resultsDiv = document.getElementById('memory-search-results');
+    if (!resultsDiv) return;
+    try {
+        const resp = await fetch('/api/memory/search?query=' + encodeURIComponent(query));
+        const data = await resp.json();
+        const results = data.results || data.memories || [];
+        if (results.length === 0) {
+            resultsDiv.innerHTML = '<div style="font-size:10px;color:#999;">无结果</div>';
+        } else {
+            let html = '';
+            for (const m of results.slice(0, 10)) {
+                const typeLabels = {conversation: '对话', knowledge: '知识', experience: '经验', emotion: '情感', relationship: '关系', skill: '技能'};
+                html += '<div style="font-size:10px;margin:2px 0;padding:2px 4px;background:#f5f5f5;border-radius:2px;">';
+                html += '<span style="color:#9C27B0;">[' + (typeLabels[m.type] || m.type || '') + ']</span> ' + (m.content || m.text || '').substring(0, 80);
+                html += '</div>';
+            }
+            resultsDiv.innerHTML = html;
+        }
+    } catch (e) {
+        resultsDiv.innerHTML = '<div style="font-size:10px;color:#F44336;">搜索失败</div>';
+    }
+}
+
+async function executeTool() {
+    const toolName = document.getElementById('tool-select')?.value;
+    const argsStr = document.getElementById('tool-args-input')?.value;
+    const resultDiv = document.getElementById('tool-execute-result');
+    if (!toolName || !resultDiv) return;
+    resultDiv.innerHTML = '<div style="color:#888;">执行中...</div>';
+    try {
+        let args = {};
+        if (argsStr) {
+            try { args = JSON.parse(argsStr); } catch { args = {input: argsStr}; }
+        }
+        const resp = await fetch('/api/tools/execute', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({tool_name: toolName, arguments: args})
+        });
+        const data = await resp.json();
+        if (data.error) {
+            resultDiv.innerHTML = '<div style="color:#F44336;">失败: ' + data.error + '</div>';
+        } else {
+            const result = typeof data.result === 'string' ? data.result : JSON.stringify(data.result || data).substring(0, 200);
+            resultDiv.innerHTML = '<div style="color:#4CAF50;">' + result + '</div>';
+        }
+    } catch (e) {
+        resultDiv.innerHTML = '<div style="color:#F44336;">请求失败: ' + e.message + '</div>';
+    }
+}
+
+async function triggerAgentCollab() {
+    const query = document.getElementById('agent-query-input')?.value;
+    const resultDiv = document.getElementById('agent-collab-result');
+    if (!query || !resultDiv) return;
+    resultDiv.innerHTML = '<div style="color:#888;">协作中...</div>';
+    try {
+        const resp = await fetch('/api/agent/collaborate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({query: query})
+        });
+        const data = await resp.json();
+        if (data.error) {
+            resultDiv.innerHTML = '<div style="color:#F44336;">失败: ' + data.error + '</div>';
+        } else {
+            const quality = data.quality_score || data.quality || 'N/A';
+            const iterations = data.iterations || data.iteration_count || 0;
+            const answer = (data.final_answer || data.answer || '').substring(0, 150);
+            resultDiv.innerHTML = '<div style="color:#4CAF50;">质量: ' + quality + ' | 迭代: ' + iterations + '</div><div style="color:#666;margin-top:2px;">' + answer + '</div>';
+        }
+    } catch (e) {
+        resultDiv.innerHTML = '<div style="color:#F44336;">请求失败: ' + e.message + '</div>';
+    }
+}
+
+async function truthsReorg(action) {
+    const resultDiv = document.getElementById('reorg-result');
+    if (!resultDiv) return;
+    resultDiv.innerHTML = '<div style="color:#888;">处理中...</div>';
+    try {
+        const resp = await fetch('/api/truths/reorganization/' + action, {method: 'POST'});
+        const data = await resp.json();
+        if (data.error) {
+            resultDiv.innerHTML = '<div style="color:#F44336;">失败: ' + data.error + '</div>';
+        } else {
+            const summary = data.proposals ? data.proposals.length + '个提议' : data.executed ? data.executed + '个已执行' : '完成';
+            resultDiv.innerHTML = '<div style="color:#4CAF50;">' + summary + '</div>';
+            refreshSystemPanorama();
+        }
+    } catch (e) {
+        resultDiv.innerHTML = '<div style="color:#F44336;">请求失败: ' + e.message + '</div>';
+    }
+}
+
+async function evalProactivity() {
+    const resultDiv = document.getElementById('presence-action-result');
+    if (!resultDiv) return;
+    resultDiv.innerHTML = '<div style="color:#888;">评估中...</div>';
+    try {
+        const resp = await fetch('/api/proactivity/evaluate');
+        const data = await resp.json();
+        if (data.error) {
+            resultDiv.innerHTML = '<div style="color:#F44336;">失败: ' + data.error + '</div>';
+        } else {
+            const should = data.should_act ? '需要行动' : '无需行动';
+            const score = data.proactivity_score != null ? (data.proactivity_score * 100).toFixed(0) + '%' : 'N/A';
+            resultDiv.innerHTML = '<div style="color:#4CAF50;">' + should + ' | 主动性: ' + score + '</div>';
+        }
+    } catch (e) {
+        resultDiv.innerHTML = '<div style="color:#F44336;">请求失败: ' + e.message + '</div>';
+    }
+}
+
+async function closedLoopOrchestrate() {
+    const resultDiv = document.getElementById('presence-action-result');
+    if (!resultDiv) return;
+    resultDiv.innerHTML = '<div style="color:#888;">编排中...</div>';
+    try {
+        const resp = await fetch('/api/closed-loop/orchestrate', {method: 'POST'});
+        const data = await resp.json();
+        if (data.error) {
+            resultDiv.innerHTML = '<div style="color:#F44336;">失败: ' + data.error + '</div>';
+        } else {
+            const loops = data.loops_completed || data.completed || 0;
+            resultDiv.innerHTML = '<div style="color:#4CAF50;">闭环完成: ' + loops + '个</div>';
+        }
+    } catch (e) {
+        resultDiv.innerHTML = '<div style="color:#F44336;">请求失败: ' + e.message + '</div>';
+    }
+}
+
+let proactivitySource = null;
+let proactivityReconnectTimer = null;
+
+function connectProactivity() {
+    if (proactivitySource) {
+        proactivitySource.close();
+    }
+
+    try {
+        proactivitySource = new EventSource(API_BASE + '/api/proactivity/stream');
+
+        proactivitySource.onmessage = function(event) {
+            try {
+                const msg = JSON.parse(event.data);
+                showProactivityMessage(msg);
+            } catch (e) {
+                console.warn('主动性消息解析失败:', e);
+            }
+        };
+
+        proactivitySource.onerror = function() {
+            proactivitySource.close();
+            proactivitySource = null;
+            if (proactivityReconnectTimer) clearTimeout(proactivityReconnectTimer);
+            proactivityReconnectTimer = setTimeout(connectProactivity, 30000);
+        };
+    } catch (e) {
+        console.warn('SSE连接失败:', e);
+    }
+}
+
+function showProactivityMessage(msg) {
+    const messagesDiv = document.getElementById('messages');
+    if (!messagesDiv) return;
+
+    const typeConfig = {
+        greeting: { icon: '👋', bg: '#E8F5E9', border: '#4CAF50' },
+        reminder: { icon: '💡', bg: '#FFF3E0', border: '#FF9800' },
+        discovery: { icon: '🔍', bg: '#E3F2FD', border: '#2196F3' },
+        system_anomaly: { icon: '⚠️', bg: '#FFEBEE', border: '#F44336' },
+        learning: { icon: '📚', bg: '#F3E5F5', border: '#9C27B0' },
+        reflection: { icon: '🪞', bg: '#E0F7FA', border: '#00BCD4' },
+    };
+
+    const config = typeConfig[msg.type] || typeConfig.discovery;
+    const content = msg.content || msg.message || msg.detail || '';
+    if (!content) return;
+
+    const proactivityDiv = document.createElement('div');
+    proactivityDiv.className = 'message system';
+    proactivityDiv.style.cssText = 'animation: fadeIn 0.3s ease-in;';
+
+    let html = `<div class="message-content" style="background:${config.bg};border-left:3px solid ${config.border};padding:8px 12px;border-radius:6px;">`;
+    html += `<div style="font-size:12px;color:#666;margin-bottom:4px;">${config.icon} 系统主动消息 · ${msg.type || 'info'}</div>`;
+    html += `<div style="font-size:13px;line-height:1.6;">${renderMarkdown(content)}</div>`;
+    if (msg.recommendations && msg.recommendations.length > 0) {
+        html += `<div style="margin-top:6px;font-size:11px;color:#888;">建议: ${msg.recommendations.slice(0, 2).join(' | ')}</div>`;
+    }
+    html += '</div>';
+
+    proactivityDiv.innerHTML = html;
+    messagesDiv.appendChild(proactivityDiv);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+    setTimeout(() => {
+        if (proactivityDiv.parentNode) {
+            proactivityDiv.style.transition = 'opacity 1s';
+            proactivityDiv.style.opacity = '0.6';
+        }
+    }, 30000);
+}
+
+connectProactivity();
+
+async function testProactivity() {
+    const resultDiv = document.getElementById('presence-action-result');
+    if (!resultDiv) return;
+    resultDiv.innerHTML = '<div style="color:#888;">测试中...</div>';
+    try {
+        const resp = await fetch('/api/proactivity/test', {method: 'POST'});
+        const data = await resp.json();
+        if (data.error) {
+            resultDiv.innerHTML = '<div style="color:#F44336;">失败: ' + data.error + '</div>';
+        } else {
+            const triggered = data.triggered || data.actions_triggered || 0;
+            resultDiv.innerHTML = '<div style="color:#4CAF50;">主动性测试完成，触发: ' + triggered + '个行动</div>';
+        }
+    } catch (e) {
+        resultDiv.innerHTML = '<div style="color:#F44336;">请求失败: ' + e.message + '</div>';
+    }
+}
+
+async function loadModuleHealth() {
+    try {
+        const resp = await fetch('/api/module/health');
+        const data = await resp.json();
+        const container = document.getElementById('module-health-info');
+        if (container && data.modules) {
+            const healthy = data.modules.filter(m => m.status === 'healthy').length;
+            const total = data.modules.length;
+            container.innerHTML = '<span style="color:#4CAF50;">模块健康: ' + healthy + '/' + total + '</span>';
+        }
+        return data;
+    } catch (e) {
+        console.warn('模块健康查询失败:', e);
+        return null;
+    }
+}
+
+async function loadIntrospectionAnomalies() {
+    try {
+        const resp = await fetch('/api/introspection/anomalies');
+        return await resp.json();
+    } catch (e) { return null; }
+}
+
+async function loadReflectionStats() {
+    try {
+        const resp = await fetch('/api/reflection/stats');
+        return await resp.json();
+    } catch (e) { return null; }
+}
+
+async function searchKnowledgeGraph(query) {
+    try {
+        const resp = await fetch('/api/knowledge-graph/search?query=' + encodeURIComponent(query));
+        return await resp.json();
+    } catch (e) { return null; }
+}
+
+async function loadEventsStats() {
+    try {
+        const resp = await fetch('/api/events/stats');
+        return await resp.json();
+    } catch (e) { return null; }
+}
+
+async function loadInputProcessorDemo() {
+    try {
+        const resp = await fetch('/api/input-processor/demo');
+        return await resp.json();
+    } catch (e) { return null; }
+}
+
+async function runEvolution() {
+    try {
+        const resp = await fetch('/api/evolution/run', {method: 'POST'});
+        return await resp.json();
+    } catch (e) { return null; }
+}
+
+async function clearModule(moduleName) {
+    try {
+        const resp = await fetch('/api/module/clear', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({module: moduleName})
+        });
+        return await resp.json();
+    } catch (e) { return null; }
+}
+
+async function runReorganization() {
+    try {
+        const resp = await fetch('/api/reorganization/run', {method: 'POST'});
+        const data = await resp.json();
+        if (data.error) {
+            alert('重组失败: ' + data.error);
+        } else {
+            alert('自动重组完成: ' + (data.reorganized || 0) + '条');
+            refreshSystemPanorama();
+        }
+    } catch (e) {
+        alert('请求失败: ' + e.message);
+    }
+}
+
+async function executeForgetting() {
+    try {
+        const resp = await fetch('/api/forgetting/execute', {method: 'POST'});
+        const data = await resp.json();
+        if (data.error) {
+            alert('遗忘失败: ' + data.error);
+        } else {
+            alert('遗忘完成: ' + (data.forgotten || 0) + '条');
+            refreshSystemPanorama();
+        }
+    } catch (e) {
+        alert('请求失败: ' + e.message);
+    }
+}
+
+async function correctDeviation(devId) {
+    try {
+        const resp = await fetch('/api/alignment/correct/' + devId, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({correction: '已修正'})
+        });
+        const data = await resp.json();
+        if (data.error) {
+            alert('修正失败: ' + data.error);
+        } else {
+            alert('偏离已修正');
+            refreshSystemPanorama();
+        }
+    } catch (e) {
+        alert('请求失败: ' + e.message);
+    }
+}
+
+async function sendPresenceSignal() {
+    try {
+        const resp = await fetch('/api/presence/signal', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({signal_type: 'user_ping', data: {}})
+        });
+        const data = await resp.json();
+        document.getElementById('presence-action-result').textContent = data.message || '信号已发送';
+        setTimeout(() => refreshSystemPanorama(), 1000);
+    } catch (e) {
+        document.getElementById('presence-action-result').textContent = '失败: ' + e.message;
+    }
+}
+
+async function forcePresenceState() {
+    const state = document.getElementById('force-state-select').value;
+    try {
+        const resp = await fetch('/api/presence/force-state', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({state: state})
+        });
+        const data = await resp.json();
+        document.getElementById('presence-action-result').textContent = data.message || '状态已切换';
+        setTimeout(() => refreshSystemPanorama(), 1000);
+    } catch (e) {
+        document.getElementById('presence-action-result').textContent = '失败: ' + e.message;
+    }
+}
+
+async function queryTaskStatus(taskId) {
+    try {
+        const resp = await fetch('/api/tasks/' + taskId);
+        const data = await resp.json();
+        return data;
+    } catch (e) {
+        return {error: e.message};
+    }
+}
+
+async function queryEventHistory(eventType) {
+    try {
+        const resp = await fetch('/api/events/history/' + eventType);
+        const data = await resp.json();
+        return data;
+    } catch (e) {
+        return {error: e.message};
+    }
+}
+
+async function autoGenerateCoverage() {
+    try {
+        const resp = await fetch('/api/coverage/auto-generate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        });
+        const data = await resp.json();
+        if (data.error) {
+            alert('自动生成失败: ' + data.error);
+        } else {
+            alert('自动生成完成: ' + (data.generated || 0) + '个片段');
+            refreshSystemPanorama();
+        }
+    } catch (e) {
+        alert('请求失败: ' + e.message);
+    }
+}
+
+async function testCBNR() {
+    const input = document.getElementById('cbnr-input').value || '测试输入';
+    const resultDiv = document.getElementById('cbnr-result');
+    resultDiv.innerHTML = '<span style="color:#999;">处理中...</span>';
+    try {
+        const resp = await fetch('/api/cbnr/process', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({input: input})
+        });
+        const data = await resp.json();
+        if (data.error) {
+            resultDiv.innerHTML = '<span style="color:#F44336;">错误: ' + data.error + '</span>';
+        } else {
+            let html = '';
+            html += '<div style="margin:4px 0;padding:4px;background:#E8F5E9;border-radius:3px;">';
+            html += '<b>L1 规范化</b>: 不确定性=' + (data.l1?.uncertainty||0).toFixed(2) + ' 强度=' + (data.l1?.strength||0).toFixed(2);
+            if (data.l1?.biases?.length) html += ' 偏差=' + data.l1.biases.join(',');
+            if (data.l1?.principles?.length) html += ' 原则=' + data.l1.principles.join(',');
+            html += '</div>';
+            html += '<div style="margin:4px 0;padding:4px;background:#E3F2FD;border-radius:3px;">';
+            html += '<b>L2 瓶颈</b>: 压缩=' + (data.l2?.compression_ratio||0).toFixed(2) + ' 冲突ΔF=' + (data.l2?.conflict_delta||0).toFixed(2) + ' 模式=' + (data.l2?.conflict_mode||'?');
+            if (data.l2?.topic) html += ' 主题=' + data.l2.topic.substring(0,30);
+            html += '</div>';
+            html += '<div style="margin:4px 0;padding:4px;background:#F3E5F5;border-radius:3px;">';
+            html += '<b>L3 残差</b>: 复用率=' + ((data.l3?.reuse_rate||0)*100).toFixed(0) + '% 搜索树=' + (data.l3?.search_tree_size||0) + ' 保底=' + (data.l3?.fallback_used?'是':'否');
+            html += '</div>';
+            html += '<div style="font-size:9px;color:#aaa;margin-top:2px;">耗时: ' + (data.processing_time_ms||0).toFixed(1) + 'ms</div>';
+            resultDiv.innerHTML = html;
+        }
+    } catch (e) {
+        resultDiv.innerHTML = '<span style="color:#F44336;">失败: ' + e.message + '</span>';
     }
 }

@@ -17,22 +17,22 @@ def get_embedding_model():
     try:
         from sentence_transformers import SentenceTransformer
         
-        # 设置镜像
-        os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
-        
-        # 使用中等模型（平衡性能和效果）
         model_name = os.getenv(
             "EMBEDDING_MODEL", 
             "paraphrase-multilingual-MiniLM-L12-v2"
         )
         
-        # 避免重复加载
         if _model_name == model_name:
             return _model
         
         logger.info(f"加载共享嵌入模型: {model_name}")
         
         cache_folder = os.path.expanduser('~/.cache/huggingface/hub')
+        
+        os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+        os.environ['HF_HUB_OFFLINE'] = '1'
+        os.environ['TRANSFORMERS_OFFLINE'] = '1'
+        
         _model = SentenceTransformer(model_name, cache_folder=cache_folder)
         _model_name = model_name
         
@@ -40,7 +40,8 @@ def get_embedding_model():
         return _model
         
     except Exception as e:
-        logger.warning(f"嵌入模型加载失败: {e}")
+        logger.warning(f"嵌入模型加载失败(离线模式): {e}")
+        _model = None
         return None
 
 def get_embeddings(texts):
