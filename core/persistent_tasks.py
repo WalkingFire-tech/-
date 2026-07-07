@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from loguru import logger
+from adapters.llm.ollama_adapter import ollama_chat_request
 
 
 class PersistentTaskSystem:
@@ -199,19 +200,18 @@ class PersistentTaskSystem:
     async def _try_direct_model(self, question: str, context: dict) -> Dict:
         """策略1: 直接调用模型"""
         try:
-            import requests
-            response = await asyncio.get_event_loop().run_in_executor(
+            result = await asyncio.get_event_loop().run_in_executor(
                 None,
-                lambda: requests.post(
-                    "http://localhost:11434/api/generate",
-                    json={"model": "qwen2.5:7b", "prompt": question, "stream": False},
+                lambda: ollama_chat_request(
+                    base_url="http://localhost:11434",
+                    model="qwen2.5:7b",
+                    prompt=question,
                     timeout=15
                 )
             )
-            if response.status_code == 200:
-                result = response.json().get("response", "")
-                if result and len(result) > 20:
-                    return {"success": True, "answer": result}
+            content = result.get("content", "")
+            if content and len(content) > 20:
+                return {"success": True, "answer": content}
         except:
             pass
         return {"success": False, "error": "直接模型调用失败"}
@@ -220,28 +220,27 @@ class PersistentTaskSystem:
         """策略2: 尝试其他模型"""
         try:
             import requests
-            # 尝试获取可用模型列表
             response = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: requests.get("http://localhost:11434/api/tags", timeout=3)
             )
             if response.status_code == 200:
                 models = response.json().get("models", [])
-                for model in models[1:3]:  # 尝试其他模型
+                for model in models[1:3]:
                     try:
                         model_name = model["name"]
-                        response = await asyncio.get_event_loop().run_in_executor(
+                        result = await asyncio.get_event_loop().run_in_executor(
                             None,
-                            lambda: requests.post(
-                                "http://localhost:11434/api/generate",
-                                json={"model": model_name, "prompt": question, "stream": False},
+                            lambda mn=model_name: ollama_chat_request(
+                                base_url="http://localhost:11434",
+                                model=mn,
+                                prompt=question,
                                 timeout=10
                             )
                         )
-                        if response.status_code == 200:
-                            result = response.json().get("response", "")
-                            if result and len(result) > 20:
-                                return {"success": True, "answer": result}
+                        content = result.get("content", "")
+                        if content and len(content) > 20:
+                            return {"success": True, "answer": content}
                     except:
                         continue
         except:

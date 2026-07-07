@@ -5,6 +5,7 @@ import asyncio
 import time
 from typing import Dict, List, Optional
 from loguru import logger
+from adapters.llm.ollama_adapter import ollama_chat_request
 
 from core.agents.base_agent import BaseAgent, AgentState, ExecutionResult
 from core.agents.agent_events import AgentEventTypes
@@ -148,20 +149,19 @@ class ExecutorAgent(BaseAgent):
 
     def _step_model_reasoning(self, query: str) -> Dict:
         try:
-            import requests
             from core.cognitive_dispatcher import get_cognitive_dispatcher
             dispatcher = get_cognitive_dispatcher()
             result = dispatcher.dispatch(user_query=query, context={})
             model = result.get("recommended_model", "qwen2.5-coder:7b")
-            resp = requests.post(
-                "http://localhost:11434/api/generate",
-                json={"model": model, "prompt": query, "stream": False},
+            resp = ollama_chat_request(
+                base_url="http://localhost:11434",
+                model=model,
+                prompt=query,
                 timeout=30,
             )
-            if resp.status_code == 200:
-                text = resp.json().get("response", "")
-                if text:
-                    return {"response": text, "source": f"ollama_{model}", "quality": 55, "success": True}
+            text = resp.get("content", "")
+            if text:
+                return {"response": text, "source": f"ollama_{model}", "quality": 55, "success": True}
         except Exception:
             pass
         return {"response": "", "source": "model_reasoning", "quality": 0, "success": False}

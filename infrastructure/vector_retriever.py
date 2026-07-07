@@ -33,6 +33,7 @@ except ImportError:
     pass
 
 _ST_MODEL = None
+_ST_TOKENIZER = None
 _ST_AVAILABLE = False
 _ST_LOADING = False
 
@@ -51,23 +52,63 @@ def _find_local_model(model_name: str) -> Optional[str]:
     return str(snaps[0])
 
 
+class _DirectEncoder:
+    """直接用transformers加载BERT模型做sentence embedding，绕过sentence_transformers超时问题"""
+
+    def __init__(self, model_path: str):
+        os.environ['HF_HUB_OFFLINE'] = '1'
+        os.environ['TRANSFORMERS_OFFLINE'] = '1'
+        from transformers import AutoTokenizer, AutoModel
+        import torch
+        self.tok = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
+        self.model = AutoModel.from_pretrained(model_path, local_files_only=True)
+        self.model.eval()
+        self.torch = torch
+
+    def encode(self, texts, show_progress_bar=False, batch_size=32):
+        import numpy as np
+        if isinstance(texts, str):
+            texts = [texts]
+        all_embs = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            inputs = self.tok(batch, return_tensors='pt', padding=True, truncation=True, max_length=128)
+            with self.torch.no_grad():
+                out = self.model(**inputs)
+            emb = out.last_hidden_state[:, 0, :].numpy()
+            all_embs.append(emb)
+        if len(all_embs) == 1:
+            return all_embs[0] if len(all_embs[0]) > 1 else all_embs[0][0]
+        return np.vstack(all_embs)
+
+
 def _load_st_model():
     global _ST_MODEL, _ST_AVAILABLE, _ST_LOADING
     if _ST_MODEL is not None or _ST_LOADING:
         return
     _ST_LOADING = True
+    os.environ['HF_HUB_OFFLINE'] = '1'
+    os.environ['TRANSFORMERS_OFFLINE'] = '1'
     try:
-        from sentence_transformers import SentenceTransformer
         model_name = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
         local_path = _find_local_model(model_name)
         if local_path:
-            _ST_MODEL = SentenceTransformer(local_path)
+            _ST_MODEL = _DirectEncoder(local_path)
+            _ST_AVAILABLE = True
+            logger.info(f"向量检索模型加载成功(DirectEncoder): {local_path}")
         else:
-            _ST_MODEL = SentenceTransformer(model_name)
-        _ST_AVAILABLE = True
-        logger.info(f"sentence_transformers模型加载成功: {model_name}")
+            try:
+                from sentence_transformers import SentenceTransformer
+                cache_folder = str(Path.home() / ".cache" / "huggingface" / "hub")
+                _ST_MODEL = SentenceTransformer(model_name, cache_folder=cache_folder)
+                _ST_AVAILABLE = True
+                logger.info(f"向量检索模型加载成功(SentenceTransformer): {model_name}")
+            except Exception as e2:
+                logger.warning(f"SentenceTransformer加载失败: {e2}，使用TF-IDF降级")
+                _ST_MODEL = None
+                _ST_AVAILABLE = False
     except Exception as e:
-        logger.warning(f"sentence_transformers加载失败: {e}，使用TF-IDF降级")
+        logger.warning(f"向量检索模型加载失败: {e}，使用TF-IDF降级")
         _ST_MODEL = None
         _ST_AVAILABLE = False
     finally:
@@ -232,7 +273,7 @@ class VectorRetriever:
         try:
             th = threading.Thread(target=_load_st_model, daemon=True)
             th.start()
-            th.join(timeout=30)
+            th.join(timeout=10)
             if _ST_AVAILABLE:
                 logger.info("sentence_transformers语义检索已启用")
             else:
@@ -356,8 +397,36 @@ class VectorRetriever:
             try:
                 query_vec = _ST_MODEL.encode([query])
                 if self._cached_vecs is None or self._cached_vecs_count != len(self._texts):
-                    self._cached_vecs = _ST_MODEL.encode(self._texts, show_progress_bar=False)
-                    self._cached_vecs_count = len(self._texts)
+                    try:
+                        import psutil
+                        mem_before = psutil.virtual_memory().percent / 100.0
+                        if mem_before > 0.88:
+                            logger.warning(f"全量encode前内存{mem_before:.1%}过高，降级为TF-IDF")
+                            return self._search_sparse(query, k, threshold)
+                    except ImportError:
+                        pass
+                    try:
+                        batch_size = 64
+                        all_vecs = []
+                        for i in range(0, len(self._texts), batch_size):
+                            batch = self._texts[i:i + batch_size]
+                            batch_vecs = _ST_MODEL.encode(batch, show_progress_bar=False, batch_size=32)
+                            all_vecs.append(batch_vecs if len(batch_vecs.shape) == 2 else batch_vecs.reshape(1, -1))
+                            if i % 256 == 0 and i > 0:
+                                try:
+                                    import psutil
+                                    if psutil.virtual_memory().percent / 100.0 > 0.92:
+                                        logger.warning(f"分批encode中内存过高，已处理{i}/{len(self._texts)}条，降级")
+                                        return self._search_sparse(query, k, threshold)
+                                except ImportError:
+                                    pass
+                        self._cached_vecs = np.vstack(all_vecs) if all_vecs else np.array([])
+                        self._cached_vecs_count = len(self._texts)
+                    except MemoryError:
+                        logger.warning("全量encode内存不足，降级为TF-IDF")
+                        return self._search_sparse(query, k, threshold)
+                if self._cached_vecs is None or len(self._cached_vecs) == 0:
+                    return self._search_sparse(query, k, threshold)
                 from sklearn.metrics.pairwise import cosine_similarity as cs
                 sims = cs(query_vec, self._cached_vecs)[0]
                 results = []

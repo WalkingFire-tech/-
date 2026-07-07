@@ -81,6 +81,9 @@ class DomainKnowledgeLearner:
     def _init_embedding(self):
         """初始化语义嵌入模型（延迟加载）"""
         try:
+            import os
+            os.environ['HF_HUB_OFFLINE'] = '1'
+            os.environ['TRANSFORMERS_OFFLINE'] = '1'
             from sentence_transformers import SentenceTransformer
             import numpy as np
 

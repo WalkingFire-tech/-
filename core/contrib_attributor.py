@@ -101,7 +101,7 @@ class ContribAttributor:
 
         self._save_attribution(query, final_source, contributions, top_source, entropy)
 
-        logger.debug(f"贡献归因: top={top_source}({contributions.get(top_source, 0):.2f}) "
+        logger.debug(f"贡献归因: top={top_source}({contributions.get(top_source, 0) or 0:.2f}) "
                       f"entropy={entropy:.3f} candidates={len(candidates)}"
                       f"{' unc=' + str(len(retrieval_uncertainties)) + 'dims' if retrieval_uncertainties else ''}")
 

@@ -85,7 +85,20 @@ class ActivePerceptionEngine:
         self._relationship_model = None
         self._gap_growth = None
         
-        logger.info("👁️ 主动感知引擎已创建")
+        # 神经形态感知：感觉适应 + 注意力聚焦
+        self._stimulus_history: Dict[str, List[float]] = {}
+        self._adaptation_rates: Dict[str, float] = {
+            "emotion_shift": 0.95,
+            "topic_shift": 0.97,
+            "activity_change": 0.95,
+            "need_emergence": 0.93,
+            "silence_break": 0.98,
+            "pattern_emergence": 0.90,
+        }
+        self._novelty_boost = 1.5
+        self._max_stimulus_memory = 20
+        
+        logger.info("👁️ 主动感知引擎已创建（含神经形态适应）")
 
     def start(self) -> None:
         if self._running:
@@ -144,6 +157,19 @@ class ActivePerceptionEngine:
         }
 
         try:
+            if self._stereo_store is None:
+                from core.memory.stereo_memory import get_stereo_memory
+                self._stereo_store = get_stereo_memory()
+            
+            recent = self._stereo_store.get_recent(3)
+            if recent:
+                last_msg = recent[-1]
+                last_content = getattr(last_msg, 'content', '') or getattr(last_msg, 'response', '') or ''
+                state["emotion"] = self._infer_emotion(last_content)
+        except Exception:
+            pass
+
+        try:
             if self._relationship_model is None:
                 from core.relationship.model import get_relationship_model
                 self._relationship_model = get_relationship_model()
@@ -195,7 +221,51 @@ class ActivePerceptionEngine:
         if silence_signal:
             signals.append(silence_signal)
 
-        return signals
+        # 神经形态适应：调整信号置信度
+        adapted_signals = []
+        for sig in signals:
+            adapted_confidence = self._apply_neuromorphic_adaptation(sig.signal.value, sig.confidence)
+            if adapted_confidence >= self._thresholds.get(sig.signal.value.replace("_shift", "_shift").replace("change", "shift"), 0.2):
+                sig.confidence = adapted_confidence
+                adapted_signals.append(sig)
+            else:
+                logger.debug(f"神经适应: {sig.signal.value} 被抑制 (adapted_conf={adapted_confidence:.2f})")
+
+        return adapted_signals
+
+    def _apply_neuromorphic_adaptation(self, signal_type: str, raw_confidence: float) -> float:
+        history = self._stimulus_history.setdefault(signal_type, [])
+        history.append(raw_confidence)
+        if len(history) > self._max_stimulus_memory:
+            history.pop(0)
+
+        if len(history) < 2:
+            return raw_confidence * self._novelty_boost
+
+        adaptation_rate = self._adaptation_rates.get(signal_type, 0.90)
+        recent_avg = sum(history[-5:]) / len(history[-5:])
+        adapted = raw_confidence * (adaptation_rate ** len(history))
+
+        if raw_confidence > recent_avg * 1.5:
+            adapted *= self._novelty_boost
+
+        return min(1.0, adapted)
+
+    def _infer_emotion(self, text: str) -> str:
+        if not text:
+            return "neutral"
+        text_lower = text.lower()
+        emotion_patterns = {
+            "positive": ["谢谢", "感谢", "好的", "太好了", "棒", "优秀", "完美", "喜欢", "开心", "happy", "great", "awesome", "thanks", "good"],
+            "frustrated": ["不行", "失败", "错误", "bug", "崩溃", "烦", "郁闷", "郁闷", "frustrated", "annoying", "broken", "error", "fail"],
+            "curious": ["为什么", "怎么", "如何", "什么", "为什么", "好奇", "why", "how", "what", "curious"],
+            "urgent": ["紧急", "急", "马上", "立刻", "赶紧", "urgent", "asap", "hurry", "immediately"],
+            "confused": ["不懂", "不明白", "困惑", "迷惑", "不理解", "confused", "don't understand", "unclear"],
+        }
+        for emotion, keywords in emotion_patterns.items():
+            if any(kw in text_lower for kw in keywords):
+                return emotion
+        return "neutral"
 
     def _detect_emotion_shift(self, current: Dict, baseline: Dict) -> Optional[PerceptionResult]:
         current_emotion = current.get("emotion", "neutral")
@@ -294,6 +364,26 @@ class ActivePerceptionEngine:
         self._stats["last_signal_time"] = datetime.now().isoformat()
 
         logger.info(f"👁️ 感知信号: {signal.description} (置信度: {signal.confidence:.2f})")
+
+        try:
+            from core.presence.existence_layer import get_existence_layer
+            el = get_existence_layer()
+            if hasattr(el, 'receive_perception_signal'):
+                el.receive_perception_signal(signal.to_dict())
+        except Exception:
+            pass
+
+        try:
+            from core.task_queue import get_task_queue
+            tq = get_task_queue()
+            if signal.confidence > 0.7 and signal.signal in (PerceptionSignal.NEED_EMERGENCE, PerceptionSignal.EMOTION_SHIFT):
+                tq.submit(
+                    task_type="perception_driven",
+                    payload={"signal": signal.to_dict(), "action": "proactive_check"},
+                    priority=3,
+                )
+        except Exception:
+            pass
 
     def _update_baseline(self, current: Dict) -> None:
         if not self._baseline_state:

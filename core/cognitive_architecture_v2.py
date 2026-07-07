@@ -22,6 +22,8 @@ import os
 
 # 尝试导入可选依赖
 try:
+    os.environ['HF_HUB_OFFLINE'] = '1'
+    os.environ['TRANSFORMERS_OFFLINE'] = '1'
     from sentence_transformers import SentenceTransformer
     from sklearn.metrics.pairwise import cosine_similarity
     import numpy as np

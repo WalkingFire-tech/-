@@ -45,9 +45,11 @@
 
 | 能力 | 说明 |
 |------|------|
-| 8路径并行推理 | 经验池/知识库/Ollama本地模型/外部API/规则推理/事实库/自我推理/外部学习，并行获取择优融合 |
+| 9路径并行推理 | 经验池/知识库/Ollama本地模型/外部API/规则推理/事实库/自我推理/外部学习/工具调用，并行获取择优融合 |
+| CBNR认知枢纽 | L1预测编码+L2因果瓶颈+L3残差复用，注意力权重驱动动态压缩比 |
+| 语义级科学免责 | 不是关键词匹配，而是理解回复的语义结构（数值断言/因果断言/机制描述），自动标注不确定性 |
 | 本质推理器 | 6步推理流程，领域感知免责，悖论/工程提前返回，否定词冲突检测 |
-| 精神内核 | 核心原则验证，降级保护，反思联动 |
+| 精神内核 | 8维度语义级验证（接受content_understanding），降级保护，反思联动 |
 | 基因演化 | 10个可演化参数，遗传算法优化，安全区间约束 |
 | 技能涌现 | 自动涌现、成熟判定、退化机制（success_rate<30%标记dormant） |
 | 真谛沉淀 | 四道筛子、认知熵值监测、6步认知重组安全协议（含渐进注入+回滚） |
@@ -57,8 +59,8 @@
 | 事实锚点库 | 结构化三元组存储，否定词追踪，注入验证 |
 | 反思管道 | 每次对话触发学习，归纳+微调样本生成 |
 | 四层防御体系 | L1预防→L2监控→L3处理→L4修复，故障隔离+异常吞噬 |
-| 自我评估 | 5维度评估（闭环完整性/知识活力/学习效率/行为偏差/适应速度） |
-| 自我审核 | 负空间感知，文档-代码差距检测 |
+| 代码工程分析 | 项目结构扫描/AST语义索引/架构依赖分析/文件读取，4个内置工具 |
+| GPU自适应节流 | 8层动态节流，GPU过热自动降频，本地+外部API协作运行 |
 
 ---
 
@@ -91,27 +93,72 @@
 
 ## 核心特性
 
-### 8路径并行推理引擎
+### 9路径并行推理引擎
 
-系统对每个用户查询，同时启动8条推理路径，并行获取结果后择优融合：
+系统对每个用户查询，同时启动9条推理路径，并行获取结果后择优融合：
 
 ```
 用户输入
     │
     ├── 路径1: 经验池检索 ──── SQL关键词匹配历史成功案例
     ├── 路径2: 知识库检索 ──── SQLite知识库+影响评分
-    ├── 路径3: Ollama本地模型 ── gemma/qwen等本地推理
+    ├── 路径3: Ollama本地模型 ── gemma/qwen等本地推理（含/api/chat→/api/generate自动fallback）
     ├── 路径4: 外部API ─────── DeepSeek/OpenAI云端推理
     ├── 路径5: 规则推理 ────── 学习规则匹配+执行
     ├── 路径6: 事实库 ──────── 结构化三元组+否定词
     ├── 路径7: 自我推理 ────── 内部逻辑推理
-    └── 路径8: 外部学习 ────── DuckDuckGo实时搜索
+    ├── 路径8: 外部学习 ────── DuckDuckGo/Bing/百度实时搜索
+    └── 路径9: 工具调用 ────── 12个内置工具（含代码分析4件套）
     │
     ▼
-质量评估 → 择优融合 → 本质推理 → 精神验证 → 反思学习
+质量评估 → 择优融合 → 本质推理 → 语义级科学免责 → 精神验证 → 反思学习
 ```
 
 每条路径120秒超时保护，所有同步操作通过`_run_sync`在executor中异步执行，不阻塞事件循环。
+
+### CBNR认知枢纽 (CBNR-AGI 2.3)
+
+```
+L1 认知规范化 (Normalization)
+    ├── 预测编码：计算预测误差，高误差→增强深度推理权重
+    └── 注意力权重：focus_boost + high_surprise → 驱动L2压缩比
+
+L2 认知瓶颈 (Bottleneck)
+    ├── 双模型架构：因果(前向)模型 + 反事实(逆向)模型
+    ├── 冲突管理：ΔF < 阈值→干涉态(融合) / ΔF ≥ 阈值→局域态(投影)
+    ├── 动态压缩比：由L1注意力权重驱动（高预测误差→低压缩比，保留更多信息）
+    └── world_model因果图：27节点47边，真实因果推理
+
+L3 认知残差 (Residual)
+    ├── 树搜索工作记忆：经验复用+增量学习
+    ├── Orchestrator/Critic制衡
+    └── 搜索树持久化（SQLite）
+```
+
+### 语义级科学免责
+
+系统不是用关键词匹配判断"这是不是科学断言"，而是理解回复的语义结构：
+
+```
+回复内容 → _understand_response_content()
+    ├── has_numerical_assertions: 数值断言（"等于2"/"值为299,792,458"）
+    ├── has_causal_assertions: 因果断言（"因为...效应"/"导致"）
+    ├── has_mechanism_descriptions: 机制描述（"原理是"/"通过...实现"）
+    ├── claim_type: scientific/factual/technical/opinion/descriptive
+    └── needs_verification: 是否需要外部验证
+
+科学免责触发条件：
+    claim_type == "scientific" AND needs_verification AND NOT 简单事实豁免
+```
+
+### 代码工程分析工具
+
+| 工具 | 功能 | 调用方式 |
+|------|------|---------|
+| project_scanner | 目录树+文件统计+技术栈识别 | `tool=project_scanner&params={query:路径}` |
+| code_indexer | AST解析+类/函数索引+符号搜索 | `tool=code_indexer&params={query:路径或符号}` |
+| dependency_analyzer | 模块依赖图+影响范围+调用链 | `tool=dependency_analyzer&params={query:路径}` |
+| file_reader | 读取本地文件内容 | `tool=file_reader&params={query:文件路径}` |
 
 ### 认知重组6步安全协议
 
@@ -155,10 +202,10 @@
 ### 聊天处理流水线
 
 ```
-用户输入 → 意图识别 → 本质闸门 → 8路径并行 → 对比择优 → 本质推理 → 精神验证 → 反思学习 → 后台进化
-              │            │           │            │           │           │           │           │
-         意图分类      科学/教育/    路径贡献      质量评分    矛盾检测    原则验证    归纳+微调    基因演化
-                      日常/哲学     占比显示      择优融合    交叉验证    降级保护    经验沉淀    技能固化
+用户输入 → 意图识别 → 本质闸门 → 9路径并行 → 对比择优 → 本质推理 → 科学免责 → 精神验证 → 反思学习 → 后台进化
+               │            │           │            │           │        │         │           │           │
+          意图分类      科学/教育/    路径贡献      质量评分    矛盾检测   语义级    原则验证    归纳+微调    基因演化
+          (语义级增强)   日常/哲学     占比显示      择优融合    交叉验证   不确定性   降级保护    经验沉淀    技能固化
 ```
 
 ### 五层认知架构
@@ -175,8 +222,8 @@ L0 基因层  — 10个可演化参数、遗传算法优化、适应度评估
 
 ```
 对话 → 反思学习 → 经验沉淀 → 归纳规则 → 基因微调 → 行为改变 → 对话
-                ↘ 事实提取 → 三元组存储 ↗
-                ↘ 立体记忆 → 情感+语义 ↗
+                 ↘ 事实提取 → 三元组存储 ↗
+                 ↘ 立体记忆 → 情感+语义 ↗
 ```
 
 ### 目录结构
@@ -184,16 +231,30 @@ L0 基因层  — 10个可演化参数、遗传算法优化、适应度评估
 ```
 alliance_pioneer/
 ├── backend/                    # 后端服务
-│   ├── main_fast.py           # 主入口 (uvicorn)
-│   ├── chat_stream.py         # 流式聊天处理器 (8路径并行)
+│   ├── main_fast.py           # 主入口 (uvicorn, 100+ API端点)
+│   ├── chat_stream.py         # 流式聊天处理器 (9路径并行+CBNR+语义级免责)
+│   ├── chat_handler.py        # 非流式聊天处理器 (含科学免责)
 │   └── api/                   # API路由
 ├── core/                       # 核心模块
+│   ├── cbnr/                  # CBNR认知枢纽
+│   │   ├── cognitive_normalization.py  # L1 预测编码
+│   │   ├── cognitive_bottleneck.py     # L2 因果瓶颈+动态压缩
+│   │   ├── cognitive_residual.py       # L3 残差复用+搜索树
+│   │   └── hub.py             # CBNR Hub (分散调用+棘轮门控)
 │   ├── essence_reasoner.py    # 本质推理器
-│   ├── spirit_core.py         # 精神内核
+│   ├── spirit_core.py         # 精神内核 (8维度语义级验证)
+│   ├── world_model.py         # 世界模型 (27节点47边因果图)
+│   ├── cognitive_dispatcher.py # 认知调度器 (语义级意图推断)
 │   ├── genome_evolver.py      # 基因演化
 │   ├── skill_emergence.py     # 技能涌现
 │   ├── truth_accumulator.py   # 真谛沉淀
-│   ├── cognitive_dispatcher.py # 认知调度器
+│   ├── tools/                 # 内置工具
+│   │   ├── project_scanner_tool.py   # 项目结构扫描
+│   │   ├── code_indexer_tool.py      # 代码语义索引
+│   │   ├── dependency_analyzer_tool.py # 架构依赖分析
+│   │   ├── file_reader_tool.py       # 文件读取
+│   │   ├── code_executor_tool.py     # 代码执行沙箱
+│   │   └── ...               # web_search/calculator/fact_check等
 │   ├── presence/              # 存在层 (心跳/生长/休息/睡眠)
 │   ├── memory/                # 立体记忆
 │   ├── relationship/          # 关系模型
@@ -201,22 +262,32 @@ alliance_pioneer/
 │   ├── evolution/             # 进化引擎
 │   ├── learning/              # 七大学习机制
 │   └── layers/                # 认知分层
+├── adapters/                   # 适配器层
+│   └── llm/
+│       ├── ollama_adapter.py  # Ollama适配器 (含/api/chat→/api/generate fallback)
+│       ├── openai_adapter.py  # OpenAI适配器
+│       └── remote_adapter.py  # 远程API适配器
 ├── infrastructure/             # 基础设施
 │   ├── fact_store.py          # 事实锚点库
 │   ├── fitness_evaluator.py   # 适应度评估
 │   ├── reflection_pipeline.py # 反思管道
-│   ├── injection_verifier.py  # 注入验证
-│   ├── external_learners.py   # 外部学习器
-│   ├── vector_retriever.py    # 向量检索
-│   └── feedback_classifier.py # 反馈分类
+│   ├── hardware_monitor.py    # 硬件监控 (GPU 8层动态节流)
+│   ├── vector_retriever.py    # 向量检索 (TF-IDF+概率化)
+│   └── ...                    # 外部学习器/注入验证/反馈分类等
 ├── frontend/                   # 前端界面
 │   ├── index.html             # 主页面
 │   ├── app.js                 # 前端逻辑
 │   └── styles.css             # 样式
+├── data/                       # 数据库文件
+│   ├── experience_pool.db     # 经验池 (~984条)
+│   ├── world_model.db         # 世界模型 (27节点47边)
+│   ├── cbnr_l3_state.db       # L3搜索树持久化
+│   └── ...                    # 事实库/知识库/规则库等
 ├── knowledge_base/             # 知识库文档
 ├── docs/                       # 文档
+│   └── sessions/              # 里程碑会话归档 (M1-M52)
 ├── tests/                      # 测试
-└── SYSTEM_ROADMAP.md           # 系统完善路线图
+└── start.bat                   # Windows一键启动脚本
 ```
 
 ---
@@ -226,7 +297,7 @@ alliance_pioneer/
 ### 前置要求
 
 - Python 3.11+
-- [Ollama](https://ollama.ai/) (本地LLM服务，推荐gemma/qwen模型)
+- [Ollama](https://ollama.ai/) (本地LLM服务，推荐qwen2.5-coder:7b / gemma-4-12B)
 - 可选：DeepSeek/OpenAI API密钥（配置`.env`）
 
 ### 启动
@@ -239,7 +310,10 @@ pip install -r requirements.txt
 cp .env.example .env
 # 编辑 .env 填入 DEEPSEEK_API_KEY / OPENAI_API_KEY
 
-# 启动后端
+# 方式1: 一键启动（Windows）
+start.bat
+
+# 方式2: 手动启动
 python -m uvicorn backend.main_fast:app --host 0.0.0.0 --port 8000
 
 # 访问
@@ -262,11 +336,19 @@ docker-compose up -d
 |------|------|------|
 | GET | `/api/health` | 健康检查 |
 | GET | `/api/stats` | 系统统计 |
-| POST | `/api/chat` | 同步聊天 |
-| POST | `/api/chat/stream` | 流式聊天(SSE) |
+| POST | `/api/chat` | 同步聊天（含科学免责） |
+| POST | `/api/chat/stream` | 流式聊天(SSE)（含CBNR+语义级免责） |
 | POST | `/api/feedback` | 用户反馈 |
 | GET | `/api/models` | 模型列表 |
 | POST | `/api/models/test` | 测试模型连接 |
+
+### 工具接口
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/tools/execute` | 执行工具（12个内置工具） |
+| GET | `/api/tools/stats` | 工具执行统计 |
+| GET | `/api/tools/history` | 工具执行历史 |
 
 ### 进化接口
 
@@ -347,17 +429,18 @@ docker-compose up -d
 
 ## 性能指标
 
-> 以下为v3.2.0参考值，实际值随系统演化动态变化
+> 以下为v3.7.0参考值，实际值随系统演化动态变化
 
 | 指标 | 参考值 | 说明 |
 |------|--------|------|
 | 简单问候响应 | ~2s | 意图快速识别+直接回复 |
-| 复杂查询响应 | ~30s | 8路径并行+本质推理+精神验证 |
-| 经验池成功率 | 96.4% | 历史交互成功占比 |
+| 简单事实查询 | ~5s | 经验池/知识库快速命中 |
+| 复杂查询响应 | ~20-40s | 9路径并行+CBNR+本质推理+语义级免责+精神验证 |
+| 经验池质量分 | 85.1 (平均) | 984条经验，启发式重评 |
 | 认知熵值 | 0.119 | 正常范围<0.3 |
-| 自我评估总分 | 0.61 | 5维度综合评分 |
-| 活跃规则数 | ~50条 | 归纳生成的学习规则 |
-| 经验池总量 | ~2900条 | 历史交互经验 |
+| 世界模型 | 27节点47边 | 因果图+反事实推理 |
+| 内置工具 | 12个 | 含代码分析4件套 |
+| Ollama兼容 | /api/chat + /api/generate fallback | 自动检测模型兼容性 |
 
 ---
 
@@ -369,6 +452,7 @@ docker-compose up -d
 | [RESPONSE_BOUNDARIES.md](RESPONSE_BOUNDARIES.md) | 回应边界 - 安全红线与黄线 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 - 如何成为同行者 |
 | [SYSTEM_ROADMAP.md](SYSTEM_ROADMAP.md) | 系统完善路线图 - 阶段1-5 |
+| [docs/sessions/](docs/sessions/) | 里程碑会话归档 (M1-M52) |
 | [docs/](docs/) | 详细架构设计文档 |
 
 > 注意：`docs/`目录下部分文档为历史参考，可能不代表当前系统状态。请以代码和本README为准。
@@ -416,11 +500,12 @@ docker-compose up -d
 
 - [Ollama](https://ollama.ai/) - 本地LLM运行时
 - [FastAPI](https://fastapi.tiangolo.com/) - 高性能异步Web框架
-- [FAISS](https://github.com/facebookresearch/faiss) - 向量检索（当前因DLL问题未启用）
+- [DeepSeek](https://deepseek.com/) - 外部推理API
+- [FAISS](https://github.com/facebookresearch/faiss) - 向量检索（当前因DLL问题未启用，使用TF-IDF降级）
 - 所有"坎坷者" — 你们的质疑和挑战让这个系统更接近善
 
 ---
 
-**版本**: v3.2.0 | **状态**: 阶段1-4已完成，阶段5进行中 | **路线图**: [SYSTEM_ROADMAP.md](SYSTEM_ROADMAP.md)
+**版本**: v3.7.0 | **状态**: 阶段1-5进行中 | **里程碑**: M1-M52 | **路线图**: [SYSTEM_ROADMAP.md](SYSTEM_ROADMAP.md)
 
 > "这不是一个急于求成的项目。我们一起走得慢一点，但走得正一点。"

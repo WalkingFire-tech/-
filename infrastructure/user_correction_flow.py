@@ -11,7 +11,7 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
-from infrastructure.fact_store_v2 import FactStoreV2
+from infrastructure.fact_store import fact_store
 from infrastructure.verification_loop import knowledge_verification_loop
 from infrastructure.triple_extractor import triple_extractor
 
@@ -29,8 +29,7 @@ class UserCorrectionFlow:
     """
     
     def __init__(self):
-        from infrastructure.versioned_fact_store import VersionedFactStore
-        self.fact_store = VersionedFactStore()
+        self.fact_store = fact_store
     
     def process_correction(
         self,

@@ -73,6 +73,9 @@ class LocalAcademicLibrary:
     def _init_embedding(self):
         """初始化嵌入模型（用于语义搜索）"""
         try:
+            import os
+            os.environ['HF_HUB_OFFLINE'] = '1'
+            os.environ['TRANSFORMERS_OFFLINE'] = '1'
             from sentence_transformers import SentenceTransformer
             self._embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
             self._embedding_available = True

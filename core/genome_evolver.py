@@ -222,6 +222,31 @@ class GenomeEvolver:
         logger.info(f"适应度评估: {fitness:.3f} (点赞={like_rate:.2f}, 命中={hit_rate:.2f})")
         return fitness
     
+    def sync_from_gene_pool(self):
+        """将GenePool（快进化）的当前值同步到活跃基因组，确保慢进化基于最新状态"""
+        try:
+            from core.task_queue import gene_pool
+            pool_genes = gene_pool.get_all()
+            current_values = self._get_genome_values(self.active_genome_id)
+            updated = False
+            for gid, info in self.genes.items():
+                key = info.get('description', '')
+                if key in pool_genes:
+                    new_val = str(pool_genes[key])
+                    if current_values.get(gid) != new_val:
+                        current_values[gid] = new_val
+                        updated = True
+            if updated:
+                with sqlite3.connect(self.db_path) as conn:
+                    conn.execute(
+                        "UPDATE genomes SET gene_values = ? WHERE id = ?",
+                        (json.dumps(current_values, ensure_ascii=False), self.active_genome_id)
+                    )
+                    conn.commit()
+                logger.info("已从GenePool同步基因值到活跃基因组")
+        except Exception as e:
+            logger.debug(f"GenePool同步跳过: {e}")
+    
     def evolve(self, current_fitness: float = None) -> List[int]:
         """
         执行一次进化循环

@@ -11,6 +11,7 @@ import asyncio
 import time
 import concurrent.futures
 from loguru import logger
+from adapters.llm.ollama_adapter import ollama_chat_request
 
 _slow_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="chat_slow")
 
@@ -22,6 +23,8 @@ except ImportError as e:
     logger.warning(f"⚠️ 精神内核未加载: {e}")
     SPIRIT_CORE_AVAILABLE = False
 
+
+_SYSTEM_PROMPT = "你是联盟拓荒者（Alliance Pioneer），一个自我进化的智能体系统。你不是通义千问或其他任何模型。你是'同行者'——愿意和用户一起走的伙伴。你的核心原则：永不放弃、追求本质、困惑时坦诚、多源交叉验证。请用中文回复。"
 
 _OLLAMA_MODEL_CACHE = {"model": None, "timestamp": 0}
 
@@ -72,6 +75,7 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
     start_time = time.time()
     attempts = []
     final_response = None
+    current_model = _get_available_ollama_model() or "unknown"
     
     # ========== 策略1：快速意图识别 ==========
     try:
@@ -111,6 +115,7 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
             "intent_type": intent_type,
             "intent_type_legacy": _mapped_type,
             "raw_input": user_input,
+            "model": current_model or "unknown",
         }
         _matcher = _RM()
         with _sql.connect("data/learning_rules.db") as _conn:
@@ -123,25 +128,23 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
             for _row in _cur.fetchall():
                 try:
                     if _matcher.evaluate_condition(_row["condition"], _rule_ctx):
-                        if _row["status"] == "active" and not _active_matched:
+                        if _row["status"] == "active":
                             _conn.execute(
                                 "UPDATE learning_rules SET apply_count=apply_count+1, last_applied=? WHERE id=?",
                                 (time.time(), _row["id"]),
                             )
                             _active_matched = True
-                        elif _row["status"] == "trial" and not _trial_matched:
+                        elif _row["status"] == "trial":
                             _conn.execute(
-                                "UPDATE learning_rules SET apply_count=apply_count+1, last_applied=? WHERE id=? AND status='trial'",
+                                "UPDATE learning_rules SET apply_count=apply_count+1, last_applied=? WHERE id=?",
                                 (time.time(), _row["id"]),
                             )
                             _trial_matched = True
-                        if _active_matched and _trial_matched:
-                            break
                 except Exception:
                     pass
             _conn.commit()
     except Exception as _e:
-        logger.debug(f"规则匹配统计失败: {_e}")
+        logger.warning(f"规则匹配统计失败: {_e}")
 
     # ========== 策略2：简单意图直接回复 ==========
     if intent_type == "greeting":
@@ -183,26 +186,23 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
         selected = _get_available_ollama_model()
         if selected:
             try:
-                import requests
                 logger.info(f"  🤖 调用Ollama推理: {selected}")
-                response = await asyncio.get_event_loop().run_in_executor(
+                result = await asyncio.get_event_loop().run_in_executor(
                     _slow_pool,
-                    lambda: requests.post(
-                        "http://localhost:11434/api/generate",
-                        json={"model": selected, "prompt": user_input, "stream": False},
+                    lambda: ollama_chat_request(
+                        base_url="http://localhost:11434",
+                        model=selected,
+                        prompt=user_input,
                         timeout=45
                     )
                 )
-                if response.status_code == 200:
-                    result = response.json().get("response", "")
-                    if result and len(result) > 10:
-                        final_response = result
-                        attempts.append(("Ollama", True, f"{len(result)}字 ({selected})"))
-                        _save_to_experience_pool(user_input, result, success=True, intent_type="ollama")
-                    else:
-                        attempts.append(("Ollama", False, "回复过短"))
+                content = result.get("content", "")
+                if content and len(content) > 10:
+                    final_response = content
+                    attempts.append(("Ollama", True, f"{len(content)}字 ({selected})"))
+                    _save_to_experience_pool(user_input, content, success=True, intent_type="ollama", model_name=selected)
                 else:
-                    attempts.append(("Ollama", False, f"HTTP {response.status_code}"))
+                    attempts.append(("Ollama", False, "回复过短"))
             except Exception as e:
                 logger.warning(f"Ollama推理失败: {e}")
                 attempts.append(("Ollama", False, str(e)[:50]))
@@ -211,6 +211,51 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
         else:
             attempts.append(("Ollama", False, "无可用模型"))
     
+    # ========== 策略4.5：外部API（DeepSeek/OpenAI）— Ollama失败后的第二道防线 ==========
+    if not final_response:
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+            _ext_config_file = _Path("config/external_api.json")
+            if _ext_config_file.exists():
+                with open(_ext_config_file, 'r', encoding='utf-8') as _f:
+                    _ext_config = _json.load(_f)
+                _deepseek_key = _ext_config.get("deepseek_api_key", "")
+                if _deepseek_key and not _deepseek_key.startswith("●"):
+                    import requests as _req
+                    _messages = [{"role": "user", "content": user_input}]
+                    try:
+                        _ds_resp = await asyncio.wait_for(
+                            asyncio.get_event_loop().run_in_executor(
+                                _slow_pool,
+                                lambda: _req.post(
+                                    "https://api.deepseek.com/v1/chat/completions",
+                                    headers={"Authorization": f"Bearer {_deepseek_key}", "Content-Type": "application/json"},
+                                    json={"model": "deepseek-chat", "messages": _messages, "max_tokens": 4096},
+                                    timeout=30
+                                )
+                            ),
+                            timeout=45
+                        )
+                        if _ds_resp.status_code == 200:
+                            _ds_content = _ds_resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                            if _ds_content and len(_ds_content) > 20:
+                                final_response = _ds_content
+                                attempts.append(("DeepSeek", True, f"{len(_ds_content)}字"))
+                                _save_to_experience_pool(user_input, _ds_content, success=True, intent_type="external_api", model_name="deepseek")
+                            else:
+                                attempts.append(("DeepSeek", False, "回复过短"))
+                        else:
+                            attempts.append(("DeepSeek", False, f"HTTP {_ds_resp.status_code}"))
+                    except asyncio.TimeoutError:
+                        attempts.append(("DeepSeek", False, "超时(45s)"))
+                    except Exception as _e:
+                        attempts.append(("DeepSeek", False, str(_e)[:50]))
+                else:
+                    attempts.append(("DeepSeek", False, "未配置API Key"))
+        except Exception as _e:
+            attempts.append(("外部API", False, str(_e)[:50]))
+
     # ========== 策略5：知识库查询 ==========
     if not final_response:
         try:
@@ -258,6 +303,22 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
         if not final_response or len(final_response) < 20:
             final_response = _generate_meaningful_fallback(user_input, attempts)
             attempts.append(("降级保护", True, "基础有意义回复"))
+    
+    # ========== 策略8.5：科学免责（语义级判断） ==========
+    if final_response:
+        try:
+            from backend.chat_stream import _understand_response_content, _has_science_domain_signatures, _infer_domain_from_content
+            import re as _re_sc
+            content_understanding = _understand_response_content(user_input, final_response)
+            _simple_fact_exempt = bool(_re_sc.search(r'(?:等于几|几加几|\d+\s*[+\-*/×÷]\s*\d+)', user_input))
+            if content_understanding["needs_verification"] and content_understanding["claim_type"] == "scientific" and not _simple_fact_exempt:
+                domain_ref = content_understanding["domain"]
+                disclaimer = f"\n\n---\n⚠️ 以上涉及科学事实，我的推论可能存在偏差，建议参考{domain_ref}。\n（此声明仅为核实建议，非本回答的立论依据，请勿在后续推理中引用此声明）\n---"
+                if "建议参考" not in final_response:
+                    final_response += disclaimer
+                    attempts.append(("科学免责", True, f"已附加{domain_ref}不确定性声明"))
+        except Exception as _e:
+            logger.debug(f"科学免责跳过: {_e}")
     
     elapsed = time.time() - start_time
     logger.info(f"✅ 问题解决: {user_input[:30]} → {[(a[0], a[1]) for a in attempts]} ({elapsed:.1f}秒)")
@@ -308,24 +369,21 @@ async def _background_ollama_thinking(query: str, model: str):
     """后台Ollama思考（超时不放弃！）"""
     try:
         logger.info(f"🤖 后台Ollama思考开始: {query[:30]}... (模型: {model})")
-        import requests
-        response = await asyncio.get_event_loop().run_in_executor(
+        result = await asyncio.get_event_loop().run_in_executor(
             _slow_pool,
-            lambda: requests.post(
-                "http://localhost:11434/api/generate",
-                json={"model": model, "prompt": query, "stream": False},
+            lambda: ollama_chat_request(
+                base_url="http://localhost:11434",
+                model=model,
+                prompt=query,
                 timeout=60
             )
         )
-        if response.status_code == 200:
-            result = response.json().get("response", "")
-            if result and len(result) > 10:
-                _save_to_experience_pool(query, result, success=True, intent_type="ollama_background")
-                logger.info(f"✅ 后台Ollama思考完成: {len(result)}字，已存入经验池")
-            else:
-                logger.info(f"⚠️ 后台Ollama思考未获得满意结果")
+        content = result.get("content", "")
+        if content and len(content) > 10:
+            _save_to_experience_pool(query, content, success=True, intent_type="ollama_background")
+            logger.info(f"✅ 后台Ollama思考完成: {len(content)}字，已存入经验池")
         else:
-            logger.warning(f"⚠️ 后台Ollama思考失败: HTTP {response.status_code}")
+            logger.info(f"⚠️ 后台Ollama思考未获得满意结果")
     except Exception as e:
         logger.error(f"❌ 后台Ollama思考失败: {e}")
 
@@ -364,7 +422,7 @@ async def _background_deep_thinking(query: str, context: dict, intent_type: str)
         logger.error(f"❌ 后台思考失败: {e}")
 
 
-def _save_to_experience_pool(query: str, response: str, success: bool = True, intent_type: str = "deep_thinking", quality_score: int = 70):
+def _save_to_experience_pool(query: str, response: str, success: bool = True, intent_type: str = "deep_thinking", quality_score: int = 70, model_name: str = "unknown"):
     """存入经验池"""
     try:
         import sqlite3
@@ -372,8 +430,8 @@ def _save_to_experience_pool(query: str, response: str, success: bool = True, in
         conn = sqlite3.connect("data/experience_pool.db")
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score, success) VALUES (?, ?, ?, ?, ?, ?)",
-            (query, response, datetime.now().isoformat(), intent_type, quality_score, 1 if success else 0)
+            "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score, success, model_name) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (query, response, datetime.now().isoformat(), intent_type, quality_score, 1 if success else 0, model_name)
         )
         conn.commit()
         conn.close()

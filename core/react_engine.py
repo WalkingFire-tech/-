@@ -17,10 +17,27 @@ ReAct推理引擎 (P0-3)
 """
 
 import asyncio
+import re
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from loguru import logger
+
+
+@dataclass
+class Doubt:
+    description: str
+    severity: str
+    source: str
+
+
+@dataclass
+class SelfDoubtResult:
+    doubts: List[Doubt] = field(default_factory=list)
+    penalty: float = 0.0
+    most_likely_error: str = ""
+    weak_dimensions: List[str] = field(default_factory=list)
+    recommended_strategy_hint: str = ""
 
 
 @dataclass
@@ -80,6 +97,82 @@ class ReActEngine:
     def __init__(self):
         self._iteration_count = 0
 
+    def _self_doubt(
+        self,
+        response: str,
+        candidates: List[Dict],
+        fitness_score: Any = None,
+        query: str = "",
+    ) -> SelfDoubtResult:
+        result = SelfDoubtResult()
+        penalty = 0.0
+
+        if len(response) < 20:
+            result.doubts.append(Doubt("回答内容过短，可能不完整", "major", "completeness"))
+            penalty += 0.2
+            result.weak_dimensions.append("completeness")
+
+        uncertainty_words = ['可能', '也许', '大概', '似乎', '猜测', '不太确定', 'maybe', 'perhaps', 'might']
+        uncertainty_count = sum(1 for w in uncertainty_words if w in response.lower())
+        if uncertainty_count > 2:
+            result.doubts.append(Doubt(f"包含{uncertainty_count}个不确定性词汇", "minor", "uncertainty"))
+            penalty += 0.05 * uncertainty_count
+            result.weak_dimensions.append("certainty")
+
+        sources = [c.get("source", "") for c in candidates if c.get("response")]
+        unique_sources = set(sources)
+        if len(unique_sources) == 1 and sources:
+            result.doubts.append(Doubt(f"仅依赖单一来源({sources[0]})", "major", "source_diversity"))
+            penalty += 0.15
+            result.weak_dimensions.append("cross_validation")
+
+        unreliable = ['blog', 'forum', 'unknown', 'external_search']
+        unreliable_count = sum(1 for s in sources if any(u in s.lower() for u in unreliable))
+        if unreliable_count > 0 and len(sources) > 0:
+            ratio = unreliable_count / len(sources)
+            if ratio > 0.5:
+                result.doubts.append(Doubt(f"{ratio:.0%}来源不可靠({unreliable_count}/{len(sources)})", "major", "source_reliability"))
+                penalty += 0.15 * ratio
+                result.weak_dimensions.append("reliability")
+
+        if fitness_score:
+            obj = getattr(fitness_score, 'objective_score', 0)
+            subj = getattr(fitness_score, 'subjective_score', 0)
+            if obj < 50:
+                result.doubts.append(Doubt("客观分低(事实可能不准)", "major", "objectivity"))
+                penalty += 0.2
+                result.weak_dimensions.append("objectivity")
+            if subj < 50:
+                result.doubts.append(Doubt("主观分低(回答不够完整)", "minor", "subjectivity"))
+                penalty += 0.1
+                result.weak_dimensions.append("subjectivity")
+
+        possible_errors = []
+        numbers = re.findall(r'\b\d+\.?\d*\b', response)
+        if len(numbers) > 3:
+            possible_errors.append("包含多个具体数值，可能存在计算或引用错误")
+        if any(w in response for w in ['绝对', '一定', '肯定', '必须']):
+            possible_errors.append("包含绝对化表述，可能过于武断")
+        if len(response) > 500:
+            possible_errors.append("内容较长，可能存在逻辑遗漏或前后不一致")
+        if possible_errors:
+            result.most_likely_error = possible_errors[0]
+            result.doubts.append(Doubt(f"最可能的错误: {possible_errors[0]}", "critical", "reverse_reasoning"))
+            penalty += 0.3
+
+        result.penalty = min(penalty, 1.0)
+
+        if "cross_validation" in result.weak_dimensions or "reliability" in result.weak_dimensions:
+            result.recommended_strategy_hint = "cross_verify"
+        elif "objectivity" in result.weak_dimensions:
+            result.recommended_strategy_hint = "tool_first"
+        elif "certainty" in result.weak_dimensions or "subjectivity" in result.weak_dimensions:
+            result.recommended_strategy_hint = "deep_reason"
+        elif "completeness" in result.weak_dimensions:
+            result.recommended_strategy_hint = "model_switch"
+
+        return result
+
     async def run(
         self,
         query: str,
@@ -106,6 +199,7 @@ class ReActEngine:
 
         used_strategies = set()
         current_quality = initial_quality
+        doubt_hint = ""
 
         for i in range(self.MAX_ITERATIONS):
             if time.time() - start_time > self.MAX_TOTAL_SECONDS:
@@ -115,12 +209,26 @@ class ReActEngine:
                 logger.info(f"ReAct: 适应度{current_quality:.0f}已达标，停止迭代")
                 break
 
+            doubt_result = self._self_doubt(
+                result.final_response, candidates, fitness_score, query
+            )
+            if doubt_result.doubts:
+                doubt_hint = doubt_result.recommended_strategy_hint
+                doubt_summary = "; ".join(f"{d.severity}:{d.description[:30]}" for d in doubt_result.doubts[:3])
+                logger.info(f"ReAct: 自我质疑发现{len(doubt_result.doubts)}个疑点(penalty={doubt_result.penalty:.2f}): {doubt_summary}")
+                if emit_fn:
+                    emit_fn("step", {
+                        "phase": f"自我质疑",
+                        "status": "reflecting",
+                        "detail": f"发现{len(doubt_result.doubts)}个疑点: {doubt_summary}"
+                    })
+
             available = [s for s in self.STRATEGY_ORDER if s not in used_strategies]
             if not available:
                 logger.info("ReAct: 无更多可用策略，停止迭代")
                 break
 
-            strategy = self._select_strategy(available, candidates, used_strategies)
+            strategy = self._select_strategy(available, candidates, used_strategies, doubt_hint)
             used_strategies.add(strategy)
 
             iter_start = time.time()
@@ -220,6 +328,7 @@ class ReActEngine:
         available: List[str],
         candidates: List[Dict],
         used_strategies: set,
+        doubt_hint: str = "",
     ) -> str:
         failed_sources = set()
         for c in candidates:
@@ -227,6 +336,10 @@ class ReActEngine:
             q = c.get("quality", 0)
             if q < 40 and src:
                 failed_sources.add(src)
+
+        if doubt_hint and doubt_hint in available and doubt_hint not in used_strategies:
+            logger.info(f"ReAct: 自我质疑推荐策略: {doubt_hint}")
+            return doubt_hint
 
         if not failed_sources:
             return available[0]

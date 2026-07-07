@@ -1,16 +1,93 @@
 ﻿"""
 Ollama模型适配器 - 优化版本
-添加重试机制、超时处理、智能降级
+添加重试机制、超时处理、智能降级、/api/chat→/api/generate fallback
 """
 import requests
 import time
 import threading
-from typing import Optional
+from typing import Optional, Dict, Any
 from core.ports.llm_port import LLMPort
 from infrastructure.model_stats import ModelStats
 from infrastructure.quality_evaluator import QualityEvaluator
 from infrastructure.config_manager import config
 from loguru import logger
+
+_SYSTEM_PROMPT = "你是联盟拓荒者（Alliance Pioneer），自我进化的智能体。你不是通义千问或其他模型。你是'同行者'——愿意和用户一起走的伙伴。核心原则：永不放弃、追求本质、困惑时坦诚、多源交叉验证。请用中文回复。"
+
+_chat_fallback_models = set()
+
+
+def ollama_chat_request(
+    base_url: str,
+    model: str,
+    prompt: str,
+    system_prompt: str = None,
+    timeout: int = 60,
+    num_predict: int = 1024,
+    options: dict = None,
+) -> Dict[str, Any]:
+    """
+    统一Ollama API调用入口，内置 /api/chat → /api/generate fallback。
+    
+    返回: {"content": str, "model": str, "endpoint": str}
+    """
+    global _chat_fallback_models
+    sys = system_prompt or _SYSTEM_PROMPT
+    opts = options or {}
+    if "num_predict" not in opts:
+        opts["num_predict"] = num_predict
+
+    if model not in _chat_fallback_models:
+        try:
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": sys},
+                    {"role": "user", "content": prompt},
+                ],
+                "stream": False,
+                "options": opts,
+            }
+            resp = requests.post(
+                f"{base_url}/api/chat",
+                json=payload,
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            content = data.get("message", {}).get("content", "").strip()
+            if content:
+                return {"content": content, "model": model, "endpoint": "/api/chat"}
+        except requests.exceptions.HTTPError as e:
+            if resp.status_code in (400, 404, 422):
+                logger.warning(f"Ollama /api/chat 不支持模型 {model}，回退到 /api/generate: {e}")
+                _chat_fallback_models.add(model)
+            else:
+                raise
+        except Exception as e:
+            err_msg = str(e).lower()
+            if any(k in err_msg for k in ("not support", "invalid", "unrecognized", "does not support")):
+                logger.warning(f"Ollama /api/chat 模型 {model} 不兼容，回退到 /api/generate: {e}")
+                _chat_fallback_models.add(model)
+            else:
+                raise
+
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "system": sys,
+        "stream": False,
+        "options": opts,
+    }
+    resp = requests.post(
+        f"{base_url}/api/generate",
+        json=payload,
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    content = data.get("response", "").strip()
+    return {"content": content, "model": model, "endpoint": "/api/generate"}
 
 
 class OllamaAdapter(LLMPort):
@@ -94,27 +171,13 @@ class OllamaAdapter(LLMPort):
         return None
 
     def generate(self, prompt: str, task_type: str = "chat", **kwargs) -> str:
-        # 检查熔断状态
         if self._is_circuit_broken():
             raise Exception(f"模型 {self._model_name} 处于熔断状态，请稍后重试或使用其他模型")
-        
-        url = f"{self.base_url}/api/generate"
         
         model_config = self._get_model_config()
         temperature = kwargs.get("temperature", model_config.get("temperature", 0.9))
         max_tokens = kwargs.get("max_tokens", model_config.get("max_tokens", 512))
         timeout = kwargs.get("timeout", self.default_timeout)
-
-        payload = {
-            "model": self._model_name,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens,
-                "top_p": 0.95,
-            }
-        }
 
         start_time = time.time()
         success = False
@@ -122,21 +185,23 @@ class OllamaAdapter(LLMPort):
         quality_score = 0
 
         try:
-            data = self._retry_request(url, payload, timeout)
-            if data is None:
-                raise Exception("请求失败,无返回数据")
-            
-            response_text = data.get("response", "").strip()
+            result = ollama_chat_request(
+                base_url=self.base_url,
+                model=self._model_name,
+                prompt=prompt,
+                timeout=timeout or 120,
+                num_predict=max_tokens,
+                options={"temperature": temperature, "top_p": 0.95},
+            )
+            response_text = result["content"]
             if not response_text:
                 raise Exception("模型返回空响应")
             
             success = True
             quality_score = QualityEvaluator.evaluate(response_text, task_type)
-            logger.info(f"质量评估: {quality_score}/100 for {task_type}")
+            logger.info(f"质量评估: {quality_score}/100 for {task_type} (via {result['endpoint']})")
             
-            # 记录成功，重置失败计数
             self._record_success()
-            
             return response_text
         
         except Exception as e:

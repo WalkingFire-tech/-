@@ -29,6 +29,7 @@ import asyncio
 import time
 from loguru import logger
 from typing import Dict, Any, List, Tuple
+from adapters.llm.ollama_adapter import ollama_chat_request
 
 
 class NeverGiveUpEngine:
@@ -228,19 +229,18 @@ class NeverGiveUpEngine:
     async def _try_model_inference(self, question: str) -> Dict:
         """尝试模型推理"""
         try:
-            import requests
-            response = await asyncio.get_event_loop().run_in_executor(
+            result = await asyncio.get_event_loop().run_in_executor(
                 None,
-                lambda: requests.post(
-                    "http://localhost:11434/api/generate",
-                    json={"model": "qwen2.5:7b", "prompt": question, "stream": False},
+                lambda: ollama_chat_request(
+                    base_url="http://localhost:11434",
+                    model="qwen2.5:7b",
+                    prompt=question,
                     timeout=10
                 )
             )
-            if response.status_code == 200:
-                answer = response.json().get("response", "")
-                if answer and len(answer) > 20:
-                    return {"success": True, "answer": answer, "confidence": 0.6}
+            content = result.get("content", "")
+            if content and len(content) > 20:
+                return {"success": True, "answer": content, "confidence": 0.6}
         except Exception as e:
             logger.debug(f"模型推理失败: {e}")
         return {"success": False}

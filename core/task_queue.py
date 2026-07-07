@@ -11,9 +11,13 @@ import asyncio
 import time
 import json
 import sqlite3
+import threading
 import os
 from datetime import datetime
 from loguru import logger
+from adapters.llm.ollama_adapter import ollama_chat_request
+
+_write_lock = threading.Lock()
 
 
 # ========== 基因参数定义 ==========
@@ -51,54 +55,72 @@ class GenePool:
 
     def __init__(self, db_path: str = "data/gene_pool.db"):
         self.db_path = db_path
+        self._lock = threading.Lock()
         self._init_db()
         self._genes = self._load_genes()
         self._safety_violations = 0
 
+    def _connect(self):
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+
+    def _write_op(self, func, *args, **kwargs):
+        with self._lock:
+            conn = self._connect()
+            try:
+                result = func(conn, *args, **kwargs)
+                conn.commit()
+                return result
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
     def _init_db(self):
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS genes (
-            key TEXT PRIMARY KEY,
-            value REAL NOT NULL,
-            mutation_count INTEGER DEFAULT 0,
-            last_mutated TEXT
-        )''')
-        c.execute('''CREATE TABLE IF NOT EXISTS mutations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            gene_key TEXT,
-            old_value REAL,
-            new_value REAL,
-            delta REAL,
-            trigger TEXT,
-            context TEXT,
-            timestamp TEXT
-        )''')
-        c.execute('''CREATE TABLE IF NOT EXISTS safety_violations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            gene_key TEXT,
-            attempted_value REAL,
-            bound_type TEXT,
-            bound_value REAL,
-            trigger TEXT,
-            timestamp TEXT
-        )''')
-        conn.commit()
-        conn.close()
+        def _do(conn):
+            c = conn.cursor()
+            c.execute('''CREATE TABLE IF NOT EXISTS genes (
+                key TEXT PRIMARY KEY,
+                value REAL NOT NULL,
+                mutation_count INTEGER DEFAULT 0,
+                last_mutated TEXT
+            )''')
+            c.execute('''CREATE TABLE IF NOT EXISTS mutations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                gene_key TEXT,
+                old_value REAL,
+                new_value REAL,
+                delta REAL,
+                trigger TEXT,
+                context TEXT,
+                timestamp TEXT
+            )''')
+            c.execute('''CREATE TABLE IF NOT EXISTS safety_violations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                gene_key TEXT,
+                attempted_value REAL,
+                bound_type TEXT,
+                bound_value REAL,
+                trigger TEXT,
+                timestamp TEXT
+            )''')
+        self._write_op(_do)
 
     def _load_genes(self) -> dict:
         try:
-            conn = sqlite3.connect(self.db_path)
-            c = conn.cursor()
-            c.execute("SELECT key, value FROM genes")
-            rows = c.fetchall()
-            conn.close()
+            with self._connect() as conn:
+                c = conn.cursor()
+                c.execute("SELECT key, value FROM genes")
+                rows = c.fetchall()
             genes = dict(rows)
             for k, v in GENE_DEFAULTS.items():
                 if k not in genes:
                     genes[k] = v
             return genes
-        except:
+        except Exception:
             return dict(GENE_DEFAULTS)
 
     def get(self, key: str) -> float:
@@ -109,30 +131,31 @@ class GenePool:
         old = self._genes.get(key, GENE_DEFAULTS.get(key, 0.5))
         new = old + delta
 
-        # 强制安全基线：基因值永远不能超出预设的安全区间
         bounds = GENE_SAFETY_BOUNDS.get(key)
         if bounds:
             min_val, max_val = bounds
             if new < min_val:
                 new = min_val
-                self._record_safety_violation(key, new, "lower_bound", min_val, trigger)
-                logger.debug(f"🧬 基因安全基线触发: {key} 降至下限 {min_val}")
+                if old > min_val:
+                    self._record_safety_violation(key, old + delta, "lower_bound", min_val, trigger)
+                    logger.debug(f"🧬 基因安全基线触发: {key} 降至下限 {min_val}")
             elif new > max_val:
                 new = max_val
-                self._record_safety_violation(key, new, "upper_bound", max_val, trigger)
-                logger.debug(f"🧬 基因安全基线触发: {key} 升至上限 {max_val}")
+                if old < max_val:
+                    self._record_safety_violation(key, old + delta, "upper_bound", max_val, trigger)
+                    logger.debug(f"🧬 基因安全基线触发: {key} 升至上限 {max_val}")
 
         self._genes[key] = new
 
-        try:
-            conn = sqlite3.connect(self.db_path)
+        def _do(conn):
             c = conn.cursor()
             c.execute("INSERT OR REPLACE INTO genes (key, value, mutation_count, last_mutated) VALUES (?, ?, COALESCE((SELECT mutation_count FROM genes WHERE key=?), 0) + 1, ?)",
                       (key, new, key, datetime.now().isoformat()))
             c.execute("INSERT INTO mutations (gene_key, old_value, new_value, delta, trigger, context, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
                       (key, old, new, delta, trigger, context[:200], datetime.now().isoformat()))
-            conn.commit()
-            conn.close()
+
+        try:
+            self._write_op(_do)
         except Exception as e:
             logger.debug(f"基因突变记录失败: {e}")
 
@@ -169,27 +192,25 @@ class GenePool:
 
     def _record_safety_violation(self, gene_key: str, attempted_value: float, bound_type: str, bound_value: float, trigger: str):
         self._safety_violations += 1
-        try:
-            conn = sqlite3.connect(self.db_path)
+        def _do(conn):
             conn.execute("INSERT INTO safety_violations (gene_key, attempted_value, bound_type, bound_value, trigger, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
                          (gene_key, attempted_value, bound_type, bound_value, trigger, datetime.now().isoformat()))
-            conn.commit()
-            conn.close()
-        except:
+        try:
+            self._write_op(_do)
+        except Exception:
             pass
         logger.warning(f"🧬 基因安全违规 #{self._safety_violations}: {gene_key} 尝试={attempted_value:.3f} {bound_type}={bound_value:.3f}")
 
     def get_safety_violations(self) -> dict:
         try:
-            conn = sqlite3.connect(self.db_path)
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM safety_violations")
-            total = c.fetchone()[0]
-            c.execute("SELECT gene_key, COUNT(*) FROM safety_violations GROUP BY gene_key ORDER BY COUNT(*) DESC")
-            by_gene = {r[0]: r[1] for r in c.fetchall()}
-            conn.close()
+            with self._connect() as conn:
+                c = conn.cursor()
+                c.execute("SELECT COUNT(*) FROM safety_violations")
+                total = c.fetchone()[0]
+                c.execute("SELECT gene_key, COUNT(*) FROM safety_violations GROUP BY gene_key ORDER BY COUNT(*) DESC")
+                by_gene = {r[0]: r[1] for r in c.fetchall()}
             return {"total": total, "by_gene": by_gene}
-        except:
+        except Exception:
             return {"total": self._safety_violations, "by_gene": {}}
 
     def get_expression_profile(self) -> dict:
@@ -210,13 +231,12 @@ class GenePool:
 
     def get_mutation_history(self, limit: int = 20) -> list:
         try:
-            conn = sqlite3.connect(self.db_path)
-            c = conn.cursor()
-            c.execute("SELECT gene_key, old_value, new_value, delta, trigger, timestamp FROM mutations ORDER BY id DESC LIMIT ?", (limit,))
-            rows = c.fetchall()
-            conn.close()
+            with self._connect() as conn:
+                c = conn.cursor()
+                c.execute("SELECT gene_key, old_value, new_value, delta, trigger, timestamp FROM mutations ORDER BY id DESC LIMIT ?", (limit,))
+                rows = c.fetchall()
             return [{"key": r[0], "old": r[1], "new": r[2], "delta": r[3], "trigger": r[4], "time": r[5]} for r in rows]
-        except:
+        except Exception:
             return []
 
 
@@ -226,47 +246,65 @@ gene_pool = GenePool()
 class PersistentTaskQueue:
     def __init__(self, db_path: str = "data/task_queue.db"):
         self.db_path = db_path
+        self._lock = threading.Lock()
         self._init_db()
         self._running = False
         self._last_user_interaction = time.time()
         self._idle_threshold = 10.0
 
+    def _connect(self):
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+
+    def _write_op(self, func, *args, **kwargs):
+        with self._lock:
+            conn = self._connect()
+            try:
+                result = func(conn, *args, **kwargs)
+                conn.commit()
+                return result
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
     def _init_db(self):
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_type TEXT NOT NULL,
-            payload TEXT NOT NULL,
-            status TEXT DEFAULT 'pending',
-            priority INTEGER DEFAULT 5,
-            retry_count INTEGER DEFAULT 0,
-            max_retries INTEGER DEFAULT 3,
-            next_retry_at TEXT,
-            created_at TEXT,
-            started_at TEXT,
-            completed_at TEXT,
-            result TEXT,
-            error TEXT
-        )''')
-        c.execute('''CREATE TABLE IF NOT EXISTS failed_buffer (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            original_task_id INTEGER,
-            task_type TEXT,
-            payload TEXT,
-            failure_reason TEXT,
-            created_at TEXT,
-            recovered_at TEXT,
-            recovered INTEGER DEFAULT 0
-        )''')
-        # 迁移：旧数据库可能缺少priority列
-        try:
-            c.execute("SELECT priority FROM tasks LIMIT 1")
-        except sqlite3.OperationalError:
-            c.execute("ALTER TABLE tasks ADD COLUMN priority INTEGER DEFAULT 5")
-            logger.info("✅ 已迁移tasks表：添加priority列")
-        conn.commit()
-        conn.close()
+        def _do(conn):
+            c = conn.cursor()
+            c.execute('''CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_type TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                priority INTEGER DEFAULT 5,
+                retry_count INTEGER DEFAULT 0,
+                max_retries INTEGER DEFAULT 3,
+                next_retry_at TEXT,
+                created_at TEXT,
+                started_at TEXT,
+                completed_at TEXT,
+                result TEXT,
+                error TEXT
+            )''')
+            c.execute('''CREATE TABLE IF NOT EXISTS failed_buffer (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                original_task_id INTEGER,
+                task_type TEXT,
+                payload TEXT,
+                failure_reason TEXT,
+                created_at TEXT,
+                recovered_at TEXT,
+                recovered INTEGER DEFAULT 0
+            )''')
+            try:
+                c.execute("SELECT priority FROM tasks LIMIT 1")
+            except sqlite3.OperationalError:
+                c.execute("ALTER TABLE tasks ADD COLUMN priority INTEGER DEFAULT 5")
+                logger.info("✅ 已迁移tasks表：添加priority列")
+        self._write_op(_do)
 
     def notify_user_interaction(self):
         """用户交互通知——更新空闲时间戳"""
@@ -280,64 +318,59 @@ class PersistentTaskQueue:
         next_retry = None
         if delay_seconds > 0:
             next_retry = datetime.fromtimestamp(time.time() + delay_seconds).isoformat()
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute(
-            "INSERT INTO tasks (task_type, payload, status, priority, max_retries, next_retry_at, created_at) VALUES (?, ?, 'pending', ?, ?, ?, ?)",
-            (task_type, json.dumps(payload, ensure_ascii=False), priority, max_retries, next_retry, datetime.now().isoformat())
-        )
-        task_id = c.lastrowid
-        conn.commit()
-        conn.close()
+
+        def _do(conn):
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO tasks (task_type, payload, status, priority, max_retries, next_retry_at, created_at) VALUES (?, ?, 'pending', ?, ?, ?, ?)",
+                (task_type, json.dumps(payload, ensure_ascii=False), priority, max_retries, next_retry, datetime.now().isoformat())
+            )
+            return c.lastrowid
+
+        task_id = self._write_op(_do)
         logger.info(f"📋 任务入队: #{task_id} type={task_type} priority={priority}" + (f" 延迟{delay_seconds:.0f}秒" if delay_seconds > 0 else ""))
         return task_id
 
     def _get_pending_tasks(self, limit: int = 3) -> list:
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        now = datetime.now().isoformat()
-        c.execute(
-            "SELECT id, task_type, payload, retry_count, priority FROM tasks WHERE status='pending' AND (next_retry_at IS NULL OR next_retry_at <= ?) ORDER BY priority DESC, created_at ASC LIMIT ?",
-            (now, limit)
-        )
-        rows = c.fetchall()
-        conn.close()
+        with self._connect() as conn:
+            c = conn.cursor()
+            now = datetime.now().isoformat()
+            c.execute(
+                "SELECT id, task_type, payload, retry_count, priority FROM tasks WHERE status='pending' AND (next_retry_at IS NULL OR next_retry_at <= ?) ORDER BY priority DESC, created_at ASC LIMIT ?",
+                (now, limit)
+            )
+            rows = c.fetchall()
         return [{"id": r[0], "task_type": r[1], "payload": json.loads(r[2]), "retry_count": r[3], "priority": r[4]} for r in rows]
 
     def _mark_running(self, task_id: int):
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute("UPDATE tasks SET status='running', started_at=? WHERE id=?", (datetime.now().isoformat(), task_id))
-        conn.commit()
-        conn.close()
+        def _do(conn):
+            conn.execute("UPDATE tasks SET status='running', started_at=? WHERE id=?", (datetime.now().isoformat(), task_id))
+        self._write_op(_do)
 
     def _mark_completed(self, task_id: int, result: str = ""):
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute("UPDATE tasks SET status='completed', completed_at=?, result=? WHERE id=?",
-                  (datetime.now().isoformat(), result[:500], task_id))
-        conn.commit()
-        conn.close()
+        def _do(conn):
+            conn.execute("UPDATE tasks SET status='completed', completed_at=?, result=? WHERE id=?",
+                         (datetime.now().isoformat(), result[:500], task_id))
+        self._write_op(_do)
 
     def _mark_failed(self, task_id: int, error: str, retry_count: int, max_retries: int):
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        if retry_count < max_retries:
-            delay = min(5 * (2 ** retry_count), 120)
-            next_retry = datetime.fromtimestamp(time.time() + delay).isoformat()
-            c.execute("UPDATE tasks SET status='pending', retry_count=?, next_retry_at=?, error=? WHERE id=?",
-                      (retry_count + 1, next_retry, error[:200], task_id))
-            logger.info(f"🔄 任务#{task_id}将在{delay}秒后重试(第{retry_count+1}次)")
-        else:
-            c.execute("UPDATE tasks SET status='failed', error=? WHERE id=?", (error[:200], task_id))
-            c.execute(
-                "INSERT INTO failed_buffer (original_task_id, task_type, payload, failure_reason, created_at) "
-                "SELECT id, task_type, payload, error, datetime('now') FROM tasks WHERE id=?",
-                (task_id,)
-            )
-            logger.warning(f"❌ 任务#{task_id}最终失败，已转入暂存区")
-        conn.commit()
-        conn.close()
+        def _do(conn):
+            c = conn.cursor()
+            if retry_count < max_retries:
+                delay = min(5 * (2 ** retry_count), 120)
+                next_retry = datetime.fromtimestamp(time.time() + delay).isoformat()
+                c.execute("UPDATE tasks SET status='pending', retry_count=?, next_retry_at=?, error=? WHERE id=?",
+                           (retry_count + 1, next_retry, error[:200], task_id))
+                logger.info(f"🔄 任务#{task_id}将在{delay}秒后重试(第{retry_count+1}次)")
+            else:
+                c.execute("UPDATE tasks SET status='failed', error=? WHERE id=?", (error[:200], task_id))
+                c.execute(
+                    "INSERT INTO failed_buffer (original_task_id, task_type, payload, failure_reason, created_at) "
+                    "SELECT id, task_type, payload, error, datetime('now') FROM tasks WHERE id=?",
+                    (task_id,)
+                )
+                logger.warning(f"❌ 任务#{task_id}最终失败，已转入暂存区")
+        self._write_op(_do)
 
     HARD_TIMEOUT = 180  # 壮士断腕：后台任务硬上限180秒
 
@@ -391,31 +424,35 @@ class PersistentTaskQueue:
             return f"未知任务类型: {task_type}"
 
     def _save_timeout_experience(self, payload: dict, task_type: str):
-        """超时经验：记录此类问题需要前置简化"""
         try:
-            import sqlite3
-            from datetime import datetime
             query = payload.get("query", "")
-            conn = sqlite3.connect("data/experience_pool.db")
-            c = conn.cursor()
-            c.execute(
-                "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
-                (query, f"[超时经验] {task_type}任务在{self.HARD_TIMEOUT}s内未完成，建议简化prompt", datetime.now().isoformat(), "timeout_wisdom", 30)
-            )
-            conn.commit()
-            conn.close()
-        except:
+            with sqlite3.connect("data/experience_pool.db", timeout=10.0) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute(
+                    "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
+                    (query, f"[超时经验] {task_type}任务在{self.HARD_TIMEOUT}s内未完成，建议简化prompt", datetime.now().isoformat(), "timeout_wisdom", 30)
+                )
+                conn.commit()
+        except Exception:
             pass
 
     async def _do_deep_thinking(self, payload: dict) -> str:
         query = payload.get("query", "")
         context = payload.get("context", {})
         try:
+            from infrastructure.hardware_monitor import get_gpu_throttle
+            throttle = get_gpu_throttle()
+            if throttle["delay_seconds"] > 0:
+                logger.info(f"深度思考节流: {throttle['message']}，等待{throttle['delay_seconds']}秒")
+                await asyncio.sleep(throttle["delay_seconds"])
+        except Exception:
+            pass
+        try:
             from core.metacognitive_executor import MetacognitiveExecutor
             executor = MetacognitiveExecutor()
             exec_result = await executor.execute_with_full_metacognition(user_query=query, context=context)
             result = exec_result.get("final_result", "")
-            if result and len(result) > 20:
+            if result and len(result) > 20 and "我已穷尽" not in result and "🎯 关于" not in result:
                 self._save_experience(query, result)
                 return f"深度思考完成: {len(result)}字"
             return "深度思考未获得满意结果"
@@ -428,48 +465,51 @@ class PersistentTaskQueue:
         if not model:
             return "无指定模型"
         try:
-            import requests
+            from infrastructure.hardware_monitor import get_gpu_throttle
+            throttle = get_gpu_throttle()
+            if throttle["delay_seconds"] > 0:
+                logger.info(f"后台Ollama节流: {throttle['message']}，等待{throttle['delay_seconds']}秒")
+                await asyncio.sleep(throttle["delay_seconds"])
+        except Exception:
+            pass
+        try:
             loop = asyncio.get_event_loop()
-            response = await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 loop.run_in_executor(
                     None,
-                    lambda: requests.post(
-                        "http://localhost:11434/api/generate",
-                        json={"model": model, "prompt": query, "stream": False},
+                    lambda: ollama_chat_request(
+                        base_url="http://localhost:11434",
+                        model=model,
+                        prompt=query,
                         timeout=30
                     )
                 ),
                 timeout=35
             )
-            if response.status_code == 200:
-                result = response.json().get("response", "")
-                if result and len(result) > 10:
-                    self._save_experience(query, result)
-                    return f"Ollama思考完成: {len(result)}字"
+            content = result.get("content", "")
+            if content and len(content) > 10 and "我已穷尽" not in content:
+                self._save_experience(query, content)
+                return f"Ollama思考完成: {len(content)}字"
             return "Ollama思考未返回有效结果"
         except Exception as e:
             return f"Ollama思考失败: {e}"
 
     async def _do_gene_solidification(self, payload: dict) -> str:
-        """基因固化：高质量知识写入知识库"""
         query = payload.get("query", "")
         response_text = payload.get("response", "")
         score = payload.get("score", 0)
         try:
-            import sqlite3 as sq
-            conn = sq.connect("data/knowledge_store.db")
-            c = conn.cursor()
-            c.execute(
-                "INSERT INTO knowledge (content, source, type, quality, created_at) VALUES (?, ?, ?, ?, ?)",
-                (response_text, "gene_pool", "solidified", int(score), datetime.now().isoformat())
-            )
-            conn.commit()
-            conn.close()
-            conn2 = sq.connect("data/experience_pool.db")
-            c2 = conn2.cursor()
-            c2.execute("UPDATE experiences SET quality_score = ? WHERE raw_input LIKE ? AND quality_score < ?", (95, f"%{query[:20]}%", 95))
-            conn2.commit()
-            conn2.close()
+            with sqlite3.connect("data/knowledge_store.db", timeout=10.0) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute(
+                    "INSERT INTO knowledge (content, source, type, quality, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (response_text, "gene_pool", "solidified", int(score), datetime.now().isoformat())
+                )
+                conn.commit()
+            with sqlite3.connect("data/experience_pool.db", timeout=10.0) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("UPDATE experiences SET quality_score = ? WHERE raw_input LIKE ? AND quality_score < ?", (95, f"%{query[:20]}%", 95))
+                conn.commit()
             return f"知识固化完成(评分{score:.0f})"
         except Exception as e:
             return f"知识固化失败: {e}"
@@ -482,24 +522,32 @@ class PersistentTaskQueue:
         if not fast_model:
             return "无快模型可用"
         try:
-            import requests
+            from infrastructure.hardware_monitor import get_gpu_throttle
+            throttle = get_gpu_throttle()
+            if throttle["delay_seconds"] > 0:
+                logger.info(f"模型评估节流: {throttle['message']}，等待{throttle['delay_seconds']}秒")
+                await asyncio.sleep(throttle["delay_seconds"])
+        except Exception:
+            pass
+        try:
             review_prompt = f"评估以下问答质量(1-10分)，只输出数字:\n问题:{query}\n回答:{response_text[:300]}"
             loop = asyncio.get_event_loop()
-            resp = await loop.run_in_executor(
+            result = await loop.run_in_executor(
                 None,
-                lambda: requests.post(
-                    "http://localhost:11434/api/generate",
-                    json={"model": fast_model, "prompt": review_prompt, "stream": False},
+                lambda: ollama_chat_request(
+                    base_url="http://localhost:11434",
+                    model=fast_model,
+                    prompt=review_prompt,
+                    system_prompt="你是质量评估助手，只输出1-10的数字评分。",
                     timeout=60
                 )
             )
-            if resp.status_code == 200:
-                review = resp.json().get("response", "")
+            content = result.get("content", "")
+            if content:
                 import re
-                match = re.search(r'(\d+)', review)
+                match = re.search(r'(\d+)', content)
                 if match:
                     score = int(match.group(1))
-                    # 基因微调：根据评估结果调整系统参数
                     if score >= 8:
                         gene_pool.mutate("confidence_bias", 0.02, "high_review_score")
                         gene_pool.mutate("knowledge_solidify_threshold", -0.5, "high_review_score")
@@ -541,16 +589,13 @@ class PersistentTaskQueue:
 
     def _save_experience(self, query: str, response: str):
         try:
-            import sqlite3
-            from datetime import datetime
-            conn = sqlite3.connect("data/experience_pool.db")
-            c = conn.cursor()
-            c.execute(
-                "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
-                (query, response, datetime.now().isoformat(), "background_task", 80)
-            )
-            conn.commit()
-            conn.close()
+            with sqlite3.connect("data/experience_pool.db", timeout=10.0) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute(
+                    "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
+                    (query, response, datetime.now().isoformat(), "background_task", 80)
+                )
+                conn.commit()
         except Exception as e:
             logger.debug(f"经验存储失败: {e}")
 
@@ -586,21 +631,18 @@ class PersistentTaskQueue:
                 await asyncio.sleep(5)
 
     def _do_idle_consolidation(self):
-        """碎片整理：空闲时归纳历史经验"""
         try:
-            import sqlite3
-            conn = sqlite3.connect("data/experience_pool.db")
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM experiences WHERE quality_score >= 80")
-            high_quality = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM experiences WHERE intent_type = 'timeout_wisdom'")
-            timeout_wisdom = c.fetchone()[0]
-            conn.close()
+            with sqlite3.connect("data/experience_pool.db", timeout=10.0) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                c = conn.cursor()
+                c.execute("SELECT COUNT(*) FROM experiences WHERE quality_score >= 80")
+                high_quality = c.fetchone()[0]
+                c.execute("SELECT COUNT(*) FROM experiences WHERE intent_type = 'timeout_wisdom'")
+                timeout_wisdom = c.fetchone()[0]
             logger.info(f"💤 碎片整理: 高质量经验{high_quality}条, 超时经验{timeout_wisdom}条")
-            # 基因微调：根据碎片整理结果
             if timeout_wisdom > 3:
                 gene_pool.mutate("depth_preference", -0.01, "idle_consolidation_too_many_timeouts")
-        except:
+        except Exception:
             pass
 
     def stop_worker(self):
@@ -609,13 +651,12 @@ class PersistentTaskQueue:
 
     def get_stats(self) -> dict:
         try:
-            conn = sqlite3.connect(self.db_path)
-            c = conn.cursor()
-            c.execute("SELECT status, COUNT(*) FROM tasks GROUP BY status")
-            status_counts = dict(c.fetchall())
-            c.execute("SELECT COUNT(*) FROM failed_buffer WHERE recovered=0")
-            failed_buffer_count = c.fetchone()[0]
-            conn.close()
+            with self._connect() as conn:
+                c = conn.cursor()
+                c.execute("SELECT status, COUNT(*) FROM tasks GROUP BY status")
+                status_counts = dict(c.fetchall())
+                c.execute("SELECT COUNT(*) FROM failed_buffer WHERE recovered=0")
+                failed_buffer_count = c.fetchone()[0]
             return {
                 "pending": status_counts.get("pending", 0),
                 "running": status_counts.get("running", 0),
@@ -625,7 +666,7 @@ class PersistentTaskQueue:
                 "is_idle": self._is_idle(),
                 "idle_seconds": round(time.time() - self._last_user_interaction, 1)
             }
-        except:
+        except Exception:
             return {"error": "无法获取统计"}
 
     async def _do_cognitive_metabolism(self, payload: dict) -> str:
@@ -638,34 +679,31 @@ class PersistentTaskQueue:
         """
         stats = {"exp_purged": 0, "exp_promoted": 0, "know_purged": 0}
 
-        # 经验池排毒：剔除30天内未被调用且评分低于50的碎片
         try:
-            conn = sqlite3.connect("data/experience_pool.db")
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM experiences WHERE quality_score < 50 AND timestamp < datetime('now', '-30 days')")
-            purge_count = c.fetchone()[0]
-            if purge_count > 0:
-                c.execute("DELETE FROM experiences WHERE quality_score < 50 AND timestamp < datetime('now', '-30 days')")
-                stats["exp_purged"] = purge_count
-            # 提升高频经验：被引用3次以上的经验质量分提升
-            c.execute("UPDATE experiences SET quality_score = MIN(quality_score + 5, 95) WHERE quality_score >= 70 AND quality_score < 95")
-            stats["exp_promoted"] = c.rowcount
-            conn.commit()
-            conn.close()
+            with sqlite3.connect("data/experience_pool.db", timeout=10.0) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                c = conn.cursor()
+                c.execute("SELECT COUNT(*) FROM experiences WHERE quality_score < 50 AND timestamp < datetime('now', '-30 days')")
+                purge_count = c.fetchone()[0]
+                if purge_count > 0:
+                    c.execute("DELETE FROM experiences WHERE quality_score < 50 AND timestamp < datetime('now', '-30 days')")
+                    stats["exp_purged"] = purge_count
+                c.execute("UPDATE experiences SET quality_score = MIN(quality_score + 5, 95) WHERE quality_score >= 70 AND quality_score < 95")
+                stats["exp_promoted"] = c.rowcount
+                conn.commit()
         except Exception as e:
             logger.debug(f"经验池代谢失败: {e}")
 
-        # 知识库排毒：剔除低质量知识
         try:
-            conn = sqlite3.connect("data/knowledge_store.db")
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM knowledge WHERE quality < 30 AND created_at < datetime('now', '-30 days')")
-            purge_count = c.fetchone()[0]
-            if purge_count > 0:
-                c.execute("DELETE FROM knowledge WHERE quality < 30 AND created_at < datetime('now', '-30 days')")
-                stats["know_purged"] = purge_count
-            conn.commit()
-            conn.close()
+            with sqlite3.connect("data/knowledge_store.db", timeout=10.0) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                c = conn.cursor()
+                c.execute("SELECT COUNT(*) FROM knowledge WHERE quality < 30 AND created_at < datetime('now', '-30 days')")
+                purge_count = c.fetchone()[0]
+                if purge_count > 0:
+                    c.execute("DELETE FROM knowledge WHERE quality < 30 AND created_at < datetime('now', '-30 days')")
+                    stats["know_purged"] = purge_count
+                conn.commit()
         except Exception as e:
             logger.debug(f"知识库代谢失败: {e}")
 
@@ -723,11 +761,12 @@ class PersistentTaskQueue:
         db_ok = True
         for db_name in ["experience_pool.db", "knowledge_store.db", "gene_pool.db", "task_queue.db"]:
             try:
-                conn = sqlite3.connect(f"data/{db_name}")
+                conn = sqlite3.connect(f"data/{db_name}", timeout=10.0)
+                conn.execute("PRAGMA journal_mode=WAL")
                 c = conn.cursor()
                 c.execute("SELECT COUNT(*) FROM sqlite_master")
                 conn.close()
-            except:
+            except Exception:
                 db_ok = False
                 tests.append(("数据库完整性", False, f"{db_name}损坏"))
                 break

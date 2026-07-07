@@ -113,7 +113,7 @@ class FitnessEvaluator:
         )
         
         # 3. 计算主观分
-        subjective_score = self._calculate_subjective_score(user_feedback)
+        subjective_score = self._calculate_subjective_score(user_feedback, question, response)
         
         # 4. 合并得分
         if is_factual:
@@ -221,21 +221,48 @@ class FitnessEvaluator:
         
         return objective_score, match_details
     
-    def _calculate_subjective_score(self, user_feedback: int) -> float:
-        """计算主观分"""
-        # 基础分50分
+    def _calculate_subjective_score(self, user_feedback: int, question: str = "", response: str = "") -> float:
+        """计算主观分（用户反馈 + 内容质量双重评估）"""
         base_score = 50.0
-        
-        # 用户反馈调整
+
         if user_feedback > 0:
-            # 点赞：+10分
-            return min(100, base_score + (user_feedback * 10))
+            base_score = min(100, base_score + (user_feedback * 10))
         elif user_feedback < 0:
-            # 点踩：-10分
-            return max(0, base_score + (user_feedback * 10))
-        else:
-            # 无反馈：保持中性
+            base_score = max(0, base_score + (user_feedback * 10))
+
+        if not response or len(response.strip()) < 10:
             return base_score
+
+        content_bonus = 0.0
+
+        # 维度1：深度（有结构化分析、多角度探讨）
+        depth_signals = ["首先", "其次", "另一方面", "从本质", "深层", "根本原因", "核心", "关键"]
+        depth_count = sum(1 for s in depth_signals if s in response)
+        content_bonus += min(15, depth_count * 5)
+
+        # 维度2：温度（有同理心、陪伴感）
+        warmth_signals = ["理解", "感受", "陪伴", "一起", "同行", "你", "我们"]
+        warmth_count = sum(1 for s in warmth_signals if s in response)
+        content_bonus += min(10, warmth_count * 3)
+
+        # 维度3：坦诚（承认不确定性、给出方向而非绝对答案）
+        honesty_signals = ["可能", "不确定", "建议", "方向", "值得考虑", "不同角度"]
+        honesty_count = sum(1 for s in honesty_signals if s in response)
+        content_bonus += min(10, honesty_count * 3)
+
+        # 维度4：实用性（给出可操作建议）
+        action_signals = ["可以", "尝试", "步骤", "方法", "具体", "例如", "比如"]
+        action_count = sum(1 for s in action_signals if s in response)
+        content_bonus += min(10, action_count * 3)
+
+        # 维度5：完整性（回复长度适中，不太短也不冗长）
+        resp_len = len(response)
+        if resp_len >= 100:
+            content_bonus += 5
+        if resp_len >= 300:
+            content_bonus += 5
+
+        return min(100, base_score + content_bonus)
     
     def _legacy_evaluate(
         self,

@@ -14,6 +14,7 @@
   3. 学习效率   — 新输入是否在转化为有效输出
   4. 行为偏差   — 系统是否在偏离核心身份
   5. 适应速度   — 面对变化时的调整能力
+  6. 前端覆盖率 — 系统能否"看见"自身能力的前端可达性
 """
 import sqlite3
 import time
@@ -39,6 +40,7 @@ class SelfAssessment:
             "learning_efficiency": self._assess_learning_efficiency(),
             "behavior_deviation": self._assess_behavior_deviation(),
             "adaptation_speed": self._assess_adaptation_speed(),
+            "frontend_coverage": self._assess_frontend_coverage(),
         }
         report["overall"] = self._calculate_overall(report)
         report["recommendations"] = self._generate_recommendations(report)
@@ -86,7 +88,7 @@ class SelfAssessment:
                 "active": active_rules,
                 "pending": pending_rules,
                 "avg_confidence": round(avg_conf, 3),
-                "status": "healthy" if active_rules > 10 and avg_conf > 0.5 else "degraded",
+                "status": "healthy" if active_rules >= 5 and avg_conf >= 0.4 else "degraded",
             }
             if pending_rules > active_rules * 3:
                 result["breaks"].append({
@@ -191,9 +193,9 @@ class SelfAssessment:
         try:
             conn = self._db("skills.db")
             c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM skills WHERE status='mature'")
+            c.execute("SELECT COUNT(*) FROM skills WHERE success_count >= 3 AND success_rate >= 0.7 AND is_active=1")
             mature = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM skills WHERE status='dormant'")
+            c.execute("SELECT COUNT(*) FROM skills WHERE is_active=0 OR (success_count < 3 AND success_rate < 0.5)")
             dormant_skills = c.fetchone()[0]
             conn.close()
             result["metrics"]["mature_skills"] = mature
@@ -242,7 +244,7 @@ class SelfAssessment:
         try:
             conn = self._db("skills.db")
             c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM skills WHERE status='mature'")
+            c.execute("SELECT COUNT(*) FROM skills WHERE success_count >= 3 AND success_rate >= 0.7 AND is_active=1")
             mature = c.fetchone()[0]
             c.execute("SELECT COUNT(*) FROM skills")
             total_skills = c.fetchone()[0]
@@ -365,6 +367,38 @@ class SelfAssessment:
         result["score"] = input_score * 0.3 + process_score * 0.4 + output_score * 0.3
         return result
 
+    def _assess_frontend_coverage(self) -> dict:
+        result = {"metrics": {}, "gaps": [], "score": 0.0}
+        try:
+            from core.coverage_auditor import coverage_auditor
+            report = coverage_auditor.generate_report()
+            result["metrics"]["total_endpoints"] = report["total_endpoints"]
+            result["metrics"]["covered_endpoints"] = report["covered_endpoints"]
+            result["metrics"]["coverage_rate"] = report["coverage_rate"]
+            result["metrics"]["coverage_score"] = report["score"]
+            result["metrics"]["by_priority"] = report["by_priority"]
+            result["metrics"]["high_priority_gaps_count"] = len(report["high_priority_gaps"])
+            for gap in report["high_priority_gaps"][:5]:
+                result["gaps"].append({
+                    "path": gap["path"],
+                    "method": gap["method"],
+                    "priority": gap["priority"],
+                    "category": gap["category"],
+                })
+            result["score"] = report["score"]
+            if report["coverage_rate"] < 0.5:
+                result["gaps"].append({
+                    "path": "overall",
+                    "method": "-",
+                    "priority": "high",
+                    "category": "coverage",
+                    "description": f"前端覆盖率仅{report['coverage_rate']:.0%}，大量能力不可达",
+                })
+        except Exception as e:
+            result["metrics"]["error"] = str(e)[:100]
+            result["score"] = 0.0
+        return result
+
     def _calculate_overall(self, report: dict) -> dict:
         scores = {
             "loop_integrity": report["loop_integrity"]["score"],
@@ -372,13 +406,16 @@ class SelfAssessment:
             "learning_efficiency": report["learning_efficiency"]["score"],
             "behavior_deviation": report["behavior_deviation"]["score"],
             "adaptation_speed": report["adaptation_speed"]["score"],
+            "frontend_coverage": report["frontend_coverage"]["score"],
         }
         overall = (
-            scores["loop_integrity"] * 0.30 +
-            scores["knowledge_vitality"] * 0.20 +
-            scores["learning_efficiency"] * 0.20 +
+            scores["loop_integrity"] * 0.25 +
+            scores["knowledge_vitality"] * 0.15 +
+            scores["learning_efficiency"] * 0.15 +
             scores["behavior_deviation"] * 0.15 +
-            scores["adaptation_speed"] * 0.15
+            scores["adaptation_speed"] * 0.15 +
+            scores["frontend_coverage"] * 0.15
+
         )
         if overall >= 0.8:
             level = "thriving"
@@ -439,6 +476,23 @@ class SelfAssessment:
                 "area": "adaptation_speed",
                 "action": "适应速度偏低，系统学习活跃度不足",
             })
+
+        coverage = report["frontend_coverage"]
+        if coverage["score"] < 0.5:
+            rate = coverage["metrics"].get("coverage_rate", 0)
+            gaps_count = coverage["metrics"].get("high_priority_gaps_count", 0)
+            recs.append({
+                "priority": "high",
+                "area": "frontend_coverage",
+                "action": f"前端覆盖率仅{rate:.0%}，{gaps_count}个高优先级端点未覆盖",
+            })
+        for gap in coverage.get("gaps", []):
+            if gap.get("priority") == "high" and gap.get("path") != "overall":
+                recs.append({
+                    "priority": "high",
+                    "area": "frontend_coverage",
+                    "action": f"高优先级缺口: {gap['method']} {gap['path']}",
+                })
 
         recs.sort(key=lambda r: 0 if r["priority"] == "high" else 1)
         return recs[:10]

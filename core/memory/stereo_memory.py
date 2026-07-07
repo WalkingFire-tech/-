@@ -368,7 +368,14 @@ class StereoMemorySystem:
                 m.time_dimension.last_accessed,
             ), reverse=True)
             
-            return results[:limit]
+            returned = results[:limit]
+            for memory in returned:
+                memory.time_dimension.last_accessed = datetime.now()
+                memory.time_dimension.access_count += 1
+                self.stats["total_accesses"] += 1
+                self._save_memory(memory)
+            
+            return returned
 
     def relate(self, memory_id1: str, memory_id2: str, relation_type: str = "related"):
         """建立记忆关联"""
@@ -523,12 +530,24 @@ class StereoMemorySystem:
                     'SELECT * FROM stereo_memories ORDER BY last_accessed DESC LIMIT ?',
                     (limit,)
                 )
-                return [self._row_to_memory(row) for row in cursor.fetchall()]
+                results = [self._row_to_memory(row) for row in cursor.fetchall()]
+                for m in results:
+                    m.time_dimension.access_count += 1
+                    m.time_dimension.last_accessed = datetime.now()
+                    self.stats["total_accesses"] += 1
+                    self._save_memory(m)
+                return results
         except Exception:
             with self._lock:
                 all_memories = list(self.memories.values())
                 all_memories.sort(key=lambda m: m.time_dimension.last_accessed, reverse=True)
-                return all_memories[:limit]
+                returned = all_memories[:limit]
+                for m in returned:
+                    m.time_dimension.access_count += 1
+                    m.time_dimension.last_accessed = datetime.now()
+                    self.stats["total_accesses"] += 1
+                    self._save_memory(m)
+                return returned
 
     def get_by_topic(self, topic: str, limit: int = 10) -> List[StereoMemory]:
         """按主题获取记忆"""

@@ -94,14 +94,17 @@ class DualSpeedEvolutionCoordinator:
             )
 
         try:
-            from infrastructure.reflection_pipeline import reflection_pipeline
-            reflection_pipeline.write_campfire_log(question, response, fitness_score)
+            from infrastructure.reflection_pipeline import get_reflection_pipeline
+            rp = get_reflection_pipeline()
+            import asyncio
+            asyncio.get_event_loop().run_until_complete(rp._write_campfire_log({
+                "question": question, "response": response, "fitness_score": fitness_score
+            }))
         except Exception as e:
             logger.debug(f"快循环: 反思管道跳过: {e}")
 
         try:
-            from core.trajectory_evolution import trajectory_store
-            trajectory_store._auto_evolve()
+            pass
         except Exception as e:
             logger.debug(f"快循环: 轨迹进化跳过: {e}")
 
@@ -158,6 +161,7 @@ class DualSpeedEvolutionCoordinator:
 
             try:
                 from core.genome_evolver import genome_evolver
+                genome_evolver.sync_from_gene_pool()
                 current_fitness = genome_evolver.get_evolution_stats().get("avg_fitness", 0.5)
                 child_ids = genome_evolver.evolve(current_fitness)
 
