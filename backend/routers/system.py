@@ -1,12 +1,12 @@
 """
 系统管理路由 — stats/introspection/alignment/module/self-assessment/coverage/defense/events/scheduled-tasks/models
 """
-import sqlite3
 import asyncio
 import json
 from pathlib import Path
 from fastapi import APIRouter
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 router = APIRouter()
 
@@ -17,7 +17,9 @@ ROOT_DIR = Path(__file__).parent.parent.parent
 async def get_stats():
     stats = {}
     try:
-        conn = sqlite3.connect("data/experience_pool.db")
+        db = DatabaseManager.get("data/experience_pool.db")
+
+        conn = db._get_conn()
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM experiences")
         stats["experiences"] = cursor.fetchone()[0]
@@ -25,7 +27,9 @@ async def get_stats():
     except Exception:
         stats["experiences"] = 0
     try:
-        conn = sqlite3.connect("data/learning_rules.db")
+        db = DatabaseManager.get("data/learning_rules.db")
+
+        conn = db._get_conn()
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
         stats["active_rules"] = cursor.fetchone()[0]

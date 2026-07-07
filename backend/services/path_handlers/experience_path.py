@@ -1,13 +1,15 @@
 import asyncio
-import sqlite3
 from loguru import logger
 from backend.services.path_handlers._shared import _check_vector_available, _fast_executor
+from infrastructure.database_manager import DatabaseManager
 
 
 def get_last_response(query: str) -> str:
     """获取最近一次交互的回复（用于质疑检测）"""
     try:
-        conn = sqlite3.connect("data/experience_pool.db")
+        db = DatabaseManager.get("data/experience_pool.db")
+
+        conn = db._get_conn()
         cursor = conn.cursor()
         cursor.execute("SELECT response FROM experiences ORDER BY timestamp DESC LIMIT 1")
         row = cursor.fetchone()
@@ -53,7 +55,9 @@ async def fetch_experience(query: str) -> dict:
     try:
         loop = asyncio.get_running_loop()
         def _query_exp():
-            conn = sqlite3.connect("data/experience_pool.db")
+            db = DatabaseManager.get("data/experience_pool.db")
+
+            conn = db._get_conn()
             cursor = conn.cursor()
             cursor.execute("SELECT response, quality_score FROM experiences WHERE raw_input LIKE ? ORDER BY timestamp DESC LIMIT 3", (f"%{query[:20]}%",))
             rows = cursor.fetchall()
@@ -85,7 +89,9 @@ async def fetch_experience(query: str) -> dict:
 def get_experience_context(query: str) -> str:
     """从经验池检索相似问题的历史回复，作为Ollama的上下文注入"""
     try:
-        conn = sqlite3.connect("data/experience_pool.db")
+        db = DatabaseManager.get("data/experience_pool.db")
+
+        conn = db._get_conn()
         cursor = conn.cursor()
         cursor.execute(
             "SELECT raw_input, response, quality_score FROM experiences WHERE raw_input LIKE ? ORDER BY quality_score DESC, timestamp DESC LIMIT 2",

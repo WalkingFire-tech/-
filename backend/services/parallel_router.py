@@ -20,6 +20,7 @@ from backend.services.path_handlers.fact_path import fetch_fact_assertions
 from backend.services.path_handlers.tool_path import (
     fetch_tool_results, query_needs_tools,
 )
+from infrastructure.database_manager import DatabaseManager
 
 
 def _emit(event_type: str, data: dict) -> str:
@@ -398,15 +399,10 @@ async def _self_reason_impl(query: str, conversation_context: str = "", truth_in
         except Exception:
             pass
         try:
-            import sqlite3
             loop = asyncio.get_running_loop()
             def _query_rules():
-                conn = sqlite3.connect("data/learning_rules.db")
-                conn.execute("PRAGMA journal_mode=WAL")
-                c = conn.cursor()
-                c.execute("SELECT rule_text, confidence FROM learning_rules WHERE status='active' AND rule_text LIKE ? ORDER BY confidence DESC LIMIT 3", (f"%{query[:10]}%",))
-                rows = c.fetchall()
-                conn.close()
+                db = DatabaseManager.get("data/learning_rules.db")
+                rows = db.query("SELECT rule_text, confidence FROM learning_rules WHERE status='active' AND rule_text LIKE ? ORDER BY confidence DESC LIMIT 3", (f"%{query[:10]}%",))
                 return rows
             rows = await asyncio.wait_for(loop.run_in_executor(_fast_executor, _query_rules), timeout=3)
             for row in rows:
@@ -414,15 +410,10 @@ async def _self_reason_impl(query: str, conversation_context: str = "", truth_in
         except Exception:
             pass
         try:
-            import sqlite3
             loop = asyncio.get_running_loop()
             def _query_truths():
-                conn = sqlite3.connect("data/truths.db")
-                conn.execute("PRAGMA journal_mode=WAL")
-                c = conn.cursor()
-                c.execute("SELECT content FROM truths WHERE content LIKE ? LIMIT 2", (f"%{query[:8]}%",))
-                rows = c.fetchall()
-                conn.close()
+                db = DatabaseManager.get("data/truths.db")
+                rows = db.query("SELECT content FROM truths WHERE content LIKE ? LIMIT 2", (f"%{query[:8]}%",))
                 return rows
             rows = await asyncio.wait_for(loop.run_in_executor(_fast_executor, _query_truths), timeout=3)
             for row in rows:

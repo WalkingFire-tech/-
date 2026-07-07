@@ -1,11 +1,12 @@
 """
 知识管理路由 — knowledge-graph/facts/forgetting/induction/optimize/knowledge-health/recent-learning/files
 """
-import sqlite3
+
 from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi import APIRouter
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 router = APIRouter()
 
@@ -67,24 +68,21 @@ async def get_knowledge_health():
         skills_total = 0
         rules_active = 0
         try:
-            conn = sqlite3.connect("data/knowledge_store.db")
-            cur = conn.execute("SELECT COUNT(*) FROM knowledge")
-            knowledge_total = cur.fetchone()[0]
-            conn.close()
+            db = DatabaseManager.get("data/knowledge_store.db")
+            row = db.query_one("SELECT COUNT(*) FROM knowledge")
+            knowledge_total = row[0]
         except Exception:
             pass
         try:
-            conn = sqlite3.connect("data/skills.db")
-            cur = conn.execute("SELECT COUNT(*) FROM skills")
-            skills_total = cur.fetchone()[0]
-            conn.close()
+            db = DatabaseManager.get("data/skills.db")
+            row = db.query_one("SELECT COUNT(*) FROM skills")
+            skills_total = row[0]
         except Exception:
             pass
         try:
-            conn = sqlite3.connect("data/learning_rules.db")
-            cur = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
-            rules_active = cur.fetchone()[0]
-            conn.close()
+            db = DatabaseManager.get("data/learning_rules.db")
+            row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
+            rules_active = row[0]
         except Exception:
             pass
         total = knowledge_total + skills_total + rules_active
@@ -127,14 +125,14 @@ async def get_knowledge_health():
 @router.post("/optimize")
 async def run_optimize(request: dict):
     try:
-        with sqlite3.connect("data/experience_pool.db") as conn:
-            cur = conn.execute("SELECT COUNT(*) FROM experiences")
-            exp_count = cur.fetchone()[0]
-        with sqlite3.connect("data/learning_rules.db") as conn:
-            cur = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
-            active = cur.fetchone()[0]
-            cur = conn.execute("SELECT AVG(confidence) FROM learning_rules WHERE status='active'")
-            avg_conf = cur.fetchone()[0] or 0.5
+        db_exp = DatabaseManager.get("data/experience_pool.db")
+        row = db_exp.query_one("SELECT COUNT(*) FROM experiences")
+        exp_count = row[0]
+        db_rules = DatabaseManager.get("data/learning_rules.db")
+        row = db_rules.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
+        active = row[0]
+        row = db_rules.query_one("SELECT AVG(confidence) FROM learning_rules WHERE status='active'")
+        avg_conf = row[0] or 0.5
         result = f"当前系统状态: 经验{exp_count}条, 活跃规则{active}条, 平均置信度{avg_conf:.2f}. 基于当前状态, 建议增加更多交互以积累经验."
         return {"success": True, "result": result}
     except Exception as e:
@@ -150,22 +148,21 @@ async def run_induction(request: dict):
         patterns = 0
         rules = 0
         try:
-            with sqlite3.connect("data/experience_pool.db") as conn:
-                cur = conn.execute("SELECT COUNT(*) FROM experiences WHERE created_at >= ?", (cutoff,))
-                recent = cur.fetchone()[0]
-                patterns = min(recent // 10, 5)
+            db = DatabaseManager.get("data/experience_pool.db")
+            row = db.query_one("SELECT COUNT(*) FROM experiences WHERE created_at >= ?", (cutoff,))
+            recent = row[0]
+            patterns = min(recent // 10, 5)
         except Exception:
             pass
         try:
-            with sqlite3.connect("data/learning_rules.db") as conn:
-                cur = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
-                pending = cur.fetchone()[0]
-                cur = conn.execute("UPDATE learning_rules SET status='active' WHERE status='pending' AND confidence >= 0.4 AND apply_count >= 2")
-                activated = cur.rowcount
-                cur2 = conn.execute("UPDATE learning_rules SET status='trial', promoted_at=datetime('now'), promotion_reason='归纳端点晋升试用' WHERE status='pending' AND confidence >= 0.3")
-                promoted = cur2.rowcount
-                conn.commit()
-                rules = activated + promoted
+            db = DatabaseManager.get("data/learning_rules.db")
+            row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
+            pending = row[0]
+            cursor = db.execute("UPDATE learning_rules SET status='active' WHERE status='pending' AND confidence >= 0.4 AND apply_count >= 2", commit=True)
+            activated = cursor.rowcount
+            cursor2 = db.execute("UPDATE learning_rules SET status='trial', promoted_at=datetime('now'), promotion_reason='归纳端点晋升试用' WHERE status='pending' AND confidence >= 0.3", commit=True)
+            promoted = cursor2.rowcount
+            rules = activated + promoted
         except Exception:
             pass
         return {
@@ -184,10 +181,9 @@ async def get_recent_learning():
     try:
         items = []
         try:
-            conn = sqlite3.connect("data/experience_pool.db", timeout=3)
-            conn.row_factory = sqlite3.Row
-            cur = conn.execute("SELECT raw_input, timestamp, intent_type FROM experiences ORDER BY timestamp DESC LIMIT 5")
-            for row in cur.fetchall():
+            db = DatabaseManager.get("data/experience_pool.db")
+            rows = db.query("SELECT raw_input, timestamp, intent_type FROM experiences ORDER BY timestamp DESC LIMIT 5")
+            for row in rows:
                 query = (row["raw_input"] or "")[:30]
                 created = row["timestamp"] or ""
                 intent = row["intent_type"] or ""
@@ -200,13 +196,12 @@ async def get_recent_learning():
                 else:
                     time_str = ""
                 items.append({"content": f"[{intent}] {query}", "time": time_str})
-            conn.close()
         except Exception:
             pass
         try:
-            conn = sqlite3.connect("data/essence_reasoning.db", timeout=3)
-            cur = conn.execute("SELECT query, final_verdict, timestamp FROM reasoning_chains ORDER BY timestamp DESC LIMIT 3")
-            for row in cur.fetchall():
+            db = DatabaseManager.get("data/essence_reasoning.db")
+            rows = db.query("SELECT query, final_verdict, timestamp FROM reasoning_chains ORDER BY timestamp DESC LIMIT 3")
+            for row in rows:
                 query = (row[0] or "")[:30]
                 created = row[2] or ""
                 if created:
@@ -218,7 +213,6 @@ async def get_recent_learning():
                 else:
                     time_str = ""
                 items.append({"content": f"推理: {query}", "time": time_str})
-            conn.close()
         except Exception:
             pass
         items.sort(key=lambda x: x.get("time", ""), reverse=True)
@@ -436,12 +430,11 @@ async def learn_from_files(request: dict):
                     content = f.read()
                 if len(content) < 10:
                     continue
-                with sqlite3.connect('data/knowledge_store.db') as conn:
-                    conn.execute('''
-                        INSERT INTO knowledge (content, source, type, quality, created_at)
-                        VALUES (?, ?, ?, ?, ?)
-                    ''', (content[:5000], f"file:{file.name}", "file_content", 70.0, datetime.now().isoformat()))
-                    conn.commit()
+                db = DatabaseManager.get("data/knowledge_store.db")
+                db.execute('''
+                    INSERT INTO knowledge (content, source, type, quality, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (content[:5000], f"file:{file.name}", "file_content", 70.0, datetime.now().isoformat()), commit=True)
                 total_knowledge += 1
                 results.append(f"{file.name}: 已学习")
             except Exception as e:
@@ -507,12 +500,11 @@ async def learn_from_folder(request: dict):
                 elif learn_mode == "summarize":
                     first_lines = '\n'.join(content.split('\n')[:5])
                     summaries.append(f"{file_path.name}:\n{first_lines}")
-                with sqlite3.connect('data/knowledge_store.db') as conn:
-                    conn.execute('''
-                        INSERT INTO knowledge (content, source, type, quality, created_at)
-                        VALUES (?, ?, ?, ?, ?)
-                    ''', (content[:5000], f"folder:{file_path.name}", "folder_content", 70.0, datetime.now().isoformat()))
-                    conn.commit()
+                db = DatabaseManager.get("data/knowledge_store.db")
+                db.execute('''
+                    INSERT INTO knowledge (content, source, type, quality, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (content[:5000], f"folder:{file_path.name}", "folder_content", 70.0, datetime.now().isoformat()), commit=True)
                 knowledge_count += 1
                 processed += 1
             except Exception as e:

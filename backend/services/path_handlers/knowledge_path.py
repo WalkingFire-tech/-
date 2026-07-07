@@ -1,7 +1,7 @@
 import asyncio
-import sqlite3
 from loguru import logger
 from backend.services.path_handlers._shared import _check_vector_available, _fast_executor
+from infrastructure.database_manager import DatabaseManager
 
 
 async def fetch_knowledge(query: str) -> dict:
@@ -38,7 +38,9 @@ async def fetch_knowledge(query: str) -> dict:
     try:
         loop = asyncio.get_running_loop()
         def _query_know():
-            conn = sqlite3.connect("data/knowledge_store.db")
+            db = DatabaseManager.get("data/knowledge_store.db")
+
+            conn = db._get_conn()
             cursor = conn.cursor()
             cursor.execute("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{query[:30]}%",))
             row = cursor.fetchone()
