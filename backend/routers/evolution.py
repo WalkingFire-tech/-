@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from fastapi import APIRouter
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 router = APIRouter()
 
@@ -310,13 +311,13 @@ async def get_tool_stats():
 async def get_tool_history(limit: int = 20):
     try:
         db_path = str(ROOT_DIR / "data" / "tool_cache.db")
-        conn = sqlite3.connect(db_path)
-        cursor = conn.execute(
+        db = DatabaseManager.get(db_path)
+        rows = db.query(
             "SELECT tool_name, params_hash, created_at, quality_score, hit_count FROM tool_cache ORDER BY created_at DESC LIMIT ?",
             (limit,),
         )
         records = []
-        for row in cursor.fetchall():
+        for row in rows:
             records.append({
                 "tool_name": row[0],
                 "params_hash": (row[1] or "")[:8],
@@ -324,7 +325,6 @@ async def get_tool_history(limit: int = 20):
                 "quality": row[3],
                 "hits": row[4] or 0,
             })
-        conn.close()
         return {"history": records, "total": len(records)}
     except Exception as e:
         return {"error": str(e), "history": []}

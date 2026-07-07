@@ -1,12 +1,12 @@
 """
 聊天路由 — /api/chat, /api/chat/stream, /api/feedback, /api/chat-history/*
 """
-import sqlite3
 import asyncio
 import json
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 router = APIRouter()
 
@@ -119,7 +119,9 @@ async def feedback(request: dict):
     score = request.get("score", 0)
     try:
         from datetime import datetime
-        conn = sqlite3.connect("data/experience_pool.db")
+        db = DatabaseManager.get("data/experience_pool.db")
+
+        conn = db._get_conn()
         cursor = conn.cursor()
         cursor.execute(
             "UPDATE experiences SET user_feedback = ? WHERE id = (SELECT MAX(id) FROM experiences)",

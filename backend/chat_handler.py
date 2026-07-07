@@ -12,6 +12,7 @@ import time
 import concurrent.futures
 from loguru import logger
 from adapters.llm.ollama_adapter import ollama_chat_request
+from infrastructure.database_manager import DatabaseManager
 
 _slow_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="chat_slow")
 
@@ -103,7 +104,6 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
     
     # ========== 策略1.5：规则匹配与统计 ==========
     try:
-        import sqlite3 as _sql
         from infrastructure.rule_matcher import RuleMatcher as _RM
         _INTENT_TYPE_MAP = {
             "greeting": "chat", "confirmation": "chat", "simple_query": "question",
@@ -118,31 +118,29 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
             "model": current_model or "unknown",
         }
         _matcher = _RM()
-        with _sql.connect("data/learning_rules.db") as _conn:
-            _conn.row_factory = _sql.Row
-            _cur = _conn.execute(
-                "SELECT id, condition, action, status FROM learning_rules WHERE status IN ('active','trial') ORDER BY priority ASC, confidence DESC"
-            )
-            _active_matched = False
-            _trial_matched = False
-            for _row in _cur.fetchall():
-                try:
-                    if _matcher.evaluate_condition(_row["condition"], _rule_ctx):
-                        if _row["status"] == "active":
-                            _conn.execute(
-                                "UPDATE learning_rules SET apply_count=apply_count+1, last_applied=? WHERE id=?",
-                                (time.time(), _row["id"]),
-                            )
-                            _active_matched = True
-                        elif _row["status"] == "trial":
-                            _conn.execute(
-                                "UPDATE learning_rules SET apply_count=apply_count+1, last_applied=? WHERE id=?",
-                                (time.time(), _row["id"]),
-                            )
-                            _trial_matched = True
-                except Exception:
-                    pass
-            _conn.commit()
+        _db = DatabaseManager.get("data/learning_rules.db")
+        _rows = _db.query("SELECT id, condition, action, status FROM learning_rules WHERE status IN ('active','trial') ORDER BY priority ASC, confidence DESC")
+        _active_matched = False
+        _trial_matched = False
+        for _row in _rows:
+            try:
+                if _matcher.evaluate_condition(_row["condition"], _rule_ctx):
+                    if _row["status"] == "active":
+                        _db.execute(
+                            "UPDATE learning_rules SET apply_count=apply_count+1, last_applied=? WHERE id=?",
+                            (time.time(), _row["id"]),
+                            commit=True,
+                        )
+                        _active_matched = True
+                    elif _row["status"] == "trial":
+                        _db.execute(
+                            "UPDATE learning_rules SET apply_count=apply_count+1, last_applied=? WHERE id=?",
+                            (time.time(), _row["id"]),
+                            commit=True,
+                        )
+                        _trial_matched = True
+            except Exception:
+                pass
     except Exception as _e:
         logger.warning(f"规则匹配统计失败: {_e}")
 
@@ -259,12 +257,8 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
     # ========== 策略5：知识库查询 ==========
     if not final_response:
         try:
-            import sqlite3
-            conn = sqlite3.connect("data/knowledge_store.db")
-            cursor = conn.cursor()
-            cursor.execute("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{user_input[:30]}%",))
-            row = cursor.fetchone()
-            conn.close()
+            db = DatabaseManager.get("data/knowledge_store.db")
+            row = db.query_one("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{user_input[:30]}%",))
             if row:
                 final_response = row[0]
                 attempts.append(("知识库", True, "检索成功"))
@@ -274,12 +268,8 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
     # ========== 策略6：经验池查询 ==========
     if not final_response:
         try:
-            import sqlite3
-            conn = sqlite3.connect("data/experience_pool.db")
-            cursor = conn.cursor()
-            cursor.execute("SELECT response FROM experiences WHERE raw_input LIKE ? ORDER BY timestamp DESC LIMIT 1", (f"%{user_input[:20]}%",))
-            row = cursor.fetchone()
-            conn.close()
+            db = DatabaseManager.get("data/experience_pool.db")
+            row = db.query_one("SELECT response FROM experiences WHERE raw_input LIKE ? ORDER BY timestamp DESC LIMIT 1", (f"%{user_input[:20]}%",))
             if row:
                 final_response = row[0]
                 attempts.append(("经验池", True, "历史经验"))
@@ -338,12 +328,8 @@ async def _quick_solve(query: str, intent_type: str) -> str:
     """快速解答：先尝试知识库和经验池"""
     # 1. 经验池
     try:
-        import sqlite3
-        conn = sqlite3.connect("data/experience_pool.db")
-        cursor = conn.cursor()
-        cursor.execute("SELECT response FROM experiences WHERE raw_input LIKE ? ORDER BY timestamp DESC LIMIT 1", (f"%{query[:20]}%",))
-        row = cursor.fetchone()
-        conn.close()
+        db = DatabaseManager.get("data/experience_pool.db")
+        row = db.query_one("SELECT response FROM experiences WHERE raw_input LIKE ? ORDER BY timestamp DESC LIMIT 1", (f"%{query[:20]}%",))
         if row and len(row[0]) > 30:
             return row[0]
     except:
@@ -351,12 +337,8 @@ async def _quick_solve(query: str, intent_type: str) -> str:
     
     # 2. 知识库
     try:
-        import sqlite3
-        conn = sqlite3.connect("data/knowledge_store.db")
-        cursor = conn.cursor()
-        cursor.execute("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{query[:30]}%",))
-        row = cursor.fetchone()
-        conn.close()
+        db = DatabaseManager.get("data/knowledge_store.db")
+        row = db.query_one("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{query[:30]}%",))
         if row and len(row[0]) > 30:
             return row[0]
     except:
@@ -425,16 +407,13 @@ async def _background_deep_thinking(query: str, context: dict, intent_type: str)
 def _save_to_experience_pool(query: str, response: str, success: bool = True, intent_type: str = "deep_thinking", quality_score: int = 70, model_name: str = "unknown"):
     """存入经验池"""
     try:
-        import sqlite3
         from datetime import datetime
-        conn = sqlite3.connect("data/experience_pool.db")
-        cursor = conn.cursor()
-        cursor.execute(
+        db = DatabaseManager.get("data/experience_pool.db")
+        db.execute(
             "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score, success, model_name) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (query, response, datetime.now().isoformat(), intent_type, quality_score, 1 if success else 0, model_name)
+            (query, response, datetime.now().isoformat(), intent_type, quality_score, 1 if success else 0, model_name),
+            commit=True,
         )
-        conn.commit()
-        conn.close()
     except Exception as e:
         logger.debug(f"经验存储失败: {e}")
 
@@ -442,12 +421,8 @@ def _save_to_experience_pool(query: str, response: str, success: bool = True, in
 async def _solve_history_query(query: str) -> str:
     """解决历史查询"""
     try:
-        import sqlite3
-        conn = sqlite3.connect("data/experience_pool.db")
-        cursor = conn.cursor()
-        cursor.execute("SELECT raw_input, response FROM experiences ORDER BY timestamp DESC LIMIT 10")
-        rows = cursor.fetchall()
-        conn.close()
+        db = DatabaseManager.get("data/experience_pool.db")
+        rows = db.query("SELECT raw_input, response FROM experiences ORDER BY timestamp DESC LIMIT 10")
         
         if rows:
             history_text = "\n".join([f"- {row[0][:30]}... → {row[1][:50]}..." for row in rows[:5]])

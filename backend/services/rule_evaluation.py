@@ -1,8 +1,8 @@
-import sqlite3
 import time
 from loguru import logger
 
 from backend.services.path_handlers._shared import _run_sync
+from infrastructure.database_manager import DatabaseManager
 
 _RULES_DB = "data/learning_rules.db"
 
@@ -25,24 +25,22 @@ def evaluate_rules(user_input: str, intent_type: str, model_name: str = "unknown
             "model": model_name,
         }
         matcher = RuleMatcher()
-        with sqlite3.connect(_RULES_DB) as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.row_factory = sqlite3.Row
-            cur = conn.execute(
-                "SELECT id, condition, action, status FROM learning_rules "
-                "WHERE status IN ('active','trial') ORDER BY priority ASC, confidence DESC"
-            )
-            for row in cur.fetchall():
-                try:
-                    if matcher.evaluate_condition(row["condition"], rule_ctx):
-                        conn.execute(
-                            "UPDATE learning_rules SET apply_count=apply_count+1, last_applied=? WHERE id=?",
-                            (time.time(), row["id"]),
-                        )
-                        rule_actions.append(row["action"])
-                except Exception:
-                    pass
-            conn.commit()
+        db = DatabaseManager.get(_RULES_DB)
+        rows = db.query(
+            "SELECT id, condition, action, status FROM learning_rules "
+            "WHERE status IN ('active','trial') ORDER BY priority ASC, confidence DESC"
+        )
+        for row in rows:
+            try:
+                if matcher.evaluate_condition(row["condition"], rule_ctx):
+                    db.execute(
+                        "UPDATE learning_rules SET apply_count=apply_count+1, last_applied=? WHERE id=?",
+                        (time.time(), row["id"]),
+                        commit=True,
+                    )
+                    rule_actions.append(row["action"])
+            except Exception:
+                pass
     except Exception as e:
         logger.warning(f"规则匹配统计失败: {e}")
     return rule_actions

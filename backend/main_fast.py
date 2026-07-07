@@ -47,6 +47,7 @@ from backend.routers.system import router as system_router
 from backend.routers.knowledge import router as knowledge_router
 from backend.routers.chat import router as chat_router
 from backend.routers.evolution import router as evolution_router
+from infrastructure.database_manager import DatabaseManager
 
 app = FastAPI(
     title="联盟拓荒者 API",
@@ -144,12 +145,8 @@ async def proactivity_test():
 
 async def solve_history_query(query: str) -> str:
     try:
-        import sqlite3
-        conn = sqlite3.connect("data/experience_pool.db")
-        cursor = conn.cursor()
-        cursor.execute("SELECT query, response FROM experiences ORDER BY timestamp DESC LIMIT 10")
-        rows = cursor.fetchall()
-        conn.close()
+        db = DatabaseManager.get("data/experience_pool.db")
+        rows = db.query("SELECT query, response FROM experiences ORDER BY timestamp DESC LIMIT 10")
 
         if rows:
             history_text = "\n".join([f"- {row[0][:30]}... → {row[1][:50]}..." for row in rows[:5]])
@@ -162,12 +159,8 @@ async def solve_history_query(query: str) -> str:
 
 async def query_knowledge_base(query: str) -> str:
     try:
-        import sqlite3
-        conn = sqlite3.connect("data/knowledge_store.db")
-        cursor = conn.cursor()
-        cursor.execute("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{query}%",))
-        row = cursor.fetchone()
-        conn.close()
+        db = DatabaseManager.get("data/knowledge_store.db")
+        row = db.query_one("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{query}%",))
         return row[0] if row else None
     except Exception:
         return None
@@ -175,12 +168,8 @@ async def query_knowledge_base(query: str) -> str:
 
 async def query_experience_pool(query: str) -> str:
     try:
-        import sqlite3
-        conn = sqlite3.connect("data/experience_pool.db")
-        cursor = conn.cursor()
-        cursor.execute("SELECT response FROM experiences WHERE query LIKE ? ORDER BY timestamp DESC LIMIT 1", (f"%{query[:20]}%",))
-        row = cursor.fetchone()
-        conn.close()
+        db = DatabaseManager.get("data/experience_pool.db")
+        row = db.query_one("SELECT response FROM experiences WHERE query LIKE ? ORDER BY timestamp DESC LIMIT 1", (f"%{query[:20]}%",))
         return row[0] if row else None
     except Exception:
         return None
