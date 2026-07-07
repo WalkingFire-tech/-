@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from loguru import logger
 import hashlib
+from infrastructure.database_manager import DatabaseManager
 
 
 class KnowledgeInjector:

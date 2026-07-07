@@ -1,6 +1,7 @@
 ﻿import sqlite3
 from datetime import datetime
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 class ModelStats:
     def __init__(self, db_path: str = "model_stats.db"):

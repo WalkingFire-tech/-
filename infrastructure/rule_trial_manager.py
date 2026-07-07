@@ -6,6 +6,7 @@ import sqlite3
 from typing import Dict, List, Optional
 from datetime import datetime
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 
 class RuleTrialManager:

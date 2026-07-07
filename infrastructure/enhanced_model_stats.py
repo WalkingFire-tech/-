@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from loguru import logger
 from infrastructure.config_manager import config
+from infrastructure.database_manager import DatabaseManager
 
 
 class EnhancedModelStats:

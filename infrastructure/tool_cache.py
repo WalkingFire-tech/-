@@ -244,6 +244,7 @@ def integrate_with_executor():
     """
     code = """
 from infrastructure.tool_cache import ToolResultCache
+from infrastructure.database_manager import DatabaseManager
 
 class SubTaskExecutor:
     def __init__(self, tools: Dict[str, Tool], llm_adapter=None):

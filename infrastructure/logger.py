@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 from loguru import logger
 from infrastructure.config_manager import config
+from infrastructure.database_manager import DatabaseManager
 
 
 class MemoryEntry:
