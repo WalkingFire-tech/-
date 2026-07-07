@@ -5,11 +5,11 @@
 """
 
 from .induction import InductionScheduler
-from .meta_induction import MetaInduction
+from .meta_induction import MetaInductor
 from .active_learner_v2 import ActiveLearner
 from .self_reflector_v2 import SelfReflector
 from .evolution_validator import EvolutionValidator
-from .learning_safety import LearningSafety
+from .learning_safety import LearningSafetyManager
 from .conflict_detector import ConflictDetector
 from .privacy_manager import PrivacyManager
 from .hyperparam_optimizer import HyperparamOptimizer
@@ -18,11 +18,11 @@ from .controller import MetaController
 
 __all__ = [
     'InductionScheduler',
-    'MetaInduction',
+    'MetaInductor',
     'ActiveLearner',
     'SelfReflector',
     'EvolutionValidator',
-    'LearningSafety',
+    'LearningSafetyManager',
     'ConflictDetector',
     'PrivacyManager',
     'HyperparamOptimizer',
