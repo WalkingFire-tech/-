@@ -7,8 +7,8 @@ import time
 from typing import List, Dict, Optional, Callable, Any, Tuple
 from loguru import logger
 from datetime import datetime
-import sqlite3
 from pathlib import Path
+from infrastructure.database_manager import DatabaseManager
 
 
 class ParallelScheduler:
@@ -39,66 +39,69 @@ class ParallelScheduler:
     
     def _init_db(self):
         """初始化数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS parallel_calls (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    task_id TEXT,
-                    model_name TEXT,
-                    start_time TEXT,
-                    end_time TEXT,
-                    duration REAL,
-                    success BOOLEAN,
-                    result_preview TEXT,
-                    error_message TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS task_results (
-                    task_id TEXT PRIMARY KEY,
-                    task_type TEXT,
-                    models_used TEXT,
-                    best_model TEXT,
-                    fusion_strategy TEXT,
-                    quality_score REAL,
-                    created_at TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS model_blacklist (
-                    model_name TEXT PRIMARY KEY,
-                    until_timestamp REAL,
-                    reason TEXT,
-                    created_at TEXT
-                )
-            ''')
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS parallel_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT,
+                model_name TEXT,
+                start_time TEXT,
+                end_time TEXT,
+                duration REAL,
+                success BOOLEAN,
+                result_preview TEXT,
+                error_message TEXT
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS task_results (
+                task_id TEXT PRIMARY KEY,
+                task_type TEXT,
+                models_used TEXT,
+                best_model TEXT,
+                fusion_strategy TEXT,
+                quality_score REAL,
+                created_at TEXT
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS model_blacklist (
+                model_name TEXT PRIMARY KEY,
+                until_timestamp REAL,
+                reason TEXT,
+                created_at TEXT
+            )
+        ''')
     
     def _load_blacklist(self):
         """从数据库加载黑名单"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute('''
-                    SELECT model_name, until_timestamp
-                    FROM model_blacklist
-                    WHERE until_timestamp > ?
-                ''', (time.time(),))
-                
-                for row in cursor.fetchall():
-                    self.model_blacklist[row[0]] = row[1]
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.execute('''
+                SELECT model_name, until_timestamp
+                FROM model_blacklist
+                WHERE until_timestamp > ?
+            ''', (time.time(),))
+            
+            for row in cursor.fetchall():
+                self.model_blacklist[row[0]] = row[1]
         except Exception as e:
             logger.debug(f"加载黑名单失败: {e}")
     
     def _save_blacklist(self, model_name: str, until_timestamp: float, reason: str = ""):
         """保存黑名单到数据库"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    INSERT OR REPLACE INTO model_blacklist
-                    (model_name, until_timestamp, reason, created_at)
-                    VALUES (?, ?, ?, ?)
-                ''', (model_name, until_timestamp, reason, datetime.now().isoformat()))
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            conn.execute('''
+                INSERT OR REPLACE INTO model_blacklist
+                (model_name, until_timestamp, reason, created_at)
+                VALUES (?, ?, ?, ?)
+            ''', (model_name, until_timestamp, reason, datetime.now().isoformat()))
         except Exception as e:
             logger.debug(f"保存黑名单失败: {e}")
     
@@ -370,44 +373,45 @@ class ParallelScheduler:
                            results: List[Dict], best_result: Optional[Dict],
                            duration: float):
         """保存并行调用记录"""
-        with sqlite3.connect(self.db_path) as conn:
-            for result in results:
-                conn.execute('''
-                    INSERT INTO parallel_calls
-                    (task_id, model_name, start_time, end_time, duration, 
-                     success, result_preview, error_message)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    task_id,
-                    result['model_name'],
-                    result.get('timestamp', ''),
-                    result.get('timestamp', ''),
-                    result.get('duration', 0),
-                    result['success'],
-                    result.get('response', '')[:200] if result.get('response') else None,
-                    result.get('error')
-                ))
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        for result in results:
+            conn.execute('''
+                INSERT INTO parallel_calls
+                (task_id, model_name, start_time, end_time, duration, 
+                 success, result_preview, error_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                task_id,
+                result['model_name'],
+                result.get('timestamp', ''),
+                result.get('timestamp', ''),
+                result.get('duration', 0),
+                result['success'],
+                result.get('response', '')[:200] if result.get('response') else None,
+                result.get('error')
+            ))
+        
+        if best_result:
+            import json
+            models_used = json.dumps([r['model_name'] for r in results])
             
-            if best_result:
-                import json
-                models_used = json.dumps([r['model_name'] for r in results])
-                
-                conn.execute('''
-                    INSERT OR REPLACE INTO task_results
-                    (task_id, task_type, models_used, best_model, 
-                     fusion_strategy, quality_score, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    task_id,
-                    task_type,
-                    models_used,
-                    best_result['model_name'],
-                    'parallel_best',
-                    best_result.get('final_score', 0.5),
-                    datetime.now().isoformat()
-                ))
-            
-            conn.commit()
+            conn.execute('''
+                INSERT OR REPLACE INTO task_results
+                (task_id, task_type, models_used, best_model, 
+                 fusion_strategy, quality_score, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                task_id,
+                task_type,
+                models_used,
+                best_result['model_name'],
+                'parallel_best',
+                best_result.get('final_score', 0.5),
+                datetime.now().isoformat()
+            ))
+        
+        conn.commit()
     
     async def federated_call(self, prompt: str, task_type: str,
                             adapters: Dict[str, Any],
@@ -514,28 +518,29 @@ class ParallelScheduler:
     
     def get_stats(self, days: int = 7) -> Dict:
         """获取调度统计"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('''
-                SELECT COUNT(*), AVG(duration), SUM(CASE WHEN success THEN 1 ELSE 0 END)
-                FROM parallel_calls
-                WHERE start_time >= datetime('now', ?)
-            ''', (f'-{days} days',))
-            
-            row = cursor.fetchone()
-            
-            cursor = conn.execute('''
-                SELECT COUNT(DISTINCT task_id) FROM task_results
-                WHERE created_at >= datetime('now', ?)
-            ''', (f'-{days} days',))
-            
-            task_count = cursor.fetchone()[0]
-            
-            return {
-                'total_calls': row[0] if row[0] else 0,
-                'avg_duration': row[1] if row[1] else 0,
-                'success_rate': row[2] / row[0] if row[0] and row[0] > 0 else 0,
-                'unique_tasks': task_count
-            }
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT COUNT(*), AVG(duration), SUM(CASE WHEN success THEN 1 ELSE 0 END)
+            FROM parallel_calls
+            WHERE start_time >= datetime('now', ?)
+        ''', (f'-{days} days',))
+        
+        row = cursor.fetchone()
+        
+        cursor = conn.execute('''
+            SELECT COUNT(DISTINCT task_id) FROM task_results
+            WHERE created_at >= datetime('now', ?)
+        ''', (f'-{days} days',))
+        
+        task_count = cursor.fetchone()[0]
+        
+        return {
+            'total_calls': row[0] if row[0] else 0,
+            'avg_duration': row[1] if row[1] else 0,
+            'success_rate': row[2] / row[0] if row[0] and row[0] > 0 else 0,
+            'unique_tasks': task_count
+        }
 
 
 parallel_scheduler = ParallelScheduler()

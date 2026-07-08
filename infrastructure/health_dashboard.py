@@ -6,8 +6,8 @@ import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from loguru import logger
-import sqlite3
 from pathlib import Path
+from infrastructure.database_manager import DatabaseManager
 
 
 class HealthDashboard:
@@ -38,22 +38,23 @@ class HealthDashboard:
     
     def _init_db(self):
         """初始化健康历史数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS health_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT,
-                    aphi_score REAL,
-                    capability_coverage REAL,
-                    task_success_rate REAL,
-                    resource_availability REAL,
-                    evolution_vitality REAL,
-                    user_satisfaction REAL,
-                    mode TEXT,
-                    details TEXT
-                )
-            ''')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON health_history(timestamp)')
+        db = DatabaseManager.get(str(self.db_path))
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS health_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                aphi_score REAL,
+                capability_coverage REAL,
+                task_success_rate REAL,
+                resource_availability REAL,
+                evolution_vitality REAL,
+                user_satisfaction REAL,
+                mode TEXT,
+                details TEXT
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON health_history(timestamp)')
     
     def calculate_aphi(self) -> Dict:
         """计算联盟拓荒者健康度指数"""
@@ -176,9 +177,10 @@ class HealthDashboard:
             
             experience_db = Path("experience_pool.db")
             if experience_db.exists():
-                with sqlite3.connect(experience_db) as conn:
-                    cur = conn.execute("SELECT COUNT(*) FROM experiences WHERE timestamp > datetime('now', '-7 days')")
-                    recent_experiences = cur.fetchone()[0]
+                db = DatabaseManager.get(str(experience_db))
+                conn = db._get_conn()
+                cur = conn.execute("SELECT COUNT(*) FROM experiences WHERE timestamp > datetime('now', '-7 days')")
+                recent_experiences = cur.fetchone()[0]
             else:
                 recent_experiences = 0
             
@@ -289,42 +291,44 @@ class HealthDashboard:
     def _save_health_record(self, metrics: Dict):
         """保存健康记录"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    INSERT INTO health_history 
-                    (timestamp, aphi_score, capability_coverage, task_success_rate,
-                     resource_availability, evolution_vitality, user_satisfaction, mode, details)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    metrics["timestamp"],
-                    metrics["aphi"],
-                    metrics["capability_coverage"],
-                    metrics["task_success_rate"],
-                    metrics["resource_availability"],
-                    metrics["evolution_vitality"],
-                    metrics["user_satisfaction"],
-                    metrics["mode"],
-                    ""
-                ))
+            db = DatabaseManager.get(str(self.db_path))
+            conn = db._get_conn()
+            conn.execute('''
+                INSERT INTO health_history 
+                (timestamp, aphi_score, capability_coverage, task_success_rate,
+                 resource_availability, evolution_vitality, user_satisfaction, mode, details)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                metrics["timestamp"],
+                metrics["aphi"],
+                metrics["capability_coverage"],
+                metrics["task_success_rate"],
+                metrics["resource_availability"],
+                metrics["evolution_vitality"],
+                metrics["user_satisfaction"],
+                metrics["mode"],
+                ""
+            ))
         except Exception as e:
             logger.warning(f"健康记录保存失败: {e}")
     
     def get_health_trend(self, hours: int = 24) -> List[Dict]:
         """获取健康趋势"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cur = conn.execute('''
-                    SELECT timestamp, aphi_score, mode
-                    FROM health_history
-                    WHERE timestamp > datetime('now', ?)
-                    ORDER BY timestamp DESC
-                    LIMIT 100
-                ''', (f'-{hours} hours',))
-                
-                return [
-                    {"timestamp": row[0], "aphi": row[1], "mode": row[2]}
-                    for row in cur.fetchall()
-                ]
+            db = DatabaseManager.get(str(self.db_path))
+            conn = db._get_conn()
+            cur = conn.execute('''
+                SELECT timestamp, aphi_score, mode
+                FROM health_history
+                WHERE timestamp > datetime('now', ?)
+                ORDER BY timestamp DESC
+                LIMIT 100
+            ''', (f'-{hours} hours',))
+            
+            return [
+                {"timestamp": row[0], "aphi": row[1], "mode": row[2]}
+                for row in cur.fetchall()
+            ]
         except Exception as e:
             logger.warning(f"健康趋势获取失败: {e}")
             return []

@@ -8,11 +8,11 @@ import socket
 import time
 import threading
 import hmac
-import sqlite3
 from typing import Dict, List, Optional
 from pathlib import Path
 from loguru import logger
 from datetime import datetime
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from cryptography.fernet import Fernet
@@ -156,14 +156,15 @@ class MigrationProtocol:
             logger.warning(f"  能力矩阵压缩失败: {e}")
         
         try:
-            with sqlite3.connect('data/experience_pool.db') as conn:
-                cursor = conn.execute('''
-                    SELECT intent_type, raw_input, model_name, quality_score, success
-                    FROM experiences
-                    ORDER BY timestamp DESC
-                    LIMIT 100
-                ''')
-                experiences = cursor.fetchall()
+            db = DatabaseManager.get('data/experience_pool.db')
+            conn = db._get_conn()
+            cursor = conn.execute('''
+                SELECT intent_type, raw_input, model_name, quality_score, success
+                FROM experiences
+                ORDER BY timestamp DESC
+                LIMIT 100
+            ''')
+            experiences = cursor.fetchall()
             
             state['components']['experiences'] = [
                 {
@@ -180,13 +181,14 @@ class MigrationProtocol:
             logger.warning(f"  经验池压缩失败: {e}")
         
         try:
-            with sqlite3.connect('data/learning_rules.db') as conn:
-                cursor = conn.execute('''
-                    SELECT condition, action, confidence, status
-                    FROM learning_rules
-                    WHERE status = 'active'
-                ''')
-                rules = cursor.fetchall()
+            db2 = DatabaseManager.get('data/learning_rules.db')
+            conn2 = db2._get_conn()
+            cursor = conn2.execute('''
+                SELECT condition, action, confidence, status
+                FROM learning_rules
+                WHERE status = 'active'
+            ''')
+            rules = cursor.fetchall()
             
             state['components']['rules'] = [
                 {
@@ -386,36 +388,38 @@ class MigrationProtocol:
                 logger.info(f"  能力矩阵已恢复: {len(matrix)}个模型")
             
             if 'experiences' in state.get('components', {}):
-                with sqlite3.connect('data/experience_pool.db') as conn:
-                    for exp in state['components']['experiences']:
-                        conn.execute('''
-                            INSERT INTO experiences
-                            (intent_type, raw_input, model_name, quality_score, success, timestamp)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        ''', (
-                            exp['intent_type'],
-                            exp['raw_input'],
-                            exp['model_name'],
-                            exp['quality_score'],
-                            exp['success'],
-                            datetime.now().isoformat()
-                        ))
+                db = DatabaseManager.get('data/experience_pool.db')
+                conn = db._get_conn()
+                for exp in state['components']['experiences']:
+                    conn.execute('''
+                        INSERT INTO experiences
+                        (intent_type, raw_input, model_name, quality_score, success, timestamp)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (
+                        exp['intent_type'],
+                        exp['raw_input'],
+                        exp['model_name'],
+                        exp['quality_score'],
+                        exp['success'],
+                        datetime.now().isoformat()
+                    ))
                 
                 logger.info(f"  经验池已恢复: {len(state['components']['experiences'])}条")
             
             if 'rules' in state.get('components', {}):
-                with sqlite3.connect('data/learning_rules.db') as conn:
-                    for rule in state['components']['rules']:
-                        conn.execute('''
-                            INSERT OR REPLACE INTO learning_rules
-                            (condition, action, confidence, status)
-                            VALUES (?, ?, ?, ?)
-                        ''', (
-                            rule['condition'],
-                            rule['action'],
-                            rule['confidence'],
-                            rule['status']
-                        ))
+                db2 = DatabaseManager.get('data/learning_rules.db')
+                conn2 = db2._get_conn()
+                for rule in state['components']['rules']:
+                    conn2.execute('''
+                        INSERT OR REPLACE INTO learning_rules
+                        (condition, action, confidence, status)
+                        VALUES (?, ?, ?, ?)
+                    ''', (
+                        rule['condition'],
+                        rule['action'],
+                        rule['confidence'],
+                        rule['status']
+                    ))
                 
                 logger.info(f"  学习规则已恢复: {len(state['components']['rules'])}条")
             

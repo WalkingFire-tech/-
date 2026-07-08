@@ -2,13 +2,13 @@
 梦境整合模块 (Dream Integration)
 参考Claude 5的梦境整合机制，空闲时整理记忆
 """
-import sqlite3
 import threading
 import json
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 from loguru import logger
 from pathlib import Path
+from infrastructure.database_manager import DatabaseManager
 
 ALLOWED_INTENT_TYPES = {
     'code', 'question', 'chat', 'memory', 'calculation',
@@ -69,45 +69,42 @@ class DreamIntegrator:
         """
         cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT id, user_input, intent_type, model_name, response, quality_score
-                FROM experiences
-                WHERE timestamp >= ?
-                AND quality_score >= 0.7
-                ORDER BY timestamp DESC
-                LIMIT ?
-            """, (cutoff_date, MAX_EXPERIENCES))
-            
-            experiences = []
-            for row in cursor.fetchall():
-                experiences.append({
-                    "id": row[0],
-                    "user_input": row[1],
-                    "intent_type": row[2],
-                    "model_name": row[3],
-                    "response": row[4],
-                    "quality_score": row[5]
-                })
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        
+        cursor = conn.execute("""
+            SELECT id, user_input, intent_type, model_name, response, quality_score
+            FROM experiences
+            WHERE timestamp >= ?
+            AND quality_score >= 0.7
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (cutoff_date, MAX_EXPERIENCES))
+        
+        experiences = []
+        for row in cursor.fetchall():
+            experiences.append({
+                "id": row[0],
+                "user_input": row[1],
+                "intent_type": row[2],
+                "model_name": row[3],
+                "response": row[4],
+                "quality_score": row[5]
+            })
         
         isolated = []
-        with sqlite3.connect(self.rules_db_path) as conn_rules:
-            cursor_rules = conn_rules.cursor()
-            
-            for exp in experiences:
-                cursor_rules.execute("""
-                    SELECT COUNT(*) FROM learning_rules
-                    WHERE condition LIKE ?
-                """, (f"%{exp['id']}%",))
-                
-                count = cursor_rules.fetchone()[0]
-                if count == 0:
-                isolated.append(exp)
+        db_rules = DatabaseManager.get(self.rules_db_path)
+        conn_rules = db_rules._get_conn()
         
-        conn.close()
-        conn_rules.close()
+        for exp in experiences:
+            cursor_rules = conn_rules.execute("""
+                SELECT COUNT(*) FROM learning_rules
+                WHERE condition LIKE ?
+            """, (f"%{exp['id']}%",))
+            
+            count = cursor_rules.fetchone()[0]
+            if count == 0:
+                isolated.append(exp)
         
         return isolated
     
@@ -172,93 +169,93 @@ class DreamIntegrator:
         """
         new_rules = []
         
-        with sqlite3.connect(self.rules_db_path) as conn:
-            cursor = conn.cursor()
+        db = DatabaseManager.get(self.rules_db_path)
+        conn = db._get_conn()
+        
+        for pattern in patterns:
+            if pattern["type"] == "intent_transition":
+                parts = pattern["pattern"].split("→")
+                if len(parts) == 2:
+                    intent_type = parts[0].strip()
+                    next_intent = parts[1].strip()
+                    
+                    if intent_type not in ALLOWED_INTENT_TYPES:
+                        logger.warning(f"跳过非法意图类型: {intent_type}")
+                        continue
+                    
+                    if next_intent not in ALLOWED_INTENT_TYPES:
+                        logger.warning(f"跳过非法目标意图: {next_intent}")
+                        continue
+                    
+                    condition_data = json.dumps({
+                        "type": "intent_equals",
+                        "intent_type": intent_type
+                    }, ensure_ascii=False)
+                    
+                    action_data = json.dumps({
+                        "type": "prepare_for",
+                        "target_intent": next_intent
+                    }, ensure_ascii=False)
+                    
+                    conn.execute("""
+                        INSERT INTO learning_rules
+                        (condition, action, confidence, source, description, status, created_at)
+                        VALUES (?, ?, ?, ?, ?, 'pending', ?)
+                    """, (
+                        condition_data,
+                        action_data,
+                        pattern["confidence"],
+                        "dream_integration",
+                        f"用户在{intent_type}后常问{next_intent}",
+                        datetime.now().isoformat()
+                    ))
+                    
+                    new_rules.append({
+                        "condition": condition_data,
+                        "action": action_data,
+                        "confidence": pattern["confidence"]
+                    })
             
-            for pattern in patterns:
-                if pattern["type"] == "intent_transition":
-                    parts = pattern["pattern"].split("→")
-                    if len(parts) == 2:
-                        intent_type = parts[0].strip()
-                        next_intent = parts[1].strip()
-                        
-                        if intent_type not in ALLOWED_INTENT_TYPES:
-                            logger.warning(f"跳过非法意图类型: {intent_type}")
-                            continue
-                        
-                        if next_intent not in ALLOWED_INTENT_TYPES:
-                            logger.warning(f"跳过非法目标意图: {next_intent}")
-                            continue
-                        
-                        condition_data = json.dumps({
-                            "type": "intent_equals",
-                            "intent_type": intent_type
-                        }, ensure_ascii=False)
-                        
-                        action_data = json.dumps({
-                            "type": "prepare_for",
-                            "target_intent": next_intent
-                        }, ensure_ascii=False)
-                        
-                        cursor.execute("""
-                            INSERT INTO learning_rules
-                            (condition, action, confidence, source, description, status, created_at)
-                            VALUES (?, ?, ?, ?, ?, 'pending', ?)
-                        """, (
-                            condition_data,
-                            action_data,
-                            pattern["confidence"],
-                            "dream_integration",
-                            f"用户在{intent_type}后常问{next_intent}",
-                            datetime.now().isoformat()
-                        ))
-                        
-                        new_rules.append({
-                            "condition": condition_data,
-                            "action": action_data,
-                            "confidence": pattern["confidence"]
-                        })
-                
-                elif pattern["type"] == "model_preference":
-                    parts = pattern["pattern"].split("→")
-                    if len(parts) == 2:
-                        intent_type = parts[0].strip()
-                        model_name = parts[1].strip()
-                        
-                        if intent_type not in ALLOWED_INTENT_TYPES:
-                            logger.warning(f"跳过非法意图类型: {intent_type}")
-                            continue
-                        
-                        condition_data = json.dumps({
-                            "type": "intent_equals",
-                            "intent_type": intent_type
-                        }, ensure_ascii=False)
-                        
-                        action_data = json.dumps({
-                            "type": "use_model",
-                            "model": model_name
-                        }, ensure_ascii=False)
-                        
-                        cursor.execute("""
-                            INSERT INTO learning_rules
-                            (condition, action, confidence, source, description, status, created_at)
-                            VALUES (?, ?, ?, ?, ?, 'pending', ?)
-                        """, (
-                            condition_data,
-                            action_data,
-                            pattern["confidence"],
-                            "dream_integration",
-                            f"{intent_type}意图偏好使用{model_name}",
-                            datetime.now().isoformat()
-                        ))
-                        
-                        new_rules.append({
-                            "condition": condition_data,
-                            "action": action_data,
-                            "confidence": pattern["confidence"]
-                        })
-            
-            conn.commit()
+            elif pattern["type"] == "model_preference":
+                parts = pattern["pattern"].split("→")
+                if len(parts) == 2:
+                    intent_type = parts[0].strip()
+                    model_name = parts[1].strip()
+                    
+                    if intent_type not in ALLOWED_INTENT_TYPES:
+                        logger.warning(f"跳过非法意图类型: {intent_type}")
+                        continue
+                    
+                    condition_data = json.dumps({
+                        "type": "intent_equals",
+                        "intent_type": intent_type
+                    }, ensure_ascii=False)
+                    
+                    action_data = json.dumps({
+                        "type": "use_model",
+                        "model": model_name
+                    }, ensure_ascii=False)
+                    
+                    conn.execute("""
+                        INSERT INTO learning_rules
+                        (condition, action, confidence, source, description, status, created_at)
+                        VALUES (?, ?, ?, ?, ?, 'pending', ?)
+                    """, (
+                        condition_data,
+                        action_data,
+                        pattern["confidence"],
+                        "dream_integration",
+                        f"{intent_type}意图偏好使用{model_name}",
+                        datetime.now().isoformat()
+                    ))
+                    
+                    new_rules.append({
+                        "condition": condition_data,
+                        "action": action_data,
+                        "confidence": pattern["confidence"]
+                    })
+        
+        conn.commit()
         
         return new_rules
     
@@ -268,29 +265,29 @@ class DreamIntegrator:
         - 删除质量分过低的经验（< 0.3）
         - 删除重复的失败案例
         """
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                DELETE FROM experiences
-                WHERE quality_score < 0.3
-                AND timestamp < date('now', '-30 days')
-            """)
-            deleted_low_quality = cursor.rowcount
-            
-            cursor.execute("""
-                DELETE FROM experiences
-                WHERE rowid NOT IN (
-                    SELECT MAX(rowid)
-                    FROM experiences
-                    WHERE quality_score < 0.5
-                    GROUP BY user_input
-                )
-                AND quality_score < 0.5
-            """)
-            deleted_duplicates = cursor.rowcount
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        
+        conn.execute("""
+            DELETE FROM experiences
+            WHERE quality_score < 0.3
+            AND timestamp < date('now', '-30 days')
+        """)
+        deleted_low_quality = conn.total_changes
+        
+        conn.execute("""
+            DELETE FROM experiences
+            WHERE rowid NOT IN (
+                SELECT MAX(rowid)
+                FROM experiences
+                WHERE quality_score < 0.5
+                GROUP BY user_input
+            )
+            AND quality_score < 0.5
+        """)
+        deleted_duplicates = conn.total_changes
+        
+        conn.commit()
         
         total_cleaned = deleted_low_quality + deleted_duplicates
         if total_cleaned > 0:

@@ -2,13 +2,13 @@
 工具结果缓存模块 (Tool Result Cache)
 避免重复计算，提升响应速度
 """
-import sqlite3
 import hashlib
 import json
 from typing import Any, Dict, Optional
 from datetime import datetime, timedelta
 from loguru import logger
 from pathlib import Path
+from infrastructure.database_manager import DatabaseManager
 
 
 class ToolResultCache:
@@ -24,28 +24,29 @@ class ToolResultCache:
         
     def _init_db(self):
         """初始化缓存数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS tool_cache (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    tool_name TEXT NOT NULL,
-                    params_hash TEXT NOT NULL,
-                    params_json TEXT,
-                    result_json TEXT NOT NULL,
-                    quality_score REAL,
-                    created_at TEXT NOT NULL,
-                    expires_at TEXT,
-                    hit_count INTEGER DEFAULT 0,
-                    UNIQUE(tool_name, params_hash)
-                )
-            """)
-            
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_tool_cache_lookup
-                ON tool_cache(tool_name, params_hash)
-            """)
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tool_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tool_name TEXT NOT NULL,
+                params_hash TEXT NOT NULL,
+                params_json TEXT,
+                result_json TEXT NOT NULL,
+                quality_score REAL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT,
+                hit_count INTEGER DEFAULT 0,
+                UNIQUE(tool_name, params_hash)
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_tool_cache_lookup
+            ON tool_cache(tool_name, params_hash)
+        """)
         
         logger.info(f"工具缓存数据库初始化完成: {self.db_path}")
     
@@ -68,43 +69,44 @@ class ToolResultCache:
         """
         params_hash = self._hash_params(params)
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT result_json, expires_at, hit_count
+            FROM tool_cache
+            WHERE tool_name = ? AND params_hash = ?
+        """, (tool_name, params_hash))
+        
+        row = cursor.fetchone()
+        
+        if row:
+            result_json, expires_at, hit_count = row
+            
+            if expires_at:
+                expires = datetime.fromisoformat(expires_at)
+                if datetime.now() > expires:
+                    logger.debug(f"缓存已过期: {tool_name}")
+                    cursor.execute("""
+                        DELETE FROM tool_cache
+                        WHERE tool_name = ? AND params_hash = ?
+                    """, (tool_name, params_hash))
+                    return None
             
             cursor.execute("""
-                SELECT result_json, expires_at, hit_count
-                FROM tool_cache
+                UPDATE tool_cache
+                SET hit_count = hit_count + 1
                 WHERE tool_name = ? AND params_hash = ?
             """, (tool_name, params_hash))
             
-            row = cursor.fetchone()
-            
-            if row:
-                result_json, expires_at, hit_count = row
-                
-                if expires_at:
-                    expires = datetime.fromisoformat(expires_at)
-                    if datetime.now() > expires:
-                        logger.debug(f"缓存已过期: {tool_name}")
-                        cursor.execute("""
-                            DELETE FROM tool_cache
-                            WHERE tool_name = ? AND params_hash = ?
-                        """, (tool_name, params_hash))
-                        return None
-                
-                cursor.execute("""
-                    UPDATE tool_cache
-                    SET hit_count = hit_count + 1
-                    WHERE tool_name = ? AND params_hash = ?
-                """, (tool_name, params_hash))
-                
-                try:
-                    result = json.loads(result_json)
-                    logger.debug(f"缓存命中: {tool_name} (命中{hit_count + 1}次)")
-                    return result
-                except:
-                    logger.warning(f"缓存结果解析失败: {tool_name}")
-                    return None
+            try:
+                result = json.loads(result_json)
+                logger.debug(f"缓存命中: {tool_name} (命中{hit_count + 1}次)")
+                return result
+            except:
+                logger.warning(f"缓存结果解析失败: {tool_name}")
+                return None
         
         return None
     
@@ -142,25 +144,26 @@ class ToolResultCache:
         expires_at = (datetime.now() + timedelta(days=ttl)).isoformat()
         
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                
-                cursor.execute("""
-                    INSERT OR REPLACE INTO tool_cache
-                    (tool_name, params_hash, params_json, result_json, quality_score, created_at, expires_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    tool_name,
-                    params_hash,
-                    params_json,
-                    result_json,
-                    quality_score,
-                    datetime.now().isoformat(),
-                    expires_at
-                ))
-                
-                logger.debug(f"缓存已保存: {tool_name} (质量{quality_score:.2f})")
-                
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT OR REPLACE INTO tool_cache
+                (tool_name, params_hash, params_json, result_json, quality_score, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                tool_name,
+                params_hash,
+                params_json,
+                result_json,
+                quality_score,
+                datetime.now().isoformat(),
+                expires_at
+            ))
+            
+            logger.debug(f"缓存已保存: {tool_name} (质量{quality_score:.2f})")
+            
         except Exception as e:
             logger.error(f"缓存保存失败: {e}")
     
@@ -172,37 +175,39 @@ class ToolResultCache:
             tool_name: 工具名称
             params: 如果提供，只删除特定参数的缓存；否则删除该工具的所有缓存
         """
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            if params:
-                params_hash = self._hash_params(params)
-                cursor.execute("""
-                    DELETE FROM tool_cache
-                    WHERE tool_name = ? AND params_hash = ?
-                """, (tool_name, params_hash))
-            else:
-                cursor.execute("""
-                    DELETE FROM tool_cache
-                    WHERE tool_name = ?
-                """, (tool_name,))
-            
-            deleted = cursor.rowcount
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.cursor()
+        
+        if params:
+            params_hash = self._hash_params(params)
+            cursor.execute("""
+                DELETE FROM tool_cache
+                WHERE tool_name = ? AND params_hash = ?
+            """, (tool_name, params_hash))
+        else:
+            cursor.execute("""
+                DELETE FROM tool_cache
+                WHERE tool_name = ?
+            """, (tool_name,))
+        
+        deleted = cursor.rowcount
         
         if deleted > 0:
             logger.info(f"缓存已失效: {tool_name} ({deleted}条)")
     
     def cleanup_expired(self) -> int:
         """清理过期缓存"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                DELETE FROM tool_cache
-                WHERE expires_at < ?
-            """, (datetime.now().isoformat(),))
-            
-            deleted = cursor.rowcount
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            DELETE FROM tool_cache
+            WHERE expires_at < ?
+        """, (datetime.now().isoformat(),))
+        
+        deleted = cursor.rowcount
         
         if deleted > 0:
             logger.info(f"清理过期缓存: {deleted}条")
@@ -211,25 +216,26 @@ class ToolResultCache:
     
     def get_stats(self) -> Dict[str, Any]:
         """获取缓存统计"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT COUNT(*) FROM tool_cache")
-            total = cursor.fetchone()[0]
-            
-            cursor.execute("""
-                SELECT tool_name, COUNT(*), SUM(hit_count), AVG(quality_score)
-                FROM tool_cache
-                GROUP BY tool_name
-            """)
-            
-            by_tool = {}
-            for row in cursor.fetchall():
-                by_tool[row[0]] = {
-                    "count": row[1],
-                    "hits": row[2] or 0,
-                    "avg_quality": row[3] or 0
-                }
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT COUNT(*) FROM tool_cache")
+        total = cursor.fetchone()[0]
+        
+        cursor.execute("""
+            SELECT tool_name, COUNT(*), SUM(hit_count), AVG(quality_score)
+            FROM tool_cache
+            GROUP BY tool_name
+        """)
+        
+        by_tool = {}
+        for row in cursor.fetchall():
+            by_tool[row[0]] = {
+                "count": row[1],
+                "hits": row[2] or 0,
+                "avg_quality": row[3] or 0
+            }
         
         return {
             "total_cached": total,

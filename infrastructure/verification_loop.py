@@ -4,8 +4,8 @@
 """
 from typing import Dict, List, Optional
 from datetime import datetime
-import sqlite3
 from pathlib import Path
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -34,45 +34,46 @@ class KnowledgeVerificationLoop:
         """初始化验证数据库"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        with sqlite3.connect(self.db_path) as conn:
-            # 验证循环记录表
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS verification_loops (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    loop_id TEXT UNIQUE NOT NULL,
-                    question TEXT NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    
-                    -- 注入前
-                    before_score REAL,
-                    before_confidence REAL,
-                    before_knowledge_count INTEGER,
-                    
-                    -- 注入
-                    injection_source TEXT,
-                    injected_knowledge_count INTEGER,
-                    injection_details TEXT,
-                    
-                    -- 注入后
-                    after_score REAL,
-                    after_confidence REAL,
-                    after_knowledge_count INTEGER,
-                    
-                    -- 验证
-                    improvement REAL,
-                    passed INTEGER,
-                    threshold REAL,
-                    
-                    -- 修正
-                    needs_correction INTEGER DEFAULT 0,
-                    correction_actions TEXT,
-                    correction_result TEXT,
-                    
-                    status TEXT DEFAULT 'pending'
-                )
-            ''')
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        # 验证循环记录表
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS verification_loops (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                loop_id TEXT UNIQUE NOT NULL,
+                question TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                
+                -- 注入前
+                before_score REAL,
+                before_confidence REAL,
+                before_knowledge_count INTEGER,
+                
+                -- 注入
+                injection_source TEXT,
+                injected_knowledge_count INTEGER,
+                injection_details TEXT,
+                
+                -- 注入后
+                after_score REAL,
+                after_confidence REAL,
+                after_knowledge_count INTEGER,
+                
+                -- 验证
+                improvement REAL,
+                passed INTEGER,
+                threshold REAL,
+                
+                -- 修正
+                needs_correction INTEGER DEFAULT 0,
+                correction_actions TEXT,
+                correction_result TEXT,
+                
+                status TEXT DEFAULT 'pending'
+            )
+        ''')
+        
+        conn.commit()
         logger.info(f"🔄 知识验证闭环已初始化: {self.db_path}")
     
     def start_verification_loop(
@@ -96,17 +97,18 @@ class KnowledgeVerificationLoop:
         """
         loop_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT INTO verification_loops
-                (loop_id, question, timestamp, before_score, before_confidence, 
-                 before_knowledge_count, status)
-                VALUES (?, ?, ?, ?, ?, ?, 'injecting')
-            ''', (
-                loop_id, question, datetime.now().isoformat(),
-                before_score, before_confidence, before_knowledge_count
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            INSERT INTO verification_loops
+            (loop_id, question, timestamp, before_score, before_confidence, 
+             before_knowledge_count, status)
+            VALUES (?, ?, ?, ?, ?, ?, 'injecting')
+        ''', (
+            loop_id, question, datetime.now().isoformat(),
+            before_score, before_confidence, before_knowledge_count
+        ))
+        conn.commit()
         
         logger.info(f"🔄 开始验证循环: {loop_id} - {question[:50]}...")
         return loop_id
@@ -127,21 +129,22 @@ class KnowledgeVerificationLoop:
         """
         import json
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                UPDATE verification_loops
-                SET injection_source = ?,
-                    injected_knowledge_count = ?,
-                    injection_details = ?,
-                    status = 'verifying'
-                WHERE loop_id = ?
-            ''', (
-                injection_source,
-                len(injected_knowledge),
-                json.dumps(injected_knowledge[:5], ensure_ascii=False),  # 只存前5条
-                loop_id
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            UPDATE verification_loops
+            SET injection_source = ?,
+                injected_knowledge_count = ?,
+                injection_details = ?,
+                status = 'verifying'
+            WHERE loop_id = ?
+        ''', (
+            injection_source,
+            len(injected_knowledge),
+            json.dumps(injected_knowledge[:5], ensure_ascii=False),  # 只存前5条
+            loop_id
+        ))
+        conn.commit()
         
         logger.info(f"💉 记录注入: {len(injected_knowledge)}条知识来自{injection_source}")
     
@@ -166,41 +169,42 @@ class KnowledgeVerificationLoop:
         Returns:
             验证结果
         """
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                'SELECT * FROM verification_loops WHERE loop_id = ?',
-                (loop_id,)
-            )
-            row = cursor.fetchone()
-            
-            if not row:
-                return {'error': '循环不存在'}
-            
-            before_score = row['before_score']
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute(
+            'SELECT * FROM verification_loops WHERE loop_id = ?',
+            (loop_id,)
+        )
+        row = cursor.fetchone()
+        
+        if not row:
+            return {'error': '循环不存在'}
+        
+        before_score = row['before_score']
         
         improvement = after_score - before_score
         passed = improvement >= threshold
         needs_correction = 0 if passed else 1
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                UPDATE verification_loops
-                SET after_score = ?,
-                    after_confidence = ?,
-                    after_knowledge_count = ?,
-                    improvement = ?,
-                    passed = ?,
-                    threshold = ?,
-                    needs_correction = ?,
-                    status = 'completed'
-                WHERE loop_id = ?
-            ''', (
-                after_score, after_confidence, after_knowledge_count,
-                improvement, 1 if passed else 0, threshold,
-                needs_correction, loop_id
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            UPDATE verification_loops
+            SET after_score = ?,
+                after_confidence = ?,
+                after_knowledge_count = ?,
+                improvement = ?,
+                passed = ?,
+                threshold = ?,
+                needs_correction = ?,
+                status = 'completed'
+            WHERE loop_id = ?
+        ''', (
+            after_score, after_confidence, after_knowledge_count,
+            improvement, 1 if passed else 0, threshold,
+            needs_correction, loop_id
+        ))
+        conn.commit()
         
         result = {
             'loop_id': loop_id,
@@ -221,15 +225,15 @@ class KnowledgeVerificationLoop:
     
     def get_correction_candidates(self) -> List[Dict]:
         """获取需要修正的验证循环"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute('''
-                SELECT * FROM verification_loops
-                WHERE needs_correction = 1 AND correction_result IS NULL
-                ORDER BY timestamp DESC
-            ''')
-            
-            return [dict(row) for row in cursor.fetchall()]
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT * FROM verification_loops
+            WHERE needs_correction = 1 AND correction_result IS NULL
+            ORDER BY timestamp DESC
+        ''')
+        
+        return [dict(row) for row in cursor.fetchall()]
     
     def apply_correction(
         self,
@@ -247,40 +251,42 @@ class KnowledgeVerificationLoop:
         """
         import json
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                UPDATE verification_loops
-                SET correction_actions = ?,
-                    correction_result = ?,
-                    status = 'corrected'
-                WHERE loop_id = ?
-            ''', (
-                json.dumps(correction_actions, ensure_ascii=False),
-                correction_result,
-                loop_id
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            UPDATE verification_loops
+            SET correction_actions = ?,
+                correction_result = ?,
+                status = 'corrected'
+            WHERE loop_id = ?
+        ''', (
+            json.dumps(correction_actions, ensure_ascii=False),
+            correction_result,
+            loop_id
+        ))
+        conn.commit()
         
         logger.info(f"🔧 应用修正: {correction_result}")
     
     def get_statistics(self) -> Dict:
         """获取验证统计"""
-        with sqlite3.connect(self.db_path) as conn:
-            total = conn.execute(
-                'SELECT COUNT(*) FROM verification_loops'
-            ).fetchone()[0]
-            
-            passed = conn.execute(
-                'SELECT COUNT(*) FROM verification_loops WHERE passed = 1'
-            ).fetchone()[0]
-            
-            corrected = conn.execute(
-                'SELECT COUNT(*) FROM verification_loops WHERE status = "corrected"'
-            ).fetchone()[0]
-            
-            avg_improvement = conn.execute(
-                'SELECT AVG(improvement) FROM verification_loops WHERE improvement IS NOT NULL'
-            ).fetchone()[0] or 0
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        total = conn.execute(
+            'SELECT COUNT(*) FROM verification_loops'
+        ).fetchone()[0]
+        
+        passed = conn.execute(
+            'SELECT COUNT(*) FROM verification_loops WHERE passed = 1'
+        ).fetchone()[0]
+        
+        corrected = conn.execute(
+            'SELECT COUNT(*) FROM verification_loops WHERE status = "corrected"'
+        ).fetchone()[0]
+        
+        avg_improvement = conn.execute(
+            'SELECT AVG(improvement) FROM verification_loops WHERE improvement IS NOT NULL'
+        ).fetchone()[0] or 0
         
         return {
             'total_loops': total,

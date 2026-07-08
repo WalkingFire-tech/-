@@ -2,12 +2,12 @@
 交互数据收集系统
 记录完整的"问题-回答-反馈"三元组，为未来的监督微调（SFT）积累训练数据
 """
-import sqlite3
 import json
 from typing import Dict, List, Optional
 from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, asdict
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -51,57 +51,58 @@ class InteractionDataCollector:
     
     def _init_database(self):
         """初始化数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            # 交互记录表
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS interactions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id TEXT NOT NULL,
-                    question TEXT NOT NULL,
-                    response TEXT NOT NULL,
-                    
-                    -- 反馈
-                    feedback_type TEXT,
-                    feedback_content TEXT,
-                    
-                    -- 评分
-                    objective_score REAL,
-                    subjective_score REAL,
-                    total_score REAL,
-                    
-                    -- 决策链
-                    decision_chain_summary TEXT,
-                    
-                    -- 知识来源
-                    knowledge_sources TEXT,         -- JSON格式
-                    
-                    -- 元数据
-                    model_version TEXT,
-                    system_version TEXT,
-                    timestamp TEXT NOT NULL,
-                    metadata TEXT
-                )
-            ''')
-            
-            # 索引
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_session ON interactions(session_id)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_feedback ON interactions(feedback_type)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_score ON interactions(total_score)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON interactions(timestamp)')
-            
-            # 数据质量评估表
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS data_quality (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    interaction_id INTEGER NOT NULL,
-                    quality_score REAL,
-                    is_high_quality BOOLEAN,
-                    quality_reasons TEXT,
-                    assessed_at TEXT
-                )
-            ''')
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        # 交互记录表
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS interactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                question TEXT NOT NULL,
+                response TEXT NOT NULL,
+                
+                -- 反馈
+                feedback_type TEXT,
+                feedback_content TEXT,
+                
+                -- 评分
+                objective_score REAL,
+                subjective_score REAL,
+                total_score REAL,
+                
+                -- 决策链
+                decision_chain_summary TEXT,
+                
+                -- 知识来源
+                knowledge_sources TEXT,         -- JSON格式
+                
+                -- 元数据
+                model_version TEXT,
+                system_version TEXT,
+                timestamp TEXT NOT NULL,
+                metadata TEXT
+            )
+        ''')
+        
+        # 索引
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_session ON interactions(session_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_feedback ON interactions(feedback_type)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_score ON interactions(total_score)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON interactions(timestamp)')
+        
+        # 数据质量评估表
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS data_quality (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                interaction_id INTEGER NOT NULL,
+                quality_score REAL,
+                is_high_quality BOOLEAN,
+                quality_reasons TEXT,
+                assessed_at TEXT
+            )
+        ''')
+        
+        conn.commit()
         
         logger.info(f"📊 交互数据收集器已初始化: {self.db_path}")
     
@@ -144,22 +145,23 @@ class InteractionDataCollector:
         """
         timestamp = datetime.now().isoformat()
         
-        with sqlite3.connect(self.db_path) as conn:
-            cur = conn.execute('''
-                INSERT INTO interactions
-                (session_id, question, response, feedback_type, feedback_content,
-                 objective_score, subjective_score, total_score, decision_chain_summary,
-                 knowledge_sources, model_version, system_version, timestamp, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                session_id, question, response, feedback_type, feedback_content,
-                objective_score, subjective_score, total_score, decision_chain_summary,
-                json.dumps(knowledge_sources or [], ensure_ascii=False),
-                model_version, system_version, timestamp,
-                json.dumps(metadata or {}, ensure_ascii=False)
-            ))
-            
-            interaction_id = cur.lastrowid
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cur = conn.execute('''
+            INSERT INTO interactions
+            (session_id, question, response, feedback_type, feedback_content,
+             objective_score, subjective_score, total_score, decision_chain_summary,
+             knowledge_sources, model_version, system_version, timestamp, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            session_id, question, response, feedback_type, feedback_content,
+            objective_score, subjective_score, total_score, decision_chain_summary,
+            json.dumps(knowledge_sources or [], ensure_ascii=False),
+            model_version, system_version, timestamp,
+            json.dumps(metadata or {}, ensure_ascii=False)
+        ))
+        
+        interaction_id = cur.lastrowid
         
         logger.info(f"📝 交互已记录: ID={interaction_id}, 反馈={feedback_type}, 总分={total_score:.1f}")
         
@@ -208,17 +210,18 @@ class InteractionDataCollector:
         
         is_high_quality = quality_score >= 0.7
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT INTO data_quality
-                (interaction_id, quality_score, is_high_quality, quality_reasons, assessed_at)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (
-                interaction_id, quality_score, 1 if is_high_quality else 0,
-                json.dumps(reasons, ensure_ascii=False),
-                datetime.now().isoformat()
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            INSERT INTO data_quality
+            (interaction_id, quality_score, is_high_quality, quality_reasons, assessed_at)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (
+            interaction_id, quality_score, 1 if is_high_quality else 0,
+            json.dumps(reasons, ensure_ascii=False),
+            datetime.now().isoformat()
+        ))
+        conn.commit()
     
     def get_training_data(
         self,
@@ -237,28 +240,28 @@ class InteractionDataCollector:
         Returns:
             训练数据列表
         """
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            query = '''
-                SELECT i.*, q.quality_score, q.is_high_quality
-                FROM interactions i
-                JOIN data_quality q ON i.id = q.interaction_id
-                WHERE q.quality_score >= ?
-            '''
-            params = [min_quality_score]
-            
-            if feedback_types:
-                placeholders = ','.join('?' * len(feedback_types))
-                query += f" AND i.feedback_type IN ({placeholders})"
-                params.extend(feedback_types)
-            
-            query += " ORDER BY i.timestamp DESC LIMIT ?"
-            params.append(limit)
-            
-            rows = conn.execute(query, params).fetchall()
-            
-            return [dict(row) for row in rows]
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        
+        query = '''
+            SELECT i.*, q.quality_score, q.is_high_quality
+            FROM interactions i
+            JOIN data_quality q ON i.id = q.interaction_id
+            WHERE q.quality_score >= ?
+        '''
+        params = [min_quality_score]
+        
+        if feedback_types:
+            placeholders = ','.join('?' * len(feedback_types))
+            query += f" AND i.feedback_type IN ({placeholders})"
+            params.extend(feedback_types)
+        
+        query += " ORDER BY i.timestamp DESC LIMIT ?"
+        params.append(limit)
+        
+        rows = conn.execute(query, params).fetchall()
+        
+        return [dict(row) for row in rows]
     
     def export_for_sft(
         self,
@@ -338,25 +341,26 @@ class InteractionDataCollector:
     
     def get_statistics(self) -> Dict:
         """获取统计信息"""
-        with sqlite3.connect(self.db_path) as conn:
-            total = conn.execute('SELECT COUNT(*) FROM interactions').fetchone()[0]
-            positive = conn.execute(
-                "SELECT COUNT(*) FROM interactions WHERE feedback_type = 'positive'"
-            ).fetchone()[0]
-            negative = conn.execute(
-                "SELECT COUNT(*) FROM interactions WHERE feedback_type = 'negative'"
-            ).fetchone()[0]
-            correction = conn.execute(
-                "SELECT COUNT(*) FROM interactions WHERE feedback_type = 'correction'"
-            ).fetchone()[0]
-            
-            high_quality = conn.execute(
-                'SELECT COUNT(*) FROM data_quality WHERE is_high_quality = 1'
-            ).fetchone()[0]
-            
-            avg_score = conn.execute(
-                'SELECT AVG(total_score) FROM interactions WHERE total_score > 0'
-            ).fetchone()[0] or 0
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        total = conn.execute('SELECT COUNT(*) FROM interactions').fetchone()[0]
+        positive = conn.execute(
+            "SELECT COUNT(*) FROM interactions WHERE feedback_type = 'positive'"
+        ).fetchone()[0]
+        negative = conn.execute(
+            "SELECT COUNT(*) FROM interactions WHERE feedback_type = 'negative'"
+        ).fetchone()[0]
+        correction = conn.execute(
+            "SELECT COUNT(*) FROM interactions WHERE feedback_type = 'correction'"
+        ).fetchone()[0]
+        
+        high_quality = conn.execute(
+            'SELECT COUNT(*) FROM data_quality WHERE is_high_quality = 1'
+        ).fetchone()[0]
+        
+        avg_score = conn.execute(
+            'SELECT AVG(total_score) FROM interactions WHERE total_score > 0'
+        ).fetchone()[0] or 0
         
         return {
             'total_interactions': total,
