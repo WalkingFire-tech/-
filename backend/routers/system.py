@@ -23,7 +23,7 @@ async def get_stats():
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM experiences")
         stats["experiences"] = cursor.fetchone()[0]
-        conn.close()
+
     except Exception:
         stats["experiences"] = 0
     try:
@@ -37,7 +37,7 @@ async def get_stats():
         stats["pending_rules"] = cursor.fetchone()[0]
         cursor.execute("SELECT COUNT(*) FROM learning_rules")
         stats["rules"] = cursor.fetchone()[0]
-        conn.close()
+
     except Exception:
         stats["active_rules"] = 0
         stats["pending_rules"] = 0
@@ -233,63 +233,29 @@ async def auto_generate_coverage(max_endpoints: int = 10):
         result = auditor.auto_generate(max_endpoints)
         return result
     except Exception as e:
-        return {"error": str(e), "snippets": []}
-
-
-@router.get("/defense/status")
-async def get_defense_status():
-    try:
-        from core.defense.guardian import system_guardian
-        return system_guardian.get_status()
-    except Exception as e:
-        return {"error": str(e), "running": False}
-
-
-@router.post("/defense/circuit/reset")
-async def reset_circuit_breaker(request: dict):
-    name = request.get("name", "")
-    if not name:
-        return {"status": "error", "message": "缺少name"}
-    try:
-        from core.defense.circuit_breaker import circuit_breaker
-        circuit_breaker.reset(name)
-        return {"status": "ok", "message": f"熔断器{name}已重置"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-@router.post("/defense/isolation/release")
-async def release_isolation(request: dict):
-    module_name = request.get("module_name", "")
-    if not module_name:
-        return {"status": "error", "message": "缺少module_name"}
-    try:
-        from core.defense.fault_isolation import fault_isolator
-        fault_isolator.release(module_name)
-        return {"status": "ok", "message": f"模块{module_name}隔离已解除"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-@router.post("/defense/repair/run")
-async def run_cognitive_repair():
-    try:
-        from core.defense.cognitive_self_repair import cognitive_self_repair
-        return cognitive_self_repair.run_full_repair()
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-@router.get("/defense/anomalies")
-async def get_anomalies():
-    try:
-        from core.defense.anomaly_detector import anomaly_detector
-        return {
-            "recent_anomalies": anomaly_detector.get_anomalies(20),
-            "baselines": anomaly_detector.get_baselines(),
-        }
-    except Exception as e:
         return {"error": str(e)}
+
+
+@router.get("/self-model")
+async def get_self_model():
+    """获取系统自我模型的完整快照"""
+    try:
+        from core.self.model import get_self_model
+        model = get_self_model()
+        return model.snapshot()
+    except Exception as e:
+        return {"error": str(e), "status": "unavailable"}
+
+
+@router.get("/self-model/status")
+async def get_self_model_status():
+    """获取系统自我模型的简短状态摘要"""
+    try:
+        from core.self.model import get_self_model
+        model = get_self_model()
+        return model.get_status_summary()
+    except Exception as e:
+        return {"error": str(e), "status": "unavailable"}
 
 
 @router.get("/defense/health/metrics")

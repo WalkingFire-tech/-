@@ -169,6 +169,52 @@ async def _start_assessment_loop(app):
     logger.info("持续自我评估已启动")
 
 
+async def _start_evolution_loop(app):
+    """启动周期性进化循环 — 让进化岛持续在线运行"""
+    app.state.evolution_running = False
+    app.state.evolution_generation = 0
+
+    async def _periodic_evolution():
+        await asyncio.sleep(300)
+        while True:
+            try:
+                from core.evolution.evolution_island import run_evolution_sandbox
+                app.state.evolution_running = True
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: run_evolution_sandbox(
+                        main_db_path="data/knowledge_store.db",
+                        num_agents=4,
+                        generations=5,
+                    )
+                )
+                app.state.evolution_generation += result.get("stats", {}).get("generations", 0)
+                best_fitness = result.get("stats", {}).get("final_best_fitness", 0)
+                logger.info(f"进化岛周期运行完成: 最优适应度={best_fitness:.3f}, 累计代数={app.state.evolution_generation}")
+
+                _sm = None
+                try:
+                    from core.self.model import get_self_model
+                    _sm = get_self_model()
+                except Exception:
+                    pass
+                if _sm:
+                    _sm.update("evolution", {
+                        "last_fitness": best_fitness,
+                        "total_generations": app.state.evolution_generation,
+                        "last_run": datetime.now().isoformat(),
+                    })
+
+                app.state.evolution_running = False
+            except Exception as e:
+                logger.debug(f"进化岛周期运行失败: {e}")
+                app.state.evolution_running = False
+            await asyncio.sleep(600)
+
+    asyncio.create_task(_periodic_evolution())
+    logger.info("进化岛持续在线已启动（每10分钟运行一次）")
+
+
 async def _register_builtin_tools():
     """注册系统级工具"""
     try:
@@ -346,6 +392,7 @@ async def lifespan(app):
     await _start_guardian()
     await _start_hardware_monitoring()
     await _start_assessment_loop(app)
+    await _start_evolution_loop(app)
     await _register_builtin_tools()
     await _start_existence_layer()
     await _init_cognitive_planner(app)

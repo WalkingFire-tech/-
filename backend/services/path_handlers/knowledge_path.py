@@ -44,7 +44,7 @@ async def fetch_knowledge(query: str) -> dict:
             cursor = conn.cursor()
             cursor.execute("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{query[:30]}%",))
             row = cursor.fetchone()
-            conn.close()
+
             return row
         row = await asyncio.wait_for(loop.run_in_executor(_fast_executor, _query_know), timeout=5)
         if row and len(row[0]) > 30:

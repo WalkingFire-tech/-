@@ -239,6 +239,30 @@ async function sendMessage() {
                             }
                             currentStepEl = null;
                         }
+                    } else if (event.type === 'thinking') {
+                        const phase = event.phase || '';
+                        const confidence = event.confidence || 0;
+                        const emotion = event.emotion || '';
+                        const sources = event.sources || [];
+                        let thinkHtml = `<span class="step-icon">🧠</span> <strong>思考中</strong> - ${phase}`;
+                        if (confidence > 0) thinkHtml += ` (置信度${(confidence*100).toFixed(0)}%)`;
+                        if (emotion && emotion !== 'neutral') thinkHtml += ` [${emotion}]`;
+                        const thinkEl = document.createElement('div');
+                        thinkEl.style.marginTop = '4px';
+                        thinkEl.style.color = '#7c4dff';
+                        thinkEl.innerHTML = thinkHtml;
+                        stepsContainer.appendChild(thinkEl);
+                    } else if (event.type === 'learning') {
+                        const summary = event.summary || '';
+                        const learnConf = event.confidence || 0;
+                        const learnSources = event.sources || [];
+                        if (summary) {
+                            const learnEl = document.createElement('div');
+                            learnEl.style.marginTop = '4px';
+                            learnEl.style.color = '#2e7d32';
+                            learnEl.innerHTML = `<span class="step-icon">📚</span> <strong>学习发现</strong> - ${summary} (置信度${(learnConf*100).toFixed(0)}%)`;
+                            stepsContainer.appendChild(learnEl);
+                        }
                     } else if (event.type === 'result') {
                         finalResult = event;
                         if (event.session_id && !currentSessionId) {
@@ -571,7 +595,7 @@ async function runInduction() {
 }
 
 // 健康检查和统计
-async function checkHealth(retryCount = 0, maxRetry = 5) {
+async function checkHealth(retryCount = 0, maxRetry = 15) {
     const indicator = document.getElementById('status-indicator');
     const statusText = document.getElementById('status-text');
     
@@ -1522,6 +1546,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         loadStats();
         loadModels();
         refreshChatHistory();
+    } else {
+        setTimeout(() => { loadStats(); loadModels(); refreshChatHistory(); }, 5000);
     }
     // 定时刷新
     setInterval(checkHealth, 30000);
@@ -2739,6 +2765,16 @@ function connectProactivity() {
         proactivitySource.onmessage = function(event) {
             try {
                 const msg = JSON.parse(event.data);
+                if (msg.type === 'system_ready' && msg.action === 'reload_if_stale') {
+                    const statEl = document.getElementById('stat-experiences');
+                    if (statEl && (statEl.textContent === '0' || statEl.textContent === '')) {
+                        loadStats();
+                        loadModels();
+                        refreshChatHistory();
+                        checkHealth();
+                    }
+                    return;
+                }
                 showProactivityMessage(msg);
             } catch (e) {
                 console.warn('主动性消息解析失败:', e);

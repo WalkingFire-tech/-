@@ -52,7 +52,7 @@ from infrastructure.database_manager import DatabaseManager
 app = FastAPI(
     title="联盟拓荒者 API",
     description="生产级自我进化智能体系统 API",
-    version="3.7.0",
+    version="3.8.0",
     lifespan=lifespan
 )
 
@@ -96,7 +96,7 @@ async def root():
     if frontend_index.exists():
         with open(frontend_index, 'r', encoding='utf-8') as f:
             html_content = f.read()
-        return HTMLResponse(content=html_content)
+        return HTMLResponse(content=html_content, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     return {"message": "联盟拓荒者 API", "docs": "/docs"}
 
 
@@ -110,6 +110,7 @@ async def proactivity_stream():
     async def _generator():
         try:
             yield f"data: {json.dumps({'type': 'connected', 'content': 'SSE连接已建立'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'system_ready', 'action': 'reload_if_stale'}, ensure_ascii=False)}\n\n"
             while True:
                 try:
                     msg = await _asyncio.wait_for(q.get(), timeout=30.0)
