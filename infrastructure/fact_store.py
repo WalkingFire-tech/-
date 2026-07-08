@@ -9,7 +9,6 @@
 - V2: apply_decay(置信度衰减) + mark_used(使用追踪) + _should_override(7级来源优先级)
 - V3: rollback_to_version(版本回滚) + superseded_by链式引用
 """
-import sqlite3
 import hashlib
 import json
 import threading
@@ -22,6 +21,8 @@ try:
 except ImportError:
     import logging
     logger = logging.getLogger(__name__)
+
+from infrastructure.database_manager import DatabaseManager
 
 _write_lock = threading.Lock()
 
@@ -41,10 +42,9 @@ class FactStore:
         logger.info(f"📚 事实锚点库已初始化: {db_path}")
     
     def _connect(self):
-        """获取线程安全的数据库连接（WAL模式）"""
-        conn = sqlite3.connect(self.db_path, timeout=10.0)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        """获取线程安全的数据库连接"""
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
         return conn
     
     def _write_op(self, func, *args, **kwargs):
@@ -58,8 +58,6 @@ class FactStore:
             except Exception:
                 conn.rollback()
                 raise
-            finally:
-                conn.close()
     
     def _init_database(self):
         """初始化数据库表结构"""
@@ -227,7 +225,6 @@ class FactStore:
         question_hash = self.hash_question(question)
         
         with self._connect() as conn:
-            conn.row_factory = sqlite3.Row
             cursor = conn.execute('''
                 SELECT subject, predicate, object, source, confidence, is_negation
                 FROM fact_assertions
@@ -242,7 +239,6 @@ class FactStore:
         question_hash = self.hash_question(question)
         
         with self._connect() as conn:
-            conn.row_factory = sqlite3.Row
             cursor = conn.execute('''
                 SELECT subject, predicate, object, source
                 FROM fact_assertions
@@ -297,7 +293,6 @@ class FactStore:
         results = []
         seen_keys = set()
         with self._connect() as conn:
-            conn.row_factory = sqlite3.Row
             for kw in keywords[:10]:
                 cursor = conn.execute('''
                     SELECT subject, predicate, object, source, confidence
@@ -437,26 +432,28 @@ class FactStore:
 
         def _do(conn):
             nonlocal decayed
-            conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 'SELECT id, confidence, use_count, last_used FROM fact_assertions WHERE is_negation = 0 AND is_active = 1'
             ).fetchall()
             for row in rows:
-                last = row['last_used']
+                last = row['last_used'] if hasattr(row, 'keys') and 'last_used' in row.keys() else row[5]
                 if last:
                     try:
                         last_ts = datetime.fromisoformat(last).timestamp()
                         if last_ts < cutoff:
-                            use_boost = min(row['use_count'] * 0.01, 0.1)
-                            new_conf = max(0.1, row['confidence'] * decay_rate + use_boost)
-                            if new_conf < row['confidence']:
+                            use_count = row['use_count'] if hasattr(row, 'keys') and 'use_count' in row.keys() else row[4]
+                            confidence = row['confidence'] if hasattr(row, 'keys') and 'confidence' in row.keys() else row[1]
+                            row_id = row['id'] if hasattr(row, 'keys') and 'id' in row.keys() else row[0]
+                            use_boost = min(use_count * 0.01, 0.1)
+                            new_conf = max(0.1, confidence * decay_rate + use_boost)
+                            if new_conf < confidence:
                                 conn.execute(
                                     'UPDATE fact_assertions SET confidence = ?, decay_factor = ? WHERE id = ?',
-                                    (new_conf, decay_rate, row['id'])
+                                    (new_conf, decay_rate, row_id)
                                 )
                                 conn.execute(
                                     'INSERT INTO confidence_decay_log (assertion_id, old_confidence, new_confidence, reason) VALUES (?, ?, ?, ?)',
-                                    (row['id'], row['confidence'], new_conf, f'unused_{days_unused}d')
+                                    (row_id, confidence, new_conf, f'unused_{days_unused}d')
                                 )
                                 decayed += 1
                     except Exception:
@@ -491,7 +488,6 @@ class FactStore:
         """获取有效断言（V3能力，版本感知）"""
         question_hash = self.hash_question(question)
         with self._connect() as conn:
-            conn.row_factory = sqlite3.Row
             cursor = conn.execute('''
                 SELECT id, subject, predicate, object, source, confidence, version, is_negation
                 FROM fact_assertions
@@ -504,7 +500,6 @@ class FactStore:
         """断言历史版本（V3能力）"""
         question_hash = self.hash_question(question)
         with self._connect() as conn:
-            conn.row_factory = sqlite3.Row
             cursor = conn.execute('''
                 SELECT id, object, source, confidence, version, is_active, superseded_by, created_at
                 FROM fact_assertions
@@ -515,7 +510,6 @@ class FactStore:
 
     def rollback_to_version(self, assertion_id: int, target_version: int) -> bool:
         def _do(conn):
-            conn.row_factory = sqlite3.Row
             current = conn.execute('SELECT id, question_hash, subject, predicate FROM fact_assertions WHERE id = ?', (assertion_id,)).fetchone()
             if not current:
                 return False

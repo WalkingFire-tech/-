@@ -8,6 +8,7 @@ import json
 from typing import Dict, Optional
 from datetime import datetime
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 
 class OnlineReflector:
@@ -147,8 +148,6 @@ class OnlineReflector:
     
     def _generate_rule_from_analysis(self, analysis: Dict) -> Optional[Dict]:
         """从分析结果生成规则"""
-        import sqlite3
-        
         intent_type = analysis["intent_type"]
         model_name = analysis["model_name"]
         action_type = analysis["suggested_action"]
@@ -193,21 +192,20 @@ class OnlineReflector:
     def _find_better_model(self, intent_type: str, current_model: str) -> Optional[str]:
         """查找更好的模型"""
         try:
-            import sqlite3
+            db = DatabaseManager.get("data/model_stats.db")
+            conn = db._get_conn()
+            cur = conn.execute('''
+                SELECT model_name, AVG(quality)
+                FROM model_calls
+                WHERE intent_type = ?
+                GROUP BY model_name
+                ORDER BY AVG(quality) DESC
+                LIMIT 3
+            ''', (intent_type,))
             
-            with sqlite3.connect("data/model_stats.db") as conn:
-                cur = conn.execute('''
-                    SELECT model_name, AVG(quality)
-                    FROM model_calls
-                    WHERE intent_type = ?
-                    GROUP BY model_name
-                    ORDER BY AVG(quality) DESC
-                    LIMIT 3
-                ''', (intent_type,))
-                
-                for row in cur.fetchall():
-                    if row[0] != current_model:
-                        return row[0]
+            for row in cur.fetchall():
+                if row[0] != current_model:
+                    return row[0]
             
             return None
             
@@ -217,22 +215,21 @@ class OnlineReflector:
     
     def _save_rule(self, rule: Dict):
         """保存规则到数据库"""
-        import sqlite3
-        
-        with sqlite3.connect("data/learning_rules.db") as conn:
-            conn.execute('''
-                INSERT INTO learning_rules
-                (condition, action, confidence, status, source, priority, created_at)
-                VALUES (?, ?, ?, 'pending', ?, ?, ?)
-            ''', (
-                rule["condition"],
-                rule["action"],
-                rule["confidence"],
-                rule["source"],
-                rule["priority"],
-                rule["created_at"]
-            ))
-            conn.commit()
+        db = DatabaseManager.get("data/learning_rules.db")
+        conn = db._get_conn()
+        conn.execute('''
+            INSERT INTO learning_rules
+            (condition, action, confidence, status, source, priority, created_at)
+            VALUES (?, ?, ?, 'pending', ?, ?, ?)
+        ''', (
+            rule["condition"],
+            rule["action"],
+            rule["confidence"],
+            rule["source"],
+            rule["priority"],
+            rule["created_at"]
+        ))
+        conn.commit()
     
     def get_stats(self) -> Dict:
         """获取统计信息"""

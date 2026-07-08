@@ -4,13 +4,13 @@
 """
 import re
 import time
-import sqlite3
 import threading
 import json
 from collections import deque
 from typing import Dict, List, Optional, Tuple
 from loguru import logger
 from infrastructure.event_bus import bus
+from infrastructure.database_manager import DatabaseManager
 
 
 class SemanticShiftDetector:
@@ -269,21 +269,21 @@ class DialogueStreamLearner:
         """处理隐式否定 - 标记低质量交互"""
         try:
             with self._db_lock:
-                with sqlite3.connect('data/experience_pool.db') as conn:
-                    cursor = conn.cursor()
-                    
-                    cursor.execute("""
-                        UPDATE experiences
-                        SET quality_score = 20,
-                            user_feedback = -1
-                        WHERE id = (
-                            SELECT id FROM experiences
-                            ORDER BY timestamp DESC
-                            LIMIT 1
-                        )
-                    """)
-                    
-                    conn.commit()
+                db = DatabaseManager.get('data/experience_pool.db')
+                conn = db._get_conn()
+                
+                conn.execute("""
+                    UPDATE experiences
+                    SET quality_score = 20,
+                        user_feedback = -1
+                    WHERE id = (
+                        SELECT id FROM experiences
+                        ORDER BY timestamp DESC
+                        LIMIT 1
+                    )
+                """)
+                
+                conn.commit()
             
             logger.info("已标记最近交互为低质量（隐式否定）")
             
@@ -309,24 +309,24 @@ class DialogueStreamLearner:
             }, ensure_ascii=False)
             
             with self._db_lock:
-                with sqlite3.connect('data/learning_rules.db') as conn:
-                    cursor = conn.cursor()
-                    
-                    cursor.execute("""
-                        INSERT INTO learning_rules
-                        (condition, action, priority, confidence, status, source, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        condition_data,
-                        "prefer_context:user_correction",
-                        5,
-                        0.8,
-                        'active',
-                        'correction',
-                        time.time()
-                    ))
-                    
-                    conn.commit()
+                db = DatabaseManager.get('data/learning_rules.db')
+                conn = db._get_conn()
+                
+                conn.execute("""
+                    INSERT INTO learning_rules
+                    (condition, action, priority, confidence, status, source, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    condition_data,
+                    "prefer_context:user_correction",
+                    5,
+                    0.8,
+                    'active',
+                    'correction',
+                    time.time()
+                ))
+                
+                conn.commit()
             
             logger.info(f"从用户修正生成规则: '{correct_content[:30]}'")
             

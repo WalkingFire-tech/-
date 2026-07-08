@@ -7,7 +7,6 @@ import re
 from typing import List, Dict, Optional
 from loguru import logger
 from datetime import datetime
-import sqlite3
 from pathlib import Path
 from infrastructure.database_manager import DatabaseManager
 
@@ -30,20 +29,21 @@ class ResultFusion:
     
     def _init_db(self):
         """初始化数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS fusions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    task_id TEXT,
-                    strategy TEXT,
-                    subtask_count INTEGER,
-                    input_results TEXT,
-                    fused_result TEXT,
-                    quality_score REAL,
-                    timestamp TEXT
-                )
-            ''')
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS fusions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT,
+                strategy TEXT,
+                subtask_count INTEGER,
+                input_results TEXT,
+                fused_result TEXT,
+                quality_score REAL,
+                timestamp TEXT
+            )
+        ''')
+        conn.commit()
     
     def fuse(self, subtasks: List[Dict], results: List[str],
             original_intent: str, strategy: str = 'auto',
@@ -279,35 +279,37 @@ class ResultFusion:
                     subtask_count: int, input_results: List[str],
                     fused_result: str):
         """保存融合记录"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT INTO fusions
-                (task_id, strategy, subtask_count, input_results, fused_result, quality_score, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                task_id,
-                strategy,
-                subtask_count,
-                json.dumps(input_results, ensure_ascii=False)[:1000],
-                fused_result[:2000],
-                self._estimate_quality(fused_result),
-                datetime.now().isoformat()
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            INSERT INTO fusions
+            (task_id, strategy, subtask_count, input_results, fused_result, quality_score, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            task_id,
+            strategy,
+            subtask_count,
+            json.dumps(input_results, ensure_ascii=False)[:1000],
+            fused_result[:2000],
+            self._estimate_quality(fused_result),
+            datetime.now().isoformat()
+        ))
+        conn.commit()
     
     def get_fusion_stats(self) -> Dict:
         """获取融合统计"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('SELECT COUNT(*) FROM fusions')
-            total = cursor.fetchone()[0]
-            
-            cursor = conn.execute('SELECT strategy, COUNT(*) FROM fusions GROUP BY strategy')
-            strategy_counts = dict(cursor.fetchall())
-            
-            return {
-                'total_fusions': total,
-                'strategies': strategy_counts
-            }
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('SELECT COUNT(*) FROM fusions')
+        total = cursor.fetchone()[0]
+        
+        cursor = conn.execute('SELECT strategy, COUNT(*) FROM fusions GROUP BY strategy')
+        strategy_counts = dict(cursor.fetchall())
+        
+        return {
+            'total_fusions': total,
+            'strategies': strategy_counts
+        }
 
 
 result_fusion = ResultFusion()

@@ -23,6 +23,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 from pathlib import Path
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 _SKLEARN_AVAILABLE = False
 try:
@@ -494,28 +495,27 @@ class VectorRetriever:
         return embedding
 
     def get_successful_plans(self, intent_type: str = None, min_quality: int = 70) -> List[Dict]:
-        import sqlite3
         db_path = "data/experience_pool.db"
         try:
-            with sqlite3.connect(db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                if intent_type:
-                    cur = conn.execute('''
-                        SELECT intent_type, raw_input, plan, model_name,
-                               quality_score, duration, response
-                        FROM experiences
-                        WHERE intent_type = ? AND quality_score >= ? AND success = 1
-                        ORDER BY quality_score DESC LIMIT 100
-                    ''', (intent_type, min_quality))
-                else:
-                    cur = conn.execute('''
-                        SELECT intent_type, raw_input, plan, model_name,
-                               quality_score, duration, response
-                        FROM experiences
-                        WHERE quality_score >= ? AND success = 1
-                        ORDER BY quality_score DESC LIMIT 100
-                    ''', (min_quality,))
-                return [dict(row) for row in cur.fetchall()]
+            db = DatabaseManager.get(db_path)
+            conn = db._get_conn()
+            if intent_type:
+                cur = conn.execute('''
+                    SELECT intent_type, raw_input, plan, model_name,
+                           quality_score, duration, response
+                    FROM experiences
+                    WHERE intent_type = ? AND quality_score >= ? AND success = 1
+                    ORDER BY quality_score DESC LIMIT 100
+                ''', (intent_type, min_quality))
+            else:
+                cur = conn.execute('''
+                    SELECT intent_type, raw_input, plan, model_name,
+                           quality_score, duration, response
+                    FROM experiences
+                    WHERE quality_score >= ? AND success = 1
+                    ORDER BY quality_score DESC LIMIT 100
+                ''', (min_quality,))
+            return [dict(row) for row in cur.fetchall()]
         except Exception as e:
             logger.error(f"获取成功计划失败: {e}")
             return []

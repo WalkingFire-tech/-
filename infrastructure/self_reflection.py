@@ -2,7 +2,6 @@
 自我反思报告生成器 - 定期生成系统进化报告
 分析能力矩阵变化、调度成功率、规则激活情况
 """
-import sqlite3
 import json
 import threading
 import tempfile
@@ -11,6 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 
 class SelfReflectionReport:
@@ -121,21 +121,22 @@ class SelfReflectionReport:
     def _analyze_rule_activation(self, since: datetime) -> Dict:
         """分析规则激活情况"""
         try:
-            with sqlite3.connect('data/learning_rules.db') as conn:
-                cursor = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
-                active_rules = cursor.fetchone()[0]
-                
-                cursor = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
-                pending_rules = cursor.fetchone()[0]
-                
-                cursor = conn.execute('''
-                    SELECT id, condition, action, confidence
-                    FROM learning_rules
-                    WHERE status='active'
-                    ORDER BY last_applied DESC
-                    LIMIT 5
-                ''')
-                recent_rules = cursor.fetchall()
+            db = DatabaseManager.get('data/learning_rules.db')
+            conn = db._get_conn()
+            cursor = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
+            active_rules = cursor.fetchone()[0]
+            
+            cursor = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
+            pending_rules = cursor.fetchone()[0]
+            
+            cursor = conn.execute('''
+                SELECT id, condition, action, confidence
+                FROM learning_rules
+                WHERE status='active'
+                ORDER BY last_applied DESC
+                LIMIT 5
+            ''')
+            recent_rules = cursor.fetchall()
             
             insights = []
             if active_rules > 20:

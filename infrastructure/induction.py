@@ -3,7 +3,6 @@
 支持LLM归纳和规则引擎降级
 """
 import json
-import sqlite3
 import re
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -65,27 +64,28 @@ class InductionEngine:
         try:
             db_path = "experience_pool.db"
             
-            with sqlite3.connect(db_path) as conn:
-                if intent_type:
-                    cur = conn.execute('''
-                        SELECT intent_type, raw_input, plan, model_name, 
-                               quality_score, success, user_feedback
-                        FROM experiences
-                        WHERE quality_score >= ? AND intent_type = ? AND success = 1
-                        ORDER BY quality_score DESC
-                        LIMIT ?
-                    ''', (min_quality, intent_type, limit))
-                else:
-                    cur = conn.execute('''
-                        SELECT intent_type, raw_input, plan, model_name,
-                               quality_score, success, user_feedback
-                        FROM experiences
-                        WHERE quality_score >= ? AND success = 1
-                        ORDER BY quality_score DESC
-                        LIMIT ?
-                    ''', (min_quality, limit))
-                
-                return [dict(row) for row in cur.fetchall()]
+            db = DatabaseManager.get(db_path)
+            conn = db._get_conn()
+            if intent_type:
+                cur = conn.execute('''
+                    SELECT intent_type, raw_input, plan, model_name, 
+                           quality_score, success, user_feedback
+                    FROM experiences
+                    WHERE quality_score >= ? AND intent_type = ? AND success = 1
+                    ORDER BY quality_score DESC
+                    LIMIT ?
+                ''', (min_quality, intent_type, limit))
+            else:
+                cur = conn.execute('''
+                    SELECT intent_type, raw_input, plan, model_name,
+                           quality_score, success, user_feedback
+                    FROM experiences
+                    WHERE quality_score >= ? AND success = 1
+                    ORDER BY quality_score DESC
+                    LIMIT ?
+                ''', (min_quality, limit))
+            
+            return [dict(row) for row in cur.fetchall()]
         
         except Exception as e:
             logger.error(f"获取高质量经验失败: {e}")
@@ -97,27 +97,28 @@ class InductionEngine:
         try:
             db_path = "experience_pool.db"
             
-            with sqlite3.connect(db_path) as conn:
-                if intent_type:
-                    cur = conn.execute('''
-                        SELECT intent_type, raw_input, plan, model_name,
-                               quality_score, success, user_feedback
-                        FROM experiences
-                        WHERE quality_score < 50 AND intent_type = ? AND success = 0
-                        ORDER BY quality_score ASC
-                        LIMIT ?
-                    ''', (intent_type, limit))
-                else:
-                    cur = conn.execute('''
-                        SELECT intent_type, raw_input, plan, model_name,
-                               quality_score, success, user_feedback
-                        FROM experiences
-                        WHERE quality_score < 50 AND success = 0
-                        ORDER BY quality_score ASC
-                        LIMIT ?
-                    ''', (limit,))
-                
-                return [dict(row) for row in cur.fetchall()]
+            db = DatabaseManager.get(db_path)
+            conn = db._get_conn()
+            if intent_type:
+                cur = conn.execute('''
+                    SELECT intent_type, raw_input, plan, model_name,
+                           quality_score, success, user_feedback
+                    FROM experiences
+                    WHERE quality_score < 50 AND intent_type = ? AND success = 0
+                    ORDER BY quality_score ASC
+                    LIMIT ?
+                ''', (intent_type, limit))
+            else:
+                cur = conn.execute('''
+                    SELECT intent_type, raw_input, plan, model_name,
+                           quality_score, success, user_feedback
+                    FROM experiences
+                    WHERE quality_score < 50 AND success = 0
+                    ORDER BY quality_score ASC
+                    LIMIT ?
+                ''', (limit,))
+            
+            return [dict(row) for row in cur.fetchall()]
         
         except Exception as e:
             logger.error(f"获取失败经验失败: {e}")
@@ -219,26 +220,27 @@ class InductionEngine:
     def _save_rule(self, rule: Dict) -> Optional[int]:
         """保存规则到数据库"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cur = conn.execute('''
-                    INSERT INTO learning_rules
-                    (condition, action, priority, confidence, status, source, created_at, metadata)
-                    VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
-                ''', (
-                    rule["condition"],
-                    rule["action"],
-                    rule.get("priority", 3),
-                    rule.get("confidence", 0.5),
-                    rule.get("source", "induction"),
-                    datetime.now().isoformat(),
-                    rule.get("metadata", "{}")
-                ))
-                
-                rule_id = cur.lastrowid
-                conn.commit()
-                
-                logger.debug(f"规则已保存, ID: {rule_id}, 条件: {rule['condition'][:50]}")
-                return rule_id
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cur = conn.execute('''
+                INSERT INTO learning_rules
+                (condition, action, priority, confidence, status, source, created_at, metadata)
+                VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
+            ''', (
+                rule["condition"],
+                rule["action"],
+                rule.get("priority", 3),
+                rule.get("confidence", 0.5),
+                rule.get("source", "induction"),
+                datetime.now().isoformat(),
+                rule.get("metadata", "{}")
+            ))
+            
+            rule_id = cur.lastrowid
+            conn.commit()
+            
+            logger.debug(f"规则已保存, ID: {rule_id}, 条件: {rule['condition'][:50]}")
+            return rule_id
         
         except Exception as e:
             logger.error(f"保存规则失败: {e}")

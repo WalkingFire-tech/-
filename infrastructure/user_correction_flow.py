@@ -14,6 +14,7 @@ except ImportError:
 from infrastructure.fact_store import fact_store
 from infrastructure.verification_loop import knowledge_verification_loop
 from infrastructure.triple_extractor import triple_extractor
+from infrastructure.database_manager import DatabaseManager
 
 
 class UserCorrectionFlow:
@@ -180,16 +181,15 @@ class UserCorrectionFlow:
         """获取问题的纠错历史"""
         question_hash = self.fact_store.hash_question(question)
         
-        import sqlite3
-        with sqlite3.connect(self.fact_store.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute('''
-                SELECT * FROM correction_history
-                WHERE question_hash = ?
-                ORDER BY id DESC
-            ''', (question_hash,))
-            
-            return [dict(row) for row in cursor.fetchall()]
+        db = DatabaseManager.get(self.fact_store.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT * FROM correction_history
+            WHERE question_hash = ?
+            ORDER BY id DESC
+        ''', (question_hash,))
+        
+        return [dict(row) for row in cursor.fetchall()]
 
 
 user_correction_flow = UserCorrectionFlow()

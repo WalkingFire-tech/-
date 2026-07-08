@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Callable
 from datetime import datetime
 from loguru import logger
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 
 
 class ReflexRule:
@@ -120,28 +120,29 @@ class ReflexRule:
                 else:
                     safe_context[key] = value
             
-            with sqlite3.connect("reflex_logs.db") as conn:
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS reflex_triggers (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        rule_name TEXT,
-                        priority INTEGER,
-                        action TEXT,
-                        context TEXT,
-                        timestamp TEXT
-                    )
-                ''')
-                conn.execute('''
-                    INSERT INTO reflex_triggers
-                    (rule_name, priority, action, context, timestamp)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (
-                    self.name,
-                    self.priority,
-                    self.action,
-                    str(safe_context)[:200],
-                    datetime.now().isoformat()
-                ))
+            db = DatabaseManager.get("reflex_logs.db")
+            conn = db._get_conn()
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS reflex_triggers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rule_name TEXT,
+                    priority INTEGER,
+                    action TEXT,
+                    context TEXT,
+                    timestamp TEXT
+                )
+            ''')
+            conn.execute('''
+                INSERT INTO reflex_triggers
+                (rule_name, priority, action, context, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (
+                self.name,
+                self.priority,
+                self.action,
+                str(safe_context)[:200],
+                datetime.now().isoformat()
+            ))
         except Exception as e:
             logger.error(f"反射日志记录失败: {e}")
 

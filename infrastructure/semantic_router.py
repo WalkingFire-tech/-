@@ -4,11 +4,11 @@
 """
 import numpy as np
 import os
-import sqlite3
 import json
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -354,82 +354,85 @@ class SemanticRouter:
         
         # 保存到数据库
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS routing_history (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        message TEXT,
-                        skills TEXT,
-                        confidences TEXT,
-                        emotion REAL,
-                        timestamp TEXT
-                    )
-                ''')
-                
-                conn.execute('''
-                    INSERT INTO routing_history 
-                    (message, skills, confidences, emotion, timestamp)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (
-                    record["message"],
-                    json.dumps(record["skills"]),
-                    json.dumps(record["confidences"]),
-                    record["emotion"],
-                    record["timestamp"]
-                ))
-                
-                conn.commit()
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS routing_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message TEXT,
+                    skills TEXT,
+                    confidences TEXT,
+                    emotion REAL,
+                    timestamp TEXT
+                )
+            ''')
+            
+            conn.execute('''
+                INSERT INTO routing_history 
+                (message, skills, confidences, emotion, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (
+                record["message"],
+                json.dumps(record["skills"]),
+                json.dumps(record["confidences"]),
+                record["emotion"],
+                record["timestamp"]
+            ))
+            
+            conn.commit()
         except Exception as e:
             logger.debug(f"记录路由历史失败: {e}")
     
     def _load_routing_history(self):
         """加载路由历史"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute('''
-                    SELECT message, skills, confidences, emotion, timestamp
-                    FROM routing_history
-                    ORDER BY timestamp DESC
-                    LIMIT 1000
-                ''')
-                
-                for row in cursor.fetchall():
-                    self.routing_history.append({
-                        "message": row[0],
-                        "skills": json.loads(row[1]),
-                        "confidences": json.loads(row[2]),
-                        "emotion": row[3],
-                        "timestamp": row[4]
-                    })
-                
-                logger.info(f"加载{len(self.routing_history)}条路由历史")
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.execute('''
+                SELECT message, skills, confidences, emotion, timestamp
+                FROM routing_history
+                ORDER BY timestamp DESC
+                LIMIT 1000
+            ''')
+            
+            for row in cursor.fetchall():
+                self.routing_history.append({
+                    "message": row[0],
+                    "skills": json.loads(row[1]),
+                    "confidences": json.loads(row[2]),
+                    "emotion": row[3],
+                    "timestamp": row[4]
+                })
+            
+            logger.info(f"加载{len(self.routing_history)}条路由历史")
         except:
             pass
     
     def _save_evolved_vectors(self):
         """保存进化后的向量"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS skill_vectors (
+                    skill_name TEXT PRIMARY KEY,
+                    vector BLOB,
+                    updated_at TEXT
+                )
+            ''')
+            
+            for skill_name, vector in self.skill_vectors.items():
                 conn.execute('''
-                    CREATE TABLE IF NOT EXISTS skill_vectors (
-                        skill_name TEXT PRIMARY KEY,
-                        vector BLOB,
-                        updated_at TEXT
-                    )
-                ''')
-                
-                for skill_name, vector in self.skill_vectors.items():
-                    conn.execute('''
-                        INSERT OR REPLACE INTO skill_vectors 
-                        (skill_name, vector, updated_at)
-                        VALUES (?, ?, ?)
-                    ''', (
-                        skill_name,
-                        vector.tobytes(),
-                        datetime.now().isoformat()
-                    ))
-                
-                conn.commit()
+                    INSERT OR REPLACE INTO skill_vectors 
+                    (skill_name, vector, updated_at)
+                    VALUES (?, ?, ?)
+                ''', (
+                    skill_name,
+                    vector.tobytes(),
+                    datetime.now().isoformat()
+                ))
+            
+            conn.commit()
         except Exception as e:
             logger.warning(f"保存技能向量失败: {e}")
     

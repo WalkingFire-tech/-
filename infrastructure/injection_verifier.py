@@ -6,12 +6,15 @@ from typing import Dict, List, Optional
 from datetime import datetime
 from dataclasses import dataclass
 import json
+import os
 
 try:
     from loguru import logger
 except ImportError:
     import logging
     logger = logging.getLogger(__name__)
+
+from infrastructure.database_manager import DatabaseManager
 
 
 @dataclass
@@ -42,15 +45,12 @@ class InjectionVerifier:
     
     def _init_db(self):
         """初始化验证结果存储"""
-        import sqlite3
-        import os
-        
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
         
-        cursor.execute('''
+        conn.execute('''
             CREATE TABLE IF NOT EXISTS injection_verifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 injection_id TEXT NOT NULL,
@@ -65,7 +65,6 @@ class InjectionVerifier:
         ''')
         
         conn.commit()
-        conn.close()
     
     def verify_injection(
         self,
@@ -140,12 +139,10 @@ class InjectionVerifier:
     
     def _save_result(self, result: VerificationResult):
         """保存验证结果到数据库"""
-        import sqlite3
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
         
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
+        conn.execute('''
             INSERT INTO injection_verifications
             (injection_id, question, before_score, after_score, improvement, passed, verified_at, details)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -161,7 +158,6 @@ class InjectionVerifier:
         ))
         
         conn.commit()
-        conn.close()
     
     def get_verification_stats(self) -> Dict:
         """获取验证统计"""
