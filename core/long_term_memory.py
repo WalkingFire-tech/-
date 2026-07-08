@@ -8,9 +8,9 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 from enum import Enum
 import json
-import sqlite3
 from pathlib import Path
 import threading
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -104,58 +104,59 @@ class LongTermMemory:
     
     def _init_database(self):
         """初始化数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS memories (
-                    id TEXT PRIMARY KEY,
-                    type TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    importance INTEGER NOT NULL,
-                    created_at TEXT NOT NULL,
-                    last_accessed TEXT NOT NULL,
-                    access_count INTEGER DEFAULT 0,
-                    decay_rate REAL DEFAULT 0.1,
-                    emotional_valence REAL DEFAULT 0.0,
-                    context TEXT,
-                    associations TEXT,
-                    source TEXT DEFAULT 'unknown',
-                    confidence REAL DEFAULT 0.8
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS conversations (
-                    conversation_id TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL,
-                    started_at TEXT NOT NULL,
-                    ended_at TEXT,
-                    messages TEXT,
-                    topics TEXT,
-                    emotions TEXT,
-                    satisfaction REAL,
-                    key_memories TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id TEXT PRIMARY KEY,
-                    first_seen TEXT NOT NULL,
-                    last_seen TEXT NOT NULL,
-                    total_conversations INTEGER DEFAULT 0,
-                    total_messages INTEGER DEFAULT 0,
-                    trust_score REAL DEFAULT 0.5,
-                    relationship_depth REAL DEFAULT 0.0,
-                    preferences TEXT,
-                    important_topics TEXT
-                )
-            ''')
-            
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id)')
-            
-            conn.commit()
+        db = DatabaseManager.get(str(self.db_path))
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS memories (
+                id TEXT PRIMARY KEY,
+                type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                importance INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                last_accessed TEXT NOT NULL,
+                access_count INTEGER DEFAULT 0,
+                decay_rate REAL DEFAULT 0.1,
+                emotional_valence REAL DEFAULT 0.0,
+                context TEXT,
+                associations TEXT,
+                source TEXT DEFAULT 'unknown',
+                confidence REAL DEFAULT 0.8
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS conversations (
+                conversation_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                messages TEXT,
+                topics TEXT,
+                emotions TEXT,
+                satisfaction REAL,
+                key_memories TEXT
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                total_conversations INTEGER DEFAULT 0,
+                total_messages INTEGER DEFAULT 0,
+                trust_score REAL DEFAULT 0.5,
+                relationship_depth REAL DEFAULT 0.0,
+                preferences TEXT,
+                important_topics TEXT
+            )
+        ''')
+        
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id)')
+        
+        conn.commit()
     
     def store_memory(
         self,
@@ -185,29 +186,30 @@ class LongTermMemory:
         with self._lock:
             self.memory_cache[memory_id] = memory
             
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    INSERT INTO memories 
-                    (id, type, content, importance, created_at, last_accessed,
-                     access_count, decay_rate, emotional_valence, context, 
-                     associations, source, confidence)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    memory.id,
-                    memory.type.value,
-                    json.dumps(content, ensure_ascii=False),
-                    memory.importance.value,
-                    memory.created_at.isoformat(),
-                    memory.last_accessed.isoformat(),
-                    memory.access_count,
-                    memory.decay_rate,
-                    memory.emotional_valence,
-                    json.dumps(memory.context, ensure_ascii=False),
-                    json.dumps(memory.associations),
-                    memory.source,
-                    memory.confidence,
-                ))
-                conn.commit()
+            db = DatabaseManager.get(str(self.db_path))
+            conn = db._get_conn()
+            conn.execute('''
+                INSERT INTO memories 
+                (id, type, content, importance, created_at, last_accessed,
+                 access_count, decay_rate, emotional_valence, context, 
+                 associations, source, confidence)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                memory.id,
+                memory.type.value,
+                json.dumps(content, ensure_ascii=False),
+                memory.importance.value,
+                memory.created_at.isoformat(),
+                memory.last_accessed.isoformat(),
+                memory.access_count,
+                memory.decay_rate,
+                memory.emotional_valence,
+                json.dumps(memory.context, ensure_ascii=False),
+                json.dumps(memory.associations),
+                memory.source,
+                memory.confidence,
+            ))
+            conn.commit()
         
         logger.debug(f"存储记忆: {memory_id} ({memory_type.value})")
         return memory_id
@@ -220,42 +222,43 @@ class LongTermMemory:
             memory.access_count += 1
             return memory
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
-                'SELECT * FROM memories WHERE id = ?',
-                (memory_id,)
+        db = DatabaseManager.get(str(self.db_path))
+        conn = db._get_conn()
+        cursor = conn.execute(
+            'SELECT * FROM memories WHERE id = ?',
+            (memory_id,)
+        )
+        row = cursor.fetchone()
+        
+        if row:
+            memory = MemoryItem(
+                id=row[0],
+                type=MemoryType(row[1]),
+                content=json.loads(row[2]),
+                importance=MemoryImportance(row[3]),
+                created_at=datetime.fromisoformat(row[4]),
+                last_accessed=datetime.fromisoformat(row[5]),
+                access_count=row[6],
+                decay_rate=row[7],
+                emotional_valence=row[8],
+                context=json.loads(row[9]) if row[9] else {},
+                associations=json.loads(row[10]) if row[10] else [],
+                source=row[11],
+                confidence=row[12],
             )
-            row = cursor.fetchone()
             
-            if row:
-                memory = MemoryItem(
-                    id=row[0],
-                    type=MemoryType(row[1]),
-                    content=json.loads(row[2]),
-                    importance=MemoryImportance(row[3]),
-                    created_at=datetime.fromisoformat(row[4]),
-                    last_accessed=datetime.fromisoformat(row[5]),
-                    access_count=row[6],
-                    decay_rate=row[7],
-                    emotional_valence=row[8],
-                    context=json.loads(row[9]) if row[9] else {},
-                    associations=json.loads(row[10]) if row[10] else [],
-                    source=row[11],
-                    confidence=row[12],
-                )
-                
-                conn.execute('''
-                    UPDATE memories 
-                    SET last_accessed = ?, access_count = ?
-                    WHERE id = ?
-                ''', (datetime.now().isoformat(), memory.access_count + 1, memory_id))
-                conn.commit()
-                
-                memory.last_accessed = datetime.now()
-                memory.access_count += 1
-                self.memory_cache[memory_id] = memory
-                
-                return memory
+            conn.execute('''
+                UPDATE memories 
+                SET last_accessed = ?, access_count = ?
+                WHERE id = ?
+            ''', (datetime.now().isoformat(), memory.access_count + 1, memory_id))
+            conn.commit()
+            
+            memory.last_accessed = datetime.now()
+            memory.access_count += 1
+            self.memory_cache[memory_id] = memory
+            
+            return memory
         
         return None
     
@@ -269,40 +272,41 @@ class LongTermMemory:
         """搜索记忆"""
         memories = []
         
-        with sqlite3.connect(self.db_path) as conn:
-            sql = 'SELECT * FROM memories WHERE content LIKE ?'
-            params = [f'%{query}%']
-            
-            if memory_type:
-                sql += ' AND type = ?'
-                params.append(memory_type.value)
-            
-            if min_importance:
-                sql += ' AND importance >= ?'
-                params.append(min_importance.value)
-            
-            sql += ' ORDER BY importance DESC, last_accessed DESC LIMIT ?'
-            params.append(limit)
-            
-            cursor = conn.execute(sql, params)
-            
-            for row in cursor.fetchall():
-                memory = MemoryItem(
-                    id=row[0],
-                    type=MemoryType(row[1]),
-                    content=json.loads(row[2]),
-                    importance=MemoryImportance(row[3]),
-                    created_at=datetime.fromisoformat(row[4]),
-                    last_accessed=datetime.fromisoformat(row[5]),
-                    access_count=row[6],
-                    decay_rate=row[7],
-                    emotional_valence=row[8],
-                    context=json.loads(row[9]) if row[9] else {},
-                    associations=json.loads(row[10]) if row[10] else [],
-                    source=row[11],
-                    confidence=row[12],
-                )
-                memories.append(memory)
+        db = DatabaseManager.get(str(self.db_path))
+        conn = db._get_conn()
+        sql = 'SELECT * FROM memories WHERE content LIKE ?'
+        params = [f'%{query}%']
+        
+        if memory_type:
+            sql += ' AND type = ?'
+            params.append(memory_type.value)
+        
+        if min_importance:
+            sql += ' AND importance >= ?'
+            params.append(min_importance.value)
+        
+        sql += ' ORDER BY importance DESC, last_accessed DESC LIMIT ?'
+        params.append(limit)
+        
+        cursor = conn.execute(sql, params)
+        
+        for row in cursor.fetchall():
+            memory = MemoryItem(
+                id=row[0],
+                type=MemoryType(row[1]),
+                content=json.loads(row[2]),
+                importance=MemoryImportance(row[3]),
+                created_at=datetime.fromisoformat(row[4]),
+                last_accessed=datetime.fromisoformat(row[5]),
+                access_count=row[6],
+                decay_rate=row[7],
+                emotional_valence=row[8],
+                context=json.loads(row[9]) if row[9] else {},
+                associations=json.loads(row[10]) if row[10] else [],
+                source=row[11],
+                confidence=row[12],
+            )
+            memories.append(memory)
         
         return memories
     
@@ -316,36 +320,37 @@ class LongTermMemory:
         cutoff = datetime.now() - timedelta(hours=hours)
         memories = []
         
-        with sqlite3.connect(self.db_path) as conn:
-            sql = 'SELECT * FROM memories WHERE created_at >= ?'
-            params = [cutoff.isoformat()]
-            
-            if memory_type:
-                sql += ' AND type = ?'
-                params.append(memory_type.value)
-            
-            sql += ' ORDER BY created_at DESC LIMIT ?'
-            params.append(limit)
-            
-            cursor = conn.execute(sql, params)
-            
-            for row in cursor.fetchall():
-                memory = MemoryItem(
-                    id=row[0],
-                    type=MemoryType(row[1]),
-                    content=json.loads(row[2]),
-                    importance=MemoryImportance(row[3]),
-                    created_at=datetime.fromisoformat(row[4]),
-                    last_accessed=datetime.fromisoformat(row[5]),
-                    access_count=row[6],
-                    decay_rate=row[7],
-                    emotional_valence=row[8],
-                    context=json.loads(row[9]) if row[9] else {},
-                    associations=json.loads(row[10]) if row[10] else [],
-                    source=row[11],
-                    confidence=row[12],
-                )
-                memories.append(memory)
+        db = DatabaseManager.get(str(self.db_path))
+        conn = db._get_conn()
+        sql = 'SELECT * FROM memories WHERE created_at >= ?'
+        params = [cutoff.isoformat()]
+        
+        if memory_type:
+            sql += ' AND type = ?'
+            params.append(memory_type.value)
+        
+        sql += ' ORDER BY created_at DESC LIMIT ?'
+        params.append(limit)
+        
+        cursor = conn.execute(sql, params)
+        
+        for row in cursor.fetchall():
+            memory = MemoryItem(
+                id=row[0],
+                type=MemoryType(row[1]),
+                content=json.loads(row[2]),
+                importance=MemoryImportance(row[3]),
+                created_at=datetime.fromisoformat(row[4]),
+                last_accessed=datetime.fromisoformat(row[5]),
+                access_count=row[6],
+                decay_rate=row[7],
+                emotional_valence=row[8],
+                context=json.loads(row[9]) if row[9] else {},
+                associations=json.loads(row[10]) if row[10] else [],
+                source=row[11],
+                confidence=row[12],
+            )
+            memories.append(memory)
         
         return memories
     
@@ -362,32 +367,33 @@ class LongTermMemory:
         
         self.conversation_cache[conversation_id] = conversation
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
-                'SELECT * FROM users WHERE user_id = ?',
-                (user_id,)
-            )
-            
-            if cursor.fetchone():
-                conn.execute('''
-                    UPDATE users 
-                    SET last_seen = ?, total_conversations = total_conversations + 1
-                    WHERE user_id = ?
-                ''', (datetime.now().isoformat(), user_id))
-            else:
-                conn.execute('''
-                    INSERT INTO users 
-                    (user_id, first_seen, last_seen, total_conversations)
-                    VALUES (?, ?, ?, 1)
-                ''', (user_id, datetime.now().isoformat(), datetime.now().isoformat()))
-            
+        db = DatabaseManager.get(str(self.db_path))
+        conn = db._get_conn()
+        cursor = conn.execute(
+            'SELECT * FROM users WHERE user_id = ?',
+            (user_id,)
+        )
+        
+        if cursor.fetchone():
             conn.execute('''
-                INSERT INTO conversations 
-                (conversation_id, user_id, started_at, messages, topics, emotions, key_memories)
-                VALUES (?, ?, ?, '[]', '[]', '[]', '[]')
-            ''', (conversation_id, user_id, conversation.started_at.isoformat()))
-            
-            conn.commit()
+                UPDATE users 
+                SET last_seen = ?, total_conversations = total_conversations + 1
+                WHERE user_id = ?
+            ''', (datetime.now().isoformat(), user_id))
+        else:
+            conn.execute('''
+                INSERT INTO users 
+                (user_id, first_seen, last_seen, total_conversations)
+                VALUES (?, ?, ?, 1)
+            ''', (user_id, datetime.now().isoformat(), datetime.now().isoformat()))
+        
+        conn.execute('''
+            INSERT INTO conversations 
+            (conversation_id, user_id, started_at, messages, topics, emotions, key_memories)
+            VALUES (?, ?, ?, '[]', '[]', '[]', '[]')
+        ''', (conversation_id, user_id, conversation.started_at.isoformat()))
+        
+        conn.commit()
         
         logger.info(f"开始对话: {conversation_id} (用户: {user_id})")
         return conversation_id
@@ -417,36 +423,37 @@ class LongTermMemory:
         if emotion is not None:
             conversation.emotions.append(emotion)
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
-                'SELECT messages, emotions FROM conversations WHERE conversation_id = ?',
-                (conversation_id,)
-            )
-            row = cursor.fetchone()
+        db = DatabaseManager.get(str(self.db_path))
+        conn = db._get_conn()
+        cursor = conn.execute(
+            'SELECT messages, emotions FROM conversations WHERE conversation_id = ?',
+            (conversation_id,)
+        )
+        row = cursor.fetchone()
+        
+        if row:
+            messages = json.loads(row[0])
+            emotions = json.loads(row[1])
             
-            if row:
-                messages = json.loads(row[0])
-                emotions = json.loads(row[1])
-                
-                messages.append(message)
-                if emotion is not None:
-                    emotions.append(emotion)
-                
-                conn.execute('''
-                    UPDATE conversations 
-                    SET messages = ?, emotions = ?
-                    WHERE conversation_id = ?
-                ''', (json.dumps(messages, ensure_ascii=False), json.dumps(emotions), conversation_id))
-                
-                conn.execute('''
-                    UPDATE users 
-                    SET total_messages = total_messages + 1
-                    WHERE user_id = (
-                        SELECT user_id FROM conversations WHERE conversation_id = ?
-                    )
-                ''', (conversation_id,))
-                
-                conn.commit()
+            messages.append(message)
+            if emotion is not None:
+                emotions.append(emotion)
+            
+            conn.execute('''
+                UPDATE conversations 
+                SET messages = ?, emotions = ?
+                WHERE conversation_id = ?
+            ''', (json.dumps(messages, ensure_ascii=False), json.dumps(emotions), conversation_id))
+            
+            conn.execute('''
+                UPDATE users 
+                SET total_messages = total_messages + 1
+                WHERE user_id = (
+                    SELECT user_id FROM conversations WHERE conversation_id = ?
+                )
+            ''', (conversation_id,))
+            
+            conn.commit()
     
     def end_conversation(
         self,
@@ -464,42 +471,44 @@ class LongTermMemory:
         if key_memories:
             conversation.key_memories = key_memories
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                UPDATE conversations 
-                SET ended_at = ?, satisfaction = ?, key_memories = ?
-                WHERE conversation_id = ?
-            ''', (
-                conversation.ended_at.isoformat(),
-                satisfaction,
-                json.dumps(key_memories or []),
-                conversation_id,
-            ))
-            conn.commit()
+        db = DatabaseManager.get(str(self.db_path))
+        conn = db._get_conn()
+        conn.execute('''
+            UPDATE conversations 
+            SET ended_at = ?, satisfaction = ?, key_memories = ?
+            WHERE conversation_id = ?
+        ''', (
+            conversation.ended_at.isoformat(),
+            satisfaction,
+            json.dumps(key_memories or []),
+            conversation_id,
+        ))
+        conn.commit()
         
         logger.info(f"结束对话: {conversation_id} (满意度: {satisfaction})")
     
     def get_user_profile(self, user_id: str) -> Dict[str, Any]:
         """获取用户档案"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
-                'SELECT * FROM users WHERE user_id = ?',
-                (user_id,)
-            )
-            row = cursor.fetchone()
-            
-            if row:
-                return {
-                    "user_id": row[0],
-                    "first_seen": row[1],
-                    "last_seen": row[2],
-                    "total_conversations": row[3],
-                    "total_messages": row[4],
-                    "trust_score": row[5],
-                    "relationship_depth": row[6],
-                    "preferences": json.loads(row[7]) if row[7] else {},
-                    "important_topics": json.loads(row[8]) if row[8] else [],
-                }
+        db = DatabaseManager.get(str(self.db_path))
+        conn = db._get_conn()
+        cursor = conn.execute(
+            'SELECT * FROM users WHERE user_id = ?',
+            (user_id,)
+        )
+        row = cursor.fetchone()
+        
+        if row:
+            return {
+                "user_id": row[0],
+                "first_seen": row[1],
+                "last_seen": row[2],
+                "total_conversations": row[3],
+                "total_messages": row[4],
+                "trust_score": row[5],
+                "relationship_depth": row[6],
+                "preferences": json.loads(row[7]) if row[7] else {},
+                "important_topics": json.loads(row[8]) if row[8] else [],
+            }
         
         return {
             "user_id": user_id,
@@ -515,65 +524,68 @@ class LongTermMemory:
     
     def update_user_trust(self, user_id: str, delta: float):
         """更新用户信任度"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                UPDATE users 
-                SET trust_score = MAX(0.0, MIN(1.0, trust_score + ?))
-                WHERE user_id = ?
-            ''', (delta, user_id))
-            conn.commit()
+        db = DatabaseManager.get(str(self.db_path))
+        conn = db._get_conn()
+        conn.execute('''
+            UPDATE users 
+            SET trust_score = MAX(0.0, MIN(1.0, trust_score + ?))
+            WHERE user_id = ?
+        ''', (delta, user_id))
+        conn.commit()
     
     def consolidate_memories(self):
         """整合记忆（睡眠整合）"""
         logger.info("开始记忆整合...")
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('''
-                SELECT id, access_count, importance 
-                FROM memories 
-                WHERE access_count >= ?
-            ''', (self.consolidation_threshold,))
+        db = DatabaseManager.get(str(self.db_path))
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT id, access_count, importance 
+            FROM memories 
+            WHERE access_count >= ?
+        ''', (self.consolidation_threshold,))
+        
+        consolidated = 0
+        for row in cursor.fetchall():
+            memory_id, access_count, importance = row
             
-            consolidated = 0
-            for row in cursor.fetchall():
-                memory_id, access_count, importance = row
-                
-                if importance < MemoryImportance.HIGH.value:
-                    new_importance = min(importance + 1, MemoryImportance.CRITICAL.value)
-                    conn.execute('''
-                        UPDATE memories SET importance = ? WHERE id = ?
-                    ''', (new_importance, memory_id))
-                    consolidated += 1
-            
-            cutoff = datetime.now() - timedelta(days=30)
-            cursor = conn.execute('''
-                SELECT id FROM memories 
-                WHERE importance = ? AND last_accessed < ?
-            ''', (MemoryImportance.TRIVIAL.value, cutoff.isoformat()))
-            
-            forgotten = 0
-            for row in cursor.fetchall():
-                conn.execute('DELETE FROM memories WHERE id = ?', (row[0],))
-                forgotten += 1
-            
-            conn.commit()
+            if importance < MemoryImportance.HIGH.value:
+                new_importance = min(importance + 1, MemoryImportance.CRITICAL.value)
+                conn.execute('''
+                    UPDATE memories SET importance = ? WHERE id = ?
+                ''', (new_importance, memory_id))
+                consolidated += 1
+        
+        cutoff = datetime.now() - timedelta(days=30)
+        cursor = conn.execute('''
+            SELECT id FROM memories 
+            WHERE importance = ? AND last_accessed < ?
+        ''', (MemoryImportance.TRIVIAL.value, cutoff.isoformat()))
+        
+        forgotten = 0
+        for row in cursor.fetchall():
+            conn.execute('DELETE FROM memories WHERE id = ?', (row[0],))
+            forgotten += 1
+        
+        conn.commit()
         
         logger.info(f"记忆整合完成: 强化 {consolidated} 条, 遗忘 {forgotten} 条")
     
     def get_memory_stats(self) -> Dict[str, Any]:
         """获取记忆统计"""
-        with sqlite3.connect(self.db_path) as conn:
-            total_memories = conn.execute('SELECT COUNT(*) FROM memories').fetchone()[0]
-            total_conversations = conn.execute('SELECT COUNT(*) FROM conversations').fetchone()[0]
-            total_users = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
-            
-            type_counts = {}
-            for mem_type in MemoryType:
-                count = conn.execute(
-                    'SELECT COUNT(*) FROM memories WHERE type = ?',
-                    (mem_type.value,)
-                ).fetchone()[0]
-                type_counts[mem_type.value] = count
+        db = DatabaseManager.get(str(self.db_path))
+        conn = db._get_conn()
+        total_memories = conn.execute('SELECT COUNT(*) FROM memories').fetchone()[0]
+        total_conversations = conn.execute('SELECT COUNT(*) FROM conversations').fetchone()[0]
+        total_users = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+        
+        type_counts = {}
+        for mem_type in MemoryType:
+            count = conn.execute(
+                'SELECT COUNT(*) FROM memories WHERE type = ?',
+                (mem_type.value,)
+            ).fetchone()[0]
+            type_counts[mem_type.value] = count
         
         return {
             "total_memories": total_memories,

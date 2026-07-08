@@ -10,8 +10,8 @@ from infrastructure.model_stats import ModelStats
 from infrastructure.experience_pool import ExperiencePool
 from infrastructure.self_audit import SelfAudit
 from infrastructure.config_manager import config
+from infrastructure.database_manager import DatabaseManager
 from loguru import logger
-import sqlite3
 import time
 from datetime import datetime
 from collections import deque
@@ -934,7 +934,7 @@ class DataDrivenPlanner:
         Returns:
             系统的自我反思回答
         """
-        import sqlite3
+
         
         # 特殊处理：价值性问题（进入对话模式）
         if meta_type == "meta_value":
@@ -1022,13 +1022,13 @@ class DataDrivenPlanner:
         
         # 通用元认知问题处理
         try:
-            with sqlite3.connect('data/experience_pool.db') as conn_exp:
-                cur = conn_exp.execute("SELECT COUNT(*), AVG(quality_score) FROM experiences")
-                exp_count, exp_quality = cur.fetchone()
+            conn_exp = DatabaseManager.get()._get_conn('data/experience_pool.db')
+            cur = conn_exp.execute("SELECT COUNT(*), AVG(quality_score) FROM experiences")
+            exp_count, exp_quality = cur.fetchone()
             
-            with sqlite3.connect('data/learning_rules.db') as conn_rules:
-                cur = conn_rules.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
-                active_rules = cur.fetchone()[0]
+            conn_rules = DatabaseManager.get()._get_conn('data/learning_rules.db')
+            cur = conn_rules.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
+            active_rules = cur.fetchone()[0]
             
             best_score = getattr(self, 'last_optimization_score', 0.0)
             
@@ -1387,15 +1387,14 @@ _感谢您的质疑，这帮助我发现了错误。_
     def _evaluate_recent_dialogs(self) -> str:
         """评价最近对话"""
         try:
-            import sqlite3
-            with sqlite3.connect('data/experience_pool.db') as conn:
-                cur = conn.execute('''
-                    SELECT intent_type, raw_input, quality_score, success, model_name
-                    FROM experiences
-                    ORDER BY timestamp DESC
-                    LIMIT 10
-                ''')
-                recent = cur.fetchall()
+            conn = DatabaseManager.get()._get_conn('data/experience_pool.db')
+            cur = conn.execute('''
+                SELECT intent_type, raw_input, quality_score, success, model_name
+                FROM experiences
+                ORDER BY timestamp DESC
+                LIMIT 10
+            ''')
+            recent = cur.fetchall()
             
             if not recent:
                 return "暂无最近对话记录。"
@@ -1445,15 +1444,15 @@ _感谢您的质疑，这帮助我发现了错误。_
         
         # 2. 历史相似任务成功率
         try:
-            with sqlite3.connect('data/experience_pool.db') as conn:
-                cursor = conn.execute('''
-                    SELECT success FROM experiences
-                    WHERE intent_type = ?
-                    ORDER BY timestamp DESC
-                    LIMIT 5
-                ''', (intent.type,))
-                
-                similar = cursor.fetchall()
+            conn = DatabaseManager.get()._get_conn('data/experience_pool.db')
+            cursor = conn.execute('''
+                SELECT success FROM experiences
+                WHERE intent_type = ?
+                ORDER BY timestamp DESC
+                LIMIT 5
+            ''', (intent.type,))
+            
+            similar = cursor.fetchall()
             success_rate = sum(1 for row in similar if row[0]) / max(len(similar), 1)
         except:
             success_rate = 0.5
@@ -1600,25 +1599,25 @@ _感谢您的质疑，这帮助我发现了错误。_
     def _store_expert_analysis(self, intent: Intent, analysis: str, confidence: float, expert_model: str):
         """存储专家分析（为逆向学习预留）"""
         try:
-            with sqlite3.connect('data/experience_pool.db') as conn:
-                conn.execute('''
-                    INSERT INTO experiences
-                    (intent_type, raw_input, plan, model_name, 
-                     quality_score, user_feedback, success, 
-                     response, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    intent.type,
-                    intent.raw_text,
-                    f"expert_collaboration:{expert_model}",
-                    expert_model,
-                    0,
-                    0,
-                    False,
-                    analysis,
-                    time.time()
-                ))
-                conn.commit()
+            conn = DatabaseManager.get()._get_conn('data/experience_pool.db')
+            conn.execute('''
+                INSERT INTO experiences
+                (intent_type, raw_input, plan, model_name, 
+                 quality_score, user_feedback, success, 
+                 response, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                intent.type,
+                intent.raw_text,
+                f"expert_collaboration:{expert_model}",
+                expert_model,
+                0,
+                0,
+                False,
+                analysis,
+                time.time()
+            ))
+            conn.commit()
             logger.debug(f"已存储专家分析 (置信度: {confidence:.2f})")
         except Exception as e:
             logger.warning(f"存储专家分析失败: {e}")
@@ -2558,18 +2557,18 @@ _感谢您的质疑，这帮助我发现了错误。_
         """
         try:
             # 1. 记录失败（质量分为0）
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    INSERT INTO experiences 
-                    (intent_type, model_used, success, quality_score, response, context)
-                    VALUES (?, ?, 0, 0, ?, ?)
-                ''', (
-                    intent.intent_type if intent else 'unknown',
-                    'none',
-                    f"[失败] {error}",
-                    json.dumps({'question': intent.raw_text if intent else ''}, ensure_ascii=False)
-                ))
-                conn.commit()
+            conn = DatabaseManager.get()._get_conn(self.db_path)
+            conn.execute('''
+                INSERT INTO experiences 
+                (intent_type, model_used, success, quality_score, response, context)
+                VALUES (?, ?, 0, 0, ?, ?)
+            ''', (
+                intent.intent_type if intent else 'unknown',
+                'none',
+                f"[失败] {error}",
+                json.dumps({'question': intent.raw_text if intent else ''}, ensure_ascii=False)
+            ))
+            conn.commit()
             
             logger.info(f"【第5层防御】失败已记录")
             
@@ -2683,18 +2682,16 @@ _感谢您的质疑，这帮助我发现了错误。_
     def _match_learning_rule(self, intent: Intent) -> Optional[Dict]:
         """匹配学习规则库中的活跃规则，同时为trial规则记录影子匹配"""
         try:
-            import sqlite3
             from infrastructure.rule_matcher import RuleMatcher
             
-            with sqlite3.connect("data/learning_rules.db") as conn:
-                conn.row_factory = sqlite3.Row
-                cur = conn.execute('''
-                    SELECT id, condition, action, priority, confidence, status
-                    FROM learning_rules
-                    WHERE status IN ('active', 'trial')
-                    ORDER BY priority ASC, confidence DESC
-                ''')
-                rules = [dict(row) for row in cur.fetchall()]
+            conn = DatabaseManager.get()._get_conn("data/learning_rules.db")
+            cur = conn.execute('''
+                SELECT id, condition, action, priority, confidence, status
+                FROM learning_rules
+                WHERE status IN ('active', 'trial')
+                ORDER BY priority ASC, confidence DESC
+            ''')
+            rules = [dict(row) for row in cur.fetchall()]
             
             matcher = RuleMatcher()
             
@@ -2738,29 +2735,27 @@ _感谢您的质疑，这帮助我发现了错误。_
     def _record_trial_match(self, rule_id: int):
         """记录trial规则的影子匹配，增加apply_count用于后续评估"""
         try:
-            import sqlite3
-            with sqlite3.connect("data/learning_rules.db") as conn:
-                conn.execute('''
-                    UPDATE learning_rules
-                    SET apply_count = apply_count + 1,
-                        last_applied = ?
-                    WHERE id = ? AND status = 'trial'
-                ''', (time.time(), rule_id))
+            conn = DatabaseManager.get()._get_conn("data/learning_rules.db")
+            conn.execute('''
+                UPDATE learning_rules
+                SET apply_count = apply_count + 1,
+                    last_applied = ?
+                WHERE id = ? AND status = 'trial'
+            ''', (time.time(), rule_id))
         except Exception as e:
             logger.debug(f"记录trial匹配失败: {e}")
     
     def _update_rule_stats(self, rule_id: int, success: bool = True):
         """更新规则应用统计"""
         try:
-            import sqlite3
-            with sqlite3.connect("data/learning_rules.db") as conn:
-                conn.execute('''
-                    UPDATE learning_rules
-                    SET apply_count = apply_count + 1,
-                        success_count = success_count + ?,
-                        last_applied = ?
-                    WHERE id = ?
-                ''', (1 if success else 0, time.time(), rule_id))
+            conn = DatabaseManager.get()._get_conn("data/learning_rules.db")
+            conn.execute('''
+                UPDATE learning_rules
+                SET apply_count = apply_count + 1,
+                    success_count = success_count + ?,
+                    last_applied = ?
+                WHERE id = ?
+            ''', (1 if success else 0, time.time(), rule_id))
         
         except Exception as e:
             logger.debug(f"更新规则统计失败: {e}")

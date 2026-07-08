@@ -10,7 +10,7 @@
 import sys
 import time
 import threading
-import sqlite3
+
 import json
 import hashlib
 from pathlib import Path
@@ -20,6 +20,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from collections import defaultdict, Counter
 from loguru import logger
 import math
+from infrastructure.database_manager import DatabaseManager
 
 ROOT_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT_DIR))
@@ -103,7 +104,8 @@ class DataDrivenReflectionEngine:
         
         Path(self.db_path).parent.mkdir(exist_ok=True)
         
-        conn = sqlite3.connect(self.db_path)
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
         cursor = conn.cursor()
         
         # 错误案例表
@@ -164,7 +166,7 @@ class DataDrivenReflectionEngine:
         ''')
         
         conn.commit()
-        conn.close()
+
     
     def detect_errors(self, knowledge_items: List[Dict]) -> List[ErrorCase]:
         """
@@ -224,7 +226,8 @@ class DataDrivenReflectionEngine:
         
         # 从数据库中获取相关知识
         try:
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             cursor = conn.cursor()
             
             # 查找相同问题的其他答案
@@ -235,7 +238,7 @@ class DataDrivenReflectionEngine:
             ''', (item.get('id', ''),))
             
             results = cursor.fetchall()
-            conn.close()
+
             
             for result in results:
                 # 简化的一致性检查：长度差异过大提示可能不一致
@@ -373,7 +376,8 @@ class DataDrivenReflectionEngine:
     def record_reflection(self, error_case: ErrorCase, resolution: str):
         """记录反思结果"""
         
-        conn = sqlite3.connect(self.db_path)
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
         cursor = conn.cursor()
         
         cursor.execute('''
@@ -389,7 +393,7 @@ class DataDrivenReflectionEngine:
         ))
         
         conn.commit()
-        conn.close()
+
         
         logger.info(f"✅ 反思已记录: {error_case.id[:8]}...")
 
@@ -422,7 +426,8 @@ class CognitiveLoopManager:
         
         Path(self.db_path).parent.mkdir(exist_ok=True)
         
-        conn = sqlite3.connect(self.db_path)
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
         cursor = conn.cursor()
         
         cursor.execute('''
@@ -451,7 +456,7 @@ class CognitiveLoopManager:
         ''')
         
         conn.commit()
-        conn.close()
+
     
     def run_complete_cycle(self, new_knowledge: List[Dict]) -> Dict:
         """
@@ -521,7 +526,8 @@ class CognitiveLoopManager:
         self.loop_status['last_completed_cycle'] = datetime.now().isoformat()
         
         # 记录循环
-        conn = sqlite3.connect(self.db_path)
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO cognitive_cycles 
@@ -537,7 +543,7 @@ class CognitiveLoopManager:
             'completed'
         ))
         conn.commit()
-        conn.close()
+
         
         return {
             'cycle_id': cycle_id,
@@ -550,8 +556,8 @@ class CognitiveLoopManager:
     def _get_existing_knowledge(self, question: str) -> List[Dict]:
         """从主系统知识库获取已有知识"""
         try:
-            conn = sqlite3.connect("data/knowledge_store.db")
-            conn.row_factory = sqlite3.Row
+            db = DatabaseManager.get("data/knowledge_store.db")
+            conn = db._get_conn()
             cursor = conn.execute('''
                 SELECT id, question, answer, quality_score as confidence
                 FROM knowledge_items
@@ -560,7 +566,6 @@ class CognitiveLoopManager:
                 LIMIT 10
             ''', (f'%{question[:30]}%',))
             results = [dict(row) for row in cursor.fetchall()]
-            conn.close()
             return results
         except Exception as e:
             logger.debug(f"获取已有知识失败: {e}")
@@ -569,8 +574,8 @@ class CognitiveLoopManager:
     def _get_all_knowledge(self) -> List[Dict]:
         """从主系统知识库获取所有知识"""
         try:
-            conn = sqlite3.connect("data/knowledge_store.db")
-            conn.row_factory = sqlite3.Row
+            db = DatabaseManager.get("data/knowledge_store.db")
+            conn = db._get_conn()
             cursor = conn.execute('''
                 SELECT id, question, answer, quality_score as confidence, 
                        source, created_at
@@ -579,7 +584,6 @@ class CognitiveLoopManager:
                 LIMIT 100
             ''')
             results = [dict(row) for row in cursor.fetchall()]
-            conn.close()
             return results
         except Exception as e:
             logger.debug(f"获取所有知识失败: {e}")
@@ -588,7 +592,8 @@ class CognitiveLoopManager:
     def _store_verified_knowledge(self, item: Dict):
         """存储通过验证的知识到主系统知识库"""
         try:
-            conn = sqlite3.connect("data/knowledge_store.db")
+            db = DatabaseManager.get("data/knowledge_store.db")
+            conn = db._get_conn()
             cursor = conn.cursor()
             
             question_hash = hashlib.md5(item.get('question', '').lower().encode()).hexdigest()
@@ -608,7 +613,7 @@ class CognitiveLoopManager:
             ))
             
             conn.commit()
-            conn.close()
+
             logger.debug(f"✓ 知识已存储: {item.get('question', '')[:30]}...")
         except Exception as e:
             logger.warning(f"存储知识失败: {e}")
@@ -618,7 +623,8 @@ class CognitiveLoopManager:
         try:
             knowledge = pending_item.get('knowledge', {})
             
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -635,7 +641,7 @@ class CognitiveLoopManager:
             ))
             
             conn.commit()
-            conn.close()
+
             logger.info(f"  ✓ 已加入验证队列: {knowledge.get('question', '')[:30]}...")
         except Exception as e:
             logger.warning(f"添加验证队列失败: {e}")
@@ -683,7 +689,8 @@ class CognitiveLoopManager:
         logger.warning(f"  ⚠️ 标记冲突: {error.problem[:50]}...")
         
         try:
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -709,7 +716,7 @@ class CognitiveLoopManager:
             ))
             
             conn.commit()
-            conn.close()
+
         except Exception as e:
             logger.debug(f"标记冲突失败: {e}")
     
@@ -718,7 +725,8 @@ class CognitiveLoopManager:
         logger.warning(f"  🚨 高优先级修正: {error.problem[:50]}...")
         
         try:
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             cursor = conn.cursor()
             
             cursor.execute('''
@@ -747,7 +755,7 @@ class CognitiveLoopManager:
             ))
             
             conn.commit()
-            conn.close()
+
             
             from core.external_learner import external_learner
             external_learner.learn_and_integrate(
@@ -790,7 +798,8 @@ class MetacognitionMonitor:
         
         Path(self.db_path).parent.mkdir(exist_ok=True)
         
-        conn = sqlite3.connect(self.db_path)
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
         cursor = conn.cursor()
         
         cursor.execute('''
@@ -816,7 +825,7 @@ class MetacognitionMonitor:
         ''')
         
         conn.commit()
-        conn.close()
+
     
     def monitor_and_adjust(self, system_state: Dict) -> Dict:
         """
@@ -879,7 +888,8 @@ class MetacognitionMonitor:
     def _record_adjustment(self, adjustment: Dict):
         """记录行为调整"""
         
-        conn = sqlite3.connect(self.db_path)
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
         cursor = conn.cursor()
         
         cursor.execute('''
@@ -893,7 +903,7 @@ class MetacognitionMonitor:
         ))
         
         conn.commit()
-        conn.close()
+
     
     def _update_metrics(self, system_state: Dict):
         """更新系统指标"""
@@ -1095,13 +1105,13 @@ class ReflectiveModelFreeEvolution:
     def _calculate_error_rate(self) -> float:
         """计算错误率"""
         try:
-            conn = sqlite3.connect(self.reflection_engine.db_path)
+            db = DatabaseManager.get(self.reflection_engine.db_path)
+            conn = db._get_conn()
             cursor = conn.execute("SELECT COUNT(*) FROM error_cases")
             total_errors = cursor.fetchone()[0]
             
             cursor = conn.execute("SELECT COUNT(*) FROM error_cases WHERE resolution_status='resolved'")
             resolved = cursor.fetchone()[0]
-            conn.close()
             
             return total_errors / max(resolved + 1, 1) * 0.1
         except:
@@ -1110,10 +1120,10 @@ class ReflectiveModelFreeEvolution:
     def _calculate_learning_efficiency(self) -> float:
         """计算学习效率"""
         try:
-            conn = sqlite3.connect("data/knowledge_store.db")
+            db = DatabaseManager.get("data/knowledge_store.db")
+            conn = db._get_conn()
             cursor = conn.execute("SELECT AVG(quality_score) FROM knowledge_items")
             result = cursor.fetchone()[0]
-            conn.close()
             return result if result else 0.5
         except:
             return 0.5
@@ -1121,7 +1131,8 @@ class ReflectiveModelFreeEvolution:
     def _calculate_confidence_trend(self) -> float:
         """计算置信度趋势"""
         try:
-            conn = sqlite3.connect(self.reflection_engine.db_path)
+            db = DatabaseManager.get(self.reflection_engine.db_path)
+            conn = db._get_conn()
             cursor = conn.execute('''
                 SELECT metric_value FROM metacognition_log
                 WHERE metric_name='confidence'
@@ -1129,7 +1140,6 @@ class ReflectiveModelFreeEvolution:
                 LIMIT 10
             ''')
             values = [row[0] for row in cursor.fetchall()]
-            conn.close()
             
             if len(values) >= 2:
                 return values[-1] - values[0]
@@ -1140,13 +1150,13 @@ class ReflectiveModelFreeEvolution:
     def _calculate_adaptation_speed(self) -> float:
         """计算适应速度"""
         try:
-            conn = sqlite3.connect(self.metacognition.db_path)
+            db = DatabaseManager.get(self.metacognition.db_path)
+            conn = db._get_conn()
             cursor = conn.execute('''
                 SELECT COUNT(*) FROM behavior_adjustments
                 WHERE timestamp > datetime('now', '-1 day')
             ''')
             adjustments = cursor.fetchone()[0]
-            conn.close()
             return min(1.0, adjustments / 10)
         except:
             return 0.1

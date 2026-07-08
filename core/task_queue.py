@@ -16,6 +16,7 @@ import os
 from datetime import datetime
 from loguru import logger
 from adapters.llm.ollama_adapter import ollama_chat_request
+from infrastructure.database_manager import DatabaseManager
 
 _write_lock = threading.Lock()
 
@@ -61,10 +62,7 @@ class GenePool:
         self._safety_violations = 0
 
     def _connect(self):
-        conn = sqlite3.connect(self.db_path, timeout=10.0)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        return conn
+        return DatabaseManager.get(self.db_path)._get_conn()
 
     def _write_op(self, func, *args, **kwargs):
         with self._lock:
@@ -76,8 +74,6 @@ class GenePool:
             except Exception:
                 conn.rollback()
                 raise
-            finally:
-                conn.close()
 
     def _init_db(self):
         def _do(conn):
@@ -111,10 +107,10 @@ class GenePool:
 
     def _load_genes(self) -> dict:
         try:
-            with self._connect() as conn:
-                c = conn.cursor()
-                c.execute("SELECT key, value FROM genes")
-                rows = c.fetchall()
+            conn = self._connect()
+            c = conn.cursor()
+            c.execute("SELECT key, value FROM genes")
+            rows = c.fetchall()
             genes = dict(rows)
             for k, v in GENE_DEFAULTS.items():
                 if k not in genes:
@@ -203,12 +199,12 @@ class GenePool:
 
     def get_safety_violations(self) -> dict:
         try:
-            with self._connect() as conn:
-                c = conn.cursor()
-                c.execute("SELECT COUNT(*) FROM safety_violations")
-                total = c.fetchone()[0]
-                c.execute("SELECT gene_key, COUNT(*) FROM safety_violations GROUP BY gene_key ORDER BY COUNT(*) DESC")
-                by_gene = {r[0]: r[1] for r in c.fetchall()}
+            conn = self._connect()
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM safety_violations")
+            total = c.fetchone()[0]
+            c.execute("SELECT gene_key, COUNT(*) FROM safety_violations GROUP BY gene_key ORDER BY COUNT(*) DESC")
+            by_gene = {r[0]: r[1] for r in c.fetchall()}
             return {"total": total, "by_gene": by_gene}
         except Exception:
             return {"total": self._safety_violations, "by_gene": {}}
@@ -231,10 +227,10 @@ class GenePool:
 
     def get_mutation_history(self, limit: int = 20) -> list:
         try:
-            with self._connect() as conn:
-                c = conn.cursor()
-                c.execute("SELECT gene_key, old_value, new_value, delta, trigger, timestamp FROM mutations ORDER BY id DESC LIMIT ?", (limit,))
-                rows = c.fetchall()
+            conn = self._connect()
+            c = conn.cursor()
+            c.execute("SELECT gene_key, old_value, new_value, delta, trigger, timestamp FROM mutations ORDER BY id DESC LIMIT ?", (limit,))
+            rows = c.fetchall()
             return [{"key": r[0], "old": r[1], "new": r[2], "delta": r[3], "trigger": r[4], "time": r[5]} for r in rows]
         except Exception:
             return []
@@ -253,10 +249,7 @@ class PersistentTaskQueue:
         self._idle_threshold = 10.0
 
     def _connect(self):
-        conn = sqlite3.connect(self.db_path, timeout=10.0)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        return conn
+        return DatabaseManager.get(self.db_path)._get_conn()
 
     def _write_op(self, func, *args, **kwargs):
         with self._lock:
@@ -268,8 +261,6 @@ class PersistentTaskQueue:
             except Exception:
                 conn.rollback()
                 raise
-            finally:
-                conn.close()
 
     def _init_db(self):
         def _do(conn):
@@ -332,14 +323,14 @@ class PersistentTaskQueue:
         return task_id
 
     def _get_pending_tasks(self, limit: int = 3) -> list:
-        with self._connect() as conn:
-            c = conn.cursor()
-            now = datetime.now().isoformat()
-            c.execute(
-                "SELECT id, task_type, payload, retry_count, priority FROM tasks WHERE status='pending' AND (next_retry_at IS NULL OR next_retry_at <= ?) ORDER BY priority DESC, created_at ASC LIMIT ?",
-                (now, limit)
-            )
-            rows = c.fetchall()
+        conn = self._connect()
+        c = conn.cursor()
+        now = datetime.now().isoformat()
+        c.execute(
+            "SELECT id, task_type, payload, retry_count, priority FROM tasks WHERE status='pending' AND (next_retry_at IS NULL OR next_retry_at <= ?) ORDER BY priority DESC, created_at ASC LIMIT ?",
+            (now, limit)
+        )
+        rows = c.fetchall()
         return [{"id": r[0], "task_type": r[1], "payload": json.loads(r[2]), "retry_count": r[3], "priority": r[4]} for r in rows]
 
     def _mark_running(self, task_id: int):
@@ -426,13 +417,12 @@ class PersistentTaskQueue:
     def _save_timeout_experience(self, payload: dict, task_type: str):
         try:
             query = payload.get("query", "")
-            with sqlite3.connect("data/experience_pool.db", timeout=10.0) as conn:
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute(
-                    "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
-                    (query, f"[超时经验] {task_type}任务在{self.HARD_TIMEOUT}s内未完成，建议简化prompt", datetime.now().isoformat(), "timeout_wisdom", 30)
-                )
-                conn.commit()
+            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
+            conn.execute(
+                "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
+                (query, f"[超时经验] {task_type}任务在{self.HARD_TIMEOUT}s内未完成，建议简化prompt", datetime.now().isoformat(), "timeout_wisdom", 30)
+            )
+            conn.commit()
         except Exception:
             pass
 
@@ -499,17 +489,15 @@ class PersistentTaskQueue:
         response_text = payload.get("response", "")
         score = payload.get("score", 0)
         try:
-            with sqlite3.connect("data/knowledge_store.db", timeout=10.0) as conn:
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute(
-                    "INSERT INTO knowledge (content, source, type, quality, created_at) VALUES (?, ?, ?, ?, ?)",
-                    (response_text, "gene_pool", "solidified", int(score), datetime.now().isoformat())
-                )
-                conn.commit()
-            with sqlite3.connect("data/experience_pool.db", timeout=10.0) as conn:
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute("UPDATE experiences SET quality_score = ? WHERE raw_input LIKE ? AND quality_score < ?", (95, f"%{query[:20]}%", 95))
-                conn.commit()
+            conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
+            conn.execute(
+                "INSERT INTO knowledge (content, source, type, quality, created_at) VALUES (?, ?, ?, ?, ?)",
+                (response_text, "gene_pool", "solidified", int(score), datetime.now().isoformat())
+            )
+            conn.commit()
+            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
+            conn.execute("UPDATE experiences SET quality_score = ? WHERE raw_input LIKE ? AND quality_score < ?", (95, f"%{query[:20]}%", 95))
+            conn.commit()
             return f"知识固化完成(评分{score:.0f})"
         except Exception as e:
             return f"知识固化失败: {e}"
@@ -589,13 +577,12 @@ class PersistentTaskQueue:
 
     def _save_experience(self, query: str, response: str):
         try:
-            with sqlite3.connect("data/experience_pool.db", timeout=10.0) as conn:
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute(
-                    "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
-                    (query, response, datetime.now().isoformat(), "background_task", 80)
-                )
-                conn.commit()
+            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
+            conn.execute(
+                "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
+                (query, response, datetime.now().isoformat(), "background_task", 80)
+            )
+            conn.commit()
         except Exception as e:
             logger.debug(f"经验存储失败: {e}")
 
@@ -632,13 +619,12 @@ class PersistentTaskQueue:
 
     def _do_idle_consolidation(self):
         try:
-            with sqlite3.connect("data/experience_pool.db", timeout=10.0) as conn:
-                conn.execute("PRAGMA journal_mode=WAL")
-                c = conn.cursor()
-                c.execute("SELECT COUNT(*) FROM experiences WHERE quality_score >= 80")
-                high_quality = c.fetchone()[0]
-                c.execute("SELECT COUNT(*) FROM experiences WHERE intent_type = 'timeout_wisdom'")
-                timeout_wisdom = c.fetchone()[0]
+            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM experiences WHERE quality_score >= 80")
+            high_quality = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM experiences WHERE intent_type = 'timeout_wisdom'")
+            timeout_wisdom = c.fetchone()[0]
             logger.info(f"💤 碎片整理: 高质量经验{high_quality}条, 超时经验{timeout_wisdom}条")
             if timeout_wisdom > 3:
                 gene_pool.mutate("depth_preference", -0.01, "idle_consolidation_too_many_timeouts")
@@ -651,12 +637,12 @@ class PersistentTaskQueue:
 
     def get_stats(self) -> dict:
         try:
-            with self._connect() as conn:
-                c = conn.cursor()
-                c.execute("SELECT status, COUNT(*) FROM tasks GROUP BY status")
-                status_counts = dict(c.fetchall())
-                c.execute("SELECT COUNT(*) FROM failed_buffer WHERE recovered=0")
-                failed_buffer_count = c.fetchone()[0]
+            conn = self._connect()
+            c = conn.cursor()
+            c.execute("SELECT status, COUNT(*) FROM tasks GROUP BY status")
+            status_counts = dict(c.fetchall())
+            c.execute("SELECT COUNT(*) FROM failed_buffer WHERE recovered=0")
+            failed_buffer_count = c.fetchone()[0]
             return {
                 "pending": status_counts.get("pending", 0),
                 "running": status_counts.get("running", 0),
@@ -680,29 +666,27 @@ class PersistentTaskQueue:
         stats = {"exp_purged": 0, "exp_promoted": 0, "know_purged": 0}
 
         try:
-            with sqlite3.connect("data/experience_pool.db", timeout=10.0) as conn:
-                conn.execute("PRAGMA journal_mode=WAL")
-                c = conn.cursor()
-                c.execute("SELECT COUNT(*) FROM experiences WHERE quality_score < 50 AND timestamp < datetime('now', '-30 days')")
-                purge_count = c.fetchone()[0]
-                if purge_count > 0:
-                    c.execute("DELETE FROM experiences WHERE quality_score < 50 AND timestamp < datetime('now', '-30 days')")
-                    stats["exp_purged"] = purge_count
-                c.execute("UPDATE experiences SET quality_score = MIN(quality_score + 5, 95) WHERE quality_score >= 70 AND quality_score < 95")
-                stats["exp_promoted"] = c.rowcount
-                conn.commit()
+            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM experiences WHERE quality_score < 50 AND timestamp < datetime('now', '-30 days')")
+            purge_count = c.fetchone()[0]
+            if purge_count > 0:
+                c.execute("DELETE FROM experiences WHERE quality_score < 50 AND timestamp < datetime('now', '-30 days')")
+                stats["exp_purged"] = purge_count
+            c.execute("UPDATE experiences SET quality_score = MIN(quality_score + 5, 95) WHERE quality_score >= 70 AND quality_score < 95")
+            stats["exp_promoted"] = c.rowcount
+            conn.commit()
         except Exception as e:
             logger.debug(f"经验池代谢失败: {e}")
 
         try:
-            with sqlite3.connect("data/knowledge_store.db", timeout=10.0) as conn:
-                conn.execute("PRAGMA journal_mode=WAL")
-                c = conn.cursor()
-                c.execute("SELECT COUNT(*) FROM knowledge WHERE quality < 30 AND created_at < datetime('now', '-30 days')")
-                purge_count = c.fetchone()[0]
-                if purge_count > 0:
-                    c.execute("DELETE FROM knowledge WHERE quality < 30 AND created_at < datetime('now', '-30 days')")
-                    stats["know_purged"] = purge_count
+            conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM knowledge WHERE quality < 30 AND created_at < datetime('now', '-30 days')")
+            purge_count = c.fetchone()[0]
+            if purge_count > 0:
+                c.execute("DELETE FROM knowledge WHERE quality < 30 AND created_at < datetime('now', '-30 days')")
+                stats["know_purged"] = purge_count
                 conn.commit()
         except Exception as e:
             logger.debug(f"知识库代谢失败: {e}")
@@ -761,11 +745,9 @@ class PersistentTaskQueue:
         db_ok = True
         for db_name in ["experience_pool.db", "knowledge_store.db", "gene_pool.db", "task_queue.db"]:
             try:
-                conn = sqlite3.connect(f"data/{db_name}", timeout=10.0)
-                conn.execute("PRAGMA journal_mode=WAL")
+                conn = DatabaseManager.get(f"data/{db_name}")._get_conn()
                 c = conn.cursor()
                 c.execute("SELECT COUNT(*) FROM sqlite_master")
-                conn.close()
             except Exception:
                 db_ok = False
                 tests.append(("数据库完整性", False, f"{db_name}损坏"))

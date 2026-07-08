@@ -3,13 +3,13 @@
 """
 import json
 import re
-import sqlite3
 import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from collections import Counter
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 
 class EnhancedLearner:
@@ -32,81 +32,82 @@ class EnhancedLearner:
     
     def _init_db(self):
         """初始化数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            # 知识表
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS knowledge_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    question_hash TEXT UNIQUE,
-                    question TEXT,
-                    answer TEXT,
-                    source TEXT,
-                    intent_type TEXT,
-                    knowledge_type TEXT DEFAULT 'qa',
-                    quality_score REAL DEFAULT 100.0,
-                    access_count INTEGER DEFAULT 0,
-                    last_accessed TEXT,
-                    created_at TEXT,
-                    metadata TEXT
-                )
-            ''')
-            
-            # 工具表
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS tools (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT UNIQUE,
-                    code TEXT,
-                    description TEXT,
-                    triggers TEXT,
-                    usage_count INTEGER DEFAULT 0,
-                    created_at TEXT
-                )
-            ''')
-            
-            # 规则表
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS learning_rules (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    trigger_pattern TEXT,
-                    action TEXT,
-                    confidence REAL DEFAULT 0.7,
-                    source TEXT,
-                    status TEXT DEFAULT 'active',
-                    created_at TEXT
-                )
-            ''')
-            
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_question_hash ON knowledge_items(question_hash)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_knowledge_type ON knowledge_items(knowledge_type)')
-            
-            # 添加缺失的记忆字段（如果不存在）
-            try:
-                conn.execute('ALTER TABLE knowledge_items ADD COLUMN memory_layer INTEGER DEFAULT 2')
-            except Exception:
-                pass  # 字段已存在
-            
-            try:
-                conn.execute('ALTER TABLE knowledge_items ADD COLUMN salience REAL DEFAULT 0.5')
-            except Exception:
-                pass
-            
-            try:
-                conn.execute('ALTER TABLE knowledge_items ADD COLUMN emotional_valence REAL DEFAULT 0.0')
-            except Exception:
-                pass
-            
-            try:
-                conn.execute('ALTER TABLE knowledge_items ADD COLUMN context_snapshot TEXT')
-            except Exception:
-                pass
-            
-            try:
-                conn.execute('ALTER TABLE knowledge_items ADD COLUMN environmental_triggers TEXT')
-            except Exception:
-                pass
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        # 知识表
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS knowledge_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question_hash TEXT UNIQUE,
+                question TEXT,
+                answer TEXT,
+                source TEXT,
+                intent_type TEXT,
+                knowledge_type TEXT DEFAULT 'qa',
+                quality_score REAL DEFAULT 100.0,
+                access_count INTEGER DEFAULT 0,
+                last_accessed TEXT,
+                created_at TEXT,
+                metadata TEXT
+            )
+        ''')
+        
+        # 工具表
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS tools (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE,
+                code TEXT,
+                description TEXT,
+                triggers TEXT,
+                usage_count INTEGER DEFAULT 0,
+                created_at TEXT
+            )
+        ''')
+        
+        # 规则表
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS learning_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trigger_pattern TEXT,
+                action TEXT,
+                confidence REAL DEFAULT 0.7,
+                source TEXT,
+                status TEXT DEFAULT 'active',
+                created_at TEXT
+            )
+        ''')
+        
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_question_hash ON knowledge_items(question_hash)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_knowledge_type ON knowledge_items(knowledge_type)')
+        
+        # 添加缺失的记忆字段（如果不存在）
+        try:
+            conn.execute('ALTER TABLE knowledge_items ADD COLUMN memory_layer INTEGER DEFAULT 2')
+        except Exception:
+            pass  # 字段已存在
+        
+        try:
+            conn.execute('ALTER TABLE knowledge_items ADD COLUMN salience REAL DEFAULT 0.5')
+        except Exception:
+            pass
+        
+        try:
+            conn.execute('ALTER TABLE knowledge_items ADD COLUMN emotional_valence REAL DEFAULT 0.0')
+        except Exception:
+            pass
+        
+        try:
+            conn.execute('ALTER TABLE knowledge_items ADD COLUMN context_snapshot TEXT')
+        except Exception:
+            pass
+        
+        try:
+            conn.execute('ALTER TABLE knowledge_items ADD COLUMN environmental_triggers TEXT')
+        except Exception:
+            pass
+        
+        conn.commit()
     
     def learn_from_file(self, filename: str, content: str, context: Dict = None, environmental_triggers: str = None) -> int:
         """从文件学习 - 提取结构化知识"""
@@ -220,12 +221,13 @@ class EnhancedLearner:
         
         knowledge_count = 0
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute(
-                    'SELECT COUNT(*) FROM knowledge_items WHERE question LIKE ?',
-                    (f'%{user_input[:20]}%',)
-                )
-                knowledge_count = cursor.fetchone()[0]
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.execute(
+                'SELECT COUNT(*) FROM knowledge_items WHERE question LIKE ?',
+                (f'%{user_input[:20]}%',)
+            )
+            knowledge_count = cursor.fetchone()[0]
         except:
             pass
         
@@ -254,46 +256,46 @@ class EnhancedLearner:
         """检测重复模式并生成规则"""
         
         rules_created = 0
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            try:
-                cursor = conn.execute('SELECT question FROM knowledge_items WHERE knowledge_type = "qa"')
-                questions = [row['question'] for row in cursor.fetchall()]
-            except:
-                questions = []
-            
-            keyword_count = Counter()
-            for q in questions:
-                words = re.findall(r'\w+', q.lower())
-                for word in words:
-                    if len(word) > 3:
-                        keyword_count[word] += 1
-            
-            for keyword, count in keyword_count.most_common(20):
-                if count >= 2:
-                    try:
-                        cursor = conn.execute(
-                            'SELECT 1 FROM learning_rules WHERE trigger_pattern LIKE ?',
-                            (f'%{keyword}%',)
-                        )
-                        if not cursor.fetchone():
-                            conn.execute('''
-                                INSERT INTO learning_rules 
-                                (trigger_pattern, action, confidence, source, created_at)
-                                VALUES (?, ?, ?, ?, ?)
-                            ''', (
-                                f"用户问题包含关键词 '{keyword}'",
-                                f"优先从知识库检索关于'{keyword}'的知识",
-                                min(0.9, 0.5 + count * 0.1),
-                                'auto_generated',
-                                datetime.now().isoformat()
-                            ))
-                            rules_created += 1
-                    except:
-                        continue
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        
+        try:
+            cursor = conn.execute('SELECT question FROM knowledge_items WHERE knowledge_type = "qa"')
+            questions = [row['question'] for row in cursor.fetchall()]
+        except:
+            questions = []
+        
+        keyword_count = Counter()
+        for q in questions:
+            words = re.findall(r'\w+', q.lower())
+            for word in words:
+                if len(word) > 3:
+                    keyword_count[word] += 1
+        
+        for keyword, count in keyword_count.most_common(20):
+            if count >= 2:
+                try:
+                    cursor = conn.execute(
+                        'SELECT 1 FROM learning_rules WHERE trigger_pattern LIKE ?',
+                        (f'%{keyword}%',)
+                    )
+                    if not cursor.fetchone():
+                        conn.execute('''
+                            INSERT INTO learning_rules 
+                            (trigger_pattern, action, confidence, source, created_at)
+                            VALUES (?, ?, ?, ?, ?)
+                        ''', (
+                            f"用户问题包含关键词 '{keyword}'",
+                            f"优先从知识库检索关于'{keyword}'的知识",
+                            min(0.9, 0.5 + count * 0.1),
+                            'auto_generated',
+                            datetime.now().isoformat()
+                        ))
+                        rules_created += 1
+                except:
+                    continue
+        
+        conn.commit()
         
         if rules_created > 0:
             logger.info(f"自动生成 {rules_created} 条学习规则")
@@ -305,13 +307,14 @@ class EnhancedLearner:
         delta = 0.1 if positive else -0.15
         question_hash = hashlib.md5(question.lower().encode()).hexdigest()
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                UPDATE knowledge_items
-                SET salience = MIN(1.0, MAX(0.0, salience + ?))
-                WHERE question_hash = ?
-            ''', (delta, question_hash))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            UPDATE knowledge_items
+            SET salience = MIN(1.0, MAX(0.0, salience + ?))
+            WHERE question_hash = ?
+        ''', (delta, question_hash))
+        conn.commit()
         
         logger.info(f"用户反馈: {question[:30]}... ({'正面' if positive else '负面'})")
     
@@ -319,18 +322,19 @@ class EnhancedLearner:
         """刻骨铭心 - 手动标记为永久记忆"""
         question_hash = hashlib.md5(question.lower().strip().encode()).hexdigest()
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                UPDATE knowledge_items
-                SET memory_layer = 1,
-                    salience = 0.9,
-                    emotional_valence = 1.0
-                WHERE question_hash = ?
-            ''', (question_hash,))
-            
-            cursor = conn.execute('SELECT changes()')
-            changes = cursor.fetchone()[0]
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            UPDATE knowledge_items
+            SET memory_layer = 1,
+                salience = 0.9,
+                emotional_valence = 1.0
+            WHERE question_hash = ?
+        ''', (question_hash,))
+        
+        cursor = conn.execute('SELECT changes()')
+        changes = cursor.fetchone()[0]
+        conn.commit()
         
         if changes > 0:
             logger.info(f"刻骨铭心: {question[:30]}...")
@@ -339,15 +343,15 @@ class EnhancedLearner:
     
     def get_last_qa(self, limit: int = 1) -> List[Dict]:
         """获取最近学习的问答对（用于 :important 命令）"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cur = conn.execute('''
-                SELECT question, answer, source, created_at
-                FROM knowledge_items
-                WHERE knowledge_type = 'qa'
-                ORDER BY created_at DESC LIMIT ?
-            ''', (limit,))
-            return [dict(row) for row in cur.fetchall()]
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cur = conn.execute('''
+            SELECT question, answer, source, created_at
+            FROM knowledge_items
+            WHERE knowledge_type = 'qa'
+            ORDER BY created_at DESC LIMIT ?
+        ''', (limit,))
+        return [dict(row) for row in cur.fetchall()]
     
     def match_environmental_triggers(self, current_file: str = None, current_topic: str = None) -> List[tuple]:
         """根据当前环境（文件路径、话题）检索相关记忆，返回 (答案, 相似度)"""
@@ -379,65 +383,65 @@ class EnhancedLearner:
     
     def get_recently_forgotten(self, days: int = 7) -> List[Dict]:
         """获取最近遗忘的记忆（用于回忆通知）"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute('''
-                SELECT question, answer, source, created_at
-                FROM knowledge_items
-                WHERE salience < 0.2
-                AND memory_layer = 3
-                AND julianday('now') - julianday(last_accessed) <= ?
-                ORDER BY last_accessed DESC
-                LIMIT 5
-            ''', (days,))
-            
-            return [dict(row) for row in cursor.fetchall()]
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT question, answer, source, created_at
+            FROM knowledge_items
+            WHERE salience < 0.2
+            AND memory_layer = 3
+            AND julianday('now') - julianday(last_accessed) <= ?
+            ORDER BY last_accessed DESC
+            LIMIT 5
+        ''', (days,))
+        
+        return [dict(row) for row in cursor.fetchall()]
     
     def get_memory_review(self) -> Dict:
         """获取记忆回顾报告"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            # L1核心记忆
-            cursor = conn.execute('''
-                SELECT COUNT(*) as count
-                FROM knowledge_items
-                WHERE memory_layer = 1
-            ''')
-            l1_count = cursor.fetchone()['count']
-            
-            # L2框架记忆
-            cursor = conn.execute('''
-                SELECT COUNT(*) as count
-                FROM knowledge_items
-                WHERE memory_layer = 2
-            ''')
-            l2_count = cursor.fetchone()['count']
-            
-            # L3情境碎片（即将遗忘）
-            cursor = conn.execute('''
-                SELECT COUNT(*) as count
-                FROM knowledge_items
-                WHERE memory_layer = 3 AND salience < 0.3
-            ''')
-            l3_fading = cursor.fetchone()['count']
-            
-            # 最近访问的热门记忆
-            cursor = conn.execute('''
-                SELECT question, access_count, last_accessed
-                FROM knowledge_items
-                WHERE access_count > 0
-                ORDER BY access_count DESC
-                LIMIT 5
-            ''')
-            hot_memories = [dict(row) for row in cursor.fetchall()]
-            
-            return {
-                "l1_core": l1_count,
-                "l2_framework": l2_count,
-                "l3_fading": l3_fading,
-                "hot_memories": hot_memories
-            }
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        
+        # L1核心记忆
+        cursor = conn.execute('''
+            SELECT COUNT(*) as count
+            FROM knowledge_items
+            WHERE memory_layer = 1
+        ''')
+        l1_count = cursor.fetchone()['count']
+        
+        # L2框架记忆
+        cursor = conn.execute('''
+            SELECT COUNT(*) as count
+            FROM knowledge_items
+            WHERE memory_layer = 2
+        ''')
+        l2_count = cursor.fetchone()['count']
+        
+        # L3情境碎片（即将遗忘）
+        cursor = conn.execute('''
+            SELECT COUNT(*) as count
+            FROM knowledge_items
+            WHERE memory_layer = 3 AND salience < 0.3
+        ''')
+        l3_fading = cursor.fetchone()['count']
+        
+        # 最近访问的热门记忆
+        cursor = conn.execute('''
+            SELECT question, access_count, last_accessed
+            FROM knowledge_items
+            WHERE access_count > 0
+            ORDER BY access_count DESC
+            LIMIT 5
+        ''')
+        hot_memories = [dict(row) for row in cursor.fetchall()]
+        
+        return {
+            "l1_core": l1_count,
+            "l2_framework": l2_count,
+            "l3_fading": l3_fading,
+            "hot_memories": hot_memories
+        }
     
     def get_retrieval_confidence(self, query: str) -> float:
         """返回检索到的知识最高置信度，若无返回0"""
@@ -458,118 +462,120 @@ class EnhancedLearner:
     
     def register_tool_from_code(self, name: str, code: str, description: str, triggers: list) -> bool:
         """注册工具到数据库，同时写入可执行文件"""
-        with sqlite3.connect(self.db_path) as conn:
-            try:
-                conn.execute('''
-                    INSERT OR REPLACE INTO tools (name, code, description, triggers, usage_count, created_at)
-                    VALUES (?, ?, ?, ?, 0, ?)
-                ''', (name, code, description, json.dumps(triggers), datetime.now().isoformat()))
-                conn.commit()
-                
-                tools_dir = Path("data/auto_tools")
-                tools_dir.mkdir(exist_ok=True)
-                tool_file = tools_dir / f"{name}.py"
-                tool_file.write_text(code)
-                
-                logger.info(f"工具已注册: {name}")
-                return True
-            except Exception as e:
-                logger.error(f"注册工具失败: {e}")
-                return False
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        try:
+            conn.execute('''
+                INSERT OR REPLACE INTO tools (name, code, description, triggers, usage_count, created_at)
+                VALUES (?, ?, ?, ?, 0, ?)
+            ''', (name, code, description, json.dumps(triggers), datetime.now().isoformat()))
+            conn.commit()
+            
+            tools_dir = Path("data/auto_tools")
+            tools_dir.mkdir(exist_ok=True)
+            tool_file = tools_dir / f"{name}.py"
+            tool_file.write_text(code)
+            
+            logger.info(f"工具已注册: {name}")
+            return True
+        except Exception as e:
+            logger.error(f"注册工具失败: {e}")
+            return False
     
     def get_tool(self, name: str) -> Optional[Dict]:
         """获取工具"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute('SELECT * FROM tools WHERE name = ?', (name,))
-            row = cursor.fetchone()
-            
-            if row:
-                return {
-                    "name": row['name'],
-                    "code": row['code'],
-                    "description": row['description'],
-                    "triggers": json.loads(row['triggers']) if row['triggers'] else [],
-                    "usage_count": row['usage_count']
-                }
-            return None
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('SELECT * FROM tools WHERE name = ?', (name,))
+        row = cursor.fetchone()
+        
+        if row:
+            return {
+                "name": row['name'],
+                "code": row['code'],
+                "description": row['description'],
+                "triggers": json.loads(row['triggers']) if row['triggers'] else [],
+                "usage_count": row['usage_count']
+            }
+        return None
     
     def increment_tool_usage(self, name: str):
         """增加工具使用计数"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                UPDATE tools SET usage_count = usage_count + 1 
-                WHERE name = ?
-            ''', (name,))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            UPDATE tools SET usage_count = usage_count + 1 
+            WHERE name = ?
+        ''', (name,))
+        conn.commit()
     
     def get_all_tools(self) -> List[Dict]:
         """获取所有工具"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute('SELECT * FROM tools ORDER BY usage_count DESC')
-            
-            tools = []
-            for row in cursor.fetchall():
-                tools.append({
-                    "name": row['name'],
-                    "code": row['code'],
-                    "description": row['description'],
-                    "triggers": json.loads(row['triggers']) if row['triggers'] else [],
-                    "usage_count": row['usage_count']
-                })
-            
-            return tools
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('SELECT * FROM tools ORDER BY usage_count DESC')
+        
+        tools = []
+        for row in cursor.fetchall():
+            tools.append({
+                "name": row['name'],
+                "code": row['code'],
+                "description": row['description'],
+                "triggers": json.loads(row['triggers']) if row['triggers'] else [],
+                "usage_count": row['usage_count']
+            })
+        
+        return tools
     
     def auto_generate_tools(self):
         """自动生成工具函数"""
         
         tools_created = 0
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        
+        try:
+            cursor = conn.execute('''
+                SELECT metadata FROM knowledge_items 
+                WHERE knowledge_type = 'function' 
+                AND metadata LIKE '%code%'
+            ''')
             
-            try:
-                cursor = conn.execute('''
-                    SELECT metadata FROM knowledge_items 
-                    WHERE knowledge_type = 'function' 
-                    AND metadata LIKE '%code%'
-                ''')
-                
-                snippets = []
-                for row in cursor.fetchall():
+            snippets = []
+            for row in cursor.fetchall():
+                try:
+                    metadata = json.loads(row['metadata'])
+                    if 'code' in metadata:
+                        snippets.append(metadata['code'])
+                except:
+                    continue
+            
+            snippet_counter = Counter(snippets)
+            
+            for snippet, count in snippet_counter.most_common(10):
+                if count >= 1 and len(snippet) > 20:
+                    tool_name = self._generate_tool_name(snippet)
+                    
                     try:
-                        metadata = json.loads(row['metadata'])
-                        if 'code' in metadata:
-                            snippets.append(metadata['code'])
+                        cursor = conn.execute('SELECT 1 FROM tools WHERE name = ?', (tool_name,))
+                        if not cursor.fetchone():
+                            conn.execute('''
+                                INSERT INTO tools (name, code, description, triggers, usage_count, created_at)
+                                VALUES (?, ?, ?, ?, 0, ?)
+                            ''', (
+                                tool_name,
+                                snippet,
+                                f"自动生成的工具函数",
+                                json.dumps([snippet[:30]]),
+                                datetime.now().isoformat()
+                            ))
+                            tools_created += 1
                     except:
                         continue
-                
-                snippet_counter = Counter(snippets)
-                
-                for snippet, count in snippet_counter.most_common(10):
-                    if count >= 1 and len(snippet) > 20:
-                        tool_name = self._generate_tool_name(snippet)
-                        
-                        try:
-                            cursor = conn.execute('SELECT 1 FROM tools WHERE name = ?', (tool_name,))
-                            if not cursor.fetchone():
-                                conn.execute('''
-                                    INSERT INTO tools (name, code, description, triggers, usage_count, created_at)
-                                    VALUES (?, ?, ?, ?, 0, ?)
-                                ''', (
-                                    tool_name,
-                                    snippet,
-                                    f"自动生成的工具函数",
-                                    json.dumps([snippet[:30]]),
-                                    datetime.now().isoformat()
-                                ))
-                                tools_created += 1
-                        except:
-                            continue
-                
-                conn.commit()
-            except:
-                pass
+            
+            conn.commit()
+        except:
+            pass
         
         if tools_created > 0:
             logger.info(f"自动生成 {tools_created} 个工具函数")
@@ -618,102 +624,102 @@ class EnhancedLearner:
         # 3. SQL精确匹配
         query_hash = hashlib.md5(query.lower().encode()).hexdigest()
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            cursor = conn.execute('''
-                SELECT answer, quality_score, memory_layer, salience
-                FROM knowledge_items 
-                WHERE question_hash = ? AND quality_score >= ?
-            ''', (query_hash, min_quality))
-            
-            row = cursor.fetchone()
-            if row:
-                conn.execute('''
-                    UPDATE knowledge_items 
-                    SET access_count = access_count + 1, last_accessed = ?
-                    WHERE question_hash = ?
-                ''', (datetime.now().isoformat(), query_hash))
-                conn.commit()
-                return {
-                    "answer": row['answer'],
-                    "confidence": row['quality_score'] / 100.0,
-                    "source": "exact",
-                    "reconstructed": False
-                }
-            
-            # 4. SQL模糊匹配
-            keywords = re.findall(r'\w+', query.lower())
-            for keyword in keywords:
-                if len(keyword) > 3:
-                    cursor = conn.execute('''
-                        SELECT answer, quality_score, memory_layer, salience
-                        FROM knowledge_items 
-                        WHERE question LIKE ? AND quality_score >= ?
-                        AND memory_layer IN (1, 2)
-                        ORDER BY quality_score DESC, access_count DESC
-                        LIMIT 1
-                    ''', (f'%{keyword}%', min_quality))
-                    
-                    row = cursor.fetchone()
-                    if row:
-                        salience = row['salience'] if row['salience'] else 0.5
-                        return {
-                            "answer": row['answer'],
-                            "confidence": row['quality_score'] / 100.0 * 0.8,
-                            "source": "fuzzy",
-                            "reconstructed": False
-                        }
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        
+        cursor = conn.execute('''
+            SELECT answer, quality_score, memory_layer, salience
+            FROM knowledge_items 
+            WHERE question_hash = ? AND quality_score >= ?
+        ''', (query_hash, min_quality))
+        
+        row = cursor.fetchone()
+        if row:
+            conn.execute('''
+                UPDATE knowledge_items 
+                SET access_count = access_count + 1, last_accessed = ?
+                WHERE question_hash = ?
+            ''', (datetime.now().isoformat(), query_hash))
+            conn.commit()
+            return {
+                "answer": row['answer'],
+                "confidence": row['quality_score'] / 100.0,
+                "source": "exact",
+                "reconstructed": False
+            }
+        
+        # 4. SQL模糊匹配
+        keywords = re.findall(r'\w+', query.lower())
+        for keyword in keywords:
+            if len(keyword) > 3:
+                cursor = conn.execute('''
+                    SELECT answer, quality_score, memory_layer, salience
+                    FROM knowledge_items 
+                    WHERE question LIKE ? AND quality_score >= ?
+                    AND memory_layer IN (1, 2)
+                    ORDER BY quality_score DESC, access_count DESC
+                    LIMIT 1
+                ''', (f'%{keyword}%', min_quality))
+                
+                row = cursor.fetchone()
+                if row:
+                    salience = row['salience'] if row['salience'] else 0.5
+                    return {
+                        "answer": row['answer'],
+                        "confidence": row['quality_score'] / 100.0 * 0.8,
+                        "source": "fuzzy",
+                        "reconstructed": False
+                    }
         
         return None
     
     def retrieve_with_context_reconstruction(self, query: str, min_salience: float = 0.3) -> Optional[tuple]:
         """情境重构检索"""
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute('''
-                SELECT question, answer, context_snapshot, source
-                FROM knowledge_items
-                WHERE memory_layer = 3 AND salience >= ?
-                ORDER BY salience DESC
-                LIMIT 3
-            ''', (min_salience,))
-            candidates = cursor.fetchall()
-            
-            if not candidates:
-                return None
-            
-            prompt = f"""用户问：{query}
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT question, answer, context_snapshot, source
+            FROM knowledge_items
+            WHERE memory_layer = 3 AND salience >= ?
+            ORDER BY salience DESC
+            LIMIT 3
+        ''', (min_salience,))
+        candidates = cursor.fetchall()
+        
+        if not candidates:
+            return None
+        
+        prompt = f"""用户问：{query}
 
 我回忆起之前学习过的情境：
 """
-            for idx, row in enumerate(candidates):
-                prompt += f"\n【情境{idx+1}】\n来源: {row['source']}\n问题: {row['question']}\n答案: {row['answer'][:200]}\n"
-                if row['context_snapshot']:
-                    prompt += f"上下文: {row['context_snapshot'][:200]}\n"
+        for idx, row in enumerate(candidates):
+            prompt += f"\n【情境{idx+1}】\n来源: {row['source']}\n问题: {row['question']}\n答案: {row['answer'][:200]}\n"
+            if row['context_snapshot']:
+                prompt += f"上下文: {row['context_snapshot'][:200]}\n"
+        
+        prompt += "\n请结合这些情境，给出完整回答。"
+        
+        try:
+            from core.external_learner import external_learner
+            new_answer = external_learner.ask_llm(prompt)
             
-            prompt += "\n请结合这些情境，给出完整回答。"
-            
-            try:
-                from core.external_learner import external_learner
-                new_answer = external_learner.ask_llm(prompt)
+            if new_answer and not new_answer.startswith("[ERROR]") and not new_answer.startswith("[模拟]"):
+                # 添加回忆感
+                recalled = f"💭 让我想想... 啊，我想起来了！\n\n{new_answer}\n\n（这是我从之前的情境中回忆起来的）"
                 
-                if new_answer and not new_answer.startswith("[ERROR]") and not new_answer.startswith("[模拟]"):
-                    # 添加回忆感
-                    recalled = f"💭 让我想想... 啊，我想起来了！\n\n{new_answer}\n\n（这是我从之前的情境中回忆起来的）"
-                    
-                    self._save_knowledge(
-                        question=query,
-                        answer=new_answer,
-                        source="context_reconstruction",
-                        knowledge_type="qa",
-                        memory_layer=2
-                    )
-                    
-                    return (recalled, 0.65)
-            except Exception as e:
-                logger.error(f"情境重构失败: {e}")
+                self._save_knowledge(
+                    question=query,
+                    answer=new_answer,
+                    source="context_reconstruction",
+                    knowledge_type="qa",
+                    memory_layer=2
+                )
+                
+                return (recalled, 0.65)
+        except Exception as e:
+            logger.error(f"情境重构失败: {e}")
         
         return None
 
@@ -725,25 +731,26 @@ class EnhancedLearner:
         question_hash = hashlib.md5(question.lower().strip().encode()).hexdigest()
         
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    INSERT OR REPLACE INTO knowledge_items
-                    (question_hash, question, answer, source, knowledge_type, 
-                     quality_score, access_count, last_accessed, created_at, metadata)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    question_hash,
-                    question,
-                    answer,
-                    source,
-                    knowledge_type,
-                    100.0,
-                    0,
-                    datetime.now().isoformat(),
-                    datetime.now().isoformat(),
-                    json.dumps(metadata or {}, ensure_ascii=False)
-                ))
-                conn.commit()
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            conn.execute('''
+                INSERT OR REPLACE INTO knowledge_items
+                (question_hash, question, answer, source, knowledge_type, 
+                 quality_score, access_count, last_accessed, created_at, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                question_hash,
+                question,
+                answer,
+                source,
+                knowledge_type,
+                100.0,
+                0,
+                datetime.now().isoformat(),
+                datetime.now().isoformat(),
+                json.dumps(metadata or {}, ensure_ascii=False)
+            ))
+            conn.commit()
             
             if self.vector_store:
                 try:

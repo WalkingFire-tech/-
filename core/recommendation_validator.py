@@ -9,10 +9,10 @@
 """
 import re
 import json
-import sqlite3
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 from datetime import datetime
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -35,88 +35,88 @@ class RecommendationValidator:
         """初始化知识库数据库"""
         Path(self.db_path).parent.mkdir(exist_ok=True)
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS product_categories (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    category_name TEXT UNIQUE,
-                    description TEXT,
-                    keywords TEXT,
-                    created_at TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS products (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    product_id TEXT UNIQUE,
-                    product_name TEXT,
-                    category TEXT,
-                    features TEXT,
-                    keywords TEXT,
-                    created_at TEXT,
-                    updated_at TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS validation_rules (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    rule_name TEXT,
-                    condition_pattern TEXT,
-                    valid_categories TEXT,
-                    priority INTEGER,
-                    created_at TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS validation_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    query_hash TEXT,
-                    recommendation TEXT,
-                    is_valid INTEGER,
-                    issues TEXT,
-                    validated_at TEXT
-                )
-            ''')
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS product_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category_name TEXT UNIQUE,
+                description TEXT,
+                keywords TEXT,
+                created_at TEXT
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id TEXT UNIQUE,
+                product_name TEXT,
+                category TEXT,
+                features TEXT,
+                keywords TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS validation_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_name TEXT,
+                condition_pattern TEXT,
+                valid_categories TEXT,
+                priority INTEGER,
+                created_at TEXT
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS validation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query_hash TEXT,
+                recommendation TEXT,
+                is_valid INTEGER,
+                issues TEXT,
+                validated_at TEXT
+            )
+        ''')
     
     def _load_initial_knowledge(self):
         """加载初始知识（仅首次）"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT COUNT(*) FROM product_categories")
-            if cursor.fetchone()[0] > 0:
-                return
-            
-            categories = [
-                ("电池保护", "电池保护芯片，BMS管理", ["保护板", "BMS", "电池保护", "电池管理"]),
-                ("LED驱动", "LED背光驱动芯片", ["LED", "背光", "屏幕驱动", "LED驱动"]),
-                ("电源管理", "电源管理芯片", ["电源管理", "PMIC", "电源控制"]),
-                ("充电管理", "电池充电管理芯片", ["充电", "充电管理", "充电控制"]),
-            ]
-            
-            for name, desc, keywords in categories:
-                conn.execute(
-                    "INSERT INTO product_categories (category_name, description, keywords, created_at) VALUES (?, ?, ?, ?)",
-                    (name, desc, json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat())
-                )
-            
-            products = [
-                ("BQ76940", "TI BQ76940", "电池保护", ["均衡", "保护", "多串"], ["BQ769", "TI"]),
-                ("BQ76952", "TI BQ76952", "电池保护", ["均衡", "保护", "高精度"], ["BQ769", "TI"]),
-                ("SH36710", "中颖 SH36710", "电池保护", ["均衡", "国产"], ["SH367", "中颖"]),
-                ("TPS61182", "TI TPS61182", "LED驱动", ["LED", "背光"], ["TPS611", "TI"]),
-                ("BQ24195", "TI BQ24195", "充电管理", ["充电", "电源路径"], ["BQ24", "TI"]),
-            ]
-            
-            for pid, name, category, features, keywords in products:
-                conn.execute(
-                    "INSERT INTO products (product_id, product_name, category, features, keywords, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (pid, name, category, json.dumps(features, ensure_ascii=False), json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat(), datetime.now().isoformat())
-                )
-            
-            conn.commit()
-            logger.info("✓ 初始知识库已加载")
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        cursor = conn.execute("SELECT COUNT(*) FROM product_categories")
+        if cursor.fetchone()[0] > 0:
+            return
+        
+        categories = [
+            ("电池保护", "电池保护芯片，BMS管理", ["保护板", "BMS", "电池保护", "电池管理"]),
+            ("LED驱动", "LED背光驱动芯片", ["LED", "背光", "屏幕驱动", "LED驱动"]),
+            ("电源管理", "电源管理芯片", ["电源管理", "PMIC", "电源控制"]),
+            ("充电管理", "电池充电管理芯片", ["充电", "充电管理", "充电控制"]),
+        ]
+        
+        for name, desc, keywords in categories:
+            conn.execute(
+                "INSERT INTO product_categories (category_name, description, keywords, created_at) VALUES (?, ?, ?, ?)",
+                (name, desc, json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat())
+            )
+        
+        products = [
+            ("BQ76940", "TI BQ76940", "电池保护", ["均衡", "保护", "多串"], ["BQ769", "TI"]),
+            ("BQ76952", "TI BQ76952", "电池保护", ["均衡", "保护", "高精度"], ["BQ769", "TI"]),
+            ("SH36710", "中颖 SH36710", "电池保护", ["均衡", "国产"], ["SH367", "中颖"]),
+            ("TPS61182", "TI TPS61182", "LED驱动", ["LED", "背光"], ["TPS611", "TI"]),
+            ("BQ24195", "TI BQ24195", "充电管理", ["充电", "电源路径"], ["BQ24", "TI"]),
+        ]
+        
+        for pid, name, category, features, keywords in products:
+            conn.execute(
+                "INSERT INTO products (product_id, product_name, category, features, keywords, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (pid, name, category, json.dumps(features, ensure_ascii=False), json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat(), datetime.now().isoformat())
+            )
+        
+        conn.commit()
+        logger.info("✓ 初始知识库已加载")
     
     def validate_recommendation(self, user_query: str, recommendation: str,
                                llm_adapter = None) -> Dict:
@@ -185,13 +185,13 @@ class RecommendationValidator:
         """识别需求类别"""
         categories = []
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT category_name, keywords FROM product_categories")
-            for row in cursor:
-                category_name, keywords_json = row
-                keywords = json.loads(keywords_json)
-                if any(kw in query for kw in keywords):
-                    categories.append(category_name)
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        cursor = conn.execute("SELECT category_name, keywords FROM product_categories")
+        for row in cursor:
+            category_name, keywords_json = row
+            keywords = json.loads(keywords_json)
+            if any(kw in query for kw in keywords):
+                categories.append(category_name)
         
         return list(set(categories))
     
@@ -199,18 +199,18 @@ class RecommendationValidator:
         """从文本中提取产品"""
         products = []
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT product_id, product_name, category, keywords FROM products")
-            for row in cursor:
-                pid, name, category, keywords_json = row
-                keywords = json.loads(keywords_json)
-                
-                if pid in text or any(kw in text for kw in keywords):
-                    products.append({
-                        'id': pid,
-                        'name': name,
-                        'category': category
-                    })
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        cursor = conn.execute("SELECT product_id, product_name, category, keywords FROM products")
+        for row in cursor:
+            pid, name, category, keywords_json = row
+            keywords = json.loads(keywords_json)
+            
+            if pid in text or any(kw in text for kw in keywords):
+                products.append({
+                    'id': pid,
+                    'name': name,
+                    'category': category
+                })
         
         return products
     
@@ -280,12 +280,12 @@ class RecommendationValidator:
         """记录验证历史"""
         try:
             query_hash = str(hash(query))[:12]
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    "INSERT INTO validation_history (query_hash, recommendation, is_valid, issues, validated_at) VALUES (?, ?, ?, ?, ?)",
-                    (query_hash, recommendation[:200], int(is_valid) if is_valid is not None else -1, json.dumps(issues, ensure_ascii=False), datetime.now().isoformat())
-                )
-                conn.commit()
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            conn.execute(
+                "INSERT INTO validation_history (query_hash, recommendation, is_valid, issues, validated_at) VALUES (?, ?, ?, ?, ?)",
+                (query_hash, recommendation[:200], int(is_valid) if is_valid is not None else -1, json.dumps(issues, ensure_ascii=False), datetime.now().isoformat())
+            )
+            conn.commit()
         except:
             pass
     
@@ -293,26 +293,26 @@ class RecommendationValidator:
                    features: List[str], keywords: List[str]):
         """添加产品到知识库"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO products (product_id, product_name, category, features, keywords, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (product_id, name, category, json.dumps(features, ensure_ascii=False), json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat(), datetime.now().isoformat())
-                )
-                conn.commit()
-                logger.info(f"✓ 添加产品: {name}")
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            conn.execute(
+                "INSERT OR REPLACE INTO products (product_id, product_name, category, features, keywords, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (product_id, name, category, json.dumps(features, ensure_ascii=False), json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat(), datetime.now().isoformat())
+            )
+            conn.commit()
+            logger.info(f"✓ 添加产品: {name}")
         except Exception as e:
             logger.warning(f"添加产品失败: {e}")
     
     def add_category(self, name: str, description: str, keywords: List[str]):
         """添加产品类别"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO product_categories (category_name, description, keywords, created_at) VALUES (?, ?, ?, ?)",
-                    (name, description, json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat())
-                )
-                conn.commit()
-                logger.info(f"✓ 添加类别: {name}")
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            conn.execute(
+                "INSERT OR REPLACE INTO product_categories (category_name, description, keywords, created_at) VALUES (?, ?, ?, ?)",
+                (name, description, json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat())
+            )
+            conn.commit()
+            logger.info(f"✓ 添加类别: {name}")
         except Exception as e:
             logger.warning(f"添加类别失败: {e}")
     
@@ -327,16 +327,16 @@ class RecommendationValidator:
         
         recommendations = []
         
-        with sqlite3.connect(self.db_path) as conn:
-            for category in required_categories:
-                cursor = conn.execute(
-                    "SELECT product_id, product_name, features FROM products WHERE category = ?",
-                    (category,)
-                )
-                for row in cursor:
-                    pid, name, features_json = row
-                    features = json.loads(features_json)
-                    recommendations.append(f"- {name}: {', '.join(features)}")
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        for category in required_categories:
+            cursor = conn.execute(
+                "SELECT product_id, product_name, features FROM products WHERE category = ?",
+                (category,)
+            )
+            for row in cursor:
+                pid, name, features_json = row
+                features = json.loads(features_json)
+                recommendations.append(f"- {name}: {', '.join(features)}")
         
         if recommendations:
             return f"推荐产品（{', '.join(required_categories)}）：\n" + "\n".join(recommendations[:5])
