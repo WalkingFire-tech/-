@@ -15,7 +15,7 @@
 import math
 import time
 import json
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 from loguru import logger
@@ -52,19 +52,19 @@ class DynamicProbabilityField:
     def _init_db(self):
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS probability_snapshots (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    query TEXT,
-                    distribution TEXT,
-                    entropy REAL,
-                    top_candidate TEXT,
-                    top_probability REAL,
-                    evidence_count INTEGER,
-                    timestamp TEXT
-                )
-            ''')
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS probability_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query TEXT,
+                distribution TEXT,
+                entropy REAL,
+                top_candidate TEXT,
+                top_probability REAL,
+                evidence_count INTEGER,
+                timestamp TEXT
+            )
+        ''')
 
     def initialize(self, candidates: List[Dict], path_weights: Dict[str, float] = None) -> Dict:
         self._candidates = {}
@@ -169,30 +169,30 @@ class DynamicProbabilityField:
     def save_snapshot(self, query: str = ""):
         dist = self.get_distribution()
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    INSERT INTO probability_snapshots
-                    (query, distribution, entropy, top_candidate, top_probability, evidence_count, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (query[:200], json.dumps(dist["candidates"], ensure_ascii=False),
-                      dist["entropy"], dist.get("top", {}).get("source", ""),
-                      dist.get("top", {}).get("probability", 0),
-                      dist["evidence_count"], datetime.now().isoformat()))
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            conn.execute('''
+                INSERT INTO probability_snapshots
+                (query, distribution, entropy, top_candidate, top_probability, evidence_count, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (query[:200], json.dumps(dist["candidates"], ensure_ascii=False),
+                  dist["entropy"], dist.get("top", {}).get("source", ""),
+                  dist.get("top", {}).get("probability", 0),
+                  dist["evidence_count"], datetime.now().isoformat()))
         except Exception as e:
             logger.debug(f"概率场快照保存失败: {e}")
 
     def get_recent_snapshots(self, limit: int = 20) -> List[Dict]:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cur = conn.execute(
-                    "SELECT query, distribution, entropy, top_candidate, top_probability, evidence_count, timestamp FROM probability_snapshots ORDER BY id DESC LIMIT ?",
-                    (limit,))
-                return [
-                    {"query": r[0], "distribution": json.loads(r[1]), "entropy": r[2],
-                     "top_candidate": r[3], "top_probability": r[4],
-                     "evidence_count": r[5], "timestamp": r[6]}
-                    for r in cur.fetchall()
-                ]
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cur = conn.execute(
+                "SELECT query, distribution, entropy, top_candidate, top_probability, evidence_count, timestamp FROM probability_snapshots ORDER BY id DESC LIMIT ?",
+                (limit,))
+            return [
+                {"query": r[0], "distribution": json.loads(r[1]), "entropy": r[2],
+                 "top_candidate": r[3], "top_probability": r[4],
+                 "evidence_count": r[5], "timestamp": r[6]}
+                for r in cur.fetchall()
+            ]
         except Exception:
             return []
 

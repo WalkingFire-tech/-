@@ -5,7 +5,7 @@
 from typing import Dict, List, Optional, Any, Callable
 from datetime import datetime, timedelta
 import threading
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import json
 from pathlib import Path
 
@@ -95,38 +95,38 @@ class StateCollector:
         """初始化数据库"""
         self._db_path.parent.mkdir(exist_ok=True)
         
-        with sqlite3.connect(str(self._db_path)) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS state_reports (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    layer TEXT,
-                    timestamp TEXT,
-                    status TEXT,
-                    health TEXT,
-                    metrics TEXT,
-                    issues TEXT,
-                    warnings TEXT,
-                    last_operation TEXT,
-                    active_tasks TEXT,
-                    confidence REAL,
-                    layer_version TEXT
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS health_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT,
-                    layer TEXT,
-                    health TEXT,
-                    confidence REAL,
-                    snapshot TEXT
-                )
-            ''')
-            
-            conn.commit()
+        conn = DatabaseManager.get(str(self._db_path))._get_conn()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS state_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                layer TEXT,
+                timestamp TEXT,
+                status TEXT,
+                health TEXT,
+                metrics TEXT,
+                issues TEXT,
+                warnings TEXT,
+                last_operation TEXT,
+                active_tasks TEXT,
+                confidence REAL,
+                layer_version TEXT
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS health_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                layer TEXT,
+                health TEXT,
+                confidence REAL,
+                snapshot TEXT
+            )
+        ''')
+        
+        conn.commit()
     
     def collect(self, report: LayerStateReport) -> None:
         """
@@ -158,27 +158,27 @@ class StateCollector:
     def _save_report(self, report: LayerStateReport):
         """保存报告到数据库"""
         try:
-            with sqlite3.connect(str(self._db_path)) as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO state_reports 
-                    (layer, timestamp, status, health, metrics, issues, warnings,
-                     last_operation, active_tasks, confidence, layer_version)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    report.layer_name,
-                    report.timestamp,
-                    report.status.value,
-                    report.health.value,
-                    json.dumps(report.metrics),
-                    json.dumps(report.issues),
-                    json.dumps(report.warnings),
-                    report.last_operation,
-                    json.dumps(report.active_tasks),
-                    report.confidence_score,
-                    report.layer_version
-                ))
-                conn.commit()
+            conn = DatabaseManager.get(str(self._db_path))._get_conn()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO state_reports 
+                (layer, timestamp, status, health, metrics, issues, warnings,
+                 last_operation, active_tasks, confidence, layer_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                report.layer_name,
+                report.timestamp,
+                report.status.value,
+                report.health.value,
+                json.dumps(report.metrics),
+                json.dumps(report.issues),
+                json.dumps(report.warnings),
+                report.last_operation,
+                json.dumps(report.active_tasks),
+                report.confidence_score,
+                report.layer_version
+            ))
+            conn.commit()
         except Exception as e:
             logger.error(f"保存状态报告失败: {e}")
     
@@ -297,23 +297,22 @@ class StateCollector:
         try:
             cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
             
-            with sqlite3.connect(str(self._db_path)) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.execute('''
-                    SELECT timestamp, health, confidence
-                    FROM state_reports
-                    WHERE layer = ? AND timestamp > ?
-                    ORDER BY timestamp ASC
-                ''', (layer_name, cutoff))
-                
-                return [
-                    {
-                        "timestamp": row["timestamp"],
-                        "health": row["health"],
-                        "confidence": row["confidence"]
-                    }
-                    for row in cursor.fetchall()
-                ]
+            conn = DatabaseManager.get(str(self._db_path))._get_conn()
+            cursor = conn.execute('''
+                SELECT timestamp, health, confidence
+                FROM state_reports
+                WHERE layer = ? AND timestamp > ?
+                ORDER BY timestamp ASC
+            ''', (layer_name, cutoff))
+            
+            return [
+                {
+                    "timestamp": row["timestamp"],
+                    "health": row["health"],
+                    "confidence": row["confidence"]
+                }
+                for row in cursor.fetchall()
+            ]
         except Exception as e:
             logger.error(f"获取健康趋势失败: {e}")
             return []

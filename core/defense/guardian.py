@@ -69,14 +69,14 @@ class SystemGuardian:
 
     def _collect_health_metrics(self):
         try:
-            import sqlite3
-            conn = sqlite3.connect("data/experience_pool.db")
+            from infrastructure.database_manager import DatabaseManager
+            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM experiences WHERE success=0")
             failures = c.fetchone()[0]
             c.execute("SELECT COUNT(*) FROM experiences")
             total = c.fetchone()[0]
-            conn.close()
+
             if total > 0:
                 error_rate = failures / total
                 health_metrics.record("error_rate", error_rate)

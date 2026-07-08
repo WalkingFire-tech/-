@@ -4,7 +4,7 @@
 
 from typing import Dict, List, Tuple
 from dataclasses import dataclass
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 from pathlib import Path
 
 
@@ -99,74 +99,74 @@ class KnowledgeValidator:
             if not self.knowledge_db_path.exists():
                 return 0.95
             
-            with sqlite3.connect(str(self.knowledge_db_path)) as conn:
-                cursor = conn.cursor()
-                
-                cursor.execute("""
-                    SELECT name FROM sqlite_master 
-                    WHERE type='table' AND name='knowledge_base'
-                """)
-                
-                if not cursor.fetchone():
-                    return 0.95
-                
-                import re
-                content_words = set(
-                    word.lower() for word in re.findall(r'\w+', content)
+            conn = DatabaseManager.get(str(self.knowledge_db_path))._get_conn()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='knowledge_base'
+            """)
+            
+            if not cursor.fetchone():
+                return 0.95
+            
+            import re
+            content_words = set(
+                word.lower() for word in re.findall(r'\w+', content)
+                if len(word) > 3
+            )
+            
+            if not content_words:
+                return 0.8
+            
+            cursor.execute("""
+                SELECT question, answer FROM knowledge_base
+                ORDER BY created_at DESC
+                LIMIT 50
+            """)
+            
+            existing_knowledge = cursor.fetchall()
+            
+            if not existing_knowledge:
+                return 0.95
+            
+            max_overlap = 0.0
+            potential_conflicts = []
+            
+            for question, answer in existing_knowledge:
+                existing_words = set(
+                    word.lower() for word in re.findall(r'\w+', f"{question} {answer}")
                     if len(word) > 3
                 )
                 
-                if not content_words:
-                    return 0.8
+                if not existing_words:
+                    continue
                 
-                cursor.execute("""
-                    SELECT question, answer FROM knowledge_base
-                    ORDER BY created_at DESC
-                    LIMIT 50
-                """)
+                overlap = len(content_words & existing_words) / len(content_words)
+                max_overlap = max(max_overlap, overlap)
                 
-                existing_knowledge = cursor.fetchall()
-                
-                if not existing_knowledge:
-                    return 0.95
-                
-                max_overlap = 0.0
-                potential_conflicts = []
-                
-                for question, answer in existing_knowledge:
-                    existing_words = set(
-                        word.lower() for word in re.findall(r'\w+', f"{question} {answer}")
-                        if len(word) > 3
-                    )
+                if overlap > 0.3:
+                    negation_patterns = ["不", "非", "无", "没", "not", "no", "never"]
+                    content_has_negation = any(neg in content for neg in negation_patterns)
+                    existing_has_negation = any(neg in f"{question} {answer}" for neg in negation_patterns)
                     
-                    if not existing_words:
-                        continue
-                    
-                    overlap = len(content_words & existing_words) / len(content_words)
-                    max_overlap = max(max_overlap, overlap)
-                    
-                    if overlap > 0.3:
-                        negation_patterns = ["不", "非", "无", "没", "not", "no", "never"]
-                        content_has_negation = any(neg in content for neg in negation_patterns)
-                        existing_has_negation = any(neg in f"{question} {answer}" for neg in negation_patterns)
-                        
-                        if content_has_negation != existing_has_negation:
-                            potential_conflicts.append({
-                                "overlap": overlap,
-                                "reason": "逻辑否定不一致"
-                            })
-                
-                if potential_conflicts:
-                    max_conflict_overlap = max(c["overlap"] for c in potential_conflicts)
-                    consistency = 0.5 - (max_conflict_overlap - 0.3) * 0.5
-                    return max(0.2, consistency)
-                
-                if max_overlap > 0.5:
-                    return 0.85
-                elif max_overlap > 0.3:
-                    return 0.9
-                else:
-                    return 0.95
+                    if content_has_negation != existing_has_negation:
+                        potential_conflicts.append({
+                            "overlap": overlap,
+                            "reason": "逻辑否定不一致"
+                        })
+            
+            if potential_conflicts:
+                max_conflict_overlap = max(c["overlap"] for c in potential_conflicts)
+                consistency = 0.5 - (max_conflict_overlap - 0.3) * 0.5
+                return max(0.2, consistency)
+            
+            if max_overlap > 0.5:
+                return 0.85
+            elif max_overlap > 0.3:
+                return 0.9
+            else:
+                return 0.95
         
         except Exception as e:
             return 0.7
@@ -326,66 +326,66 @@ class KnowledgeValidator:
             if not self.knowledge_db_path.exists():
                 return 0.9
             
-            with sqlite3.connect(str(self.knowledge_db_path)) as conn:
-                cursor = conn.cursor()
-                
-                cursor.execute("""
-                    SELECT name FROM sqlite_master 
-                    WHERE type='table' AND name='knowledge_base'
-                """)
-                
-                if not cursor.fetchone():
-                    return 0.9
-                
-                import re
-                content_key_phrases = set()
-                
-                patterns = [
-                    r'([^。！？\n]{10,30})',
-                    r'(\w+的\w+)',
-                    r'(如何\w+)',
-                    r'(为什么\w+)'
-                ]
-                
+            conn = DatabaseManager.get(str(self.knowledge_db_path))._get_conn()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='knowledge_base'
+            """)
+            
+            if not cursor.fetchone():
+                return 0.9
+            
+            import re
+            content_key_phrases = set()
+            
+            patterns = [
+                r'([^。！？\n]{10,30})',
+                r'(\w+的\w+)',
+                r'(如何\w+)',
+                r'(为什么\w+)'
+            ]
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, content)
+                content_key_phrases.update(matches)
+            
+            if not content_key_phrases:
+                return 0.6
+            
+            cursor.execute("""
+                SELECT answer FROM knowledge_base
+                ORDER BY created_at DESC
+                LIMIT 30
+            """)
+            
+            existing_answers = [row[0] for row in cursor.fetchall()]
+            
+            if not existing_answers:
+                return 0.9
+            
+            max_similarity = 0.0
+            
+            for existing in existing_answers:
+                existing_phrases = set()
                 for pattern in patterns:
-                    matches = re.findall(pattern, content)
-                    content_key_phrases.update(matches)
+                    matches = re.findall(pattern, existing)
+                    existing_phrases.update(matches)
                 
-                if not content_key_phrases:
-                    return 0.6
+                if not existing_phrases:
+                    continue
                 
-                cursor.execute("""
-                    SELECT answer FROM knowledge_base
-                    ORDER BY created_at DESC
-                    LIMIT 30
-                """)
+                intersection = len(content_key_phrases & existing_phrases)
+                union = len(content_key_phrases | existing_phrases)
                 
-                existing_answers = [row[0] for row in cursor.fetchall()]
-                
-                if not existing_answers:
-                    return 0.9
-                
-                max_similarity = 0.0
-                
-                for existing in existing_answers:
-                    existing_phrases = set()
-                    for pattern in patterns:
-                        matches = re.findall(pattern, existing)
-                        existing_phrases.update(matches)
-                    
-                    if not existing_phrases:
-                        continue
-                    
-                    intersection = len(content_key_phrases & existing_phrases)
-                    union = len(content_key_phrases | existing_phrases)
-                    
-                    if union > 0:
-                        similarity = intersection / union
-                        max_similarity = max(max_similarity, similarity)
-                
-                novelty = 1.0 - max_similarity
-                
-                return max(0.1, novelty)
+                if union > 0:
+                    similarity = intersection / union
+                    max_similarity = max(max_similarity, similarity)
+            
+            novelty = 1.0 - max_similarity
+            
+            return max(0.1, novelty)
         
         except Exception:
             return 0.6

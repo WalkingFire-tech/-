@@ -12,7 +12,7 @@
 import re
 import os
 import json
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 from typing import Dict, List, Any
 from loguru import logger
 from datetime import datetime
@@ -147,7 +147,7 @@ class SystemAuditor:
         result = {"stats": {}, "gaps": []}
 
         try:
-            conn = sqlite3.connect(os.path.join(self.root_dir, "data", "experience_pool.db"))
+            conn = DatabaseManager.get(os.path.join(self.root_dir, "data", "experience_pool.db"))._get_conn()
             c = conn.cursor()
             c.execute("SELECT success, COUNT(*) FROM experiences GROUP BY success")
             success_dist = {str(r[0]): r[1] for r in c.fetchall()}
@@ -161,12 +161,11 @@ class SystemAuditor:
                     "severity": "high",
                     "description": f"经验池success率仅{success_rate:.0%}，学习闭环可能失效",
                 })
-            conn.close()
         except:
             pass
 
         try:
-            conn = sqlite3.connect(os.path.join(self.root_dir, "data", "learning_rules.db"))
+            conn = DatabaseManager.get(os.path.join(self.root_dir, "data", "learning_rules.db"))._get_conn()
             c = conn.cursor()
             c.execute("SELECT AVG(confidence) FROM learning_rules WHERE status='active'")
             avg_conf = c.fetchone()[0] or 0.5
@@ -177,7 +176,6 @@ class SystemAuditor:
                     "severity": "medium",
                     "description": f"活跃规则平均置信度{avg_conf:.2f}，未分化（大部分=0.5）",
                 })
-            conn.close()
         except:
             pass
 

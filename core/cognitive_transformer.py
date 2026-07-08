@@ -13,7 +13,7 @@ L4: 抽象能力/元认知（跨领域原则）
 - 技能 → 反射（高频成功自动化）
 - 情景记忆 → 抽象知识（归纳总结）
 """
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import json
 import re
 from datetime import datetime, timedelta
@@ -66,69 +66,63 @@ class CognitiveTransformer:
         skills_created = 0
         MAX_AUTO_TOOLS = 30
         
-        with sqlite3.connect(self.db_path) as conn:
-            existing_count = conn.execute("SELECT COUNT(*) FROM tools WHERE enabled=1").fetchone()[0]
-            if existing_count >= MAX_AUTO_TOOLS:
-                logger.debug(f"自动工具已达上限({MAX_AUTO_TOOLS})，跳过技能转化")
-                return 0
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        existing_count = conn.execute("SELECT COUNT(*) FROM tools WHERE enabled=1").fetchone()[0]
+        if existing_count >= MAX_AUTO_TOOLS:
+            logger.debug(f"自动工具已达上限({MAX_AUTO_TOOLS})，跳过技能转化")
+            return 0
+        
+        remaining_slots = MAX_AUTO_TOOLS - existing_count
+        
+        cur = conn.execute('''
+            SELECT question, answer, COUNT(*) as freq
+            FROM knowledge_items
+            WHERE memory_layer = 3
+            AND knowledge_type = 'qa'
+            AND salience >= 0.5
+            GROUP BY question
+            HAVING freq >= 3
+            ORDER BY freq DESC
+            LIMIT 10
+        ''')
+        
+        candidates = cur.fetchall()
+        
+        for row in candidates:
+            if skills_created >= remaining_slots:
+                break
+            question = row['question']
+            answer = row['answer']
+            freq = row['freq']
             
-            remaining_slots = MAX_AUTO_TOOLS - existing_count
-            conn.row_factory = sqlite3.Row
+            tool_name = self._generate_tool_name(question)
+            cur2 = conn.execute("SELECT 1 FROM tools WHERE name = ?", (tool_name,))
+            if cur2.fetchone():
+                continue
             
-            # 统计L3情景记忆中的高频问题模式
-            cur = conn.execute('''
-                SELECT question, answer, COUNT(*) as freq
-                FROM knowledge_items
-                WHERE memory_layer = 3
-                AND knowledge_type = 'qa'
-                AND salience >= 0.5
-                GROUP BY question
-                HAVING freq >= 3
-                ORDER BY freq DESC
-                LIMIT 10
-            ''')
+            tool_code = self._generate_tool_code(tool_name, question, answer)
             
-            candidates = cur.fetchall()
+            conn.execute('''
+                INSERT INTO tools (name, code, description, triggers, usage_count, created_at)
+                VALUES (?, ?, ?, ?, 0, ?)
+            ''', (
+                tool_name,
+                tool_code,
+                f"从{freq}次成功经验中提取的技能: {question[:50]}",
+                json.dumps([question[:30]]),
+                datetime.now().isoformat()
+            ))
             
-            for row in candidates:
-                if skills_created >= remaining_slots:
-                    break
-                question = row['question']
-                answer = row['answer']
-                freq = row['freq']
-                
-                # 检查是否已有对应工具
-                tool_name = self._generate_tool_name(question)
-                cur2 = conn.execute("SELECT 1 FROM tools WHERE name = ?", (tool_name,))
-                if cur2.fetchone():
-                    continue
-                
-                # 生成工具代码（简化：将答案封装为函数）
-                tool_code = self._generate_tool_code(tool_name, question, answer)
-                
-                # 注册工具
-                conn.execute('''
-                    INSERT INTO tools (name, code, description, triggers, usage_count, created_at)
-                    VALUES (?, ?, ?, ?, 0, ?)
-                ''', (
-                    tool_name,
-                    tool_code,
-                    f"从{freq}次成功经验中提取的技能: {question[:50]}",
-                    json.dumps([question[:30]]),
-                    datetime.now().isoformat()
-                ))
-                
-                # 标记原始记忆为已转化
-                conn.execute('''
-                    UPDATE knowledge_items
-                    SET metadata = json_set(metadata, '$.transformed_to', ?)
-                    WHERE question = ? AND memory_layer = 3
-                ''', (tool_name, question))
-                
-                skills_created += 1
-                logger.info(f"情景→技能: {question[:40]} -> {tool_name}")
+            conn.execute('''
+                UPDATE knowledge_items
+                SET metadata = json_set(metadata, '$.transformed_to', ?)
+                WHERE question = ? AND memory_layer = 3
+            ''', (tool_name, question))
             
-            conn.commit()
+            skills_created += 1
+            logger.info(f"情景→技能: {question[:40]} -> {tool_name}")
+        
+        conn.commit()
         
         return skills_created
     
@@ -141,54 +135,49 @@ class CognitiveTransformer:
         """
         reflexes_created = 0
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        
+        cur = conn.execute('''
+            SELECT name, description, triggers, usage_count
+            FROM tools
+            WHERE usage_count >= 3
+            ORDER BY usage_count DESC
+            LIMIT 10
+        ''')
+        
+        candidates = cur.fetchall()
+        
+        for row in candidates:
+            tool_name = row['name']
+            triggers = json.loads(row['triggers']) if row['triggers'] else []
             
-            # 查找高频成功的工具
-            cur = conn.execute('''
-                SELECT name, description, triggers, usage_count
-                FROM tools
-                WHERE usage_count >= 3
-                ORDER BY usage_count DESC
-                LIMIT 10
-            ''')
+            if not triggers:
+                continue
             
-            candidates = cur.fetchall()
-            
-            for row in candidates:
-                tool_name = row['name']
-                triggers = json.loads(row['triggers']) if row['triggers'] else []
+            for trigger in triggers:
+                cur2 = conn.execute('''
+                    SELECT 1 FROM learning_rules
+                    WHERE trigger_pattern LIKE ?
+                ''', (f'%{trigger}%',))
                 
-                if not triggers:
+                if cur2.fetchone():
                     continue
                 
-                # 为每个触发词创建规则
-                for trigger in triggers:
-                    # 检查是否已有规则
-                    cur2 = conn.execute('''
-                        SELECT 1 FROM learning_rules
-                        WHERE trigger_pattern LIKE ?
-                    ''', (f'%{trigger}%',))
-                    
-                    if cur2.fetchone():
-                        continue
-                    
-                    # 创建反射规则
-                    conn.execute('''
-                        INSERT INTO learning_rules
-                        (trigger_pattern, action, confidence, source, status, created_at)
-                        VALUES (?, ?, ?, ?, 'active', ?)
-                    ''', (
-                        f"用户输入包含 '{trigger}'",
-                        f"自动调用工具 {tool_name}",
-                        0.85,
-                        'reflex_from_skill'
-                    ))
-                    
-                    reflexes_created += 1
-                    logger.info(f"技能→反射: {tool_name} -> 触发'{trigger}'")
-            
-            conn.commit()
+                conn.execute('''
+                    INSERT INTO learning_rules
+                    (trigger_pattern, action, confidence, source, status, created_at)
+                    VALUES (?, ?, ?, ?, 'active', ?)
+                ''', (
+                    f"用户输入包含 '{trigger}'",
+                    f"自动调用工具 {tool_name}",
+                    0.85,
+                    'reflex_from_skill'
+                ))
+                
+                reflexes_created += 1
+                logger.info(f"技能→反射: {tool_name} -> 触发'{trigger}'")
+        
+        conn.commit()
         
         return reflexes_created
     
@@ -201,79 +190,70 @@ class CognitiveTransformer:
         """
         abstractions_created = 0
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        
+        cur = conn.execute('''
+            SELECT question, answer, source, metadata
+            FROM knowledge_items
+            WHERE memory_layer = 3
+            AND knowledge_type = 'qa'
+            ORDER BY salience DESC
+            LIMIT 20
+        ''')
+        
+        situations = cur.fetchall()
+        
+        if len(situations) < 5:
+            return 0
+        
+        keywords = []
+        for row in situations:
+            words = re.findall(r'\w+', row['question'].lower())
+            keywords.extend([w for w in words if len(w) > 3])
+        
+        keyword_count = Counter(keywords)
+        top_keywords = keyword_count.most_common(5)
+        
+        for keyword, count in top_keywords:
+            if count < 3:
+                continue
             
-            # 获取L3情景记忆
-            cur = conn.execute('''
-                SELECT question, answer, source, metadata
-                FROM knowledge_items
-                WHERE memory_layer = 3
-                AND knowledge_type = 'qa'
-                ORDER BY salience DESC
-                LIMIT 20
-            ''')
+            related = [s for s in situations if keyword in s['question'].lower()]
             
-            situations = cur.fetchall()
+            if len(related) < 3:
+                continue
             
-            if len(situations) < 5:
-                return 0
+            abstract_question = f"关于{keyword}的通用原则"
             
-            # 提取关键词主题
-            keywords = []
-            for row in situations:
-                words = re.findall(r'\w+', row['question'].lower())
-                keywords.extend([w for w in words if len(w) > 3])
+            cur2 = conn.execute('''
+                SELECT 1 FROM knowledge_items
+                WHERE question = ? AND memory_layer = 1
+            ''', (abstract_question,))
             
-            keyword_count = Counter(keywords)
-            top_keywords = keyword_count.most_common(5)
+            if cur2.fetchone():
+                continue
             
-            # 为高频主题生成抽象知识
-            for keyword, count in top_keywords:
-                if count < 3:
-                    continue
-                
-                # 收集相关情景
-                related = [s for s in situations if keyword in s['question'].lower()]
-                
-                if len(related) < 3:
-                    continue
-                
-                # 生成抽象知识（简化：统计共性）
-                abstract_question = f"关于{keyword}的通用原则"
-                
-                # 检查是否已存在
-                cur2 = conn.execute('''
-                    SELECT 1 FROM knowledge_items
-                    WHERE question = ? AND memory_layer = 1
-                ''', (abstract_question,))
-                
-                if cur2.fetchone():
-                    continue
-                
-                # 归纳答案（简化：汇总相关答案）
-                related_answers = [r['answer'][:100] for r in related[:3]]
-                abstract_answer = f"根据{len(related)}次经验总结：\n" + "\n".join([f"- {a}" for a in related_answers])
-                
-                # 存入L1（抽象知识）
-                conn.execute('''
-                    INSERT INTO knowledge_items
-                    (question_hash, question, answer, source, knowledge_type, 
-                     quality_score, memory_layer, salience, metadata, created_at)
-                    VALUES (?, ?, ?, ?, 'abstract', 100.0, 1, 0.85, ?, ?)
-                ''', (
-                    f"abstract_{keyword}",
-                    abstract_question,
-                    abstract_answer,
-                    "abstraction_from_situations",
-                    json.dumps({"source_count": len(related), "keyword": keyword}),
-                    datetime.now().isoformat()
-                ))
-                
-                abstractions_created += 1
-                logger.info(f"情景→抽象: {keyword} (来自{len(related)}条情景)")
+            related_answers = [r['answer'][:100] for r in related[:3]]
+            abstract_answer = f"根据{len(related)}次经验总结：\n" + "\n".join([f"- {a}" for a in related_answers])
             
-            conn.commit()
+            conn.execute('''
+                INSERT INTO knowledge_items
+                (question_hash, question, answer, source, knowledge_type, 
+                 quality_score, memory_layer, salience, metadata, created_at)
+                VALUES (?, ?, ?, ?, 'abstract', 100.0, 1, 0.85, ?, ?)
+            ''', (
+                f"abstract_{keyword}",
+                abstract_question,
+                abstract_answer,
+                "abstraction_from_situations",
+                json.dumps({"source_count": len(related), "keyword": keyword}),
+                datetime.now().isoformat()
+            ))
+            
+            abstractions_created += 1
+            logger.info(f"情景→抽象: {keyword} (来自{len(related)}条情景)")
+        
+        conn.commit()
         
         return abstractions_created
     
@@ -300,36 +280,31 @@ class CognitiveTransformer:
     
     def get_transformation_stats(self) -> Dict:
         """获取转化统计"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            # L3情景记忆数
-            cur = conn.execute("SELECT COUNT(*) FROM knowledge_items WHERE memory_layer = 3")
-            l3_count = cur.fetchone()[0]
-            
-            # 工具数
-            cur = conn.execute("SELECT COUNT(*) FROM tools")
-            tools_count = cur.fetchone()[0]
-            
-            # 反射规则数
-            cur = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE source = 'reflex_from_skill'")
-            reflexes_count = cur.fetchone()[0]
-            
-            # 抽象知识数
-            cur = conn.execute("SELECT COUNT(*) FROM knowledge_items WHERE knowledge_type = 'abstract'")
-            abstractions_count = cur.fetchone()[0]
-            
-            return {
-                "l3_situations": l3_count,
-                "l2_skills": tools_count,
-                "l1_reflexes": reflexes_count,
-                "l4_abstractions": abstractions_count,
-                "transformation_potential": {
-                    "situations_to_skills": max(0, l3_count // 3),
-                    "skills_to_reflexes": max(0, tools_count // 2),
-                    "situations_to_abstractions": max(0, l3_count // 5)
-                }
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        
+        cur = conn.execute("SELECT COUNT(*) FROM knowledge_items WHERE memory_layer = 3")
+        l3_count = cur.fetchone()[0]
+        
+        cur = conn.execute("SELECT COUNT(*) FROM tools")
+        tools_count = cur.fetchone()[0]
+        
+        cur = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE source = 'reflex_from_skill'")
+        reflexes_count = cur.fetchone()[0]
+        
+        cur = conn.execute("SELECT COUNT(*) FROM knowledge_items WHERE knowledge_type = 'abstract'")
+        abstractions_count = cur.fetchone()[0]
+        
+        return {
+            "l3_situations": l3_count,
+            "l2_skills": tools_count,
+            "l1_reflexes": reflexes_count,
+            "l4_abstractions": abstractions_count,
+            "transformation_potential": {
+                "situations_to_skills": max(0, l3_count // 3),
+                "skills_to_reflexes": max(0, tools_count // 2),
+                "situations_to_abstractions": max(0, l3_count // 5)
             }
+        }
 
 
 cognitive_transformer = CognitiveTransformer()

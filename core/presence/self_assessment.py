@@ -21,7 +21,7 @@
 - P3: 规范单例实现
 - P5: 配置化阈值
 """
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -144,29 +144,29 @@ class ContinuousSelfAssessment:
         try:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
             
-            with sqlite3.connect(str(self._db_path)) as conn:
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS assessments (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        conversation_id TEXT,
-                        timestamp TEXT,
-                        overall_score REAL,
-                        metrics TEXT,
-                        insights TEXT,
-                        improvements TEXT,
-                        self_criticism TEXT,
-                        learning_points TEXT
-                    )
-                ''')
-                conn.execute('''
-                    CREATE INDEX IF NOT EXISTS idx_conversation 
-                    ON assessments(conversation_id)
-                ''')
-                conn.execute('''
-                    CREATE INDEX IF NOT EXISTS idx_timestamp 
-                    ON assessments(timestamp)
-                ''')
-                conn.commit()
+            conn = DatabaseManager.get(str(self._db_path))._get_conn()
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS assessments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT,
+                    timestamp TEXT,
+                    overall_score REAL,
+                    metrics TEXT,
+                    insights TEXT,
+                    improvements TEXT,
+                    self_criticism TEXT,
+                    learning_points TEXT
+                )
+            ''')
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_conversation 
+                ON assessments(conversation_id)
+            ''')
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_timestamp 
+                ON assessments(timestamp)
+            ''')
+            conn.commit()
             logger.debug("自我评估数据库初始化成功")
         except Exception as e:
             logger.warning(f"自我评估数据库初始化失败: {e}")
@@ -177,28 +177,28 @@ class ContinuousSelfAssessment:
             if not self._db_path.exists():
                 return
             
-            with sqlite3.connect(str(self._db_path)) as conn:
-                cursor = conn.execute('''
-                    SELECT conversation_id, timestamp, overall_score, 
-                           metrics, insights, improvements, 
-                           self_criticism, learning_points
-                    FROM assessments
-                    ORDER BY timestamp DESC
-                    LIMIT 50
-                ''')
-                
-                for row in cursor:
-                    result = AssessmentResult(
-                        timestamp=datetime.fromisoformat(row[1]),
-                        conversation_id=row[0],
-                        overall_score=row[2],
-                        metrics=json.loads(row[3]) if row[3] else {},
-                        insights=json.loads(row[4]) if row[4] else [],
-                        improvements=json.loads(row[5]) if row[5] else [],
-                        self_criticism=json.loads(row[6]) if row[6] else [],
-                        learning_points=json.loads(row[7]) if row[7] else [],
-                    )
-                    self.history.results.insert(0, result)
+            conn = DatabaseManager.get(str(self._db_path))._get_conn()
+            cursor = conn.execute('''
+                SELECT conversation_id, timestamp, overall_score, 
+                       metrics, insights, improvements, 
+                       self_criticism, learning_points
+                FROM assessments
+                ORDER BY timestamp DESC
+                LIMIT 50
+            ''')
+            
+            for row in cursor:
+                result = AssessmentResult(
+                    timestamp=datetime.fromisoformat(row[1]),
+                    conversation_id=row[0],
+                    overall_score=row[2],
+                    metrics=json.loads(row[3]) if row[3] else {},
+                    insights=json.loads(row[4]) if row[4] else [],
+                    improvements=json.loads(row[5]) if row[5] else [],
+                    self_criticism=json.loads(row[6]) if row[6] else [],
+                    learning_points=json.loads(row[7]) if row[7] else [],
+                )
+                self.history.results.insert(0, result)
             
             logger.debug(f"从数据库加载了 {len(self.history.results)} 条历史评估")
         except Exception as e:
@@ -207,23 +207,23 @@ class ContinuousSelfAssessment:
     def _save_assessment_to_db(self, result: AssessmentResult):
         """保存评估结果到数据库"""
         try:
-            with sqlite3.connect(str(self._db_path)) as conn:
-                conn.execute('''
-                    INSERT INTO assessments
-                    (conversation_id, timestamp, overall_score, metrics, insights,
-                     improvements, self_criticism, learning_points)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    result.conversation_id,
-                    result.timestamp.isoformat(),
-                    result.overall_score,
-                    json.dumps(result.metrics),
-                    json.dumps(result.insights),
-                    json.dumps(result.improvements),
-                    json.dumps(result.self_criticism),
-                    json.dumps(result.learning_points)
-                ))
-                conn.commit()
+            conn = DatabaseManager.get(str(self._db_path))._get_conn()
+            conn.execute('''
+                INSERT INTO assessments
+                (conversation_id, timestamp, overall_score, metrics, insights,
+                 improvements, self_criticism, learning_points)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                result.conversation_id,
+                result.timestamp.isoformat(),
+                result.overall_score,
+                json.dumps(result.metrics),
+                json.dumps(result.insights),
+                json.dumps(result.improvements),
+                json.dumps(result.self_criticism),
+                json.dumps(result.learning_points)
+            ))
+            conn.commit()
             logger.debug(f"评估结果已保存: {result.conversation_id}")
         except Exception as e:
             logger.warning(f"保存评估结果失败: {e}")
@@ -691,23 +691,23 @@ class ContinuousSelfAssessment:
     def get_historical_assessments(self, limit: int = 20) -> List[Dict[str, Any]]:
         """获取历史评估"""
         try:
-            with sqlite3.connect(str(self._db_path)) as conn:
-                cursor = conn.execute('''
-                    SELECT conversation_id, timestamp, overall_score, metrics
-                    FROM assessments
-                    ORDER BY timestamp DESC
-                    LIMIT ?
-                ''', (limit,))
-                
-                results = []
-                for row in cursor:
-                    results.append({
-                        "conversation_id": row[0],
-                        "timestamp": row[1],
-                        "overall_score": row[2],
-                        "metrics": json.loads(row[3]) if row[3] else {}
-                    })
-                return results
+            conn = DatabaseManager.get(str(self._db_path))._get_conn()
+            cursor = conn.execute('''
+                SELECT conversation_id, timestamp, overall_score, metrics
+                FROM assessments
+                ORDER BY timestamp DESC
+                LIMIT ?
+            ''', (limit,))
+            
+            results = []
+            for row in cursor:
+                results.append({
+                    "conversation_id": row[0],
+                    "timestamp": row[1],
+                    "overall_score": row[2],
+                    "metrics": json.loads(row[3]) if row[3] else {}
+                })
+            return results
         except Exception as e:
             logger.warning(f"获取历史评估失败: {e}")
             return []

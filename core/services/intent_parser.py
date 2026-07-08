@@ -356,8 +356,8 @@ class IntentParser:
             correct_intent: 正确的意图类型
         """
         try:
-            import sqlite3
-            conn = sqlite3.connect("data/learning_rules.db")
+            from infrastructure.database_manager import DatabaseManager
+            conn = DatabaseManager.get("data/learning_rules.db")._get_conn()
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS learning_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -380,7 +380,7 @@ class IntentParser:
                 VALUES (?, ?, 0.8, 'pending', 'user_correction', datetime('now'))
             ''', (condition, action))
             conn.commit()
-            conn.close()
+
             
             logger.info(f"从纠正中学习: '{text[:30]}...' -> {correct_intent}")
             

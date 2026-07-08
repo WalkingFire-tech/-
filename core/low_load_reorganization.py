@@ -14,7 +14,7 @@
   3. 知识连接：发现知识间的新关联
   4. 经验提炼：高质量经验提取为规则
 """
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import re
 from typing import Dict, List
 from datetime import datetime
@@ -26,8 +26,8 @@ class LowLoadReorganization:
         self.root_dir = root_dir
         self._last_result: Dict = {}
 
-    def _db(self, name: str) -> sqlite3.Connection:
-        return sqlite3.connect(f"{self.root_dir}/data/{name}")
+    def _db(self, name: str):
+        return DatabaseManager.get(f"{self.root_dir}/data/{name}")._get_conn()
 
     def run(self) -> dict:
         result = {
@@ -79,7 +79,7 @@ class LowLoadReorganization:
                     result["promoted_to_trial"] += 1
 
             conn.commit()
-            conn.close()
+
         except Exception as e:
             logger.error(f"规则激活失败: {e}")
 
@@ -92,7 +92,7 @@ class LowLoadReorganization:
             c = conn.cursor()
             c.execute("SELECT id, condition, action, confidence, status FROM learning_rules WHERE status='active'")
             active = c.fetchall()
-            conn.close()
+
 
             condition_groups: Dict[str, List] = {}
             for row in active:
@@ -115,7 +115,7 @@ class LowLoadReorganization:
                             conn2 = self._db("learning_rules.db")
                             conn2.execute("UPDATE learning_rules SET status='superseded' WHERE id=?", (rule[0],))
                             conn2.commit()
-                            conn2.close()
+
                             result["merged"] += 1
                         except:
                             pass
@@ -131,7 +131,7 @@ class LowLoadReorganization:
             c = conn.cursor()
             c.execute("SELECT raw_input, response, intent_type FROM experiences WHERE success=1 AND quality_score >= 80 ORDER BY timestamp DESC LIMIT 50")
             high_quality = c.fetchall()
-            conn.close()
+
             result["candidates"] = len(high_quality)
 
             if not high_quality:
@@ -154,7 +154,7 @@ class LowLoadReorganization:
                 result["extracted"] += 1
 
             conn2.commit()
-            conn2.close()
+
         except Exception as e:
             logger.error(f"经验提取失败: {e}")
 
@@ -167,7 +167,7 @@ class LowLoadReorganization:
             c = conn.cursor()
             c.execute("SELECT content, level FROM truths WHERE level >= 3 LIMIT 20")
             truths = c.fetchall()
-            conn.close()
+
 
             if len(truths) < 2:
                 return result

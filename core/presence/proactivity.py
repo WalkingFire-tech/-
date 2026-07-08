@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime, timedelta
 from enum import Enum
+from infrastructure.database_manager import DatabaseManager
 
 
 class ProactivityType(Enum):
@@ -284,26 +285,22 @@ class ProactivityEngine:
     def _get_dynamic_content(self, action_type: str, fallback_reason: str) -> str:
         try:
             if action_type == "greeting":
-                import sqlite3
-                conn = sqlite3.connect("data/experience_pool.db")
+                conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
                 cur = conn.execute(
                     "SELECT raw_input FROM experiences WHERE intent_type != 'proactivity' ORDER BY timestamp DESC LIMIT 1"
                 )
                 row = cur.fetchone()
-                conn.close()
                 if row and row[0]:
                     topic = row[0][:40]
                     return f"好久不见！上次我们聊到了「{topic}」，还想继续吗？"
                 return "好久不见，有什么我可以帮助你的吗？"
 
             elif action_type == "follow_up":
-                import sqlite3
-                conn = sqlite3.connect("data/experience_pool.db")
+                conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
                 cur = conn.execute(
                     "SELECT raw_input, response FROM experiences WHERE intent_type != 'proactivity' AND quality_score >= 50 ORDER BY timestamp DESC LIMIT 1"
                 )
                 row = cur.fetchone()
-                conn.close()
                 if row and row[0]:
                     return f"之前我们讨论的「{row[0][:30]}」，你有什么新的想法吗？"
                 return "之前我们讨论的事情，你有什么新的想法吗？"
@@ -321,13 +318,11 @@ class ProactivityEngine:
                 return "我在思考中发现了有趣的模式，想和你分享。"
 
             elif action_type == "learning":
-                import sqlite3
-                conn = sqlite3.connect("data/truths.db")
+                conn = DatabaseManager.get("data/truths.db")._get_conn()
                 cur = conn.execute(
                     "SELECT content FROM truths ORDER BY created_at DESC LIMIT 1"
                 )
                 row = cur.fetchone()
-                conn.close()
                 if row and row[0]:
                     return f"我最近领悟到：{row[0][:60]}，可能对你有帮助。"
                 return "我最近学到了一些新东西，可能对你有帮助。"

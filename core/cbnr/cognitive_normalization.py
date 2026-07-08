@@ -164,8 +164,8 @@ class CognitiveNormalization:
             pass
         
         try:
-            import sqlite3
-            conn = sqlite3.connect("data/experience_pool.db")
+            from infrastructure.database_manager import DatabaseManager
+            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
             cur = conn.execute(
                 "SELECT response, quality_score FROM experiences WHERE raw_input LIKE ? ORDER BY quality_score DESC LIMIT 2",
                 (f"%{user_input[:30]}%",)
@@ -176,7 +176,7 @@ class CognitiveNormalization:
                     "content": row[0][:100],
                     "confidence": min(row[1] / 100.0, 1.0),
                 })
-            conn.close()
+
         except Exception:
             pass
         

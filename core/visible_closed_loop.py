@@ -316,20 +316,19 @@ class VisibleClosedLoop:
         for result in tool_results:
             if result.get("success") and result.get("output"):
                 try:
-                    # 存储到知识库
-                    import sqlite3
-                    with sqlite3.connect("data/knowledge_store.db") as conn:
-                        conn.execute('''
-                            INSERT INTO knowledge_items 
-                            (question, answer, source, knowledge_type, quality_score, created_at)
-                            VALUES (?, ?, ?, 'closed_loop', 60.0, ?)
-                        ''', (
-                            question,
-                            str(result["output"])[:500],
-                            result["type"],
-                            datetime.now().isoformat()
-                        ))
-                        conn.commit()
+                    from infrastructure.database_manager import DatabaseManager
+                    conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
+                    conn.execute('''
+                        INSERT INTO knowledge_items 
+                        (question, answer, source, knowledge_type, quality_score, created_at)
+                        VALUES (?, ?, ?, 'closed_loop', 60.0, ?)
+                    ''', (
+                        question,
+                        str(result["output"])[:500],
+                        result["type"],
+                        datetime.now().isoformat()
+                    ))
+                    conn.commit()
                     gained.append(f"新增知识: {result['type']}")
                 except Exception as e:
                     logger.debug(f"知识存储失败: {e}")
@@ -340,20 +339,20 @@ class VisibleClosedLoop:
         """能力提升"""
         # 记录经验
         try:
-            import sqlite3
-            with sqlite3.connect("data/knowledge_store.db") as conn:
-                conn.execute('''
-                    INSERT INTO experiences 
-                    (timestamp, intent_type, success, quality_score, context)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (
-                    datetime.now().isoformat(),
-                    "closed_loop_execution",
-                    1,
-                    results.get("evaluation", {}).get("avg_confidence", 0.5) * 100,
-                    json.dumps(results, ensure_ascii=False)[:500]
-                ))
-                conn.commit()
+            from infrastructure.database_manager import DatabaseManager
+            conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
+            conn.execute('''
+                INSERT INTO experiences 
+                (timestamp, intent_type, success, quality_score, context)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (
+                datetime.now().isoformat(),
+                "closed_loop_execution",
+                1,
+                results.get("evaluation", {}).get("avg_confidence", 0.5) * 100,
+                json.dumps(results, ensure_ascii=False)[:500]
+            ))
+            conn.commit()
         except:
             pass
         

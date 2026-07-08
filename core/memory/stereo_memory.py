@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from datetime import datetime, timedelta
 from enum import Enum
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import os
 import json
 from loguru import logger
@@ -124,49 +124,49 @@ class StereoMemorySystem:
         self._load_memories()
 
     def _init_database(self):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS stereo_memories (
-                    memory_id TEXT PRIMARY KEY,
-                    content TEXT,
-                    memory_type TEXT,
-                    importance REAL,
-                    related_memories TEXT,
-                    related_entities TEXT,
-                    self_role TEXT,
-                    self_confidence REAL,
-                    self_emotional_state TEXT,
-                    self_learning_progress REAL,
-                    self_intentions TEXT,
-                    created_at TEXT,
-                    last_accessed TEXT,
-                    access_count INTEGER,
-                    decay_factor REAL,
-                    reinforcement_count INTEGER,
-                    context_user_id TEXT,
-                    context_session_id TEXT,
-                    context_conversation_turn INTEGER,
-                    context_trigger TEXT,
-                    context_related_concepts TEXT,
-                    metadata TEXT
-                )
-            ''')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_memory_type ON stereo_memories(memory_type)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_importance ON stereo_memories(importance)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_created_at ON stereo_memories(created_at)')
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS stereo_memories (
+                memory_id TEXT PRIMARY KEY,
+                content TEXT,
+                memory_type TEXT,
+                importance REAL,
+                related_memories TEXT,
+                related_entities TEXT,
+                self_role TEXT,
+                self_confidence REAL,
+                self_emotional_state TEXT,
+                self_learning_progress REAL,
+                self_intentions TEXT,
+                created_at TEXT,
+                last_accessed TEXT,
+                access_count INTEGER,
+                decay_factor REAL,
+                reinforcement_count INTEGER,
+                context_user_id TEXT,
+                context_session_id TEXT,
+                context_conversation_turn INTEGER,
+                context_trigger TEXT,
+                context_related_concepts TEXT,
+                metadata TEXT
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_memory_type ON stereo_memories(memory_type)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_importance ON stereo_memories(importance)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_created_at ON stereo_memories(created_at)')
+        conn.commit()
 
     def _load_memories(self):
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM stereo_memories")
-                for row in cursor.fetchall():
-                    memory = self._row_to_memory(row)
-                    self.memories[memory.memory_id] = memory
-                    self._update_index(memory)
-                self.stats["total_memories"] = len(self.memories)
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM stereo_memories")
+            for row in cursor.fetchall():
+                memory = self._row_to_memory(row)
+                self.memories[memory.memory_id] = memory
+                self._update_index(memory)
+            self.stats["total_memories"] = len(self.memories)
         except Exception as e:
             logger.warning(f"加载立体记忆失败: {e}")
 
@@ -291,23 +291,23 @@ class StereoMemorySystem:
             return memory_id
 
     def _save_memory(self, memory: StereoMemory):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            data = self._memory_to_dict(memory)
-            cursor.execute('''
-                INSERT OR REPLACE INTO stereo_memories (
-                    memory_id, content, memory_type, importance,
-                    related_memories, related_entities,
-                    self_role, self_confidence, self_emotional_state,
-                    self_learning_progress, self_intentions,
-                    created_at, last_accessed, access_count,
-                    decay_factor, reinforcement_count,
-                    context_user_id, context_session_id, context_conversation_turn,
-                    context_trigger, context_related_concepts,
-                    metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', tuple(data.values()))
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        cursor = conn.cursor()
+        data = self._memory_to_dict(memory)
+        cursor.execute('''
+            INSERT OR REPLACE INTO stereo_memories (
+                memory_id, content, memory_type, importance,
+                related_memories, related_entities,
+                self_role, self_confidence, self_emotional_state,
+                self_learning_progress, self_intentions,
+                created_at, last_accessed, access_count,
+                decay_factor, reinforcement_count,
+                context_user_id, context_session_id, context_conversation_turn,
+                context_trigger, context_related_concepts,
+                metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', tuple(data.values()))
+        conn.commit()
 
     def recall(self, memory_id: str, reinforce: bool = True) -> Optional[StereoMemory]:
         """回忆记忆"""
@@ -525,18 +525,18 @@ class StereoMemorySystem:
     def get_recent(self, limit: int = 20) -> List[StereoMemory]:
         """获取最近记忆（SQL排序，避免全量Python排序）"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute(
-                    'SELECT * FROM stereo_memories ORDER BY last_accessed DESC LIMIT ?',
-                    (limit,)
-                )
-                results = [self._row_to_memory(row) for row in cursor.fetchall()]
-                for m in results:
-                    m.time_dimension.access_count += 1
-                    m.time_dimension.last_accessed = datetime.now()
-                    self.stats["total_accesses"] += 1
-                    self._save_memory(m)
-                return results
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.execute(
+                'SELECT * FROM stereo_memories ORDER BY last_accessed DESC LIMIT ?',
+                (limit,)
+            )
+            results = [self._row_to_memory(row) for row in cursor.fetchall()]
+            for m in results:
+                m.time_dimension.access_count += 1
+                m.time_dimension.last_accessed = datetime.now()
+                self.stats["total_accesses"] += 1
+                self._save_memory(m)
+            return results
         except Exception:
             with self._lock:
                 all_memories = list(self.memories.values())

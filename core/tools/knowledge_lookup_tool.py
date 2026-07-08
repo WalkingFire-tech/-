@@ -54,9 +54,9 @@ class KnowledgeLookupTool(ToolInterface):
             pass
 
         try:
-            import sqlite3
+            from infrastructure.database_manager import DatabaseManager
             def _search_kb():
-                conn = sqlite3.connect("data/knowledge_store.db", timeout=3)
+                conn = DatabaseManager.get("data/knowledge_store.db", timeout=3)._get_conn()
                 try:
                     cursor = conn.execute(
                         "SELECT answer, source, quality_score FROM knowledge_items "
@@ -66,7 +66,7 @@ class KnowledgeLookupTool(ToolInterface):
                     return [dict(zip(["content", "source", "quality"], row))
                             for row in cursor.fetchall()]
                 finally:
-                    conn.close()
+                    pass
 
             kb_results = await run_tool_async(_search_kb, timeout=5)
             if kb_results:

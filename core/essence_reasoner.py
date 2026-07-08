@@ -14,7 +14,7 @@
 
 import re
 import json
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 from typing import Dict, List, Any, Optional, Tuple
 from loguru import logger
 from datetime import datetime
@@ -45,7 +45,7 @@ class EssenceReasoner:
 
     def _init_db(self):
         try:
-            conn = sqlite3.connect("data/essence_reasoning.db")
+            conn = DatabaseManager.get("data/essence_reasoning.db")._get_conn()
             cursor = conn.cursor()
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS reasoning_chains (
@@ -72,7 +72,6 @@ class EssenceReasoner:
                 )
             ''')
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.debug(f"本质推理器数据库初始化失败: {e}")
 
@@ -326,11 +325,10 @@ class EssenceReasoner:
         truths = base_truths.get(domain, [])
 
         try:
-            conn = sqlite3.connect("data/knowledge_store.db")
+            conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
             cursor = conn.cursor()
             cursor.execute("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 5", (f"%{domain}%",))
             rows = cursor.fetchall()
-            conn.close()
             for row in rows:
                 if row[0] and len(row[0]) > 20:
                     truths.append({"keywords": row[0][:10].split(), "reasoning": row[0][:200], "verified": True})
@@ -690,7 +688,7 @@ class EssenceReasoner:
     def _save_reasoning(self, query: str, response: str, result: Dict):
         """持久化推理结果"""
         try:
-            conn = sqlite3.connect("data/essence_reasoning.db")
+            conn = DatabaseManager.get("data/essence_reasoning.db")._get_conn()
             cursor = conn.cursor()
             cursor.execute(
                 """INSERT INTO reasoning_chains 
@@ -708,7 +706,6 @@ class EssenceReasoner:
                 )
             )
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.debug(f"推理结果持久化失败: {e}")
 

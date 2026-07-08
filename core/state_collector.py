@@ -7,7 +7,7 @@ import threading
 import time
 import os
 import json
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Callable
 from collections import defaultdict
@@ -80,33 +80,33 @@ class StateCollector:
         """初始化数据库"""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS state_reports (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    layer_name TEXT,
-                    status TEXT,
-                    timestamp TEXT,
-                    metrics TEXT,
-                    issues TEXT,
-                    confidence REAL,
-                    report_json TEXT
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS health_summaries (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    level TEXT,
-                    timestamp TEXT,
-                    overall_score REAL,
-                    summary_json TEXT
-                )
-            ''')
-            
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS state_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                layer_name TEXT,
+                status TEXT,
+                timestamp TEXT,
+                metrics TEXT,
+                issues TEXT,
+                confidence REAL,
+                report_json TEXT
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS health_summaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                level TEXT,
+                timestamp TEXT,
+                overall_score REAL,
+                summary_json TEXT
+            )
+        ''')
+        
+        conn.commit()
     
     def collect(self, report: LayerStateReport) -> None:
         """
@@ -235,47 +235,47 @@ class StateCollector:
     def _save_report(self, report: LayerStateReport):
         """保存报告"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO state_reports
-                    (layer_name, status, timestamp, metrics, issues, confidence, report_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    report.layer_name,
-                    report.status.value,
-                    report.timestamp,
-                    json.dumps(report.metrics),
-                    json.dumps(report.issues),
-                    report.confidence_score,
-                    json.dumps(report.to_dict())
-                ))
-                conn.commit()
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO state_reports
+                (layer_name, status, timestamp, metrics, issues, confidence, report_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                report.layer_name,
+                report.status.value,
+                report.timestamp,
+                json.dumps(report.metrics),
+                json.dumps(report.issues),
+                report.confidence_score,
+                json.dumps(report.to_dict())
+            ))
+            conn.commit()
         except Exception as e:
             logger.warning(f"保存状态报告失败: {e}")
     
     def _save_summary(self, summary: SystemHealthSummary):
         """保存摘要"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO health_summaries
-                    (level, timestamp, overall_score, summary_json)
-                    VALUES (?, ?, ?, ?)
-                ''', (
-                    summary.level.value,
-                    summary.timestamp,
-                    summary.overall_score,
-                    json.dumps({
-                        'level': summary.level.value,
-                        'layer_summaries': summary.layer_summaries,
-                        'overall_score': summary.overall_score,
-                        'critical_issues': summary.critical_issues,
-                        'recommendations': summary.recommendations
-                    })
-                ))
-                conn.commit()
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO health_summaries
+                (level, timestamp, overall_score, summary_json)
+                VALUES (?, ?, ?, ?)
+            ''', (
+                summary.level.value,
+                summary.timestamp,
+                summary.overall_score,
+                json.dumps({
+                    'level': summary.level.value,
+                    'layer_summaries': summary.layer_summaries,
+                    'overall_score': summary.overall_score,
+                    'critical_issues': summary.critical_issues,
+                    'recommendations': summary.recommendations
+                })
+            ))
+            conn.commit()
         except Exception as e:
             logger.warning(f"保存健康度摘要失败: {e}")
     
@@ -288,16 +288,15 @@ class StateCollector:
     def get_layer_history(self, layer_name: str, limit: int = 100) -> List[Dict]:
         """获取层的历史状态"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.execute('''
-                    SELECT * FROM state_reports
-                    WHERE layer_name = ?
-                    ORDER BY timestamp DESC
-                    LIMIT ?
-                ''', (layer_name, limit))
-                
-                return [dict(row) for row in cursor.fetchall()]
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.execute('''
+                SELECT * FROM state_reports
+                WHERE layer_name = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+            ''', (layer_name, limit))
+            
+            return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.warning(f"获取层历史失败: {e}")
             return []

@@ -336,14 +336,12 @@ class CognitiveResidual:
             return None
         
         try:
-            import sqlite3
-            conn = sqlite3.connect("data/experience_pool.db")
+            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
             cur = conn.execute(
                 "SELECT raw_input, response, quality_score FROM experiences WHERE raw_input LIKE ? ORDER BY quality_score DESC LIMIT 1",
                 (f"%{topic[:30]}%",)
             )
             row = cur.fetchone()
-            conn.close()
             if row:
                 return {
                     "_state_id": "retrieved_from_experience",
@@ -429,57 +427,57 @@ class CognitiveResidual:
 
     def _load_search_tree(self):
         try:
-            with sqlite3.connect(self._db_path) as conn:
-                conn.execute('''CREATE TABLE IF NOT EXISTS search_nodes (
-                    node_id TEXT PRIMARY KEY,
-                    node_type TEXT,
-                    content TEXT,
-                    confidence REAL,
-                    parent_id TEXT,
-                    score REAL,
-                    explored INTEGER
-                )''')
-                cur = conn.execute("SELECT node_id, node_type, content, confidence, parent_id, score, explored FROM search_nodes ORDER BY rowid")
-                for row in cur.fetchall():
-                    node_id, ntype, content, confidence, parent_id, score, explored = row
-                    node = SearchNode(
-                        node_id=node_id,
-                        node_type=NodeType(ntype),
-                        content=content,
-                        confidence=confidence,
-                        parent_id=parent_id,
-                        score=score,
-                        explored=bool(explored),
-                    )
-                    self._search_tree._nodes[node_id] = node
-                    if parent_id and parent_id in self._search_tree._nodes:
-                        if node_id not in self._search_tree._nodes[parent_id].children_ids:
-                            self._search_tree._nodes[parent_id].children_ids.append(node_id)
+            conn = DatabaseManager.get(self._db_path)._get_conn()
+            conn.execute('''CREATE TABLE IF NOT EXISTS search_nodes (
+                node_id TEXT PRIMARY KEY,
+                node_type TEXT,
+                content TEXT,
+                confidence REAL,
+                parent_id TEXT,
+                score REAL,
+                explored INTEGER
+            )''')
+            cur = conn.execute("SELECT node_id, node_type, content, confidence, parent_id, score, explored FROM search_nodes ORDER BY rowid")
+            for row in cur.fetchall():
+                node_id, ntype, content, confidence, parent_id, score, explored = row
+                node = SearchNode(
+                    node_id=node_id,
+                    node_type=NodeType(ntype),
+                    content=content,
+                    confidence=confidence,
+                    parent_id=parent_id,
+                    score=score,
+                    explored=bool(explored),
+                )
+                self._search_tree._nodes[node_id] = node
+                if parent_id and parent_id in self._search_tree._nodes:
+                    if node_id not in self._search_tree._nodes[parent_id].children_ids:
+                        self._search_tree._nodes[parent_id].children_ids.append(node_id)
                     elif not self._search_tree._root_id:
                         self._search_tree._root_id = node_id
-                if self._search_tree.size() > 0:
-                    logger.debug(f"L3搜索树从数据库加载: {self._search_tree.size()}个节点")
+            if self._search_tree.size() > 0:
+                logger.debug(f"L3搜索树从数据库加载: {self._search_tree.size()}个节点")
         except Exception as e:
             logger.debug(f"L3搜索树加载失败(首次运行正常): {e}")
 
     def _save_search_tree(self):
         try:
-            with sqlite3.connect(self._db_path) as conn:
-                conn.execute('''CREATE TABLE IF NOT EXISTS search_nodes (
-                    node_id TEXT PRIMARY KEY,
-                    node_type TEXT,
-                    content TEXT,
-                    confidence REAL,
-                    parent_id TEXT,
-                    score REAL,
-                    explored INTEGER
-                )''')
-                conn.execute("DELETE FROM search_nodes")
-                for nid, node in self._search_tree._nodes.items():
-                    conn.execute(
-                        "INSERT INTO search_nodes (node_id, node_type, content, confidence, parent_id, score, explored) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        (nid, node.node_type.value, node.content, node.confidence, node.parent_id, node.score, int(node.explored))
-                    )
+            conn = DatabaseManager.get(self._db_path)._get_conn()
+            conn.execute('''CREATE TABLE IF NOT EXISTS search_nodes (
+                node_id TEXT PRIMARY KEY,
+                node_type TEXT,
+                content TEXT,
+                confidence REAL,
+                parent_id TEXT,
+                score REAL,
+                explored INTEGER
+            )''')
+            conn.execute("DELETE FROM search_nodes")
+            for nid, node in self._search_tree._nodes.items():
+                conn.execute(
+                    "INSERT INTO search_nodes (node_id, node_type, content, confidence, parent_id, score, explored) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (nid, node.node_type.value, node.content, node.confidence, node.parent_id, node.score, int(node.explored))
+                )
         except Exception as e:
             logger.debug(f"L3搜索树保存失败: {e}")
 

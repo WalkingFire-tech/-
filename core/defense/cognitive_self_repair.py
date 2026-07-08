@@ -6,7 +6,7 @@ L4 自修复层 - 认知自修复 (Cognitive Self-Repair)
 - 自动修复：合并矛盾、补全断裂
 - 修复后验证一致性
 """
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 from typing import Dict, List, Optional
 from loguru import logger
 from datetime import datetime
@@ -27,11 +27,10 @@ class CognitiveSelfRepair:
             "timestamp": datetime.now().isoformat(),
         }
         try:
-            conn = sqlite3.connect("data/learning_rules.db")
+            conn = DatabaseManager.get("data/learning_rules.db")._get_conn()
             c = conn.cursor()
             c.execute("SELECT id, pattern, action, confidence, status FROM learning_rules WHERE status='active'")
             rules = c.fetchall()
-            conn.close()
             pattern_map: Dict[str, List] = {}
             for rule in rules:
                 rid, pattern, action, confidence, status = rule
@@ -54,14 +53,13 @@ class CognitiveSelfRepair:
             logger.debug(f"规则诊断失败: {e}")
 
         try:
-            conn = sqlite3.connect("data/essence_reasoning.db")
+            conn = DatabaseManager.get("data/essence_reasoning.db")._get_conn()
             c = conn.cursor()
             c.execute("SELECT id, query, consistency_score FROM reasoning_chains WHERE consistency_score < 0.5 ORDER BY timestamp DESC LIMIT 10")
             for row in c.fetchall():
                 diagnosis["broken_chains"].append({
                     "id": row[0], "query": row[1][:50], "consistency": row[2],
                 })
-            conn.close()
         except:
             pass
 
@@ -70,7 +68,7 @@ class CognitiveSelfRepair:
     def repair_contradictions(self, contradictions: List[dict]) -> int:
         repaired = 0
         try:
-            conn = sqlite3.connect("data/learning_rules.db")
+            conn = DatabaseManager.get("data/learning_rules.db")._get_conn()
             c = conn.cursor()
             for contra in contradictions:
                 rules = contra["rules"]
@@ -87,7 +85,6 @@ class CognitiveSelfRepair:
                     "timestamp": datetime.now().isoformat(),
                 })
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.error(f"矛盾修复失败: {e}")
         if repaired:
@@ -97,7 +94,7 @@ class CognitiveSelfRepair:
     def repair_low_confidence(self, rules: List[dict]) -> int:
         demoted = 0
         try:
-            conn = sqlite3.connect("data/learning_rules.db")
+            conn = DatabaseManager.get("data/learning_rules.db")._get_conn()
             c = conn.cursor()
             for rule in rules:
                 c.execute("UPDATE learning_rules SET status='dormant' WHERE id=? AND confidence < ?",
@@ -105,7 +102,6 @@ class CognitiveSelfRepair:
                 if c.rowcount > 0:
                     demoted += 1
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.error(f"低置信度修复失败: {e}")
         if demoted:

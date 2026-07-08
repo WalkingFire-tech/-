@@ -16,7 +16,7 @@
 """
 
 import json
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import time
 import threading
 from typing import Dict, List, Optional
@@ -113,10 +113,7 @@ class AlignmentGuard:
         self._init_db()
 
     def _connect(self):
-        conn = sqlite3.connect(self.db_path, timeout=10.0)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        return conn
+        return DatabaseManager.get(self.db_path, timeout=10.0)._get_conn()
 
     def _write_op(self, func, *args, **kwargs):
         with self._lock:
@@ -128,8 +125,7 @@ class AlignmentGuard:
             except Exception:
                 conn.rollback()
                 raise
-            finally:
-                conn.close()
+
 
     def _init_db(self):
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -278,25 +274,24 @@ class AlignmentGuard:
         logger.info(f"偏离记录#{dev_id}已修正")
 
     def get_open_deviations(self, limit: int = 20) -> List[DeviationRecord]:
-        with self._connect() as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                'SELECT * FROM deviations WHERE status = ? ORDER BY detected_at DESC LIMIT ?',
-                (DeviationStatus.OPEN.value, limit)
-            ).fetchall()
-            return [self._row_to_record(r) for r in rows]
+        conn = self._connect()
+        rows = conn.execute(
+            'SELECT * FROM deviations WHERE status = ? ORDER BY detected_at DESC LIMIT ?',
+            (DeviationStatus.OPEN.value, limit)
+        ).fetchall()
+        return [self._row_to_record(r) for r in rows]
 
     def get_stats(self) -> Dict:
-        with self._connect() as conn:
-            total = conn.execute('SELECT COUNT(*) FROM deviations').fetchone()[0]
-            open_count = conn.execute("SELECT COUNT(*) FROM deviations WHERE status = 'open'").fetchone()[0]
-            corrected = conn.execute("SELECT COUNT(*) FROM deviations WHERE status = 'corrected'").fetchone()[0]
-            by_type = {}
-            for row in conn.execute('SELECT deviation_type, COUNT(*) FROM deviations GROUP BY deviation_type'):
-                by_type[row[0]] = row[1]
-            by_severity = {}
-            for row in conn.execute('SELECT severity, COUNT(*) FROM deviations GROUP BY severity'):
-                by_severity[row[0]] = row[1]
+        conn = self._connect()
+        total = conn.execute('SELECT COUNT(*) FROM deviations').fetchone()[0]
+        open_count = conn.execute("SELECT COUNT(*) FROM deviations WHERE status = 'open'").fetchone()[0]
+        corrected = conn.execute("SELECT COUNT(*) FROM deviations WHERE status = 'corrected'").fetchone()[0]
+        by_type = {}
+        for row in conn.execute('SELECT deviation_type, COUNT(*) FROM deviations GROUP BY deviation_type'):
+            by_type[row[0]] = row[1]
+        by_severity = {}
+        for row in conn.execute('SELECT severity, COUNT(*) FROM deviations GROUP BY severity'):
+            by_severity[row[0]] = row[1]
         return {
             "total": total,
             "open": open_count,
@@ -306,10 +301,9 @@ class AlignmentGuard:
         }
 
     def _get_by_id(self, dev_id: int) -> DeviationRecord:
-        with self._connect() as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute('SELECT * FROM deviations WHERE id = ?', (dev_id,)).fetchone()
-            return self._row_to_record(row) if row else DeviationRecord(id=dev_id)
+        conn = self._connect()
+        row = conn.execute('SELECT * FROM deviations WHERE id = ?', (dev_id,)).fetchone()
+        return self._row_to_record(row) if row else DeviationRecord(id=dev_id)
 
     def _row_to_record(self, row) -> DeviationRecord:
         return DeviationRecord(

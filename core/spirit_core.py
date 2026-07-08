@@ -49,7 +49,7 @@
 from typing import Dict, Any, List, Optional, Final
 from loguru import logger
 import time
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import json
 import threading
 from datetime import datetime
@@ -182,10 +182,7 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         object.__delattr__(self, name)
     
     def _db_connect(self):
-        conn = sqlite3.connect("data/spirit_lessons.db", timeout=10.0)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        return conn
+        return DatabaseManager.get("data/spirit_lessons.db", timeout=10.0)._get_conn()
     
     def _init_lesson_db(self):
         """初始化教训持久化数据库"""
@@ -211,7 +208,6 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
                 )
             ''')
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.debug(f"精神内核数据库初始化失败: {e}")
         
@@ -400,7 +396,6 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
                 )
             )
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.debug(f"精神异常记录失败: {e}")
         
@@ -558,7 +553,6 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
                 )
             )
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.debug(f"教训持久化失败: {e}")
         
@@ -612,7 +606,6 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
                 (limit,)
             )
             rows = cursor.fetchall()
-            conn.close()
             
             lessons = []
             for row in rows:
@@ -645,7 +638,6 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
                 (limit,)
             )
             rows = cursor.fetchall()
-            conn.close()
             
             violations = []
             for row in rows:

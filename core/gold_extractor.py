@@ -10,7 +10,7 @@
 这是"白天记忆"阶段。
 """
 import json
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import re
 from pathlib import Path
 from datetime import datetime
@@ -194,8 +194,7 @@ class GoldExtractor:
             return interactions
         
         try:
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
+            conn = DatabaseManager.get(str(self.db_path))._get_conn()
             
             cursor = conn.execute("""
                 SELECT question, response, feedback, objective_score, timestamp 
@@ -206,7 +205,6 @@ class GoldExtractor:
             """, (limit,))
             
             interactions = [dict(row) for row in cursor.fetchall()]
-            conn.close()
             
         except Exception as e:
             logger.error(f"读取数据库失败: {e}")

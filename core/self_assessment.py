@@ -16,7 +16,7 @@
   5. 适应速度   — 面对变化时的调整能力
   6. 前端覆盖率 — 系统能否"看见"自身能力的前端可达性
 """
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import time
 import json
 from typing import Dict, List, Optional
@@ -50,8 +50,8 @@ class SelfAssessment:
         self._last_assessment = report
         return report
 
-    def _db(self, name: str) -> sqlite3.Connection:
-        return sqlite3.connect(f"{self.root_dir}/data/{name}")
+    def _db(self, name: str):
+        return DatabaseManager.get(f"{self.root_dir}/data/{name}")._get_conn()
 
     def _assess_loop_integrity(self) -> dict:
         result = {"stages": {}, "breaks": [], "score": 0.0}
@@ -64,7 +64,7 @@ class SelfAssessment:
             success_exp = c.fetchone()[0]
             c.execute("SELECT COUNT(*) FROM experiences WHERE intent_type IS NOT NULL AND intent_type != ''")
             tagged_exp = c.fetchone()[0]
-            conn.close()
+
             result["stages"]["experience_collection"] = {
                 "total": total_exp,
                 "success_rate": success_exp / max(total_exp, 1),
@@ -83,7 +83,7 @@ class SelfAssessment:
             pending_rules = c.fetchone()[0]
             c.execute("SELECT AVG(confidence) FROM learning_rules WHERE status='active'")
             avg_conf = c.fetchone()[0] or 0.5
-            conn.close()
+
             result["stages"]["reflection_to_rules"] = {
                 "active": active_rules,
                 "pending": pending_rules,
@@ -106,7 +106,7 @@ class SelfAssessment:
             mature = c.fetchone()[0]
             c.execute("SELECT COUNT(*) FROM skills")
             total_skills = c.fetchone()[0]
-            conn.close()
+
             result["stages"]["rules_to_skills"] = {
                 "total": total_skills,
                 "mature": mature,
@@ -123,7 +123,7 @@ class SelfAssessment:
             total_truths = c.fetchone()[0]
             c.execute("SELECT level, COUNT(*) FROM truths GROUP BY level")
             by_level = {str(row[0]): row[1] for row in c.fetchall()}
-            conn.close()
+
             result["stages"]["skills_to_truths"] = {
                 "total": total_truths,
                 "by_level": by_level,
@@ -164,7 +164,6 @@ class SelfAssessment:
             recent_exp = c.fetchone()[0]
             c.execute("SELECT COUNT(*) FROM experiences")
             total_exp = c.fetchone()[0]
-            conn.close()
             result["metrics"]["recent_experiences_7d"] = recent_exp
             result["metrics"]["experience_total"] = total_exp
             result["metrics"]["experience_activity"] = recent_exp / max(total_exp, 1)
@@ -180,7 +179,6 @@ class SelfAssessment:
             active_rules = c.fetchone()[0]
             c.execute("SELECT AVG(apply_count) FROM learning_rules WHERE status='active'")
             avg_apply = c.fetchone()[0] or 0
-            conn.close()
             result["metrics"]["used_active_rules"] = used_rules
             result["metrics"]["active_rules"] = active_rules
             result["metrics"]["rule_usage_rate"] = used_rules / max(active_rules, 1)
@@ -197,7 +195,6 @@ class SelfAssessment:
             mature = c.fetchone()[0]
             c.execute("SELECT COUNT(*) FROM skills WHERE is_active=0 OR (success_count < 3 AND success_rate < 0.5)")
             dormant_skills = c.fetchone()[0]
-            conn.close()
             result["metrics"]["mature_skills"] = mature
             result["metrics"]["dormant_skills"] = dormant_skills
             result["dormant_count"] += dormant_skills
@@ -218,7 +215,6 @@ class SelfAssessment:
             success = c.fetchone()[0]
             c.execute("SELECT COUNT(*) FROM experiences WHERE success=0")
             failure = c.fetchone()[0]
-            conn.close()
             total = success + failure
             result["metrics"]["success_count"] = success
             result["metrics"]["failure_count"] = failure
@@ -233,7 +229,6 @@ class SelfAssessment:
             pending = c.fetchone()[0]
             c.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
             active = c.fetchone()[0]
-            conn.close()
             conversion = active / max(active + pending, 1)
             result["metrics"]["pending_rules"] = pending
             result["metrics"]["active_rules"] = active
@@ -248,7 +243,6 @@ class SelfAssessment:
             mature = c.fetchone()[0]
             c.execute("SELECT COUNT(*) FROM skills")
             total_skills = c.fetchone()[0]
-            conn.close()
             result["metrics"]["skill_maturation_rate"] = mature / max(total_skills, 1)
         except:
             pass
@@ -268,7 +262,6 @@ class SelfAssessment:
             failures = c.fetchone()[0]
             c.execute("SELECT COUNT(*) FROM experiences")
             total = c.fetchone()[0]
-            conn.close()
             error_rate = failures / max(total, 1)
             result["checks"]["error_rate"] = round(error_rate, 3)
             if error_rate > 0.15:
@@ -286,7 +279,6 @@ class SelfAssessment:
             c = conn.cursor()
             c.execute("SELECT AVG(confidence) FROM learning_rules WHERE status='active'")
             avg_conf = c.fetchone()[0] or 0.5
-            conn.close()
             result["checks"]["avg_rule_confidence"] = round(avg_conf, 3)
             if avg_conf < 0.4:
                 result["deviations"].append({
@@ -330,7 +322,6 @@ class SelfAssessment:
             week_ago = (datetime.now() - timedelta(days=7)).isoformat()
             c.execute("SELECT COUNT(*) FROM experiences WHERE timestamp >= ?", (week_ago,))
             weekly_exp = c.fetchone()[0]
-            conn.close()
             result["metrics"]["daily_experiences"] = daily_exp
             result["metrics"]["weekly_experiences"] = weekly_exp
         except:
@@ -342,7 +333,6 @@ class SelfAssessment:
             week_ago = (datetime.now() - timedelta(days=7)).isoformat()
             c.execute("SELECT COUNT(*) FROM learning_rules WHERE created_at >= ?", (week_ago,))
             new_rules = c.fetchone()[0]
-            conn.close()
             result["metrics"]["new_rules_7d"] = new_rules
         except:
             pass
@@ -353,7 +343,6 @@ class SelfAssessment:
             week_ago = (datetime.now() - timedelta(days=7)).isoformat()
             c.execute("SELECT COUNT(*) FROM skills WHERE created_at >= ?", (week_ago,))
             new_skills = c.fetchone()[0]
-            conn.close()
             result["metrics"]["new_skills_7d"] = new_skills
         except:
             pass

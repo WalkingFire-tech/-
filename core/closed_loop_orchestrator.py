@@ -416,9 +416,9 @@ class ClosedLoopOrchestrator:
             emit_func("step", {"phase": "闭环沉淀", "status": "running", "detail": "积累经验、固化技能..."})
 
         try:
-            import sqlite3
+            from infrastructure.database_manager import DatabaseManager
             from datetime import datetime
-            conn = sqlite3.connect("data/experience_pool.db")
+            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO experiences (raw_input, raw_output, intent_type, success, quality_score, timestamp, duration)
@@ -429,7 +429,6 @@ class ClosedLoopOrchestrator:
                   datetime.now().isoformat(),
                   int((time.time() - ctx.start_time) * 1000)))
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.debug(f"闭环沉淀异常: {e}")
 

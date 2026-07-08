@@ -317,16 +317,16 @@ class ClosedLoopReasoning:
         kb_result = results.get("kb_result", {})
         if not kb_result.get("found") and len(answer) > 20:
             try:
-                import sqlite3
+                from infrastructure.database_manager import DatabaseManager
                 from datetime import datetime
                 
-                with sqlite3.connect("data/knowledge_store.db") as conn:
-                    conn.execute('''
-                        INSERT INTO knowledge_items 
-                        (question, answer, source, knowledge_type, quality_score, created_at)
-                        VALUES (?, ?, ?, 'learned', 60.0, ?)
-                    ''', (question, answer, "closed_loop", datetime.now().isoformat()))
-                    conn.commit()
+                conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
+                conn.execute('''
+                    INSERT INTO knowledge_items 
+                    (question, answer, source, knowledge_type, quality_score, created_at)
+                    VALUES (?, ?, ?, 'learned', 60.0, ?)
+                ''', (question, answer, "closed_loop", datetime.now().isoformat()))
+                conn.commit()
                 
                 learned.append("新增知识到知识库")
             except Exception as e:
@@ -356,22 +356,22 @@ class ClosedLoopReasoning:
         
         # 1. 记录推理经验
         try:
-            import sqlite3
+            from infrastructure.database_manager import DatabaseManager
             from datetime import datetime
             
-            with sqlite3.connect("data/knowledge_store.db") as conn:
-                conn.execute('''
-                    INSERT INTO experiences 
-                    (timestamp, intent_type, success, quality_score, context)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (
-                    datetime.now().isoformat(),
-                    "closed_loop",
-                    1 if results.get("validation", {}).get("is_valid") else 0,
-                    results.get("validation", {}).get("confidence", 0.5) * 100,
-                    question[:200]
-                ))
-                conn.commit()
+            conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
+            conn.execute('''
+                INSERT INTO experiences 
+                (timestamp, intent_type, success, quality_score, context)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (
+                datetime.now().isoformat(),
+                "closed_loop",
+                1 if results.get("validation", {}).get("is_valid") else 0,
+                results.get("validation", {}).get("confidence", 0.5) * 100,
+                question[:200]
+            ))
+            conn.commit()
             
             improvements.append("记录推理经验")
         except Exception as e:

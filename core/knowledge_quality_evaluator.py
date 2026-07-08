@@ -9,7 +9,7 @@
 
 from typing import Dict, Tuple, List
 from dataclasses import dataclass
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 from pathlib import Path
 import re
 
@@ -245,82 +245,82 @@ class KnowledgeQualityEvaluator:
             if not db_path.exists():
                 return 0.95
             
-            with sqlite3.connect(str(db_path)) as conn:
-                cursor = conn.cursor()
+            conn = DatabaseManager.get(str(db_path))._get_conn()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='knowledge_items'
+            """)
+            
+            if not cursor.fetchone():
+                return 0.95
+            
+            new_concepts = self._extract_concepts(f"{question} {answer}")
+            new_relations = self._extract_relations(answer)
+            new_numbers = self._extract_numbers(answer)
+            
+            cursor.execute("""
+                SELECT question, answer FROM knowledge_items
+                WHERE question LIKE ? OR question LIKE ? OR question LIKE ?
+                LIMIT 10
+            """, (f"%{question[:20]}%", f"%{question[10:30]}%", f"%{question[-20:]}%"))
+            
+            similar_entries = cursor.fetchall()
+            
+            if not similar_entries:
+                return 0.95
+            
+            conflicts = []
+            consistencies = []
+            
+            for existing_question, existing_answer in similar_entries:
+                existing_concepts = self._extract_concepts(f"{existing_question} {existing_answer}")
+                existing_relations = self._extract_relations(existing_answer)
+                existing_numbers = self._extract_numbers(existing_answer)
                 
-                cursor.execute("""
-                    SELECT name FROM sqlite_master 
-                    WHERE type='table' AND name='knowledge_items'
-                """)
+                concept_conflict = self._check_concept_conflict(
+                    new_concepts, existing_concepts
+                )
+                if concept_conflict:
+                    conflicts.append(("concept", concept_conflict))
                 
-                if not cursor.fetchone():
-                    return 0.95
+                relation_conflict = self._check_relation_conflict(
+                    new_relations, existing_relations
+                )
+                if relation_conflict:
+                    conflicts.append(("relation", relation_conflict))
                 
-                new_concepts = self._extract_concepts(f"{question} {answer}")
-                new_relations = self._extract_relations(answer)
-                new_numbers = self._extract_numbers(answer)
+                number_conflict = self._check_number_conflict(
+                    new_numbers, existing_numbers
+                )
+                if number_conflict:
+                    conflicts.append(("number", number_conflict))
                 
-                cursor.execute("""
-                    SELECT question, answer FROM knowledge_items
-                    WHERE question LIKE ? OR question LIKE ? OR question LIKE ?
-                    LIMIT 10
-                """, (f"%{question[:20]}%", f"%{question[10:30]}%", f"%{question[-20:]}%"))
+                if new_concepts and existing_concepts:
+                    overlap = len(new_concepts & existing_concepts) / len(new_concepts)
+                    if overlap > 0.5:
+                        consistencies.append(overlap)
+            
+            if conflicts:
+                severity_weights = {
+                    "number": 0.4,
+                    "relation": 0.35,
+                    "concept": 0.25
+                }
                 
-                similar_entries = cursor.fetchall()
+                max_severity = max(
+                    severity_weights.get(c[0], 0.25)
+                    for c in conflicts
+                )
                 
-                if not similar_entries:
-                    return 0.95
-                
-                conflicts = []
-                consistencies = []
-                
-                for existing_question, existing_answer in similar_entries:
-                    existing_concepts = self._extract_concepts(f"{existing_question} {existing_answer}")
-                    existing_relations = self._extract_relations(existing_answer)
-                    existing_numbers = self._extract_numbers(existing_answer)
-                    
-                    concept_conflict = self._check_concept_conflict(
-                        new_concepts, existing_concepts
-                    )
-                    if concept_conflict:
-                        conflicts.append(("concept", concept_conflict))
-                    
-                    relation_conflict = self._check_relation_conflict(
-                        new_relations, existing_relations
-                    )
-                    if relation_conflict:
-                        conflicts.append(("relation", relation_conflict))
-                    
-                    number_conflict = self._check_number_conflict(
-                        new_numbers, existing_numbers
-                    )
-                    if number_conflict:
-                        conflicts.append(("number", number_conflict))
-                    
-                    if new_concepts and existing_concepts:
-                        overlap = len(new_concepts & existing_concepts) / len(new_concepts)
-                        if overlap > 0.5:
-                            consistencies.append(overlap)
-                
-                if conflicts:
-                    severity_weights = {
-                        "number": 0.4,
-                        "relation": 0.35,
-                        "concept": 0.25
-                    }
-                    
-                    max_severity = max(
-                        severity_weights.get(c[0], 0.25)
-                        for c in conflicts
-                    )
-                    
-                    consistency = 0.5 - max_severity
-                    return max(0.2, consistency)
-                
-                if consistencies:
-                    return 0.85 + max(consistencies) * 0.1
-                
-                return 0.9
+                consistency = 0.5 - max_severity
+                return max(0.2, consistency)
+            
+            if consistencies:
+                return 0.85 + max(consistencies) * 0.1
+            
+            return 0.9
         
         except Exception as e:
             logger.debug(f"一致性检查失败: {e}")

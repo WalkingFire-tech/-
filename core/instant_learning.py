@@ -11,7 +11,7 @@
 这是真正的"像人一样学习"的机制。
 """
 import json
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -55,10 +55,9 @@ class InstantLearningSystem:
     
     def _init_fact_db(self):
         """初始化事实库"""
-        conn = sqlite3.connect(self.fact_db_path)
+        conn = DatabaseManager.get(self.fact_db_path)._get_conn()
         cursor = conn.cursor()
         
-        # 创建事实表
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS facts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,12 +71,10 @@ class InstantLearningSystem:
             )
         ''')
         
-        # 创建索引
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_concept ON facts(concept)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_assertion ON facts(assertion)')
         
         conn.commit()
-        conn.close()
         
         logger.info("✅ 事实库已初始化")
     
@@ -108,7 +105,7 @@ class InstantLearningSystem:
         keywords = self._extract_keywords(question)
         
         # 检索事实库
-        conn = sqlite3.connect(self.fact_db_path)
+        conn = DatabaseManager.get(self.fact_db_path)._get_conn()
         cursor = conn.cursor()
         
         results = []
@@ -131,8 +128,6 @@ class InstantLearningSystem:
                     'access_count': row[5],
                     'matched_keyword': keyword
                 })
-        
-        conn.close()
         
         # 去重
         seen = set()
@@ -198,17 +193,15 @@ class InstantLearningSystem:
         logger.info(f"📚 即时学习: {concept[:30]}...")
         
         # 写入事实库
-        conn = sqlite3.connect(self.fact_db_path)
+        conn = DatabaseManager.get(self.fact_db_path)._get_conn()
         cursor = conn.cursor()
         
         now = datetime.now().isoformat()
         
-        # 检查是否已存在
         cursor.execute('SELECT id FROM facts WHERE concept = ?', (concept,))
         existing = cursor.fetchone()
         
         if existing:
-            # 更新
             cursor.execute('''
                 UPDATE facts 
                 SET assertion = ?, confidence = ?, source = ?, updated_at = ?
@@ -217,7 +210,6 @@ class InstantLearningSystem:
             
             action = 'updated'
         else:
-            # 插入
             cursor.execute('''
                 INSERT INTO facts (concept, assertion, confidence, source, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -226,7 +218,6 @@ class InstantLearningSystem:
             action = 'inserted'
         
         conn.commit()
-        conn.close()
         
         # 记录学习日志
         learning_record = {
@@ -298,26 +289,20 @@ class InstantLearningSystem:
         Returns:
             知识统计信息
         """
-        conn = sqlite3.connect(self.fact_db_path)
+        conn = DatabaseManager.get(self.fact_db_path)._get_conn()
         cursor = conn.cursor()
         
-        # 总数
         cursor.execute('SELECT COUNT(*) FROM facts')
         total_facts = cursor.fetchone()[0]
         
-        # 按来源统计
         cursor.execute('SELECT source, COUNT(*) FROM facts GROUP BY source')
         by_source = dict(cursor.fetchall())
         
-        # 平均置信度
         cursor.execute('SELECT AVG(confidence) FROM facts')
         avg_confidence = cursor.fetchone()[0] or 0.0
         
-        # 最近学习
         cursor.execute('SELECT concept, created_at FROM facts ORDER BY created_at DESC LIMIT 5')
         recent = cursor.fetchall()
-        
-        conn.close()
         
         return {
             'total_facts': total_facts,

@@ -2,7 +2,7 @@
 外部学习模块 - 主动向搜索引擎和更强AI请教
 """
 import json
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import hashlib
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -91,10 +91,9 @@ class ExternalLearner:
         results = []
         
         try:
-            import sqlite3
             for db_name, label in [("data/knowledge_base.db", "知识库"), ("data/experience_pool.db", "经验池")]:
                 try:
-                    conn = sqlite3.connect(db_name)
+                    conn = DatabaseManager.get(db_name)._get_conn()
                     c = conn.cursor()
                     tables = [row[0] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
                     
@@ -109,8 +108,6 @@ class ExternalLearner:
                         for row in c.fetchall():
                             if row[1] and len(row[1]) > 20:
                                 results.append(f"[{label}] {row[1][:300]}")
-                    
-                    conn.close()
                 except Exception:
                     pass
         except Exception:
@@ -385,29 +382,29 @@ class ExternalLearner:
         """保存外部学习结果到知识库"""
         
         saved_count = 0
-        with sqlite3.connect(self.db_path) as conn:
-            for item in items:
-                try:
-                    question_hash = hashlib.md5(item["question"].lower().encode()).hexdigest()
-                    
-                    conn.execute('''
-                        INSERT OR REPLACE INTO knowledge_items 
-                        (question_hash, question, answer, source, knowledge_type, metadata, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        question_hash,
-                        item["question"],
-                        item["answer"],
-                        item["source"],
-                        item.get("knowledge_type", "external"),
-                        item.get("metadata", "{}"),
-                        datetime.now().isoformat()
-                    ))
-                    saved_count += 1
-                except Exception as e:
-                    logger.error(f"保存知识失败: {e}")
-            
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        for item in items:
+            try:
+                question_hash = hashlib.md5(item["question"].lower().encode()).hexdigest()
+                
+                conn.execute('''
+                    INSERT OR REPLACE INTO knowledge_items 
+                    (question_hash, question, answer, source, knowledge_type, metadata, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    question_hash,
+                    item["question"],
+                    item["answer"],
+                    item["source"],
+                    item.get("knowledge_type", "external"),
+                    item.get("metadata", "{}"),
+                    datetime.now().isoformat()
+                ))
+                saved_count += 1
+            except Exception as e:
+                logger.error(f"保存知识失败: {e}")
+        
+        conn.commit()
         
         if saved_count > 0:
             logger.info(f"保存 {saved_count} 条外部学习知识")

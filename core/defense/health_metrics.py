@@ -7,7 +7,7 @@ L2 监控感知层 - 健康指标采集 (Health Metrics Collector)
 - 预警机制（阈值触发）
 """
 import time
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 from typing import Dict, List, Optional
 from loguru import logger
 from datetime import datetime
@@ -30,7 +30,7 @@ class HealthMetricsCollector:
 
     def _init_db(self):
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = DatabaseManager.get(self.db_path)._get_conn()
             c = conn.cursor()
             c.execute('''CREATE TABLE IF NOT EXISTS metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,7 +47,6 @@ class HealthMetricsCollector:
                 timestamp TEXT
             )''')
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.debug(f"指标数据库初始化失败: {e}")
 
@@ -60,11 +59,10 @@ class HealthMetricsCollector:
             self._metrics[metric_name] = self._metrics[metric_name][-self.WINDOW_SIZE:]
         self._check_threshold(metric_name, value)
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = DatabaseManager.get(self.db_path)._get_conn()
             conn.execute("INSERT INTO metrics (metric_name, value, timestamp) VALUES (?, ?, ?)",
                          (metric_name, value, datetime.now().isoformat()))
             conn.commit()
-            conn.close()
         except:
             pass
 
@@ -83,11 +81,10 @@ class HealthMetricsCollector:
                 self._alerts = self._alerts[-200:]
             logger.warning(alert["message"])
             try:
-                conn = sqlite3.connect(self.db_path)
+                conn = DatabaseManager.get(self.db_path)._get_conn()
                 conn.execute("INSERT INTO alerts (metric_name, value, threshold, message, timestamp) VALUES (?, ?, ?, ?, ?)",
                              (metric_name, value, threshold, alert["message"], alert["timestamp"]))
                 conn.commit()
-                conn.close()
             except:
                 pass
 

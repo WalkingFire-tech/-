@@ -17,7 +17,7 @@
 """
 
 import json
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import hashlib
 import time
 from datetime import datetime, timedelta
@@ -99,21 +99,21 @@ class KnowledgeSourceManager:
         try:
             self._cache_db.parent.mkdir(parents=True, exist_ok=True)
             
-            with sqlite3.connect(str(self._cache_db)) as conn:
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS knowledge_cache (
-                        query_hash TEXT PRIMARY KEY,
-                        query TEXT,
-                        source TEXT,
-                        result TEXT,
-                        created_at TEXT,
-                        expires_at TEXT
-                    )
-                ''')
-                conn.execute('''
-                    CREATE INDEX IF NOT EXISTS idx_expires ON knowledge_cache(expires_at)
-                ''')
-                conn.commit()
+            conn = DatabaseManager.get(str(self._cache_db))._get_conn()
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS knowledge_cache (
+                    query_hash TEXT PRIMARY KEY,
+                    query TEXT,
+                    source TEXT,
+                    result TEXT,
+                    created_at TEXT,
+                    expires_at TEXT
+                )
+            ''')
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_expires ON knowledge_cache(expires_at)
+            ''')
+            conn.commit()
         except Exception as e:
             logger.warning(f"缓存数据库初始化失败: {e}")
     
@@ -502,33 +502,30 @@ class KnowledgeSourceManager:
     def _query_local_kb(self, source_name: str, config: Dict, question: str) -> Dict:
         """查询本地知识库"""
         try:
-            import sqlite3
-            
             db_path = config.get("db_path", "data/knowledge_store.db")
             
-            with sqlite3.connect(db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                
-                cursor = conn.execute('''
-                    SELECT question, answer, source, quality_score
-                    FROM knowledge_items
-                    WHERE question LIKE ?
-                    ORDER BY quality_score DESC
-                    LIMIT 1
-                ''', (f'%{question[:30]}%',))
-                
-                row = cursor.fetchone()
-                if row:
-                    return {
-                        "success": True,
-                        "data": [{
-                            "question": row['question'],
-                            "answer": row['answer'],
-                            "source": row['source'],
-                            "quality_score": row['quality_score']
-                        }],
-                        "confidence": min(0.9, row['quality_score'] / 100.0) if row['quality_score'] else 0.7
-                    }
+            conn = DatabaseManager.get(db_path)._get_conn()
+            
+            cursor = conn.execute('''
+                SELECT question, answer, source, quality_score
+                FROM knowledge_items
+                WHERE question LIKE ?
+                ORDER BY quality_score DESC
+                LIMIT 1
+            ''', (f'%{question[:30]}%',))
+            
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "success": True,
+                    "data": [{
+                        "question": row['question'],
+                        "answer": row['answer'],
+                        "source": row['source'],
+                        "quality_score": row['quality_score']
+                    }],
+                    "confidence": min(0.9, row['quality_score'] / 100.0) if row['quality_score'] else 0.7
+                }
             
             return {"success": False, "error": "本地知识库未找到相关条目"}
         except Exception as e:
@@ -564,20 +561,20 @@ class KnowledgeSourceManager:
             return None
         
         try:
-            with sqlite3.connect(str(self._cache_db)) as conn:
-                cursor = conn.execute('''
-                    SELECT result, source FROM knowledge_cache
-                    WHERE query_hash = ? AND expires_at > ?
-                ''', (query_hash, datetime.now().isoformat()))
-                
-                row = cursor.fetchone()
-                if row:
-                    return {
-                        "success": True,
-                        "source": row[1],
-                        "data": json.loads(row[0]),
-                        "from_cache": True
-                    }
+            conn = DatabaseManager.get(str(self._cache_db))._get_conn()
+            cursor = conn.execute('''
+                SELECT result, source FROM knowledge_cache
+                WHERE query_hash = ? AND expires_at > ?
+            ''', (query_hash, datetime.now().isoformat()))
+            
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "success": True,
+                    "source": row[1],
+                    "data": json.loads(row[0]),
+                    "from_cache": True
+                }
         except Exception as e:
             logger.debug(f"读取缓存失败: {e}")
         
@@ -589,20 +586,20 @@ class KnowledgeSourceManager:
             ttl_hours = self.config.get("cache_config", {}).get("ttl_hours", 24)
             expires_at = datetime.now() + timedelta(hours=ttl_hours)
             
-            with sqlite3.connect(str(self._cache_db)) as conn:
-                conn.execute('''
-                    INSERT OR REPLACE INTO knowledge_cache
-                    (query_hash, query, source, result, created_at, expires_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (
-                    query_hash,
-                    query,
-                    source,
-                    json.dumps(result.get("data")),
-                    datetime.now().isoformat(),
-                    expires_at.isoformat()
-                ))
-                conn.commit()
+            conn = DatabaseManager.get(str(self._cache_db))._get_conn()
+            conn.execute('''
+                INSERT OR REPLACE INTO knowledge_cache
+                (query_hash, query, source, result, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                query_hash,
+                query,
+                source,
+                json.dumps(result.get("data")),
+                datetime.now().isoformat(),
+                expires_at.isoformat()
+            ))
+            conn.commit()
         except Exception as e:
             logger.debug(f"缓存结果失败: {e}")
     
