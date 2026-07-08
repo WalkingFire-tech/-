@@ -6,8 +6,8 @@ from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 import json
-import sqlite3
 from pathlib import Path
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -67,42 +67,40 @@ class LearningReflector:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS learning_events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    event_id TEXT UNIQUE NOT NULL,
-                    event_type TEXT NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    question TEXT,
-                    action_taken TEXT,
-                    result TEXT,
-                    knowledge_gained INTEGER DEFAULT 0,
-                    confidence_before REAL DEFAULT 0,
-                    confidence_after REAL DEFAULT 0,
-                    improvement REAL DEFAULT 0,
-                    metadata TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS reflections (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    period TEXT NOT NULL,
-                    generated_at TEXT NOT NULL,
-                    total_events INTEGER,
-                    success_rate REAL,
-                    avg_improvement REAL,
-                    knowledge_absorbed INTEGER,
-                    knowledge_rejected INTEGER,
-                    knowledge_pending INTEGER,
-                    strengths TEXT,
-                    weaknesses TEXT,
-                    recommendations TEXT
-                )
-            ''')
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS learning_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT UNIQUE NOT NULL,
+                event_type TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                question TEXT,
+                action_taken TEXT,
+                result TEXT,
+                knowledge_gained INTEGER DEFAULT 0,
+                confidence_before REAL DEFAULT 0,
+                confidence_after REAL DEFAULT 0,
+                improvement REAL DEFAULT 0,
+                metadata TEXT
+            )
+        ''')
+        
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS reflections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                period TEXT NOT NULL,
+                generated_at TEXT NOT NULL,
+                total_events INTEGER,
+                success_rate REAL,
+                avg_improvement REAL,
+                knowledge_absorbed INTEGER,
+                knowledge_rejected INTEGER,
+                knowledge_pending INTEGER,
+                strengths TEXT,
+                weaknesses TEXT,
+                recommendations TEXT
+            )
+        ''', commit=True)
         logger.info(f"🪞 学习反思引擎已初始化: {self.db_path}")
     
     def record_learning_event(
@@ -121,36 +119,33 @@ class LearningReflector:
         improvement = confidence_after - confidence_before
         timestamp = datetime.now().isoformat()
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT INTO learning_events
-                (event_id, event_type, timestamp, question, action_taken, result,
-                 knowledge_gained, confidence_before, confidence_after, improvement, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                event_id, event_type, timestamp, question, action_taken, result,
-                knowledge_gained, confidence_before, confidence_after, improvement,
-                json.dumps(metadata or {}, ensure_ascii=False)
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            INSERT INTO learning_events
+            (event_id, event_type, timestamp, question, action_taken, result,
+             knowledge_gained, confidence_before, confidence_after, improvement, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            event_id, event_type, timestamp, question, action_taken, result,
+            knowledge_gained, confidence_before, confidence_after, improvement,
+            json.dumps(metadata or {}, ensure_ascii=False)
+        ), commit=True)
         
         logger.info(f"📝 学习事件已记录: {event_type} - {result}")
         return event_id
     
     def reflect_on_learning(self, event_id: str) -> Dict:
         """对一次学习事件进行反思"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                'SELECT * FROM learning_events WHERE event_id = ?',
-                (event_id,)
-            )
-            row = cursor.fetchone()
-            
-            if not row:
-                return {'error': '事件不存在'}
-            
-            event = dict(row)
+        db = DatabaseManager.get(self.db_path)
+        row = db.query_one(
+            'SELECT * FROM learning_events WHERE event_id = ?',
+            (event_id,)
+        )
+        
+        if not row:
+            return {'error': '事件不存在'}
+        
+        event = dict(row)
         
         effectiveness = self._evaluate_effectiveness(event)
         improvement_suggestions = self._generate_improvement_suggestions(event)
@@ -218,12 +213,11 @@ class LearningReflector:
         else:
             start_time = now - timedelta(weeks=1)
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute('''
-                SELECT * FROM learning_events WHERE timestamp >= ? ORDER BY timestamp DESC
-            ''', (start_time.isoformat(),))
-            events = [dict(row) for row in cursor.fetchall()]
+        db = DatabaseManager.get(self.db_path)
+        rows = db.query('''
+            SELECT * FROM learning_events WHERE timestamp >= ? ORDER BY timestamp DESC
+        ''', (start_time.isoformat(),))
+        events = [dict(r) for r in rows]
         
         total_events = len(events)
         if total_events == 0:
@@ -328,22 +322,21 @@ class LearningReflector:
     
     def _save_reflection(self, result: ReflectionResult):
         """保存反思记录"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT INTO reflections
-                (period, generated_at, total_events, success_rate, avg_improvement,
-                 knowledge_absorbed, knowledge_rejected, knowledge_pending,
-                 strengths, weaknesses, recommendations)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                result.period, result.generated_at, result.total_events, result.success_rate,
-                result.avg_improvement, result.knowledge_absorbed, result.knowledge_rejected,
-                result.knowledge_pending,
-                json.dumps(result.strengths, ensure_ascii=False),
-                json.dumps(result.weaknesses, ensure_ascii=False),
-                json.dumps(result.recommendations, ensure_ascii=False)
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            INSERT INTO reflections
+            (period, generated_at, total_events, success_rate, avg_improvement,
+             knowledge_absorbed, knowledge_rejected, knowledge_pending,
+             strengths, weaknesses, recommendations)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            result.period, result.generated_at, result.total_events, result.success_rate,
+            result.avg_improvement, result.knowledge_absorbed, result.knowledge_rejected,
+            result.knowledge_pending,
+            json.dumps(result.strengths, ensure_ascii=False),
+            json.dumps(result.weaknesses, ensure_ascii=False),
+            json.dumps(result.recommendations, ensure_ascii=False)
+        ), commit=True)
     
     def format_report(self, result: ReflectionResult) -> str:
         """格式化报告为可读文本"""

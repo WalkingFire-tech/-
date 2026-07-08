@@ -12,8 +12,8 @@ from typing import Dict, List, Optional
 from enum import Enum
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-import sqlite3
 from pathlib import Path
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -61,32 +61,30 @@ class KnowledgeStatusManager:
         """初始化数据库"""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS knowledge_status (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    question TEXT NOT NULL,
-                    answer TEXT NOT NULL,
-                    status TEXT DEFAULT 'pending',
-                    confidence REAL DEFAULT 0.5,
-                    verification_count INTEGER DEFAULT 0,
-                    last_verified TIMESTAMP,
-                    sources TEXT,
-                    conflicts TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_status ON knowledge_status(status)
-            """)
-            
-            conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_question ON knowledge_status(question)
-            """)
-            
-            conn.commit()
+        db = DatabaseManager.get(str(self.db_path))
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_status (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                confidence REAL DEFAULT 0.5,
+                verification_count INTEGER DEFAULT 0,
+                last_verified TIMESTAMP,
+                sources TEXT,
+                conflicts TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_status ON knowledge_status(status)
+        """)
+        
+        db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_question ON knowledge_status(question)
+        """, commit=True)
     
     def add_knowledge(
         self,
@@ -109,26 +107,25 @@ class KnowledgeStatusManager:
         Returns:
             知识ID
         """
-        with sqlite3.connect(str(self.db_path)) as conn:
-            cursor = conn.execute("""
-                INSERT INTO knowledge_status 
-                (question, answer, status, confidence, sources, last_verified)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                question,
-                answer,
-                status.value,
-                confidence,
-                f'["{source}"]',
-                datetime.now().isoformat()
-            ))
-            
-            knowledge_id = cursor.lastrowid
-            conn.commit()
-            
-            logger.info(f"添加知识: {question[:30]}... (状态={status.value}, ID={knowledge_id})")
-            
-            return knowledge_id
+        db = DatabaseManager.get(str(self.db_path))
+        cursor = db.execute("""
+            INSERT INTO knowledge_status 
+            (question, answer, status, confidence, sources, last_verified)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            question,
+            answer,
+            status.value,
+            confidence,
+            f'["{source}"]',
+            datetime.now().isoformat()
+        ), commit=True)
+        
+        knowledge_id = cursor.lastrowid
+        
+        logger.info(f"添加知识: {question[:30]}... (状态={status.value}, ID={knowledge_id})")
+        
+        return knowledge_id
     
     def verify_knowledge(
         self,
@@ -145,63 +142,53 @@ class KnowledgeStatusManager:
         Returns:
             新状态
         """
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            
-            # 获取当前状态
-            cursor.execute("""
-                SELECT status, verification_count, confidence
-                FROM knowledge_status WHERE id = ?
-            """, (knowledge_id,))
-            
-            row = cursor.fetchone()
-            if not row:
-                return KnowledgeStatus.PENDING
-            
-            current_status = KnowledgeStatus(row['status'])
-            verification_count = row['verification_count']
-            current_confidence = row['confidence']
-            
-            # 计算新置信度
-            new_confidence = self._update_confidence(
-                current_confidence,
-                verification_result
-            )
-            
-            # 决定新状态
-            new_status = self._determine_status(
-                current_status,
-                new_confidence,
-                verification_count + 1,
-                verification_result
-            )
-            
-            # 更新数据库
-            conn.execute("""
-                UPDATE knowledge_status
-                SET status = ?,
-                    confidence = ?,
-                    verification_count = verification_count + 1,
-                    last_verified = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (
-                new_status.value,
-                new_confidence,
-                datetime.now().isoformat(),
-                knowledge_id
-            ))
-            
-            conn.commit()
-            
-            logger.info(
-                f"知识验证: ID={knowledge_id}, "
-                f"状态={current_status.value}→{new_status.value}, "
-                f"置信度={current_confidence:.2f}→{new_confidence:.2f}"
-            )
-            
-            return new_status
+        db = DatabaseManager.get(str(self.db_path))
+        row = db.query_one("""
+            SELECT status, verification_count, confidence
+            FROM knowledge_status WHERE id = ?
+        """, (knowledge_id,))
+        
+        if not row:
+            return KnowledgeStatus.PENDING
+        
+        current_status = KnowledgeStatus(row['status'])
+        verification_count = row['verification_count']
+        current_confidence = row['confidence']
+        
+        new_confidence = self._update_confidence(
+            current_confidence,
+            verification_result
+        )
+        
+        new_status = self._determine_status(
+            current_status,
+            new_confidence,
+            verification_count + 1,
+            verification_result
+        )
+        
+        db.execute("""
+            UPDATE knowledge_status
+            SET status = ?,
+                confidence = ?,
+                verification_count = verification_count + 1,
+                last_verified = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (
+            new_status.value,
+            new_confidence,
+            datetime.now().isoformat(),
+            knowledge_id
+        ), commit=True)
+        
+        logger.info(
+            f"知识验证: ID={knowledge_id}, "
+            f"状态={current_status.value}→{new_status.value}, "
+            f"置信度={current_confidence:.2f}→{new_confidence:.2f}"
+        )
+        
+        return new_status
     
     def _update_confidence(
         self,
@@ -258,18 +245,15 @@ class KnowledgeStatusManager:
         limit: int = 10
     ) -> List[Dict]:
         """按状态获取知识"""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT * FROM knowledge_status
-                WHERE status = ?
-                ORDER BY confidence DESC, updated_at DESC
-                LIMIT ?
-            """, (status.value, limit))
-            
-            return [dict(row) for row in cursor.fetchall()]
+        db = DatabaseManager.get(str(self.db_path))
+        rows = db.query("""
+            SELECT * FROM knowledge_status
+            WHERE status = ?
+            ORDER BY confidence DESC, updated_at DESC
+            LIMIT ?
+        """, (status.value, limit))
+        
+        return [dict(r) for r in rows]
     
     def deprecate_conflicting(
         self,
@@ -278,22 +262,20 @@ class KnowledgeStatusManager:
         reason: str
     ):
         """废弃冲突的知识"""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute("""
-                UPDATE knowledge_status
-                SET status = ?,
-                    conflicts = ?,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (
-                KnowledgeStatus.DEPRECATED.value,
-                f'[{conflict_with}]',
-                knowledge_id
-            ))
-            
-            conn.commit()
-            
-            logger.warning(f"废弃知识: ID={knowledge_id}, 原因={reason}")
+        db = DatabaseManager.get(str(self.db_path))
+        db.execute("""
+            UPDATE knowledge_status
+            SET status = ?,
+                conflicts = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (
+            KnowledgeStatus.DEPRECATED.value,
+            f'[{conflict_with}]',
+            knowledge_id
+        ), commit=True)
+        
+        logger.warning(f"废弃知识: ID={knowledge_id}, 原因={reason}")
 
 
 status_manager = KnowledgeStatusManager()

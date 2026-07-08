@@ -6,8 +6,8 @@ from typing import Dict, List, Optional
 from datetime import datetime
 from dataclasses import dataclass, field
 import json
-import sqlite3
 from pathlib import Path
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -44,25 +44,24 @@ class MethodologyExtractor:
     
     def _init_database(self):
         """初始化数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS methodologies (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    description TEXT,
-                    trigger_conditions TEXT,
-                    application_steps TEXT,
-                    example_application TEXT,
-                    source_case TEXT,
-                    effectiveness_score REAL DEFAULT 0.5,
-                    use_count INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_used TIMESTAMP
-                )
-            ''')
-            
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_name ON methodologies(name)')
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS methodologies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                trigger_conditions TEXT,
+                application_steps TEXT,
+                example_application TEXT,
+                source_case TEXT,
+                effectiveness_score REAL DEFAULT 0.5,
+                use_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_used TIMESTAMP
+            )
+        ''')
+        
+        db.execute('CREATE INDEX IF NOT EXISTS idx_name ON methodologies(name)', commit=True)
         
         logger.info(f"📚 方法论库已初始化: {self.db_path}")
     
@@ -204,22 +203,21 @@ class MethodologyExtractor:
     
     def _save_methodology(self, method: Methodology):
         """保存方法论"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT INTO methodologies
-                (name, description, trigger_conditions, application_steps,
-                 example_application, source_case, effectiveness_score)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                method.name,
-                method.description,
-                json.dumps(method.trigger_conditions, ensure_ascii=False),
-                json.dumps(method.application_steps, ensure_ascii=False),
-                method.example_application,
-                method.source_case,
-                method.effectiveness_score
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            INSERT INTO methodologies
+            (name, description, trigger_conditions, application_steps,
+             example_application, source_case, effectiveness_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            method.name,
+            method.description,
+            json.dumps(method.trigger_conditions, ensure_ascii=False),
+            json.dumps(method.application_steps, ensure_ascii=False),
+            method.example_application,
+            method.source_case,
+            method.effectiveness_score
+        ), commit=True)
     
     def get_relevant_methodologies(self, question: str) -> List[Methodology]:
         """
@@ -231,49 +229,46 @@ class MethodologyExtractor:
         Returns:
             相关方法论列表
         """
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute('''
-                SELECT * FROM methodologies
-                ORDER BY effectiveness_score DESC, use_count DESC
-                LIMIT 5
-            ''').fetchall()
-            
-            methodologies = []
-            for row in rows:
-                methodologies.append(Methodology(
-                    name=row['name'],
-                    description=row['description'],
-                    trigger_conditions=json.loads(row['trigger_conditions']),
-                    application_steps=json.loads(row['application_steps']),
-                    example_application=row['example_application'],
-                    source_case=row['source_case'],
-                    effectiveness_score=row['effectiveness_score'],
-                    use_count=row['use_count']
-                ))
-            
-            return methodologies
+        db = DatabaseManager.get(self.db_path)
+        rows = db.query('''
+            SELECT * FROM methodologies
+            ORDER BY effectiveness_score DESC, use_count DESC
+            LIMIT 5
+        ''')
+        
+        methodologies = []
+        for row in rows:
+            methodologies.append(Methodology(
+                name=row['name'],
+                description=row['description'],
+                trigger_conditions=json.loads(row['trigger_conditions']),
+                application_steps=json.loads(row['application_steps']),
+                example_application=row['example_application'],
+                source_case=row['source_case'],
+                effectiveness_score=row['effectiveness_score'],
+                use_count=row['use_count']
+            ))
+        
+        return methodologies
     
     def record_methodology_use(self, methodology_name: str):
         """记录方法论使用"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                UPDATE methodologies
-                SET use_count = use_count + 1, last_used = CURRENT_TIMESTAMP
-                WHERE name = ?
-            ''', (methodology_name,))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            UPDATE methodologies
+            SET use_count = use_count + 1, last_used = CURRENT_TIMESTAMP
+            WHERE name = ?
+        ''', (methodology_name,), commit=True)
     
     def get_statistics(self) -> Dict:
         """获取统计信息"""
-        with sqlite3.connect(self.db_path) as conn:
-            total = conn.execute('SELECT COUNT(*) FROM methodologies').fetchone()[0]
-            avg_effectiveness = conn.execute(
-                'SELECT AVG(effectiveness_score) FROM methodologies'
-            ).fetchone()[0] or 0
-            total_uses = conn.execute(
-                'SELECT SUM(use_count) FROM methodologies'
-            ).fetchone()[0] or 0
+        db = DatabaseManager.get(self.db_path)
+        total_row = db.query_one('SELECT COUNT(*) as cnt FROM methodologies')
+        total = total_row['cnt'] if total_row else 0
+        avg_row = db.query_one('SELECT AVG(effectiveness_score) as avg FROM methodologies')
+        avg_effectiveness = avg_row['avg'] if avg_row and avg_row['avg'] is not None else 0
+        uses_row = db.query_one('SELECT SUM(use_count) as total_uses FROM methodologies')
+        total_uses = uses_row['total_uses'] if uses_row and uses_row['total_uses'] is not None else 0
         
         return {
             'total_methodologies': total,

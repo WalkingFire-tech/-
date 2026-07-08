@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 from loguru import logger
 from adapters.llm.ollama_adapter import ollama_chat_request
+from infrastructure.database_manager import DatabaseManager
 
 
 class PersistentTaskSystem:
@@ -38,12 +39,10 @@ class PersistentTaskSystem:
     
     def _init_database(self):
         """初始化持久化数据库"""
-        import sqlite3
         self.db_path.parent.mkdir(exist_ok=True)
         
-        conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.cursor()
-        cursor.execute("""
+        db = DatabaseManager.get(str(self.db_path))
+        db.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
                 task_id TEXT PRIMARY KEY,
                 question TEXT,
@@ -58,9 +57,7 @@ class PersistentTaskSystem:
                 strategies_tried TEXT,
                 partial_results TEXT
             )
-        """)
-        conn.commit()
-        conn.close()
+        """, commit=True)
     
     def _start_workers(self):
         """启动后台工作者"""
@@ -273,17 +270,13 @@ class PersistentTaskSystem:
     async def _try_search(self, question: str, context: dict) -> Dict:
         """策略4: 搜索知识库"""
         try:
-            import sqlite3
-            conn = sqlite3.connect("data/knowledge_store.db")
-            cursor = conn.cursor()
-            cursor.execute(
+            db = DatabaseManager.get("data/knowledge_store.db")
+            row = db.query_one(
                 "SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1",
                 (f"%{question[:30]}%",)
             )
-            row = cursor.fetchone()
-            conn.close()
             if row:
-                return {"success": True, "answer": row[0]}
+                return {"success": True, "answer": row['content']}
         except:
             pass
         return {"success": False, "error": "知识检索失败"}
@@ -310,17 +303,13 @@ class PersistentTaskSystem:
     async def _try_rag(self, question: str, context: dict) -> Dict:
         """策略6: RAG检索"""
         try:
-            import sqlite3
-            conn = sqlite3.connect("data/experience_pool.db")
-            cursor = conn.cursor()
-            cursor.execute(
+            db = DatabaseManager.get("data/experience_pool.db")
+            row = db.query_one(
                 "SELECT response FROM experiences WHERE query LIKE ? ORDER BY timestamp DESC LIMIT 1",
                 (f"%{question[:20]}%",)
             )
-            row = cursor.fetchone()
-            conn.close()
-            if row and row[0]:
-                return {"success": True, "answer": row[0]}
+            if row and row['response']:
+                return {"success": True, "answer": row['response']}
         except:
             pass
         return {"success": False, "error": "RAG检索失败"}
@@ -350,11 +339,9 @@ if __name__ == "__main__":
     
     def _save_task(self, task: Dict):
         """持久化任务"""
-        import sqlite3
         try:
-            conn = sqlite3.connect(str(self.db_path))
-            cursor = conn.cursor()
-            cursor.execute("""
+            db = DatabaseManager.get(str(self.db_path))
+            db.execute("""
                 INSERT OR REPLACE INTO tasks VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
@@ -371,36 +358,30 @@ if __name__ == "__main__":
                 task["result"],
                 json.dumps(task["strategies_tried"]),
                 json.dumps(task["partial_results"])
-            ))
-            conn.commit()
-            conn.close()
+            ), commit=True)
         except Exception as e:
             logger.error(f"保存任务失败: {e}")
     
     def _load_task(self, task_id: str) -> Optional[Dict]:
         """加载任务"""
-        import sqlite3
         try:
-            conn = sqlite3.connect(str(self.db_path))
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
-            row = cursor.fetchone()
-            conn.close()
+            db = DatabaseManager.get(str(self.db_path))
+            row = db.query_one("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
             
             if row:
                 return {
-                    "task_id": row[0],
-                    "question": row[1],
-                    "context": json.loads(row[2]),
-                    "status": row[3],
-                    "attempts": row[4],
-                    "max_attempts": row[5],
-                    "created_at": row[6],
-                    "last_attempt": row[7],
-                    "error": row[8],
-                    "result": row[9],
-                    "strategies_tried": json.loads(row[10]),
-                    "partial_results": json.loads(row[11])
+                    "task_id": row['task_id'],
+                    "question": row['question'],
+                    "context": json.loads(row['context']),
+                    "status": row['status'],
+                    "attempts": row['attempts'],
+                    "max_attempts": row['max_attempts'],
+                    "created_at": row['created_at'],
+                    "last_attempt": row['last_attempt'],
+                    "error": row['error'],
+                    "result": row['result'],
+                    "strategies_tried": json.loads(row['strategies_tried']),
+                    "partial_results": json.loads(row['partial_results'])
                 }
         except:
             pass

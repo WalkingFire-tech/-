@@ -7,9 +7,9 @@
 - 干细胞：自动重启并验证修复
 """
 import time
-import sqlite3
 from typing import Dict, Optional
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 from datetime import datetime
 
 
@@ -27,7 +27,8 @@ class ModuleHealthMonitor:
 
     def _init_db(self):
         try:
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             c = conn.cursor()
             c.execute('''CREATE TABLE IF NOT EXISTS module_health (
                 module_name TEXT PRIMARY KEY,
@@ -48,14 +49,15 @@ class ModuleHealthMonitor:
                 timestamp TEXT
             )''')
             conn.commit()
-            conn.close()
+
         except Exception as e:
             logger.debug(f"模块健康数据库初始化失败: {e}")
 
     def record_success(self, module_name: str):
         """记录模块成功"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             c = conn.cursor()
             c.execute("INSERT OR IGNORE INTO module_health (module_name) VALUES (?)", (module_name,))
             c.execute("UPDATE module_health SET success_count=success_count+1, last_success=?, status=CASE WHEN status='degraded' THEN 'degraded' ELSE 'healthy' END WHERE module_name=?",
@@ -63,14 +65,15 @@ class ModuleHealthMonitor:
             c.execute("INSERT INTO health_events (module_name, event_type, detail, timestamp) VALUES (?, 'success', '', ?)",
                       (module_name, datetime.now().isoformat()))
             conn.commit()
-            conn.close()
+
         except:
             pass
 
     def record_failure(self, module_name: str, detail: str = ""):
         """记录模块失败，检查是否需要隔离"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             c = conn.cursor()
             c.execute("INSERT OR IGNORE INTO module_health (module_name) VALUES (?)", (module_name,))
             c.execute("UPDATE module_health SET failure_count=failure_count+1, last_failure=? WHERE module_name=?",
@@ -95,18 +98,19 @@ class ModuleHealthMonitor:
                     logger.warning(f"⚠️ 模块{module_name}降级: 错误率{error_rate:.0%}")
 
             conn.commit()
-            conn.close()
+
         except:
             pass
 
     def is_module_available(self, module_name: str) -> bool:
         """检查模块是否可用（未隔离）"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             c = conn.cursor()
             c.execute("SELECT status, isolated_at FROM module_health WHERE module_name=?", (module_name,))
             row = c.fetchone()
-            conn.close()
+
             if not row:
                 return True
             status, isolated_at = row
@@ -125,7 +129,8 @@ class ModuleHealthMonitor:
         """获取所有模块的健康报告"""
         report = {"healthy": [], "degraded": [], "isolated": [], "unknown": []}
         try:
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             c = conn.cursor()
             c.execute("SELECT module_name, status, failure_count, success_count, last_failure FROM module_health")
             for row in c.fetchall():
@@ -134,7 +139,7 @@ class ModuleHealthMonitor:
                     report[row[1]].append(entry)
                 else:
                     report["unknown"].append(entry)
-            conn.close()
+
         except:
             pass
         return report
@@ -142,13 +147,14 @@ class ModuleHealthMonitor:
     def clear_anomalies(self, module_name: str):
         """异常吞噬：清理模块的异常状态"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             c = conn.cursor()
             c.execute("UPDATE module_health SET failure_count=0, status='healthy' WHERE module_name=?", (module_name,))
             c.execute("INSERT INTO health_events (module_name, event_type, detail, timestamp) VALUES (?, 'cleared', '异常吞噬：状态重置', ?)",
                       (module_name, datetime.now().isoformat()))
             conn.commit()
-            conn.close()
+
             logger.info(f"🧹 模块{module_name}异常已清除")
         except:
             pass

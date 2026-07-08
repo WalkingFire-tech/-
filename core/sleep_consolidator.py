@@ -15,11 +15,11 @@
 """
 import asyncio
 import logging
-import sqlite3
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 import json
+from infrastructure.database_manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -126,32 +126,26 @@ class SleepConsolidator:
         """
         cutoff = datetime.utcnow() - timedelta(days=self.consolidation_window_days)
         
-        conn = sqlite3.connect(self.reflection_db)
-        conn.row_factory = sqlite3.Row
+        db = DatabaseManager.get(self.reflection_db)
         
-        try:
-            cursor = conn.execute('''
-                SELECT id, query, final_answer, confidence, plan, tool_calls, 
-                       model_used, duration_ms, timestamp
-                FROM reflection_log
-                WHERE (confidence > ? OR confidence < ?)
-                  AND (consolidated IS NULL OR consolidated = 0)
-                  AND timestamp > ?
-                  AND LENGTH(final_answer) > ?
-                ORDER BY ABS(confidence - 0.5) DESC
-                LIMIT 100
-            ''', (
-                self.high_value_threshold_high,
-                self.high_value_threshold_low,
-                cutoff.isoformat(),
-                self.min_answer_length
-            ))
-            
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
-            
-        finally:
-            conn.close()
+        rows = db.query('''
+            SELECT id, query, final_answer, confidence, plan, tool_calls, 
+                   model_used, duration_ms, timestamp
+            FROM reflection_log
+            WHERE (confidence > ? OR confidence < ?)
+              AND (consolidated IS NULL OR consolidated = 0)
+              AND timestamp > ?
+              AND LENGTH(final_answer) > ?
+            ORDER BY ABS(confidence - 0.5) DESC
+            LIMIT 100
+        ''', (
+            self.high_value_threshold_high,
+            self.high_value_threshold_low,
+            cutoff.isoformat(),
+            self.min_answer_length
+        ))
+        
+        return [dict(r) for r in rows]
     
     async def _process_sample(self, sample: Dict) -> Dict[str, Any]:
         """
@@ -222,43 +216,35 @@ class SleepConsolidator:
     
     def _save_to_experience_pool(self, sample: Dict, summary: str):
         """存入经验池"""
-        conn = sqlite3.connect(self.experience_db)
+        db = DatabaseManager.get(self.experience_db)
         
-        try:
-            # 解析plan获取intent
-            plan = sample.get("plan", "{}")
-            if isinstance(plan, str):
-                plan = json.loads(plan)
-            intent = plan.get("intent", "general")
-            
-            # 解析tool_calls
-            tool_calls = sample.get("tool_calls", "[]")
-            if isinstance(tool_calls, str):
-                tool_calls = json.loads(tool_calls)
-            tools_used = [tc.get("name", "") for tc in tool_calls if tc.get("status") == "success"]
-            
-            conn.execute('''
-                INSERT INTO experiences 
-                (timestamp, intent_type, raw_input, plan, model_name, 
-                 quality_score, success, duration, user_feedback, response)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                sample.get("timestamp", datetime.utcnow().isoformat()),
-                intent,
-                sample["query"][:500],
-                sample.get("plan", "{}"),
-                sample.get("model_used", "unknown"),
-                int(sample.get("confidence", 0.5) * 100),
-                1 if sample.get("confidence", 0) > 0.6 else 0,
-                sample.get("duration_ms", 0) / 1000.0,
-                None,
-                summary
-            ))
-            
-            conn.commit()
-            
-        finally:
-            conn.close()
+        plan = sample.get("plan", "{}")
+        if isinstance(plan, str):
+            plan = json.loads(plan)
+        intent = plan.get("intent", "general")
+        
+        tool_calls = sample.get("tool_calls", "[]")
+        if isinstance(tool_calls, str):
+            tool_calls = json.loads(tool_calls)
+        tools_used = [tc.get("name", "") for tc in tool_calls if tc.get("status") == "success"]
+        
+        db.execute('''
+            INSERT INTO experiences 
+            (timestamp, intent_type, raw_input, plan, model_name, 
+             quality_score, success, duration, user_feedback, response)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            sample.get("timestamp", datetime.utcnow().isoformat()),
+            intent,
+            sample["query"][:500],
+            sample.get("plan", "{}"),
+            sample.get("model_used", "unknown"),
+            int(sample.get("confidence", 0.5) * 100),
+            1 if sample.get("confidence", 0) > 0.6 else 0,
+            sample.get("duration_ms", 0) / 1000.0,
+            None,
+            summary
+        ), commit=True)
     
     def _mark_consolidated(self, samples: List[Dict]):
         """标记为已巩固"""
@@ -267,20 +253,14 @@ class SleepConsolidator:
         
         ids = [s["id"] for s in samples]
         
-        conn = sqlite3.connect(self.reflection_db)
+        db = DatabaseManager.get(self.reflection_db)
         
-        try:
-            placeholders = ",".join(["?" for _ in ids])
-            conn.execute(f'''
-                UPDATE reflection_log
-                SET consolidated = 1, consolidated_at = ?
-                WHERE id IN ({placeholders})
-            ''', [datetime.utcnow().isoformat()] + ids)
-            
-            conn.commit()
-            
-        finally:
-            conn.close()
+        placeholders = ",".join(["?" for _ in ids])
+        db.execute(f'''
+            UPDATE reflection_log
+            SET consolidated = 1, consolidated_at = ?
+            WHERE id IN ({placeholders})
+        ''', [datetime.utcnow().isoformat()] + ids, commit=True)
     
     def _cleanup_old_data(self) -> int:
         """
@@ -290,52 +270,43 @@ class SleepConsolidator:
         """
         cutoff = datetime.utcnow() - timedelta(days=self.cleanup_days)
         
-        conn = sqlite3.connect(self.reflection_db)
+        db = DatabaseManager.get(self.reflection_db)
         
-        try:
-            # 删除30天前的低价值数据
-            cursor = conn.execute('''
-                DELETE FROM reflection_log
-                WHERE timestamp < ?
-                  AND confidence >= ?
-                  AND confidence <= ?
-                  AND consolidated = 1
-            ''', (
-                cutoff.isoformat(),
-                self.high_value_threshold_low,
-                self.high_value_threshold_high
-            ))
-            
-            deleted = cursor.rowcount
-            conn.commit()
-            return deleted
-            
-        finally:
-            conn.close()
+        cursor = db.execute('''
+            DELETE FROM reflection_log
+            WHERE timestamp < ?
+              AND confidence >= ?
+              AND confidence <= ?
+              AND consolidated = 1
+        ''', (
+            cutoff.isoformat(),
+            self.high_value_threshold_low,
+            self.high_value_threshold_high
+        ), commit=True)
+        
+        deleted = cursor.rowcount
+        return deleted
     
     def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""
-        conn = sqlite3.connect(self.reflection_db)
+        db = DatabaseManager.get(self.reflection_db)
         
-        try:
-            total = conn.execute('SELECT COUNT(*) FROM reflection_log').fetchone()[0]
-            consolidated = conn.execute(
-                'SELECT COUNT(*) FROM reflection_log WHERE consolidated = 1'
-            ).fetchone()[0]
-            high_value = conn.execute('''
-                SELECT COUNT(*) FROM reflection_log
-                WHERE confidence > ? OR confidence < ?
-            ''', (self.high_value_threshold_high, self.high_value_threshold_low)).fetchone()[0]
-            
-            return {
-                "total_samples": total,
-                "consolidated": consolidated,
-                "high_value_pending": high_value - consolidated,
-                "consolidation_rate": consolidated / total if total > 0 else 0
-            }
-            
-        finally:
-            conn.close()
+        total_row = db.query_one('SELECT COUNT(*) as cnt FROM reflection_log')
+        total = total_row['cnt'] if total_row else 0
+        cons_row = db.query_one('SELECT COUNT(*) as cnt FROM reflection_log WHERE consolidated = 1')
+        consolidated = cons_row['cnt'] if cons_row else 0
+        hv_row = db.query_one('''
+            SELECT COUNT(*) as cnt FROM reflection_log
+            WHERE confidence > ? OR confidence < ?
+        ''', (self.high_value_threshold_high, self.high_value_threshold_low))
+        high_value = hv_row['cnt'] if hv_row else 0
+        
+        return {
+            "total_samples": total,
+            "consolidated": consolidated,
+            "high_value_pending": high_value - consolidated,
+            "consolidation_rate": consolidated / total if total > 0 else 0
+        }
 
 
 # 全局实例

@@ -11,7 +11,6 @@
 import os
 import hashlib
 import json
-import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -20,6 +19,7 @@ from typing import Dict, List, Optional, Callable, Any
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from core.content_extractors import (
@@ -237,46 +237,47 @@ class FolderLearner:
     
     def _init_db(self):
         """初始化数据库"""
-        with sqlite3.connect(self.state_db) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS learned_files (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    root_path TEXT,
-                    file_path TEXT,
-                    relative_path TEXT,
-                    file_hash TEXT,
-                    file_size INTEGER,
-                    last_modified REAL,
-                    last_learned TEXT,
-                    status TEXT DEFAULT 'pending',
-                    error_msg TEXT,
-                    knowledge_count INTEGER DEFAULT 0,
-                    extracted_preview TEXT,
-                    created_at TEXT,
-                    updated_at TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS learning_sessions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    root_path TEXT,
-                    session_start TEXT,
-                    session_end TEXT,
-                    total_files INTEGER,
-                    new_files INTEGER,
-                    updated_files INTEGER,
-                    failed_files INTEGER,
-                    skipped_files INTEGER,
-                    status TEXT
-                )
-            ''')
-            
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_file_path ON learned_files(file_path)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_root_path ON learned_files(root_path)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_status ON learned_files(status)')
-            
-            conn.commit()
+        db = DatabaseManager.get(self.state_db)
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS learned_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                root_path TEXT,
+                file_path TEXT,
+                relative_path TEXT,
+                file_hash TEXT,
+                file_size INTEGER,
+                last_modified REAL,
+                last_learned TEXT,
+                status TEXT DEFAULT 'pending',
+                error_msg TEXT,
+                knowledge_count INTEGER DEFAULT 0,
+                extracted_preview TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS learning_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                root_path TEXT,
+                session_start TEXT,
+                session_end TEXT,
+                total_files INTEGER,
+                new_files INTEGER,
+                updated_files INTEGER,
+                failed_files INTEGER,
+                skipped_files INTEGER,
+                status TEXT
+            )
+        ''')
+        
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_file_path ON learned_files(file_path)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_root_path ON learned_files(root_path)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_status ON learned_files(status)')
+        
+        conn.commit()
     
     def _load_snapshot(self):
         """加载快照到内存缓存"""
@@ -284,20 +285,20 @@ class FolderLearner:
             return
         
         try:
-            with sqlite3.connect(self.state_db) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.execute('''
-                    SELECT relative_path, file_hash
-                    FROM learned_files
-                    WHERE root_path = ? AND status = 'success'
-                ''', (str(self.root_path),))
-                
-                self._snapshot_cache = {
-                    row['relative_path']: row['file_hash']
-                    for row in cursor.fetchall()
-                }
-                
-                logger.debug(f"加载快照: {len(self._snapshot_cache)} 个文件")
+            db = DatabaseManager.get(self.state_db)
+            conn = db._get_conn()
+            cursor = conn.execute('''
+                SELECT relative_path, file_hash
+                FROM learned_files
+                WHERE root_path = ? AND status = 'success'
+            ''', (str(self.root_path),))
+            
+            self._snapshot_cache = {
+                row['relative_path']: row['file_hash']
+                for row in cursor.fetchall()
+            }
+            
+            logger.debug(f"加载快照: {len(self._snapshot_cache)} 个文件")
         except Exception as e:
             logger.error(f"加载快照失败: {e}")
     
@@ -455,28 +456,29 @@ class FolderLearner:
                          status: str, error_msg: str = None,
                          knowledge_count: int = 0, preview: str = None):
         """保存文件学习状态"""
-        with sqlite3.connect(self.state_db) as conn:
-            conn.execute('''
-                INSERT OR REPLACE INTO learned_files
-                (root_path, file_path, relative_path, file_hash, file_size,
-                 last_modified, last_learned, status, error_msg, knowledge_count,
-                 extracted_preview, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                str(self.root_path),
-                str(file_path),
-                rel_path,
-                info["hash"],
-                info["size"],
-                info["modified"],
-                datetime.now().isoformat(),
-                status,
-                error_msg,
-                knowledge_count,
-                preview[:500] if preview else None,
-                datetime.now().isoformat()
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.state_db)
+        conn = db._get_conn()
+        conn.execute('''
+            INSERT OR REPLACE INTO learned_files
+            (root_path, file_path, relative_path, file_hash, file_size,
+             last_modified, last_learned, status, error_msg, knowledge_count,
+             extracted_preview, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            str(self.root_path),
+            str(file_path),
+            rel_path,
+            info["hash"],
+            info["size"],
+            info["modified"],
+            datetime.now().isoformat(),
+            status,
+            error_msg,
+            knowledge_count,
+            preview[:500] if preview else None,
+            datetime.now().isoformat()
+        ))
+        conn.commit()
     
     def scan_and_learn(self, progress_callback: Callable = None) -> Dict:
         """扫描文件夹并学习所有文件"""
@@ -559,25 +561,26 @@ class FolderLearner:
     
     def _record_session(self, start: str, end: str, results: Dict):
         """记录学习会话"""
-        with sqlite3.connect(self.state_db) as conn:
-            status = 'completed' if results["failed"] == 0 else 'completed_with_errors'
-            conn.execute('''
-                INSERT INTO learning_sessions
-                (root_path, session_start, session_end, total_files,
-                 new_files, updated_files, failed_files, skipped_files, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                str(self.root_path),
-                start,
-                end,
-                results["total"],
-                results["new"],
-                results["updated"],
-                results["failed"],
-                results["skipped"],
-                status
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.state_db)
+        conn = db._get_conn()
+        status = 'completed' if results["failed"] == 0 else 'completed_with_errors'
+        conn.execute('''
+            INSERT INTO learning_sessions
+            (root_path, session_start, session_end, total_files,
+             new_files, updated_files, failed_files, skipped_files, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            str(self.root_path),
+            start,
+            end,
+            results["total"],
+            results["new"],
+            results["updated"],
+            results["failed"],
+            results["skipped"],
+            status
+        ))
+        conn.commit()
     
     def start_background_monitor(self, interval_seconds: int = 300):
         """启动后台监控"""
@@ -624,62 +627,62 @@ class FolderLearner:
         if not self.root_path:
             return {"root_path": None, "total_files": 0}
         
-        with sqlite3.connect(self.state_db) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute('''
-                SELECT 
-                    COUNT(*) as total,
-                    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as successful,
-                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
-                    SUM(knowledge_count) as total_knowledge,
-                    MAX(last_learned) as last_scan
-                FROM learned_files
-                WHERE root_path = ?
-            ''', (str(self.root_path),))
-            
-            row = cursor.fetchone()
-            
-            return {
-                "root_path": str(self.root_path),
-                "total_files": row['total'] or 0,
-                "successful": row['successful'] or 0,
-                "failed": row['failed'] or 0,
-                "total_knowledge": row['total_knowledge'] or 0,
-                "last_scan": row['last_scan']
-            }
+        db = DatabaseManager.get(self.state_db)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as successful,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+                SUM(knowledge_count) as total_knowledge,
+                MAX(last_learned) as last_scan
+            FROM learned_files
+            WHERE root_path = ?
+        ''', (str(self.root_path),))
+        
+        row = cursor.fetchone()
+        
+        return {
+            "root_path": str(self.root_path),
+            "total_files": row['total'] or 0,
+            "successful": row['successful'] or 0,
+            "failed": row['failed'] or 0,
+            "total_knowledge": row['total_knowledge'] or 0,
+            "last_scan": row['last_scan']
+        }
     
     def get_failed_files(self) -> List[Dict]:
         """获取失败的文件列表"""
         if not self.root_path:
             return []
         
-        with sqlite3.connect(self.state_db) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute('''
-                SELECT relative_path, error_msg, last_learned
-                FROM learned_files
-                WHERE root_path = ? AND status = 'failed'
-                ORDER BY last_learned DESC
-            ''', (str(self.root_path),))
-            
-            return [dict(row) for row in cursor.fetchall()]
+        db = DatabaseManager.get(self.state_db)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT relative_path, error_msg, last_learned
+            FROM learned_files
+            WHERE root_path = ? AND status = 'failed'
+            ORDER BY last_learned DESC
+        ''', (str(self.root_path),))
+        
+        return [dict(row) for row in cursor.fetchall()]
     
     def get_recent_learned(self, limit: int = 10) -> List[Dict]:
         """获取最近学习的文件"""
         if not self.root_path:
             return []
         
-        with sqlite3.connect(self.state_db) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute('''
-                SELECT relative_path, knowledge_count, last_learned, status
-                FROM learned_files
-                WHERE root_path = ?
-                ORDER BY last_learned DESC
-                LIMIT ?
-            ''', (str(self.root_path), limit))
-            
-            return [dict(row) for row in cursor.fetchall()]
+        db = DatabaseManager.get(self.state_db)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT relative_path, knowledge_count, last_learned, status
+            FROM learned_files
+            WHERE root_path = ?
+            ORDER BY last_learned DESC
+            LIMIT ?
+        ''', (str(self.root_path), limit))
+        
+        return [dict(row) for row in cursor.fetchall()]
     
     def pop_notifications(self) -> List[Dict]:
         """取出并清空未读通知"""

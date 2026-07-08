@@ -17,9 +17,9 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 from enum import Enum
-import sqlite3
 import os
 import json
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from core.memory.stereo_memory import MemoryImportance
@@ -136,94 +136,93 @@ class RelationshipModel:
     
     def _init_database(self):
         """初始化数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS interactions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT,
-                    interaction_type TEXT,
-                    user_input TEXT,
-                    system_response TEXT,
-                    user_satisfaction REAL,
-                    context TEXT
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS trust_evolution (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT,
-                    old_trust REAL,
-                    new_trust REAL,
-                    delta REAL,
-                    reason TEXT,
-                    interaction_type TEXT
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS relationship_state (
-                    user_id TEXT PRIMARY KEY,
-                    trust_level REAL,
-                    intimacy_level REAL,
-                    understanding_level REAL,
-                    total_interactions INTEGER,
-                    positive_interactions INTEGER,
-                    negative_interactions INTEGER,
-                    preferred_types TEXT,
-                    typical_topics TEXT,
-                    communication_style TEXT,
-                    relationship_start TEXT,
-                    last_interaction TEXT
-                )
-            ''')
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS interactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                interaction_type TEXT,
+                user_input TEXT,
+                system_response TEXT,
+                user_satisfaction REAL,
+                context TEXT
+            )
+        ''')
+        
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS trust_evolution (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                old_trust REAL,
+                new_trust REAL,
+                delta REAL,
+                reason TEXT,
+                interaction_type TEXT
+            )
+        ''')
+        
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS relationship_state (
+                user_id TEXT PRIMARY KEY,
+                trust_level REAL,
+                intimacy_level REAL,
+                understanding_level REAL,
+                total_interactions INTEGER,
+                positive_interactions INTEGER,
+                negative_interactions INTEGER,
+                preferred_types TEXT,
+                typical_topics TEXT,
+                communication_style TEXT,
+                relationship_start TEXT,
+                last_interaction TEXT
+            )
+        ''', commit=True)
     
     def _load_relationship(self):
         """加载关系状态"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT * FROM relationship_state WHERE user_id = ?",
-                    (self.user_id,)
-                )
+            db = DatabaseManager.get(self.db_path)
+            row = db.query_one(
+                "SELECT * FROM relationship_state WHERE user_id = ?",
+                (self.user_id,)
+            )
+            
+            if row:
+                trust = row['trust_level']
+                intimacy = row['intimacy_level']
+                understanding = row['understanding_level']
+                total = row['total_interactions']
+                positive = row['positive_interactions']
+                negative = row['negative_interactions']
+                preferred_types = row['preferred_types']
+                typical_topics = row['typical_topics']
+                style = row['communication_style']
+                start = row['relationship_start']
+                last = row['last_interaction']
                 
-                row = cursor.fetchone()
-                if row:
-                    (
-                        _, trust, intimacy, understanding,
-                        total, positive, negative,
-                        preferred_types, typical_topics, style,
-                        start, last
-                    ) = row
-                    
-                    if start:
-                        self._relationship_start = datetime.fromisoformat(start)
-                    else:
-                        self._relationship_start = datetime.now()
-                    
-                    self.state = RelationshipState(
-                        trust_level=trust,
-                        intimacy_level=intimacy,
-                        understanding_level=understanding,
-                        total_interactions=total,
-                        positive_interactions=positive,
-                        negative_interactions=negative,
-                        preferred_interaction_types=[
-                            InteractionType(t) for t in json.loads(preferred_types)
-                        ] if preferred_types else [],
-                        typical_topics=json.loads(typical_topics) if typical_topics else [],
-                        communication_style=style or "mixed",
-                        relationship_age_days=(datetime.now() - self._relationship_start).days,
-                        last_interaction=datetime.fromisoformat(last) if last else datetime.now(),
-                        interaction_frequency=total / max(1, (datetime.now() - self._relationship_start).days),
-                        trust_trend="stable",
-                        intimacy_trend="stable",
-                    )
+                if start:
+                    self._relationship_start = datetime.fromisoformat(start)
+                else:
+                    self._relationship_start = datetime.now()
+                
+                self.state = RelationshipState(
+                    trust_level=trust,
+                    intimacy_level=intimacy,
+                    understanding_level=understanding,
+                    total_interactions=total,
+                    positive_interactions=positive,
+                    negative_interactions=negative,
+                    preferred_interaction_types=[
+                        InteractionType(t) for t in json.loads(preferred_types)
+                    ] if preferred_types else [],
+                    typical_topics=json.loads(typical_topics) if typical_topics else [],
+                    communication_style=style or "mixed",
+                    relationship_age_days=(datetime.now() - self._relationship_start).days,
+                    last_interaction=datetime.fromisoformat(last) if last else datetime.now(),
+                    interaction_frequency=total / max(1, (datetime.now() - self._relationship_start).days),
+                    trust_trend="stable",
+                    intimacy_trend="stable",
+                )
         except Exception as e:
             pass
     
@@ -266,24 +265,20 @@ class RelationshipModel:
     
     def _save_interaction(self, record: InteractionRecord):
         """保存互动记录"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO interactions (
-                    timestamp, interaction_type, user_input,
-                    system_response, user_satisfaction, context
-                ) VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                record.timestamp.isoformat(),
-                record.interaction_type.value,
-                record.user_input,
-                record.system_response,
-                record.user_satisfaction,
-                json.dumps(record.context),
-            ))
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            INSERT INTO interactions (
+                timestamp, interaction_type, user_input,
+                system_response, user_satisfaction, context
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        ''', (
+            record.timestamp.isoformat(),
+            record.interaction_type.value,
+            record.user_input,
+            record.system_response,
+            record.user_satisfaction,
+            json.dumps(record.context),
+        ), commit=True)
     
     def _update_relationship_state(self, record: InteractionRecord):
         """更新关系状态"""
@@ -382,52 +377,44 @@ class RelationshipModel:
     
     def _save_state(self):
         """保存关系状态"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT OR REPLACE INTO relationship_state (
-                    user_id, trust_level, intimacy_level, understanding_level,
-                    total_interactions, positive_interactions, negative_interactions,
-                    preferred_types, typical_topics, communication_style,
-                    relationship_start, last_interaction
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                self.user_id,
-                self.state.trust_level,
-                self.state.intimacy_level,
-                self.state.understanding_level,
-                self.state.total_interactions,
-                self.state.positive_interactions,
-                self.state.negative_interactions,
-                json.dumps([t.value for t in self.state.preferred_interaction_types]),
-                json.dumps(self.state.typical_topics),
-                self.state.communication_style,
-                self._relationship_start.isoformat(),
-                self.state.last_interaction.isoformat(),
-            ))
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            INSERT OR REPLACE INTO relationship_state (
+                user_id, trust_level, intimacy_level, understanding_level,
+                total_interactions, positive_interactions, negative_interactions,
+                preferred_types, typical_topics, communication_style,
+                relationship_start, last_interaction
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            self.user_id,
+            self.state.trust_level,
+            self.state.intimacy_level,
+            self.state.understanding_level,
+            self.state.total_interactions,
+            self.state.positive_interactions,
+            self.state.negative_interactions,
+            json.dumps([t.value for t in self.state.preferred_interaction_types]),
+            json.dumps(self.state.typical_topics),
+            self.state.communication_style,
+            self._relationship_start.isoformat(),
+            self.state.last_interaction.isoformat(),
+        ), commit=True)
     
     def _save_trust_evolution(self, evolution: TrustEvolution):
         """保存信任演化"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO trust_evolution (
-                    timestamp, old_trust, new_trust, delta, reason, interaction_type
-                ) VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                evolution.timestamp.isoformat(),
-                evolution.old_trust,
-                evolution.new_trust,
-                evolution.delta,
-                evolution.reason,
-                evolution.interaction_type.value,
-            ))
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            INSERT INTO trust_evolution (
+                timestamp, old_trust, new_trust, delta, reason, interaction_type
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        ''', (
+            evolution.timestamp.isoformat(),
+            evolution.old_trust,
+            evolution.new_trust,
+            evolution.delta,
+            evolution.reason,
+            evolution.interaction_type.value,
+        ), commit=True)
     
     def get_trust_level(self) -> TrustLevel:
         """获取信任等级"""

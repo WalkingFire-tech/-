@@ -4,13 +4,13 @@
 """
 
 import json
-import sqlite3
 import hashlib
 import os
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -101,47 +101,43 @@ class ConflictCoordinator:
         """初始化数据库"""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS conflicts (
-                    id TEXT PRIMARY KEY,
-                    type TEXT,
-                    severity TEXT,
-                    description TEXT,
-                    source1 TEXT,
-                    source2 TEXT,
-                    detected_at TEXT,
-                    resolved_at TEXT,
-                    resolution TEXT
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS applied_rules (
-                    rule_id TEXT PRIMARY KEY,
-                    source_type TEXT,
-                    parameter TEXT,
-                    value TEXT,
-                    priority INTEGER,
-                    applied_at TEXT,
-                    evidence TEXT
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS arbitration_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT,
-                    conflict_id TEXT,
-                    decision TEXT,
-                    reasoning TEXT,
-                    applied_rule_id TEXT
-                )
-            ''')
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS conflicts (
+                id TEXT PRIMARY KEY,
+                type TEXT,
+                severity TEXT,
+                description TEXT,
+                source1 TEXT,
+                source2 TEXT,
+                detected_at TEXT,
+                resolved_at TEXT,
+                resolution TEXT
+            )
+        ''')
+        
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS applied_rules (
+                rule_id TEXT PRIMARY KEY,
+                source_type TEXT,
+                parameter TEXT,
+                value TEXT,
+                priority INTEGER,
+                applied_at TEXT,
+                evidence TEXT
+            )
+        ''')
+        
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS arbitration_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                conflict_id TEXT,
+                decision TEXT,
+                reasoning TEXT,
+                applied_rule_id TEXT
+            )
+        ''', commit=True)
     
     def detect_conflicts(self, rule1: Dict, rule2: Dict) -> Optional[Conflict]:
         """检测两个规则之间是否存在冲突"""
@@ -279,66 +275,61 @@ class ConflictCoordinator:
     def _record_arbitration(self, conflict: Conflict, decision: Dict):
         """记录仲裁"""
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO arbitration_log
-                (timestamp, conflict_id, decision, reasoning, applied_rule_id)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (
-                datetime.now().isoformat(),
-                conflict.id,
-                decision.get('winner', 'none'),
-                decision.get('reason', ''),
-                decision.get('rule', {}).get('rule_id', '') if decision.get('rule') else ''
-            ))
-            
-            cursor.execute('''
-                UPDATE conflicts
-                SET resolved_at = ?, resolution = ?
-                WHERE id = ?
-            ''', (
-                conflict.resolved_at,
-                conflict.resolution,
-                conflict.id
-            ))
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            INSERT INTO arbitration_log
+            (timestamp, conflict_id, decision, reasoning, applied_rule_id)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (
+            datetime.now().isoformat(),
+            conflict.id,
+            decision.get('winner', 'none'),
+            decision.get('reason', ''),
+            decision.get('rule', {}).get('rule_id', '') if decision.get('rule') else ''
+        ))
+        
+        db.execute('''
+            UPDATE conflicts
+            SET resolved_at = ?, resolution = ?
+            WHERE id = ?
+        ''', (
+            conflict.resolved_at,
+            conflict.resolution,
+            conflict.id
+        ), commit=True)
     
     def _load_state(self):
         """加载状态"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                
-                cursor = conn.execute('''
-                    SELECT * FROM conflicts ORDER BY detected_at DESC LIMIT 50
-                ''')
-                for row in cursor:
-                    self.conflict_history.append(Conflict(
-                        id=row['id'],
-                        type=ConflictType(row['type']),
-                        severity=ConflictSeverity(row['severity']),
-                        description=row['description'],
-                        source1=json.loads(row['source1']),
-                        source2=json.loads(row['source2']),
-                        detected_at=row['detected_at'],
-                        resolved_at=row['resolved_at'],
-                        resolution=row['resolution']
-                    ))
-                
-                cursor = conn.execute('SELECT * FROM applied_rules')
-                for row in cursor:
-                    self.applied_rules[row['rule_id']] = EvolutionRule(
-                        rule_id=row['rule_id'],
-                        source_type=row['source_type'],
-                        parameter=row['parameter'],
-                        value=json.loads(row['value']),
-                        priority=row['priority'],
-                        applied_at=row['applied_at'],
-                        evidence=json.loads(row['evidence'])
-                    )
+            db = DatabaseManager.get(self.db_path)
+            
+            rows = db.query('''
+                SELECT * FROM conflicts ORDER BY detected_at DESC LIMIT 50
+            ''')
+            for row in rows:
+                self.conflict_history.append(Conflict(
+                    id=row['id'],
+                    type=ConflictType(row['type']),
+                    severity=ConflictSeverity(row['severity']),
+                    description=row['description'],
+                    source1=json.loads(row['source1']),
+                    source2=json.loads(row['source2']),
+                    detected_at=row['detected_at'],
+                    resolved_at=row['resolved_at'],
+                    resolution=row['resolution']
+                ))
+            
+            rule_rows = db.query('SELECT * FROM applied_rules')
+            for row in rule_rows:
+                self.applied_rules[row['rule_id']] = EvolutionRule(
+                    rule_id=row['rule_id'],
+                    source_type=row['source_type'],
+                    parameter=row['parameter'],
+                    value=json.loads(row['value']),
+                    priority=row['priority'],
+                    applied_at=row['applied_at'],
+                    evidence=json.loads(row['evidence'])
+                )
                     
         except Exception as e:
             logger.warning(f"加载冲突协调状态失败: {e}")
@@ -360,47 +351,39 @@ class ConflictCoordinator:
         """注册规则"""
         self.applied_rules[rule.rule_id] = rule
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT OR REPLACE INTO applied_rules
-                (rule_id, source_type, parameter, value, priority, applied_at, evidence)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                rule.rule_id,
-                rule.source_type,
-                rule.parameter,
-                json.dumps(rule.value),
-                rule.priority,
-                rule.applied_at,
-                json.dumps(rule.evidence)
-            ))
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            INSERT OR REPLACE INTO applied_rules
+            (rule_id, source_type, parameter, value, priority, applied_at, evidence)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            rule.rule_id,
+            rule.source_type,
+            rule.parameter,
+            json.dumps(rule.value),
+            rule.priority,
+            rule.applied_at,
+            json.dumps(rule.evidence)
+        ), commit=True)
     
     def save_conflict(self, conflict: Conflict):
         """保存冲突记录"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT OR REPLACE INTO conflicts
-                (id, type, severity, description, source1, source2, detected_at, resolved_at, resolution)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                conflict.id,
-                conflict.type.value,
-                conflict.severity.value,
-                conflict.description,
-                json.dumps(conflict.source1),
-                json.dumps(conflict.source2),
-                conflict.detected_at,
-                conflict.resolved_at,
-                conflict.resolution
-            ))
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            INSERT OR REPLACE INTO conflicts
+            (id, type, severity, description, source1, source2, detected_at, resolved_at, resolution)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            conflict.id,
+            conflict.type.value,
+            conflict.severity.value,
+            conflict.description,
+            json.dumps(conflict.source1),
+            json.dumps(conflict.source2),
+            conflict.detected_at,
+            conflict.resolved_at,
+            conflict.resolution
+        ), commit=True)
 
 
 conflict_coordinator = ConflictCoordinator()

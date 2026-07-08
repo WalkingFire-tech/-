@@ -22,7 +22,6 @@
 - P7: 规范单例实现
 """
 
-import sqlite3
 import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -30,6 +29,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from collections import deque
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -188,41 +188,40 @@ class AdaptiveEvolutionGoal:
         try:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
             
-            with sqlite3.connect(str(self._db_path)) as conn:
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS evolution_goals (
-                        dimension TEXT PRIMARY KEY,
-                        target_value REAL,
-                        current_value REAL,
-                        priority TEXT,
-                        source TEXT,
-                        created_at TEXT,
-                        updated_at TEXT,
-                        progress_history TEXT
-                    )
-                ''')
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS value_inferences (
-                        dimension TEXT PRIMARY KEY,
-                        inferred_value REAL,
-                        evidence_count INTEGER,
-                        evidence_sources TEXT,
-                        confidence REAL,
-                        trend TEXT,
-                        updated_at TEXT
-                    )
-                ''')
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS feedback_history (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        timestamp TEXT,
-                        satisfaction REAL,
-                        praised TEXT,
-                        criticized TEXT,
-                        raw_feedback TEXT
-                    )
-                ''')
-                conn.commit()
+            db = DatabaseManager.get(str(self._db_path))
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS evolution_goals (
+                    dimension TEXT PRIMARY KEY,
+                    target_value REAL,
+                    current_value REAL,
+                    priority TEXT,
+                    source TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    progress_history TEXT
+                )
+            ''')
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS value_inferences (
+                    dimension TEXT PRIMARY KEY,
+                    inferred_value REAL,
+                    evidence_count INTEGER,
+                    evidence_sources TEXT,
+                    confidence REAL,
+                    trend TEXT,
+                    updated_at TEXT
+                )
+            ''')
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS feedback_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT,
+                    satisfaction REAL,
+                    praised TEXT,
+                    criticized TEXT,
+                    raw_feedback TEXT
+                )
+            ''', commit=True)
             logger.debug("进化目标数据库初始化成功")
         except Exception as e:
             logger.warning(f"进化目标数据库初始化失败: {e}")
@@ -230,42 +229,42 @@ class AdaptiveEvolutionGoal:
     def _load_from_database(self):
         """从数据库加载数据"""
         try:
-            with sqlite3.connect(str(self._db_path)) as conn:
-                cursor = conn.execute('''
-                    SELECT dimension, target_value, current_value, priority,
-                           source, created_at, updated_at, progress_history
-                    FROM evolution_goals
-                ''')
-                
-                for row in cursor:
-                    dim = EvolutionDimension(row[0])
-                    self.goals[dim] = EvolutionGoal(
-                        dimension=dim,
-                        target_value=row[1],
-                        current_value=row[2],
-                        priority=GoalPriority[row[3]],
-                        source=row[4],
-                        created_at=datetime.fromisoformat(row[5]),
-                        updated_at=datetime.fromisoformat(row[6]),
-                        progress_history=json.loads(row[7]) if row[7] else []
-                    )
-                
-                cursor = conn.execute('''
-                    SELECT dimension, inferred_value, evidence_count,
-                           evidence_sources, confidence, trend
-                    FROM value_inferences
-                ''')
-                
-                for row in cursor:
-                    dim = EvolutionDimension(row[0])
-                    self.value_inferences[dim] = ValueInference(
-                        dimension=dim,
-                        inferred_value=row[1],
-                        evidence_count=row[2],
-                        evidence_sources=json.loads(row[3]) if row[3] else [],
-                        confidence=row[4],
-                        trend=row[5] or "stable"
-                    )
+            db = DatabaseManager.get(str(self._db_path))
+            rows = db.query('''
+                SELECT dimension, target_value, current_value, priority,
+                       source, created_at, updated_at, progress_history
+                FROM evolution_goals
+            ''')
+            
+            for row in rows:
+                dim = EvolutionDimension(row[0])
+                self.goals[dim] = EvolutionGoal(
+                    dimension=dim,
+                    target_value=row[1],
+                    current_value=row[2],
+                    priority=GoalPriority[row[3]],
+                    source=row[4],
+                    created_at=datetime.fromisoformat(row[5]),
+                    updated_at=datetime.fromisoformat(row[6]),
+                    progress_history=json.loads(row[7]) if row[7] else []
+                )
+            
+            inf_rows = db.query('''
+                SELECT dimension, inferred_value, evidence_count,
+                       evidence_sources, confidence, trend
+                FROM value_inferences
+            ''')
+            
+            for row in inf_rows:
+                dim = EvolutionDimension(row[0])
+                self.value_inferences[dim] = ValueInference(
+                    dimension=dim,
+                    inferred_value=row[1],
+                    evidence_count=row[2],
+                    evidence_sources=json.loads(row[3]) if row[3] else [],
+                    confidence=row[4],
+                    trend=row[5] or "stable"
+                )
             
             logger.debug(f"从数据库加载了 {len(self.goals)} 个目标, {len(self.value_inferences)} 个推断")
         except Exception as e:
@@ -274,45 +273,43 @@ class AdaptiveEvolutionGoal:
     def _save_goal_to_db(self, goal: EvolutionGoal):
         """保存目标到数据库"""
         try:
-            with sqlite3.connect(str(self._db_path)) as conn:
-                conn.execute('''
-                    INSERT OR REPLACE INTO evolution_goals
-                    (dimension, target_value, current_value, priority, source,
-                     created_at, updated_at, progress_history)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    goal.dimension.value,
-                    goal.target_value,
-                    goal.current_value,
-                    goal.priority.name,
-                    goal.source,
-                    goal.created_at.isoformat(),
-                    goal.updated_at.isoformat(),
-                    json.dumps(goal.progress_history[-100:])
-                ))
-                conn.commit()
+            db = DatabaseManager.get(str(self._db_path))
+            db.execute('''
+                INSERT OR REPLACE INTO evolution_goals
+                (dimension, target_value, current_value, priority, source,
+                 created_at, updated_at, progress_history)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                goal.dimension.value,
+                goal.target_value,
+                goal.current_value,
+                goal.priority.name,
+                goal.source,
+                goal.created_at.isoformat(),
+                goal.updated_at.isoformat(),
+                json.dumps(goal.progress_history[-100:])
+            ), commit=True)
         except Exception as e:
             logger.debug(f"保存目标失败: {e}")
     
     def _save_inference_to_db(self, inference: ValueInference):
         """保存推断到数据库"""
         try:
-            with sqlite3.connect(str(self._db_path)) as conn:
-                conn.execute('''
-                    INSERT OR REPLACE INTO value_inferences
-                    (dimension, inferred_value, evidence_count, evidence_sources,
-                     confidence, trend, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    inference.dimension.value,
-                    inference.inferred_value,
-                    inference.evidence_count,
-                    json.dumps(inference.evidence_sources),
-                    inference.confidence,
-                    inference.trend,
-                    datetime.now().isoformat()
-                ))
-                conn.commit()
+            db = DatabaseManager.get(str(self._db_path))
+            db.execute('''
+                INSERT OR REPLACE INTO value_inferences
+                (dimension, inferred_value, evidence_count, evidence_sources,
+                 confidence, trend, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                inference.dimension.value,
+                inference.inferred_value,
+                inference.evidence_count,
+                json.dumps(inference.evidence_sources),
+                inference.confidence,
+                inference.trend,
+                datetime.now().isoformat()
+            ), commit=True)
         except Exception as e:
             logger.debug(f"保存推断失败: {e}")
     
@@ -607,19 +604,18 @@ class AdaptiveEvolutionGoal:
     def _save_feedback_to_db(self, fb: Dict):
         """保存反馈到数据库"""
         try:
-            with sqlite3.connect(str(self._db_path)) as conn:
-                conn.execute('''
-                    INSERT INTO feedback_history
-                    (timestamp, satisfaction, praised, criticized, raw_feedback)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (
-                    fb["timestamp"],
-                    fb["satisfaction"],
-                    json.dumps(fb["praised"]),
-                    json.dumps(fb["criticized"]),
-                    fb.get("raw_feedback", "")
-                ))
-                conn.commit()
+            db = DatabaseManager.get(str(self._db_path))
+            db.execute('''
+                INSERT INTO feedback_history
+                (timestamp, satisfaction, praised, criticized, raw_feedback)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (
+                fb["timestamp"],
+                fb["satisfaction"],
+                json.dumps(fb["praised"]),
+                json.dumps(fb["criticized"]),
+                fb.get("raw_feedback", "")
+            ), commit=True)
         except Exception as e:
             logger.debug(f"保存反馈失败: {e}")
     

@@ -2,13 +2,13 @@
 记忆价值评估器 - 决定什么应该记住，什么应该遗忘
 """
 
-import sqlite3
 import json
 import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from enum import Enum
 from dataclasses import dataclass
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -82,46 +82,42 @@ class MemoryValueAssessor:
         """初始化数据库"""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS memories (
-                    id TEXT PRIMARY KEY,
-                    content TEXT,
-                    memory_type TEXT,
-                    value_score REAL,
-                    value_grade TEXT,
-                    access_count INTEGER,
-                    last_accessed TEXT,
-                    user_marked_important INTEGER,
-                    correctness_score REAL,
-                    context_importance REAL,
-                    created_at TEXT,
-                    expires_at TEXT
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS memory_graph (
-                    memory_id TEXT,
-                    related_memory_id TEXT,
-                    relation_type TEXT,
-                    strength REAL
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS memory_verdicts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    memory_id TEXT,
-                    verdict_type TEXT,
-                    verdict_value TEXT,
-                    created_at TEXT
-                )
-            ''')
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS memories (
+                id TEXT PRIMARY KEY,
+                content TEXT,
+                memory_type TEXT,
+                value_score REAL,
+                value_grade TEXT,
+                access_count INTEGER,
+                last_accessed TEXT,
+                user_marked_important INTEGER,
+                correctness_score REAL,
+                context_importance REAL,
+                created_at TEXT,
+                expires_at TEXT
+            )
+        ''')
+        
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS memory_graph (
+                memory_id TEXT,
+                related_memory_id TEXT,
+                relation_type TEXT,
+                strength REAL
+            )
+        ''')
+        
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS memory_verdicts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id TEXT,
+                verdict_type TEXT,
+                verdict_value TEXT,
+                created_at TEXT
+            )
+        ''', commit=True)
     
     def evaluate(self, memory: Dict) -> float:
         """
@@ -298,21 +294,17 @@ class MemoryValueAssessor:
     def update_with_feedback(self, memory_id: str, feedback_type: str, feedback_value: any):
         """根据反馈更新记忆评估"""
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO memory_verdicts
-                (memory_id, verdict_type, verdict_value, created_at)
-                VALUES (?, ?, ?, ?)
-            ''', (
-                memory_id,
-                feedback_type,
-                str(feedback_value),
-                datetime.now().isoformat()
-            ))
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            INSERT INTO memory_verdicts
+            (memory_id, verdict_type, verdict_value, created_at)
+            VALUES (?, ?, ?, ?)
+        ''', (
+            memory_id,
+            feedback_type,
+            str(feedback_value),
+            datetime.now().isoformat()
+        ), commit=True)
         
         if feedback_type == 'user_marked_important' and feedback_value:
             self._mark_important(memory_id)
@@ -320,30 +312,24 @@ class MemoryValueAssessor:
     def _mark_important(self, memory_id: str):
         """标记为重要记忆"""
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                UPDATE memories
-                SET user_marked_important = 1
-                WHERE id = ?
-            ''', (memory_id,))
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            UPDATE memories
+            SET user_marked_important = 1
+            WHERE id = ?
+        ''', (memory_id,), commit=True)
     
     def get_memory_report(self, limit: int = 20) -> Dict:
         """生成记忆报告"""
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            cursor = conn.execute('''
-                SELECT * FROM memories
-                ORDER BY value_score DESC
-                LIMIT ?
-            ''', (limit,))
-            
-            memories = [dict(row) for row in cursor.fetchall()]
+        db = DatabaseManager.get(self.db_path)
+        rows = db.query('''
+            SELECT * FROM memories
+            ORDER BY value_score DESC
+            LIMIT ?
+        ''', (limit,))
+        
+        memories = [dict(r) for r in rows]
         
         return {
             'total_memories': len(memories),
@@ -363,31 +349,27 @@ class MemoryValueAssessor:
         score = self.evaluate(memory)
         grade = self.get_value_grade(score)
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT OR REPLACE INTO memories
-                (id, content, memory_type, value_score, value_grade, 
-                 access_count, last_accessed, user_marked_important,
-                 correctness_score, context_importance, created_at, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                memory.get('id'),
-                memory.get('content', ''),
-                memory.get('memory_type', 'general'),
-                score,
-                str(grade.value),
-                memory.get('access_count', 0),
-                memory.get('last_accessed'),
-                1 if memory.get('user_marked_important', False) else 0,
-                memory.get('correctness_score', 0.8),
-                memory.get('context_importance', 0.5),
-                memory.get('created_at', datetime.now().isoformat()),
-                memory.get('expires_at')
-            ))
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            INSERT OR REPLACE INTO memories
+            (id, content, memory_type, value_score, value_grade, 
+             access_count, last_accessed, user_marked_important,
+             correctness_score, context_importance, created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            memory.get('id'),
+            memory.get('content', ''),
+            memory.get('memory_type', 'general'),
+            score,
+            str(grade.value),
+            memory.get('access_count', 0),
+            memory.get('last_accessed'),
+            1 if memory.get('user_marked_important', False) else 0,
+            memory.get('correctness_score', 0.8),
+            memory.get('context_importance', 0.5),
+            memory.get('created_at', datetime.now().isoformat()),
+            memory.get('expires_at')
+        ), commit=True)
 
 
 memory_value_assessor = MemoryValueAssessor()

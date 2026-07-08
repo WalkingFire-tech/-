@@ -12,9 +12,9 @@
 """
 
 import json
-import sqlite3
 from typing import Dict, List, Any, Optional
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 from datetime import datetime
 
 
@@ -27,7 +27,8 @@ class SkillEmergence:
 
     def _init_db(self):
         try:
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             c = conn.cursor()
             c.execute('''CREATE TABLE IF NOT EXISTS skills (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,7 +53,7 @@ class SkillEmergence:
                 timestamp TEXT
             )''')
             conn.commit()
-            conn.close()
+
         except Exception as e:
             logger.debug(f"技能库初始化失败: {e}")
 
@@ -150,14 +151,15 @@ class SkillEmergence:
     def _find_matching_skill(self, trigger: str, skill_type: str) -> Optional[dict]:
         """查找匹配的已有技能"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             c = conn.cursor()
             c.execute(
                 "SELECT skill_name, skill_type, trigger_patterns, solution_path, success_count, fail_count, success_rate FROM skills WHERE skill_type=? AND is_active=1",
                 (skill_type,)
             )
             rows = c.fetchall()
-            conn.close()
+
 
             for row in rows:
                 existing_triggers = row[2].split("|")
@@ -179,7 +181,8 @@ class SkillEmergence:
     def _update_skill(self, skill: dict, was_successful: bool, elapsed: float):
         """更新技能统计"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             c = conn.cursor()
             new_success = skill["success_count"] + (1 if was_successful else 0)
             new_fail = skill["fail_count"] + (0 if was_successful else 1)
@@ -189,7 +192,7 @@ class SkillEmergence:
                 (new_success, new_fail, round(new_rate, 3), datetime.now().isoformat(), skill["skill_name"])
             )
             conn.commit()
-            conn.close()
+
 
             if new_success >= 3 and new_rate >= 0.7:
                 logger.info(f"🎯 技能成熟: {skill['skill_name']} (成功率{new_rate:.0%}, {new_success}次成功)")
@@ -199,14 +202,15 @@ class SkillEmergence:
     def _create_skill(self, skill_name: str, skill_type: str, trigger: str, solution_path: str):
         """创建新技能"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             c = conn.cursor()
             c.execute(
                 "INSERT OR IGNORE INTO skills (skill_name, skill_type, trigger_patterns, solution_path, success_count, fail_count, success_rate, last_used, created_at) VALUES (?, ?, ?, ?, 1, 0, 1.0, ?, ?)",
                 (skill_name, skill_type, trigger, solution_path, datetime.now().isoformat(), datetime.now().isoformat())
             )
             conn.commit()
-            conn.close()
+
             logger.info(f"✨ 新技能涌现: {skill_name} (类型={skill_type}, 触发={trigger})")
         except:
             pass
@@ -237,7 +241,8 @@ class SkillEmergence:
                 if name and name not in ("规则推理", "本质推理"):
                     failed_names.add(name)
         try:
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             c = conn.cursor()
             c.execute("SELECT skill_name, success_count, fail_count FROM skills WHERE is_active=1")
             rows = c.fetchall()
@@ -252,20 +257,21 @@ class SkillEmergence:
                     c.execute("UPDATE skills SET is_active=0 WHERE skill_name=?", (skill_name,))
                     logger.info(f"技能退化: {skill_name} 成功率{new_rate:.0%}<{30}%，已标记为休眠")
             conn.commit()
-            conn.close()
+
         except Exception as e:
             logger.debug(f"技能失败记录异常: {e}")
 
     def get_applicable_skills(self, query: str) -> List[dict]:
         """获取适用于当前问题的技能（按成功率排序）"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             c = conn.cursor()
             c.execute(
                 "SELECT skill_name, skill_type, trigger_patterns, solution_path, success_count, success_rate FROM skills WHERE is_active=1 AND success_count >= 2 ORDER BY success_rate DESC, success_count DESC LIMIT 5"
             )
             rows = c.fetchall()
-            conn.close()
+
 
             applicable = []
             for row in rows:
@@ -286,7 +292,8 @@ class SkillEmergence:
     def get_skill_stats(self) -> dict:
         """获取技能统计"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM skills WHERE is_active=1")
             total = c.fetchone()[0]
@@ -294,7 +301,7 @@ class SkillEmergence:
             mature = c.fetchone()[0]
             c.execute("SELECT skill_name, success_count, success_rate FROM skills WHERE is_active=1 ORDER BY success_count DESC LIMIT 5")
             top = c.fetchall()
-            conn.close()
+
             return {
                 "total_skills": total,
                 "mature_skills": mature,
