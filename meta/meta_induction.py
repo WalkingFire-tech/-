@@ -2,7 +2,6 @@
 元归纳器 - 递归归纳系统
 让系统学会如何学习，优化归纳器自身的参数和策略
 """
-import sqlite3
 import yaml
 import time
 import threading
@@ -10,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List
 from loguru import logger
 from infrastructure.event_bus import bus
+from infrastructure.database_manager import DatabaseManager
 
 
 class MetaInductor:
@@ -74,44 +74,43 @@ class MetaInductor:
         """
         try:
             db_path = self.BASE_DATA_DIR / "learning_rules.db"
-            with sqlite3.connect(db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                
-                cursor.execute("""
-                    SELECT 
-                        action,
-                        COUNT(*) as total,
-                        SUM(CASE WHEN success_count > apply_count * 0.5 THEN 1 ELSE 0 END) as successful,
-                        AVG(apply_count) as avg_apply,
-                        AVG(success_count) as avg_success
-                    FROM learning_rules
-                    WHERE status = 'active' AND apply_count > 0
-                    GROUP BY action
-                """)
-                
-                performance = {}
-                for row in cursor.fetchall():
-                    action = row['action']
-                    total = row['total']
-                    successful = row['successful']
-                    
-                    success_rate = successful / total if total > 0 else 0
-                    
-                    action_type = action.split(':')[0] if ':' in action else action
-                    
-                    if action_type not in performance:
-                        performance[action_type] = {
-                            'total_rules': 0,
-                            'total_applications': 0,
-                            'successful_applications': 0,
-                            'success_rate': 0.0
-                        }
-                    
-                    performance[action_type]['total_rules'] += total
-                    performance[action_type]['total_applications'] += row['avg_apply'] * total
-                    performance[action_type]['successful_applications'] += row['avg_success'] * total
+            conn = DatabaseManager.get(str(db_path))._get_conn()
+            cursor = conn.cursor()
             
+            cursor.execute("""
+                SELECT 
+                    action,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN success_count > apply_count * 0.5 THEN 1 ELSE 0 END) as successful,
+                    AVG(apply_count) as avg_apply,
+                    AVG(success_count) as avg_success
+                FROM learning_rules
+                WHERE status = 'active' AND apply_count > 0
+                GROUP BY action
+            """)
+            
+            performance = {}
+            for row in cursor.fetchall():
+                action = row['action']
+                total = row['total']
+                successful = row['successful']
+                
+                success_rate = successful / total if total > 0 else 0
+                
+                action_type = action.split(':')[0] if ':' in action else action
+                
+                if action_type not in performance:
+                    performance[action_type] = {
+                        'total_rules': 0,
+                        'total_applications': 0,
+                        'successful_applications': 0,
+                        'success_rate': 0.0
+                    }
+                
+                performance[action_type]['total_rules'] += total
+                performance[action_type]['total_applications'] += row['avg_apply'] * total
+                performance[action_type]['successful_applications'] += row['avg_success'] * total
+        
             for action_type in performance:
                 total_app = performance[action_type]['total_applications']
                 success_app = performance[action_type]['successful_applications']

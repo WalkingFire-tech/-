@@ -3,13 +3,13 @@
 使用贝叶斯优化自动调整路由权重等超参数
 """
 import json
-import sqlite3
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from loguru import logger
 from infrastructure.config_manager import config
+from infrastructure.database_manager import DatabaseManager
 
 
 class HyperparamOptimizer:
@@ -84,9 +84,9 @@ class HyperparamOptimizer:
             return 0
         
         try:
-            with sqlite3.connect(stats_db) as conn:
-                cur = conn.execute('SELECT COUNT(*) FROM model_performance')
-                return cur.fetchone()[0]
+            conn = DatabaseManager.get(str(stats_db))._get_conn()
+            cur = conn.execute('SELECT COUNT(*) FROM model_performance')
+            return cur.fetchone()[0]
         except:
             return 0
     
@@ -162,41 +162,41 @@ class HyperparamOptimizer:
             return 0.0
         
         try:
-            with sqlite3.connect(stats_db) as conn:
-                cur = conn.execute('''
-                    SELECT 
-                        quality_score,
-                        duration,
-                        cost,
-                        CASE WHEN success THEN 1.0 ELSE 0 END as success,
-                        user_feedback
-                    FROM model_performance
-                    ORDER BY timestamp DESC
-                    LIMIT 1000
-                ''')
+            conn = DatabaseManager.get(str(stats_db))._get_conn()
+            cur = conn.execute('''
+                SELECT 
+                    quality_score,
+                    duration,
+                    cost,
+                    CASE WHEN success THEN 1.0 ELSE 0 END as success,
+                    user_feedback
+                FROM model_performance
+                ORDER BY timestamp DESC
+                LIMIT 1000
+            ''')
+            
+            scores = []
+            for row in cur.fetchall():
+                quality, duration, cost, success, feedback = row
                 
-                scores = []
-                for row in cur.fetchall():
-                    quality, duration, cost, success, feedback = row
-                    
-                    norm_quality = (quality or 50) / 100.0
-                    norm_speed = max(0, 1 - (duration or 10) / 60.0)
-                    norm_cost = max(0, 1 - (cost or 0) * 100)
-                    norm_success = success
-                    
-                    score = (
-                        params["quality_weight"] * norm_quality +
-                        params["speed_weight"] * norm_speed +
-                        params["cost_weight"] * norm_cost +
-                        params["success_weight"] * norm_success
-                    )
-                    
-                    if feedback is not None:
-                        score *= (1 + feedback * 0.2)
-                    
-                    scores.append(score)
+                norm_quality = (quality or 50) / 100.0
+                norm_speed = max(0, 1 - (duration or 10) / 60.0)
+                norm_cost = max(0, 1 - (cost or 0) * 100)
+                norm_success = success
                 
-                return sum(scores) / len(scores) if scores else 0.0
+                score = (
+                    params["quality_weight"] * norm_quality +
+                    params["speed_weight"] * norm_speed +
+                    params["cost_weight"] * norm_cost +
+                    params["success_weight"] * norm_success
+                )
+                
+                if feedback is not None:
+                    score *= (1 + feedback * 0.2)
+                
+                scores.append(score)
+            
+            return sum(scores) / len(scores) if scores else 0.0
         
         except Exception as e:
             logger.error(f"评估参数失败: {e}")

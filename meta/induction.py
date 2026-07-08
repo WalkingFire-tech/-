@@ -8,7 +8,6 @@
 - 模式验证：验证生成模式的有效性
 """
 import json
-import sqlite3
 import math
 import re
 from typing import Dict, List, Optional, Tuple
@@ -17,6 +16,7 @@ from collections import Counter
 from pathlib import Path
 from loguru import logger
 from infrastructure.config_manager import config
+from infrastructure.database_manager import DatabaseManager
 
 
 class PatternMiner:
@@ -65,41 +65,40 @@ class PatternMiner:
         threshold = datetime.now() - timedelta(days=days)
 
         try:
-            with sqlite3.connect(db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                # 查询表名（动态获取，兼容复数或单数）
-                cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND (name='experiences' OR name='experience')")
-                table_row = cur.fetchone()
-                if not table_row:
-                    logger.error("经验池表不存在，请检查数据库初始化")
-                    return []
-                table_name = table_row[0]
+            conn = DatabaseManager.get(db_path)._get_conn()
+            # 查询表名（动态获取，兼容复数或单数）
+            cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND (name='experiences' OR name='experience')")
+            table_row = cur.fetchone()
+            if not table_row:
+                logger.error("经验池表不存在，请检查数据库初始化")
+                return []
+            table_name = table_row[0]
 
-                cur = conn.execute(f'''
-                    SELECT intent_type, raw_input, model_name, quality_score,
-                           success, duration, user_feedback, timestamp
-                    FROM {table_name}
-                    WHERE timestamp >= ?
-                    ORDER BY timestamp DESC
-                ''', (threshold.isoformat(),))
+            cur = conn.execute(f'''
+                SELECT intent_type, raw_input, model_name, quality_score,
+                       success, duration, user_feedback, timestamp
+                FROM {table_name}
+                WHERE timestamp >= ?
+                ORDER BY timestamp DESC
+            ''', (threshold.isoformat(),))
 
-                experiences = [dict(row) for row in cur.fetchall()]
-                
-                # 添加时间衰减权重
-                now = datetime.now()
-                for exp in experiences:
-                    if 'timestamp' in exp and exp['timestamp']:
-                        try:
-                            exp_time = datetime.fromisoformat(exp['timestamp'])
-                            age_days = (now - exp_time).days
-                            # 指数衰减：最近的经验权重更高
-                            exp['weight'] = math.exp(-age_days / (days / 2))
-                        except:
-                            exp['weight'] = 0.5  # 默认权重
-                    else:
-                        exp['weight'] = 0.5
-                
-                return experiences
+            experiences = [dict(row) for row in cur.fetchall()]
+            
+            # 添加时间衰减权重
+            now = datetime.now()
+            for exp in experiences:
+                if 'timestamp' in exp and exp['timestamp']:
+                    try:
+                        exp_time = datetime.fromisoformat(exp['timestamp'])
+                        age_days = (now - exp_time).days
+                        # 指数衰减：最近的经验权重更高
+                        exp['weight'] = math.exp(-age_days / (days / 2))
+                    except:
+                        exp['weight'] = 0.5  # 默认权重
+                else:
+                    exp['weight'] = 0.5
+            
+            return experiences
         except Exception as e:
             logger.error(f"加载经验失败: {e}")
             return []
@@ -297,37 +296,37 @@ class RuleGenerator:
         try:
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
             
-            with sqlite3.connect(db_path) as conn:
+            conn = DatabaseManager.get(db_path)._get_conn()
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS learning_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    condition TEXT,
+                    action TEXT,
+                    priority INTEGER,
+                    confidence REAL,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    status TEXT,
+                    source TEXT,
+                    metadata TEXT
+                )
+            ''')
+            
+            for rule in rules:
                 conn.execute('''
-                    CREATE TABLE IF NOT EXISTS learning_rules (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        condition TEXT,
-                        action TEXT,
-                        priority INTEGER,
-                        confidence REAL,
-                        created_at TEXT,
-                        updated_at TEXT,
-                        status TEXT,
-                        source TEXT,
-                        metadata TEXT
-                    )
-                ''')
-                
-                for rule in rules:
-                    conn.execute('''
-                        INSERT INTO learning_rules
-                        (condition, action, priority, created_at, status, source, metadata, confidence)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        rule["condition"],
-                        rule["action"],
-                        rule["priority"],
-                        rule["created_at"],
-                        rule["status"],
-                        rule["source"],
-                        json.dumps(rule["metadata"], ensure_ascii=False),
-                        rule.get("confidence", 0.5)
-                    ))
+                    INSERT INTO learning_rules
+                    (condition, action, priority, created_at, status, source, metadata, confidence)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    rule["condition"],
+                    rule["action"],
+                    rule["priority"],
+                    rule["created_at"],
+                    rule["status"],
+                    rule["source"],
+                    json.dumps(rule["metadata"], ensure_ascii=False),
+                    rule.get("confidence", 0.5)
+                ))
             
             logger.info(f"保存{len(rules)}条归纳规则")
         
@@ -467,28 +466,27 @@ class InductionScheduler:
     def activate_pending_rules(self, min_confidence: float = 0.4) -> int:
         """激活待定规则：置信度达标的直接激活，低于阈值的晋升到trial"""
         try:
-            import sqlite3
-            with sqlite3.connect("data/learning_rules.db") as conn:
-                cur = conn.execute('''
-                    UPDATE learning_rules
-                    SET status = 'active'
-                    WHERE status = 'pending' AND confidence >= ?
-                ''', (min_confidence,))
-                
-                activated = cur.rowcount
-                
-                cur2 = conn.execute('''
-                    UPDATE learning_rules
-                    SET status = 'trial', promoted_at = ?,
-                        promotion_reason = '归纳调度晋升试用：置信度不足但值得验证'
-                    WHERE status = 'pending' AND confidence >= 0.3
-                ''', (datetime.now().isoformat(),))
-                
-                promoted = cur2.rowcount
-                conn.commit()
-                
-                logger.info(f"激活{activated}条规则，晋升{promoted}条到试用期")
-                return activated + promoted
+            conn = DatabaseManager.get("data/learning_rules.db")._get_conn()
+            cur = conn.execute('''
+                UPDATE learning_rules
+                SET status = 'active'
+                WHERE status = 'pending' AND confidence >= ?
+            ''', (min_confidence,))
+            
+            activated = cur.rowcount
+            
+            cur2 = conn.execute('''
+                UPDATE learning_rules
+                SET status = 'trial', promoted_at = ?,
+                    promotion_reason = '归纳调度晋升试用：置信度不足但值得验证'
+                WHERE status = 'pending' AND confidence >= 0.3
+            ''', (datetime.now().isoformat(),))
+            
+            promoted = cur2.rowcount
+            conn.commit()
+            
+            logger.info(f"激活{activated}条规则，晋升{promoted}条到试用期")
+            return activated + promoted
         
         except Exception as e:
             logger.error(f"激活规则失败: {e}")

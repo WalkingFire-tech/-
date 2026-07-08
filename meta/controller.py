@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from loguru import logger
 from infrastructure.model_stats import ModelStats
 from infrastructure.event_bus import bus
+from infrastructure.database_manager import DatabaseManager
 from meta.bayesian_optimizer import bayesian_optimizer
 from meta.conflict_detector import conflict_detector
 from meta.induction import induction_scheduler
@@ -89,28 +90,27 @@ class MetaController:
     def _get_recent_performance(self, days: int = 7) -> Dict:
         """从统计库获取最近几天的汇总性能"""
         try:
-            import sqlite3
             db_path = "model_stats.db"
             
-            with sqlite3.connect(db_path) as conn:
-                cur = conn.execute('''
-                    SELECT
-                        AVG(quality_score) as avg_quality,
-                        AVG(duration) as avg_duration,
-                        AVG(input_tokens + output_tokens) as avg_tokens
-                    FROM model_performance
-                    WHERE datetime(timestamp) > datetime('now', ?)
-                ''', (f'-{days} days',))
-                
-                row = cur.fetchone()
-                
-                if row and row[0] is not None:
-                    return {
-                        "avg_quality": row[0],
-                        "avg_duration": row[1],
-                        "avg_tokens": row[2],
-                        "avg_cost": row[2] * 0.000002
-                    }
+            conn = DatabaseManager.get(db_path)._get_conn()
+            cur = conn.execute('''
+                SELECT
+                    AVG(quality_score) as avg_quality,
+                    AVG(duration) as avg_duration,
+                    AVG(input_tokens + output_tokens) as avg_tokens
+                FROM model_performance
+                WHERE datetime(timestamp) > datetime('now', ?)
+            ''', (f'-{days} days',))
+            
+            row = cur.fetchone()
+            
+            if row and row[0] is not None:
+                return {
+                    "avg_quality": row[0],
+                    "avg_duration": row[1],
+                    "avg_tokens": row[2],
+                    "avg_cost": row[2] * 0.000002
+                }
         
         except Exception as e:
             logger.warning(f"获取性能数据失败: {e}")
@@ -120,27 +120,26 @@ class MetaController:
     def _get_task_performance(self, task_type: str, days: int = 7) -> Dict:
         """获取特定任务类型的性能数据"""
         try:
-            import sqlite3
             db_path = "experience_pool.db"
             
-            with sqlite3.connect(db_path) as conn:
-                cur = conn.execute('''
-                    SELECT
-                        AVG(quality_score) as avg_quality,
-                        AVG(duration) as avg_duration
-                    FROM experiences
-                    WHERE intent_type = ? 
-                    AND datetime(timestamp) > datetime('now', ?)
-                ''', (task_type, f'-{days} days'))
-                
-                row = cur.fetchone()
-                
-                if row and row[0] is not None:
-                    return {
-                        "avg_quality": row[0],
-                        "avg_duration": row[1],
-                        "avg_cost": 0.01
-                    }
+            conn = DatabaseManager.get(db_path)._get_conn()
+            cur = conn.execute('''
+                SELECT
+                    AVG(quality_score) as avg_quality,
+                    AVG(duration) as avg_duration
+                FROM experiences
+                WHERE intent_type = ? 
+                AND datetime(timestamp) > datetime('now', ?)
+            ''', (task_type, f'-{days} days'))
+            
+            row = cur.fetchone()
+            
+            if row and row[0] is not None:
+                return {
+                    "avg_quality": row[0],
+                    "avg_duration": row[1],
+                    "avg_cost": 0.01
+                }
         
         except Exception as e:
             logger.debug(f"获取任务{task_type}性能失败: {e}")

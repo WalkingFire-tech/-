@@ -2,12 +2,12 @@
 规则冲突检测器 - 增强版
 动作解析、合并策略、条件精确匹配
 """
-import sqlite3
 import json
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 from loguru import logger
 from infrastructure.config_manager import config
+from infrastructure.database_manager import DatabaseManager
 
 
 class ConflictDetector:
@@ -38,16 +38,15 @@ class ConflictDetector:
     def _load_active_rules(self) -> List[Dict]:
         """加载活跃规则"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                cur = conn.execute('''
-                    SELECT id, condition, action, priority, confidence, status, source
-                    FROM learning_rules
-                    WHERE status = 'active'
-                    ORDER BY priority DESC, confidence DESC
-                ''')
-                
-                return [dict(row) for row in cur.fetchall()]
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cur = conn.execute('''
+                SELECT id, condition, action, priority, confidence, status, source
+                FROM learning_rules
+                WHERE status = 'active'
+                ORDER BY priority DESC, confidence DESC
+            ''')
+            
+            return [dict(row) for row in cur.fetchall()]
         
         except Exception as e:
             logger.error(f"加载规则失败: {e}")
@@ -186,11 +185,11 @@ class ConflictDetector:
     def _deactivate_rule(self, rule_id: int):
         """停用规则"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    "UPDATE learning_rules SET status = 'conflicted' WHERE id = ?",
-                    (rule_id,)
-                )
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            conn.execute(
+                "UPDATE learning_rules SET status = 'conflicted' WHERE id = ?",
+                (rule_id,)
+            )
             
             logger.info(f"规则 {rule_id} 已标记为冲突并停用")
         
@@ -201,12 +200,12 @@ class ConflictDetector:
         """创建合并规则(使用JSON格式存储动作列表)"""
         try:
             import json
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    INSERT INTO learning_rules 
-                    (condition, action, priority, confidence, status, source, created_at, metadata)
-                    VALUES (?, ?, ?, ?, 'pending', 'merge_auto', ?, ?)
-                ''', (condition, action, 5, confidence, datetime.now().isoformat(), "{}"))
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            conn.execute('''
+                INSERT INTO learning_rules 
+                (condition, action, priority, confidence, status, source, created_at, metadata)
+                VALUES (?, ?, ?, ?, 'pending', 'merge_auto', ?, ?)
+            ''', (condition, action, 5, confidence, datetime.now().isoformat(), "{}"))
             
             logger.info(f"创建合并规则: {condition} -> {action}")
         
