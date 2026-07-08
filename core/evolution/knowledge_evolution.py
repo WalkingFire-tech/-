@@ -8,11 +8,11 @@
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
 from datetime import datetime
-import sqlite3
 import json
 import hashlib
 import re
 from pathlib import Path
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -65,65 +65,65 @@ class KnowledgeEvolutionEngine:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS knowledge_verifications (
-                    id TEXT PRIMARY KEY,
-                    knowledge_id TEXT,
-                    is_consistent INTEGER,
-                    conflict_with TEXT,
-                    quality_score REAL,
-                    evidence_count INTEGER,
-                    verification_status TEXT,
-                    timestamp TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE INDEX IF NOT EXISTS idx_knowledge_id ON knowledge_verifications(knowledge_id)
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS knowledge_conflicts (
-                    id TEXT PRIMARY KEY,
-                    knowledge_id_a TEXT,
-                    knowledge_id_b TEXT,
-                    conflict_type TEXT,
-                    conflict_details TEXT,
-                    resolution_status TEXT,
-                    created_at TEXT,
-                    resolved_at TEXT,
-                    resolution_note TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE INDEX IF NOT EXISTS idx_conflict_status ON knowledge_conflicts(resolution_status)
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS knowledge_refinements (
-                    id TEXT PRIMARY KEY,
-                    original_knowledge_id TEXT,
-                    refined_content TEXT,
-                    refinement_reason TEXT,
-                    quality_improvement REAL,
-                    created_at TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS conflict_patterns (
-                    pattern_id TEXT PRIMARY KEY,
-                    pattern_type TEXT,
-                    occurrence_count INTEGER,
-                    resolution_strategy TEXT,
-                    success_rate REAL,
-                    last_seen TEXT
-                )
-            ''')
-            
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS knowledge_verifications (
+                id TEXT PRIMARY KEY,
+                knowledge_id TEXT,
+                is_consistent INTEGER,
+                conflict_with TEXT,
+                quality_score REAL,
+                evidence_count INTEGER,
+                verification_status TEXT,
+                timestamp TEXT
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_knowledge_id ON knowledge_verifications(knowledge_id)
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS knowledge_conflicts (
+                id TEXT PRIMARY KEY,
+                knowledge_id_a TEXT,
+                knowledge_id_b TEXT,
+                conflict_type TEXT,
+                conflict_details TEXT,
+                resolution_status TEXT,
+                created_at TEXT,
+                resolved_at TEXT,
+                resolution_note TEXT
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE INDEX IF NOT EXISTS idx_conflict_status ON knowledge_conflicts(resolution_status)
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS knowledge_refinements (
+                id TEXT PRIMARY KEY,
+                original_knowledge_id TEXT,
+                refined_content TEXT,
+                refinement_reason TEXT,
+                quality_improvement REAL,
+                created_at TEXT
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS conflict_patterns (
+                pattern_id TEXT PRIMARY KEY,
+                pattern_type TEXT,
+                occurrence_count INTEGER,
+                resolution_strategy TEXT,
+                success_rate REAL,
+                last_seen TEXT
+            )
+        ''')
+        
+        conn.commit()
     
     def verify_knowledge(self, knowledge_id: str, content: str, 
                          question: str = "") -> KnowledgeVerification:
@@ -171,56 +171,56 @@ class KnowledgeEvolutionEngine:
             timestamp=datetime.now().isoformat()
         )
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT OR REPLACE INTO knowledge_verifications
-                (id, knowledge_id, is_consistent, conflict_with,
-                 quality_score, evidence_count, verification_status, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                verification.verification_id,
-                verification.knowledge_id,
-                1 if verification.is_consistent else 0,
-                json.dumps(verification.conflict_with),
-                verification.quality_score,
-                verification.evidence_count,
-                verification.verification_status,
-                verification.timestamp
-            ))
-            
-            if conflicts:
-                for conflict_info in conflicts:
-                    if isinstance(conflict_info, dict):
-                        other_id = conflict_info.get("id")
-                        conflict_type = conflict_info.get("type", "semantic_conflict")
-                        details = conflict_info.get("details", "")
-                    else:
-                        other_id = conflict_info
-                        conflict_type = "semantic_conflict"
-                        details = ""
-                    
-                    conflict_id = hashlib.md5(
-                        f"{knowledge_id}{other_id}{datetime.now().isoformat()}".encode()
-                    ).hexdigest()[:12]
-                    
-                    conn.execute('''
-                        INSERT OR IGNORE INTO knowledge_conflicts
-                        (id, knowledge_id_a, knowledge_id_b, conflict_type,
-                         conflict_details, resolution_status, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        conflict_id,
-                        knowledge_id,
-                        other_id,
-                        conflict_type,
-                        details,
-                        "pending",
-                        datetime.now().isoformat()
-                    ))
-                    
-                    self._update_conflict_pattern(conn, conflict_type)
-            
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''
+            INSERT OR REPLACE INTO knowledge_verifications
+            (id, knowledge_id, is_consistent, conflict_with,
+             quality_score, evidence_count, verification_status, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            verification.verification_id,
+            verification.knowledge_id,
+            1 if verification.is_consistent else 0,
+            json.dumps(verification.conflict_with),
+            verification.quality_score,
+            verification.evidence_count,
+            verification.verification_status,
+            verification.timestamp
+        ))
+        
+        if conflicts:
+            for conflict_info in conflicts:
+                if isinstance(conflict_info, dict):
+                    other_id = conflict_info.get("id")
+                    conflict_type = conflict_info.get("type", "semantic_conflict")
+                    details = conflict_info.get("details", "")
+                else:
+                    other_id = conflict_info
+                    conflict_type = "semantic_conflict"
+                    details = ""
+                
+                conflict_id = hashlib.md5(
+                    f"{knowledge_id}{other_id}{datetime.now().isoformat()}".encode()
+                ).hexdigest()[:12]
+                
+                conn.execute('''
+                    INSERT OR IGNORE INTO knowledge_conflicts
+                    (id, knowledge_id_a, knowledge_id_b, conflict_type,
+                     conflict_details, resolution_status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    conflict_id,
+                    knowledge_id,
+                    other_id,
+                    conflict_type,
+                    details,
+                    "pending",
+                    datetime.now().isoformat()
+                ))
+                
+                self._update_conflict_pattern(conn, conflict_type)
+        
+        conn.commit()
         
         logger.debug(f"知识验证: {knowledge_id} -> {status} (质量={quality_score:.2f})")
         return verification
@@ -228,19 +228,18 @@ class KnowledgeEvolutionEngine:
     def _get_all_knowledge(self) -> List[Dict]:
         """获取所有已有知识"""
         try:
-            with sqlite3.connect(self.knowledge_db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                
-                cursor = conn.execute("""
-                    SELECT name FROM sqlite_master 
-                    WHERE type='table' AND name='knowledge_items'
-                """)
-                
-                if not cursor.fetchone():
-                    return []
-                
-                cursor = conn.execute("SELECT id, question, answer FROM knowledge_items")
-                return [dict(row) for row in cursor.fetchall()]
+            conn = DatabaseManager.get(self.knowledge_db_path)._get_conn()
+            
+            cursor = conn.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='knowledge_items'
+            """)
+            
+            if not cursor.fetchone():
+                return []
+            
+            cursor = conn.execute("SELECT id, question, answer FROM knowledge_items")
+            return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.debug(f"获取知识失败: {e}")
             return []
@@ -472,42 +471,42 @@ class KnowledgeEvolutionEngine:
             resolution: 解决方式 ('accept_a', 'accept_b', 'merge', 'ignore')
             note: 备注
         """
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                UPDATE knowledge_conflicts
-                SET resolution_status = ?, resolved_at = ?, resolution_note = ?
-                WHERE id = ?
-            ''', (resolution, datetime.now().isoformat(), note, conflict_id))
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''
+            UPDATE knowledge_conflicts
+            SET resolution_status = ?, resolved_at = ?, resolution_note = ?
+            WHERE id = ?
+        ''', (resolution, datetime.now().isoformat(), note, conflict_id))
+        
+        cursor = conn.execute(
+            "SELECT conflict_type FROM knowledge_conflicts WHERE id = ?",
+            (conflict_id,)
+        )
+        row = cursor.fetchone()
+        
+        if row:
+            conflict_type = row[0]
+            pattern_id = hashlib.md5(conflict_type.encode()).hexdigest()[:8]
             
             cursor = conn.execute(
-                "SELECT conflict_type FROM knowledge_conflicts WHERE id = ?",
-                (conflict_id,)
+                "SELECT success_rate, occurrence_count FROM conflict_patterns WHERE pattern_id = ?",
+                (pattern_id,)
             )
-            row = cursor.fetchone()
+            pattern_row = cursor.fetchone()
             
-            if row:
-                conflict_type = row[0]
-                pattern_id = hashlib.md5(conflict_type.encode()).hexdigest()[:8]
+            if pattern_row:
+                old_rate = pattern_row[0]
+                count = pattern_row[1]
+                success_increment = 1.0 if resolution != "ignore" else 0.0
+                new_rate = (old_rate * count + success_increment) / (count + 1)
                 
-                cursor = conn.execute(
-                    "SELECT success_rate, occurrence_count FROM conflict_patterns WHERE pattern_id = ?",
-                    (pattern_id,)
-                )
-                pattern_row = cursor.fetchone()
-                
-                if pattern_row:
-                    old_rate = pattern_row[0]
-                    count = pattern_row[1]
-                    success_increment = 1.0 if resolution != "ignore" else 0.0
-                    new_rate = (old_rate * count + success_increment) / (count + 1)
-                    
-                    conn.execute('''
-                        UPDATE conflict_patterns
-                        SET success_rate = ?, resolution_strategy = ?
-                        WHERE pattern_id = ?
-                    ''', (new_rate, resolution, pattern_id))
-            
-            conn.commit()
+                conn.execute('''
+                    UPDATE conflict_patterns
+                    SET success_rate = ?, resolution_strategy = ?
+                    WHERE pattern_id = ?
+                ''', (new_rate, resolution, pattern_id))
+        
+        conn.commit()
         
         logger.info(f"冲突已解决: {conflict_id} -> {resolution}")
         return True
@@ -529,112 +528,109 @@ class KnowledgeEvolutionEngine:
             f"{knowledge_id}{datetime.now().isoformat()}".encode()
         ).hexdigest()[:12]
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('''
-                SELECT quality_score FROM knowledge_verifications
-                WHERE knowledge_id = ?
-                ORDER BY timestamp DESC
-                LIMIT 1
-            ''', (knowledge_id,))
-            row = cursor.fetchone()
-            old_quality = row[0] if row else 0.5
-            
-            new_quality = self._assess_quality(refined_content)
-            improvement = new_quality - old_quality
-            
-            conn.execute('''
-                INSERT INTO knowledge_refinements
-                (id, original_knowledge_id, refined_content, refinement_reason,
-                 quality_improvement, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                refinement_id,
-                knowledge_id,
-                refined_content,
-                reason,
-                improvement,
-                datetime.now().isoformat()
-            ))
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        cursor = conn.execute('''
+            SELECT quality_score FROM knowledge_verifications
+            WHERE knowledge_id = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+        ''', (knowledge_id,))
+        row = cursor.fetchone()
+        old_quality = row[0] if row else 0.5
+        
+        new_quality = self._assess_quality(refined_content)
+        improvement = new_quality - old_quality
+        
+        conn.execute('''
+            INSERT INTO knowledge_refinements
+            (id, original_knowledge_id, refined_content, refinement_reason,
+             quality_improvement, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (
+            refinement_id,
+            knowledge_id,
+            refined_content,
+            reason,
+            improvement,
+            datetime.now().isoformat()
+        ))
+        conn.commit()
         
         logger.info(f"知识重构: {knowledge_id} -> {refinement_id} (改进={improvement:+.2f})")
         return refinement_id
     
     def get_pending_conflicts(self) -> List[KnowledgeConflict]:
         """获取待处理的冲突"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute('''
-                SELECT * FROM knowledge_conflicts
-                WHERE resolution_status = 'pending'
-                ORDER BY created_at DESC
-            ''')
-            
-            conflicts = []
-            for row in cursor.fetchall():
-                conflicts.append(KnowledgeConflict(
-                    conflict_id=row['id'],
-                    knowledge_id_a=row['knowledge_id_a'],
-                    knowledge_id_b=row['knowledge_id_b'],
-                    conflict_type=row['conflict_type'],
-                    resolution_status=row['resolution_status'],
-                    created_at=row['created_at'],
-                    resolved_at=row['resolved_at'],
-                    resolution_note=row['resolution_note']
-                ))
-            return conflicts
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        cursor = conn.execute('''
+            SELECT * FROM knowledge_conflicts
+            WHERE resolution_status = 'pending'
+            ORDER BY created_at DESC
+        ''')
+        
+        conflicts = []
+        for row in cursor.fetchall():
+            conflicts.append(KnowledgeConflict(
+                conflict_id=row['id'],
+                knowledge_id_a=row['knowledge_id_a'],
+                knowledge_id_b=row['knowledge_id_b'],
+                conflict_type=row['conflict_type'],
+                resolution_status=row['resolution_status'],
+                created_at=row['created_at'],
+                resolved_at=row['resolved_at'],
+                resolution_note=row['resolution_note']
+            ))
+        return conflicts
     
     def get_verification_history(self, knowledge_id: str, limit: int = 10) -> List[Dict]:
         """获取知识的验证历史"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute('''
-                SELECT * FROM knowledge_verifications
-                WHERE knowledge_id = ?
-                ORDER BY timestamp DESC
-                LIMIT ?
-            ''', (knowledge_id, limit))
-            return [dict(row) for row in cursor.fetchall()]
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        cursor = conn.execute('''
+            SELECT * FROM knowledge_verifications
+            WHERE knowledge_id = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        ''', (knowledge_id, limit))
+        return [dict(row) for row in cursor.fetchall()]
     
     def get_statistics(self) -> Dict:
         """获取统计信息"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            cursor = conn.execute("SELECT COUNT(*) as total FROM knowledge_verifications")
-            total_verifications = cursor.fetchone()['total']
-            
-            cursor = conn.execute('''
-                SELECT verification_status, COUNT(*) as count
-                FROM knowledge_verifications
-                GROUP BY verification_status
-            ''')
-            by_status = [dict(row) for row in cursor.fetchall()]
-            
-            cursor = conn.execute("SELECT COUNT(*) as total FROM knowledge_conflicts")
-            total_conflicts = cursor.fetchone()['total']
-            
-            cursor = conn.execute('''
-                SELECT resolution_status, COUNT(*) as count
-                FROM knowledge_conflicts
-                GROUP BY resolution_status
-            ''')
-            conflicts_by_status = [dict(row) for row in cursor.fetchall()]
-            
-            cursor = conn.execute('''
-                SELECT pattern_type, occurrence_count, success_rate
-                FROM conflict_patterns
-                ORDER BY occurrence_count DESC
-            ''')
-            conflict_patterns = [dict(row) for row in cursor.fetchall()]
-            
-            return {
-                "total_verifications": total_verifications,
-                "verifications_by_status": by_status,
-                "total_conflicts": total_conflicts,
-                "conflicts_by_status": conflicts_by_status,
-                "conflict_patterns": conflict_patterns
-            }
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        
+        cursor = conn.execute("SELECT COUNT(*) as total FROM knowledge_verifications")
+        total_verifications = cursor.fetchone()['total']
+        
+        cursor = conn.execute('''
+            SELECT verification_status, COUNT(*) as count
+            FROM knowledge_verifications
+            GROUP BY verification_status
+        ''')
+        by_status = [dict(row) for row in cursor.fetchall()]
+        
+        cursor = conn.execute("SELECT COUNT(*) as total FROM knowledge_conflicts")
+        total_conflicts = cursor.fetchone()['total']
+        
+        cursor = conn.execute('''
+            SELECT resolution_status, COUNT(*) as count
+            FROM knowledge_conflicts
+            GROUP BY resolution_status
+        ''')
+        conflicts_by_status = [dict(row) for row in cursor.fetchall()]
+        
+        cursor = conn.execute('''
+            SELECT pattern_type, occurrence_count, success_rate
+            FROM conflict_patterns
+            ORDER BY occurrence_count DESC
+        ''')
+        conflict_patterns = [dict(row) for row in cursor.fetchall()]
+        
+        return {
+            "total_verifications": total_verifications,
+            "verifications_by_status": by_status,
+            "total_conflicts": total_conflicts,
+            "conflicts_by_status": conflicts_by_status,
+            "conflict_patterns": conflict_patterns
+        }
     
     def get_evolution_report(self) -> Dict:
         """获取进化报告"""

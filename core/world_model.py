@@ -14,13 +14,13 @@
 - 预测失败时坦诚表达不确定性
 """
 
-import sqlite3
 import json
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -87,76 +87,79 @@ class WorldModel:
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
 
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS causal_nodes (
-                    id TEXT PRIMARY KEY,
-                    node_type TEXT,
-                    content TEXT,
-                    properties TEXT,
-                    created_at TEXT,
-                    updated_at TEXT
-                )
-            ''')
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS causal_edges (
-                    source_id TEXT,
-                    target_id TEXT,
-                    edge_type TEXT,
-                    probability REAL,
-                    confidence REAL,
-                    evidence_count INTEGER DEFAULT 0,
-                    last_verified TEXT,
-                    created_at TEXT,
-                    PRIMARY KEY (source_id, target_id, edge_type)
-                )
-            ''')
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS predictions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    query_hash TEXT,
-                    predicted_state TEXT,
-                    probability REAL,
-                    confidence REAL,
-                    causal_path TEXT,
-                    actual_outcome TEXT,
-                    was_correct BOOLEAN,
-                    created_at TEXT,
-                    verified_at TEXT
-                )
-            ''')
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS counterfactuals (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    intent TEXT,
-                    actual_action TEXT,
-                    alternative_action TEXT,
-                    actual_score REAL,
-                    alternative_score REAL,
-                    would_have_been_better BOOLEAN,
-                    lesson TEXT,
-                    created_at TEXT
-                )
-            ''')
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS causal_nodes (
+                id TEXT PRIMARY KEY,
+                node_type TEXT,
+                content TEXT,
+                properties TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS causal_edges (
+                source_id TEXT,
+                target_id TEXT,
+                edge_type TEXT,
+                probability REAL,
+                confidence REAL,
+                evidence_count INTEGER DEFAULT 0,
+                last_verified TEXT,
+                created_at TEXT,
+                PRIMARY KEY (source_id, target_id, edge_type)
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS predictions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query_hash TEXT,
+                predicted_state TEXT,
+                probability REAL,
+                confidence REAL,
+                causal_path TEXT,
+                actual_outcome TEXT,
+                was_correct BOOLEAN,
+                created_at TEXT,
+                verified_at TEXT
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS counterfactuals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                intent TEXT,
+                actual_action TEXT,
+                alternative_action TEXT,
+                actual_score REAL,
+                alternative_score REAL,
+                would_have_been_better BOOLEAN,
+                lesson TEXT,
+                created_at TEXT
+            )
+        ''')
 
     def add_causal_node(self, node_id: str, node_type: str, content: str, properties: Dict = None) -> bool:
-        with sqlite3.connect(self.db_path) as conn:
-            now = datetime.now().isoformat()
-            conn.execute(
-                'INSERT OR REPLACE INTO causal_nodes (id, node_type, content, properties, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-                (node_id, node_type, content, json.dumps(properties or {}, ensure_ascii=False), now, now)
-            )
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        now = datetime.now().isoformat()
+        conn.execute(
+            'INSERT OR REPLACE INTO causal_nodes (id, node_type, content, properties, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+            (node_id, node_type, content, json.dumps(properties or {}, ensure_ascii=False), now, now)
+        )
         return True
 
     def add_causal_edge(self, source_id: str, target_id: str,
                         edge_type: CausalEdgeType = CausalEdgeType.CAUSES,
                         probability: float = 0.5, confidence: float = 0.3) -> bool:
-        with sqlite3.connect(self.db_path) as conn:
-            now = datetime.now().isoformat()
-            conn.execute(
-                'INSERT OR REPLACE INTO causal_edges (source_id, target_id, edge_type, probability, confidence, evidence_count, last_verified, created_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)',
-                (source_id, target_id, edge_type.value, probability, confidence, now, now)
-            )
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        now = datetime.now().isoformat()
+        conn.execute(
+            'INSERT OR REPLACE INTO causal_edges (source_id, target_id, edge_type, probability, confidence, evidence_count, last_verified, created_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)',
+            (source_id, target_id, edge_type.value, probability, confidence, now, now)
+        )
         return True
 
     def predict(self, current_state: Dict, intent: str = "", top_k: int = 3) -> Prediction:
@@ -209,13 +212,14 @@ class WorldModel:
 
     def _save_prediction(self, query_hash: str, prediction: Prediction):
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    'INSERT INTO predictions (query_hash, predicted_state, probability, confidence, causal_path, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-                    (query_hash, json.dumps(prediction.predicted_state, ensure_ascii=False),
-                     prediction.probability, prediction.confidence,
-                     json.dumps(prediction.causal_path), datetime.now().isoformat())
-                )
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            conn.execute(
+                'INSERT INTO predictions (query_hash, predicted_state, probability, confidence, causal_path, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+                (query_hash, json.dumps(prediction.predicted_state, ensure_ascii=False),
+                 prediction.probability, prediction.confidence,
+                 json.dumps(prediction.causal_path), datetime.now().isoformat())
+            )
         except Exception:
             pass
 
@@ -313,11 +317,12 @@ class WorldModel:
 
     def save_counterfactual(self, intent: str, actual_action: str, alternative_action: str,
                             actual_score: float, alt_score: float, would_be_better: bool, lesson: str) -> bool:
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                'INSERT INTO counterfactuals (intent, actual_action, alternative_action, actual_score, alternative_score, would_have_been_better, lesson, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                (intent, actual_action, alternative_action, actual_score, alt_score, would_be_better, lesson, datetime.now().isoformat())
-            )
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute(
+            'INSERT INTO counterfactuals (intent, actual_action, alternative_action, actual_score, alternative_score, would_have_been_better, lesson, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            (intent, actual_action, alternative_action, actual_score, alt_score, would_be_better, lesson, datetime.now().isoformat())
+        )
         return True
 
     def auto_verify(self, query_hash: str, actual_outcome: Dict) -> Optional[PredictionResult]:
@@ -327,33 +332,34 @@ class WorldModel:
         return result
 
     def verify(self, query_hash: str, actual_outcome: Dict) -> PredictionResult:
-        with sqlite3.connect(self.db_path) as conn:
-            cur = conn.execute(
-                'SELECT id, predicted_state, probability, confidence, causal_path FROM predictions WHERE query_hash = ? ORDER BY created_at DESC LIMIT 1',
-                (query_hash,)
-            )
-            row = cur.fetchone()
-            if not row:
-                return PredictionResult(
-                    prediction=Prediction(predicted_state={}, probability=0, confidence=0, causal_path=[]),
-                    actual_outcome=actual_outcome,
-                    was_correct=None
-                )
-
-            pred_id, pred_state_json, prob, conf, path_json = row
-            pred_state = json.loads(pred_state_json)
-            causal_path = json.loads(path_json) if path_json else []
-            
-            was_correct = self._evaluate_prediction(pred_state, actual_outcome)
-            now = datetime.now().isoformat()
-            
-            conn.execute(
-                'UPDATE predictions SET actual_outcome=?, was_correct=?, verified_at=? WHERE id=?',
-                (json.dumps(actual_outcome, ensure_ascii=False), was_correct, now, pred_id)
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cur = conn.execute(
+            'SELECT id, predicted_state, probability, confidence, causal_path FROM predictions WHERE query_hash = ? ORDER BY created_at DESC LIMIT 1',
+            (query_hash,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return PredictionResult(
+                prediction=Prediction(predicted_state={}, probability=0, confidence=0, causal_path=[]),
+                actual_outcome=actual_outcome,
+                was_correct=None
             )
 
-            if causal_path and len(causal_path) >= 2:
-                self._update_edge_confidence_in_conn(conn, causal_path[0], causal_path[-1], was_correct)
+        pred_id, pred_state_json, prob, conf, path_json = row
+        pred_state = json.loads(pred_state_json)
+        causal_path = json.loads(path_json) if path_json else []
+        
+        was_correct = self._evaluate_prediction(pred_state, actual_outcome)
+        now = datetime.now().isoformat()
+        
+        conn.execute(
+            'UPDATE predictions SET actual_outcome=?, was_correct=?, verified_at=? WHERE id=?',
+            (json.dumps(actual_outcome, ensure_ascii=False), was_correct, now, pred_id)
+        )
+
+        if causal_path and len(causal_path) >= 2:
+            self._update_edge_confidence_in_conn(conn, causal_path[0], causal_path[-1], was_correct)
 
         prediction = Prediction(predicted_state=pred_state, probability=prob, confidence=conf, causal_path=causal_path)
         return PredictionResult(
@@ -401,27 +407,29 @@ class WorldModel:
         if existing:
             new_prob = (existing.probability * existing.evidence_count + prob) / (existing.evidence_count + 1)
             new_conf = min(1.0, existing.confidence + 0.1)
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    'UPDATE causal_edges SET probability=?, confidence=?, evidence_count=evidence_count+1, last_verified=? WHERE source_id=? AND target_id=? AND edge_type=?',
-                    (new_prob, new_conf, datetime.now().isoformat(), source_id, target_id, edge_type.value)
-                )
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            conn.execute(
+                'UPDATE causal_edges SET probability=?, confidence=?, evidence_count=evidence_count+1, last_verified=? WHERE source_id=? AND target_id=? AND edge_type=?',
+                (new_prob, new_conf, datetime.now().isoformat(), source_id, target_id, edge_type.value)
+            )
         else:
             self.add_causal_edge(source_id, target_id, edge_type, prob, base_conf)
 
     def get_stats(self) -> Dict:
-        with sqlite3.connect(self.db_path) as conn:
-            node_count = conn.execute('SELECT COUNT(*) FROM causal_nodes').fetchone()[0]
-            edge_count = conn.execute('SELECT COUNT(*) FROM causal_edges').fetchone()[0]
-            pred_count = conn.execute('SELECT COUNT(*) FROM predictions').fetchone()[0]
-            verified = conn.execute('SELECT COUNT(*) FROM predictions WHERE was_correct IS NOT NULL').fetchone()[0]
-            correct = conn.execute('SELECT COUNT(*) FROM predictions WHERE was_correct = 1').fetchone()[0]
-            
-            edge_type_dist = {}
-            cur = conn.execute('SELECT edge_type, COUNT(*), AVG(probability), AVG(confidence) FROM causal_edges GROUP BY edge_type')
-            for row in cur.fetchall():
-                edge_type_dist[row[0]] = {"count": row[1], "avg_probability": round(row[2], 3), "avg_confidence": round(row[3], 3)}
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        node_count = conn.execute('SELECT COUNT(*) FROM causal_nodes').fetchone()[0]
+        edge_count = conn.execute('SELECT COUNT(*) FROM causal_edges').fetchone()[0]
+        pred_count = conn.execute('SELECT COUNT(*) FROM predictions').fetchone()[0]
+        verified = conn.execute('SELECT COUNT(*) FROM predictions WHERE was_correct IS NOT NULL').fetchone()[0]
+        correct = conn.execute('SELECT COUNT(*) FROM predictions WHERE was_correct = 1').fetchone()[0]
         
+        edge_type_dist = {}
+        cur = conn.execute('SELECT edge_type, COUNT(*), AVG(probability), AVG(confidence) FROM causal_edges GROUP BY edge_type')
+        for row in cur.fetchall():
+            edge_type_dist[row[0]] = {"count": row[1], "avg_probability": round(row[2], 3), "avg_confidence": round(row[3], 3)}
+
         return {
             "node_count": node_count,
             "edge_count": edge_count,
@@ -445,46 +453,50 @@ class WorldModel:
         if not search_terms:
             return edges
         
-        with sqlite3.connect(self.db_path) as conn:
-            placeholders = ' OR '.join(['source_id LIKE ?' for _ in search_terms])
-            params = [f'%{t}%' for t in search_terms]
-            cur = conn.execute(
-                f'SELECT source_id, target_id, edge_type, probability, confidence, evidence_count, last_verified FROM causal_edges WHERE {placeholders} ORDER BY probability * confidence DESC LIMIT 20',
-                params
-            )
-            for row in cur.fetchall():
-                edges.append(CausalEdge(
-                    source_id=row[0], target_id=row[1],
-                    edge_type=CausalEdgeType(row[2]),
-                    probability=row[3], confidence=row[4],
-                    evidence_count=row[5], last_verified=row[6]
-                ))
-        
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        placeholders = ' OR '.join(['source_id LIKE ?' for _ in search_terms])
+        params = [f'%{t}%' for t in search_terms]
+        cur = conn.execute(
+            f'SELECT source_id, target_id, edge_type, probability, confidence, evidence_count, last_verified FROM causal_edges WHERE {placeholders} ORDER BY probability * confidence DESC LIMIT 20',
+            params
+        )
+        for row in cur.fetchall():
+            edges.append(CausalEdge(
+                source_id=row[0], target_id=row[1],
+                edge_type=CausalEdgeType(row[2]),
+                probability=row[3], confidence=row[4],
+                evidence_count=row[5], last_verified=row[6]
+            ))
+
         return edges
 
     def _get_node(self, node_id: str) -> Optional[CausalNode]:
-        with sqlite3.connect(self.db_path) as conn:
-            cur = conn.execute('SELECT id, node_type, content, properties FROM causal_nodes WHERE id = ?', (node_id,))
-            row = cur.fetchone()
-            if row:
-                return CausalNode(id=row[0], node_type=row[1], content=row[2], properties=json.loads(row[3]) if row[3] else {})
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cur = conn.execute('SELECT id, node_type, content, properties FROM causal_nodes WHERE id = ?', (node_id,))
+        row = cur.fetchone()
+        if row:
+            return CausalNode(id=row[0], node_type=row[1], content=row[2], properties=json.loads(row[3]) if row[3] else {})
         return None
 
     def _get_edge(self, source_id: str, target_id: str, edge_type: CausalEdgeType) -> Optional[CausalEdge]:
-        with sqlite3.connect(self.db_path) as conn:
-            cur = conn.execute(
-                'SELECT source_id, target_id, edge_type, probability, confidence, evidence_count, last_verified FROM causal_edges WHERE source_id=? AND target_id=? AND edge_type=?',
-                (source_id, target_id, edge_type.value)
-            )
-            row = cur.fetchone()
-            if row:
-                return CausalEdge(source_id=row[0], target_id=row[1], edge_type=CausalEdgeType(row[2]),
-                                  probability=row[3], confidence=row[4], evidence_count=row[5], last_verified=row[6])
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cur = conn.execute(
+            'SELECT source_id, target_id, edge_type, probability, confidence, evidence_count, last_verified FROM causal_edges WHERE source_id=? AND target_id=? AND edge_type=?',
+            (source_id, target_id, edge_type.value)
+        )
+        row = cur.fetchone()
+        if row:
+            return CausalEdge(source_id=row[0], target_id=row[1], edge_type=CausalEdgeType(row[2]),
+                              probability=row[3], confidence=row[4], evidence_count=row[5], last_verified=row[6])
         return None
 
     def _update_edge_confidence(self, source_id: str, target_id: str, was_correct: bool):
-        with sqlite3.connect(self.db_path) as conn:
-            self._update_edge_confidence_in_conn(conn, source_id, target_id, was_correct)
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        self._update_edge_confidence_in_conn(conn, source_id, target_id, was_correct)
 
     def _update_edge_confidence_in_conn(self, conn, source_id: str, target_id: str, was_correct: bool):
         cur = conn.execute(

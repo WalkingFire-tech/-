@@ -13,9 +13,9 @@
 """
 
 import json
-import sqlite3
 import hashlib
 import threading
+from infrastructure.database_manager import DatabaseManager
 from typing import Dict, List, Optional, Set, Tuple
 from datetime import datetime
 from enum import Enum
@@ -117,28 +117,28 @@ class KnowledgeGraph:
 
     def _init_db(self):
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''CREATE TABLE IF NOT EXISTS nodes (
-                id TEXT PRIMARY KEY,
-                node_type TEXT NOT NULL,
-                content TEXT NOT NULL,
-                importance REAL DEFAULT 0.5,
-                access_count INTEGER DEFAULT 0,
-                metadata TEXT DEFAULT '{}',
-                created_at TEXT,
-                updated_at TEXT
-            )''')
-            conn.execute('''CREATE TABLE IF NOT EXISTS connections (
-                source_id TEXT NOT NULL,
-                target_id TEXT NOT NULL,
-                connection_type TEXT NOT NULL,
-                strength REAL DEFAULT 0.5,
-                evidence TEXT DEFAULT '',
-                PRIMARY KEY (source_id, target_id, connection_type)
-            )''')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_conn_source ON connections(source_id)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_conn_target ON connections(target_id)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(node_type)')
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''CREATE TABLE IF NOT EXISTS nodes (
+            id TEXT PRIMARY KEY,
+            node_type TEXT NOT NULL,
+            content TEXT NOT NULL,
+            importance REAL DEFAULT 0.5,
+            access_count INTEGER DEFAULT 0,
+            metadata TEXT DEFAULT '{}',
+            created_at TEXT,
+            updated_at TEXT
+        )''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS connections (
+            source_id TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            connection_type TEXT NOT NULL,
+            strength REAL DEFAULT 0.5,
+            evidence TEXT DEFAULT '',
+            PRIMARY KEY (source_id, target_id, connection_type)
+        )''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_conn_source ON connections(source_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_conn_target ON connections(target_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(node_type)')
 
     def add_node(self, content: str, node_type: NodeType = NodeType.CONCEPT,
                  importance: float = 0.5, metadata: Dict = None,
@@ -160,14 +160,14 @@ class KnowledgeGraph:
             updated_at=now,
         )
         with self._lock:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    'INSERT OR REPLACE INTO nodes (id, node_type, content, importance, access_count, metadata, created_at, updated_at) '
-                    'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                    (node.id, node.node_type.value, node.content, node.importance,
-                     node.access_count, json.dumps(node.metadata, ensure_ascii=False),
-                     node.created_at, node.updated_at)
-                )
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            conn.execute(
+                'INSERT OR REPLACE INTO nodes (id, node_type, content, importance, access_count, metadata, created_at, updated_at) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                (node.id, node.node_type.value, node.content, node.importance,
+                 node.access_count, json.dumps(node.metadata, ensure_ascii=False),
+                 node.created_at, node.updated_at)
+            )
         if auto_connect:
             try:
                 self.auto_connect(node.id)
@@ -176,37 +176,36 @@ class KnowledgeGraph:
         return node
 
     def get_node(self, node_id: str) -> Optional[KnowledgeNode]:
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cur = conn.execute('SELECT * FROM nodes WHERE id = ?', (node_id,))
-            row = cur.fetchone()
-            if not row:
-                return None
-            return KnowledgeNode(
-                id=row['id'],
-                node_type=NodeType(row['node_type']),
-                content=row['content'],
-                importance=row['importance'],
-                access_count=row['access_count'],
-                metadata=json.loads(row['metadata']),
-                created_at=row['created_at'],
-                updated_at=row['updated_at'],
-            )
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        cur = conn.execute('SELECT * FROM nodes WHERE id = ?', (node_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        return KnowledgeNode(
+            id=row['id'],
+            node_type=NodeType(row['node_type']),
+            content=row['content'],
+            importance=row['importance'],
+            access_count=row['access_count'],
+            metadata=json.loads(row['metadata']),
+            created_at=row['created_at'],
+            updated_at=row['updated_at'],
+        )
 
     def add_connection(self, source_id: str, target_id: str,
                        connection_type: ConnectionType = ConnectionType.RELATED_TO,
                        strength: float = 0.5, evidence: str = "") -> bool:
         with self._lock:
-            with sqlite3.connect(self.db_path) as conn:
-                try:
-                    conn.execute(
-                        'INSERT OR REPLACE INTO connections (source_id, target_id, connection_type, strength, evidence) '
-                        'VALUES (?, ?, ?, ?, ?)',
-                        (source_id, target_id, connection_type.value, strength, evidence)
-                    )
-                    return True
-                except Exception:
-                    return False
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            try:
+                conn.execute(
+                    'INSERT OR REPLACE INTO connections (source_id, target_id, connection_type, strength, evidence) '
+                    'VALUES (?, ?, ?, ?, ?)',
+                    (source_id, target_id, connection_type.value, strength, evidence)
+                )
+                return True
+            except Exception:
+                return False
 
     def auto_connect(self, node_id: str, threshold: float = 0.3) -> List[KnowledgeConnection]:
         node = self.get_node(node_id)
@@ -264,10 +263,10 @@ class KnowledgeGraph:
         clusters = []
 
         all_node_ids = set()
-        with sqlite3.connect(self.db_path) as conn:
-            cur = conn.execute('SELECT id FROM nodes')
-            for row in cur:
-                all_node_ids.add(row[0])
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        cur = conn.execute('SELECT id FROM nodes')
+        for row in cur:
+            all_node_ids.add(row[0])
 
         for node_id in all_node_ids:
             if node_id in visited:
@@ -330,24 +329,24 @@ class KnowledgeGraph:
 
         if to_remove:
             with self._lock:
-                with sqlite3.connect(self.db_path) as conn:
-                    placeholders = ",".join("?" * len(to_remove))
-                    conn.execute(f'DELETE FROM nodes WHERE id IN ({placeholders})', to_remove)
-                    conn.execute(f'DELETE FROM connections WHERE source_id IN ({placeholders})', to_remove)
-                    conn.execute(f'DELETE FROM connections WHERE target_id IN ({placeholders})', to_remove)
+                conn = DatabaseManager.get(self.db_path)._get_conn()
+                placeholders = ",".join("?" * len(to_remove))
+                conn.execute(f'DELETE FROM nodes WHERE id IN ({placeholders})', to_remove)
+                conn.execute(f'DELETE FROM connections WHERE source_id IN ({placeholders})', to_remove)
+                conn.execute(f'DELETE FROM connections WHERE target_id IN ({placeholders})', to_remove)
             logger.info(f"知识图谱修剪: 移除{len(to_remove)}个低价值节点")
 
     def get_stats(self) -> Dict:
-        with sqlite3.connect(self.db_path) as conn:
-            node_count = conn.execute('SELECT COUNT(*) FROM nodes').fetchone()[0]
-            conn_count = conn.execute('SELECT COUNT(*) FROM connections').fetchone()[0]
-            type_dist = {}
-            for row in conn.execute('SELECT node_type, COUNT(*) FROM nodes GROUP BY node_type'):
-                type_dist[row[0]] = row[1]
-            conn_type_dist = {}
-            for row in conn.execute('SELECT connection_type, COUNT(*) FROM connections GROUP BY connection_type'):
-                conn_type_dist[row[0]] = row[1]
-            avg_importance = conn.execute('SELECT AVG(importance) FROM nodes').fetchone()[0] or 0
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        node_count = conn.execute('SELECT COUNT(*) FROM nodes').fetchone()[0]
+        conn_count = conn.execute('SELECT COUNT(*) FROM connections').fetchone()[0]
+        type_dist = {}
+        for row in conn.execute('SELECT node_type, COUNT(*) FROM nodes GROUP BY node_type'):
+            type_dist[row[0]] = row[1]
+        conn_type_dist = {}
+        for row in conn.execute('SELECT connection_type, COUNT(*) FROM connections GROUP BY connection_type'):
+            conn_type_dist[row[0]] = row[1]
+        avg_importance = conn.execute('SELECT AVG(importance) FROM nodes').fetchone()[0] or 0
 
         return {
             "node_count": node_count,
@@ -359,27 +358,26 @@ class KnowledgeGraph:
 
     def _get_all_nodes(self) -> List[KnowledgeNode]:
         nodes = []
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            for row in conn.execute('SELECT * FROM nodes'):
-                nodes.append(KnowledgeNode(
-                    id=row['id'],
-                    node_type=NodeType(row['node_type']),
-                    content=row['content'],
-                    importance=row['importance'],
-                    access_count=row['access_count'],
-                    metadata=json.loads(row['metadata']),
-                    created_at=row['created_at'],
-                    updated_at=row['updated_at'],
-                ))
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        for row in conn.execute('SELECT * FROM nodes'):
+            nodes.append(KnowledgeNode(
+                id=row['id'],
+                node_type=NodeType(row['node_type']),
+                content=row['content'],
+                importance=row['importance'],
+                access_count=row['access_count'],
+                metadata=json.loads(row['metadata']),
+                created_at=row['created_at'],
+                updated_at=row['updated_at'],
+            ))
         return nodes
 
     def _build_adjacency(self) -> Dict[str, List[str]]:
         adj: Dict[str, List[str]] = {}
-        with sqlite3.connect(self.db_path) as conn:
-            for row in conn.execute('SELECT source_id, target_id FROM connections'):
-                adj.setdefault(row[0], []).append(row[1])
-                adj.setdefault(row[1], []).append(row[0])
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        for row in conn.execute('SELECT source_id, target_id FROM connections'):
+            adj.setdefault(row[0], []).append(row[1])
+            adj.setdefault(row[1], []).append(row[0])
         return adj
 
     def _extract_keywords(self, text: str) -> Set[str]:

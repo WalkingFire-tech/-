@@ -9,12 +9,13 @@
 """
 
 import json
-import sqlite3
+
 import re
 import hashlib
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 from datetime import datetime
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -37,85 +38,85 @@ class KnowledgeBasedValidator:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(exist_ok=True)
 
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS category_mapping (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    category TEXT,
-                    keyword TEXT,
-                    created_at TEXT,
-                    UNIQUE(category, keyword)
-                )
-            ''')
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS category_mapping (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT,
+                keyword TEXT,
+                created_at TEXT,
+                UNIQUE(category, keyword)
+            )
+        ''')
 
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS entity_mapping (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    entity_type TEXT,
-                    pattern TEXT,
-                    confidence REAL,
-                    created_at TEXT
-                )
-            ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS entity_mapping (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entity_type TEXT,
+                pattern TEXT,
+                confidence REAL,
+                created_at TEXT
+            )
+        ''')
 
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS type_compatibility (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    type_a TEXT,
-                    type_b TEXT,
-                    confidence REAL DEFAULT 0.5,
-                    occurrences INTEGER DEFAULT 1,
-                    created_at TEXT,
-                    updated_at TEXT,
-                    UNIQUE(type_a, type_b)
-                )
-            ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS type_compatibility (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type_a TEXT,
+                type_b TEXT,
+                confidence REAL DEFAULT 0.5,
+                occurrences INTEGER DEFAULT 1,
+                created_at TEXT,
+                updated_at TEXT,
+                UNIQUE(type_a, type_b)
+            )
+        ''')
 
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS validation_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    query_hash TEXT,
-                    recommendation TEXT,
-                    is_valid INTEGER,
-                    issues TEXT,
-                    confidence REAL,
-                    validated_at TEXT
-                )
-            ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS validation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query_hash TEXT,
+                recommendation TEXT,
+                is_valid INTEGER,
+                issues TEXT,
+                confidence REAL,
+                validated_at TEXT
+            )
+        ''')
 
     def _load_initial_knowledge(self):
         """从外部配置文件加载初始知识"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT COUNT(*) FROM category_mapping")
-            if cursor.fetchone()[0] > 0:
-                return
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        cursor = conn.execute("SELECT COUNT(*) FROM category_mapping")
+        if cursor.fetchone()[0] > 0:
+            return
 
         init_data = self._load_init_file()
         if not init_data:
             logger.info("⚠️ 无初始知识文件，以空知识库启动")
             return
 
-        with sqlite3.connect(self.db_path) as conn:
-            for category, keyword in init_data.get("category_keywords", []):
-                conn.execute(
-                    "INSERT OR IGNORE INTO category_mapping (category, keyword, created_at) VALUES (?, ?, ?)",
-                    (category, keyword, datetime.now().isoformat())
-                )
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        for category, keyword in init_data.get("category_keywords", []):
+            conn.execute(
+                "INSERT OR IGNORE INTO category_mapping (category, keyword, created_at) VALUES (?, ?, ?)",
+                (category, keyword, datetime.now().isoformat())
+            )
 
-            for entity_type, pattern, confidence in init_data.get("entity_patterns", []):
-                conn.execute(
-                    "INSERT INTO entity_mapping (entity_type, pattern, confidence, created_at) VALUES (?, ?, ?, ?)",
-                    (entity_type, pattern, confidence, datetime.now().isoformat())
-                )
+        for entity_type, pattern, confidence in init_data.get("entity_patterns", []):
+            conn.execute(
+                "INSERT INTO entity_mapping (entity_type, pattern, confidence, created_at) VALUES (?, ?, ?, ?)",
+                (entity_type, pattern, confidence, datetime.now().isoformat())
+            )
 
-            for type_a, type_b, confidence in init_data.get("type_compatibilities", []):
-                conn.execute(
-                    "INSERT OR IGNORE INTO type_compatibility (type_a, type_b, confidence, occurrences, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                    (type_a, type_b, confidence, 1, datetime.now().isoformat(), datetime.now().isoformat())
-                )
+        for type_a, type_b, confidence in init_data.get("type_compatibilities", []):
+            conn.execute(
+                "INSERT OR IGNORE INTO type_compatibility (type_a, type_b, confidence, occurrences, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (type_a, type_b, confidence, 1, datetime.now().isoformat(), datetime.now().isoformat())
+            )
 
-            conn.commit()
-            logger.info("✅ 初始知识已加载")
+        conn.commit()
+        logger.info("✅ 初始知识已加载")
 
     def _load_init_file(self) -> dict:
         """加载初始化配置文件"""
@@ -202,11 +203,11 @@ class KnowledgeBasedValidator:
         """从知识库查询需求类型（纯 Python 匹配，无 SQL 拼接）"""
         categories = []
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute("SELECT category, keyword FROM category_mapping")
-                for category, keyword in cursor.fetchall():
-                    if keyword in query:
-                        categories.append(category)
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.execute("SELECT category, keyword FROM category_mapping")
+            for category, keyword in cursor.fetchall():
+                if keyword in query:
+                    categories.append(category)
         except Exception as e:
             logger.debug(f"需求识别失败: {e}")
         return list(set(categories))
@@ -214,18 +215,18 @@ class KnowledgeBasedValidator:
     def _identify_entity_type(self, text: str) -> Optional[str]:
         """从知识库识别实体类型"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute("SELECT entity_type, pattern, confidence FROM entity_mapping")
-                best_type = None
-                best_score = 0.0
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.execute("SELECT entity_type, pattern, confidence FROM entity_mapping")
+            best_type = None
+            best_score = 0.0
 
-                for entity_type, pattern, confidence in cursor.fetchall():
-                    if pattern in text:
-                        if confidence > best_score:
-                            best_score = confidence
-                            best_type = entity_type
+            for entity_type, pattern, confidence in cursor.fetchall():
+                if pattern in text:
+                    if confidence > best_score:
+                        best_score = confidence
+                        best_type = entity_type
 
-                return best_type
+            return best_type
         except Exception as e:
             logger.debug(f"实体识别失败: {e}")
             return None
@@ -236,17 +237,17 @@ class KnowledgeBasedValidator:
             return True
 
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute('''
-                    SELECT confidence FROM type_compatibility
-                    WHERE (type_a = ? AND type_b = ?)
-                       OR (type_a = ? AND type_b = ?)
-                    ORDER BY confidence DESC
-                    LIMIT 1
-                ''', (type_a, type_b, type_b, type_a))
-                row = cursor.fetchone()
-                if row:
-                    return row[0] > 0.5
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.execute('''
+                SELECT confidence FROM type_compatibility
+                WHERE (type_a = ? AND type_b = ?)
+                   OR (type_a = ? AND type_b = ?)
+                ORDER BY confidence DESC
+                LIMIT 1
+            ''', (type_a, type_b, type_b, type_a))
+            row = cursor.fetchone()
+            if row:
+                return row[0] > 0.5
         except Exception as e:
             logger.debug(f"兼容性查询失败: {e}")
 
@@ -306,69 +307,69 @@ class KnowledgeBasedValidator:
         """记录验证历史"""
         try:
             query_hash = hashlib.sha256(query.encode()).hexdigest()[:16]
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    INSERT INTO validation_history
-                    (query_hash, recommendation, is_valid, issues, confidence, validated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (
-                    query_hash,
-                    recommendation[:500],
-                    1 if is_valid else 0 if is_valid is not None else -1,
-                    json.dumps(issues, ensure_ascii=False),
-                    confidence,
-                    datetime.now().isoformat()
-                ))
-                conn.commit()
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            conn.execute('''
+                INSERT INTO validation_history
+                (query_hash, recommendation, is_valid, issues, confidence, validated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                query_hash,
+                recommendation[:500],
+                1 if is_valid else 0 if is_valid is not None else -1,
+                json.dumps(issues, ensure_ascii=False),
+                confidence,
+                datetime.now().isoformat()
+            ))
+            conn.commit()
         except Exception as e:
             logger.debug(f"记录验证历史失败: {e}")
 
     def add_category_keyword(self, category: str, keyword: str):
         """添加类别关键词映射"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO category_mapping (category, keyword, created_at) VALUES (?, ?, ?)",
-                (category, keyword, datetime.now().isoformat())
-            )
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute(
+            "INSERT OR IGNORE INTO category_mapping (category, keyword, created_at) VALUES (?, ?, ?)",
+            (category, keyword, datetime.now().isoformat())
+        )
+        conn.commit()
         logger.info(f"✅ 添加类别映射: {category} <- {keyword}")
 
     def add_entity_pattern(self, entity_type: str, pattern: str, confidence: float = 0.9):
         """添加实体模式"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                "INSERT INTO entity_mapping (entity_type, pattern, confidence, created_at) VALUES (?, ?, ?, ?)",
-                (entity_type, pattern, confidence, datetime.now().isoformat())
-            )
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute(
+            "INSERT INTO entity_mapping (entity_type, pattern, confidence, created_at) VALUES (?, ?, ?, ?)",
+            (entity_type, pattern, confidence, datetime.now().isoformat())
+        )
+        conn.commit()
         logger.info(f"✅ 添加实体模式: {entity_type} <- {pattern}")
 
     def learn_compatibility(self, type_a: str, type_b: str):
         """学习类型兼容性"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
-                "SELECT id, occurrences FROM type_compatibility WHERE type_a = ? AND type_b = ?",
-                (type_a, type_b)
-            )
-            row = cursor.fetchone()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        cursor = conn.execute(
+            "SELECT id, occurrences FROM type_compatibility WHERE type_a = ? AND type_b = ?",
+            (type_a, type_b)
+        )
+        row = cursor.fetchone()
 
-            if row:
-                conn.execute('''
-                    UPDATE type_compatibility
-                    SET occurrences = occurrences + 1,
-                        confidence = ?,
-                        updated_at = ?
-                    WHERE id = ?
-                ''', (min(1.0, (row[1] + 1) / 10), datetime.now().isoformat(), row[0]))
-            else:
-                conn.execute('''
-                    INSERT INTO type_compatibility
-                    (type_a, type_b, confidence, occurrences, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (type_a, type_b, 0.5, 1, datetime.now().isoformat(), datetime.now().isoformat()))
+        if row:
+            conn.execute('''
+                UPDATE type_compatibility
+                SET occurrences = occurrences + 1,
+                    confidence = ?,
+                    updated_at = ?
+                WHERE id = ?
+            ''', (min(1.0, (row[1] + 1) / 10), datetime.now().isoformat(), row[0]))
+        else:
+            conn.execute('''
+                INSERT INTO type_compatibility
+                (type_a, type_b, confidence, occurrences, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (type_a, type_b, 0.5, 1, datetime.now().isoformat(), datetime.now().isoformat()))
 
-            conn.commit()
-            logger.info(f"📚 学习类型兼容性: {type_a} ↔ {type_b}")
+        conn.commit()
+        logger.info(f"📚 学习类型兼容性: {type_a} ↔ {type_b}")
 
 
 knowledge_validator = KnowledgeBasedValidator()

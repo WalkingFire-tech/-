@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable, Set
 from datetime import datetime
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 try:
     import signal
@@ -75,44 +76,45 @@ class ToolManager:
     
     def _init_db(self):
         """初始化工具表"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS tools (
-                    name TEXT PRIMARY KEY,
-                    code TEXT,
-                    description TEXT,
-                    triggers TEXT,
-                    usage_count INTEGER DEFAULT 0,
-                    success_count INTEGER DEFAULT 0,
-                    failure_count INTEGER DEFAULT 0,
-                    created_at TEXT,
-                    last_used TEXT,
-                    enabled INTEGER DEFAULT 1
-                )
-            ''')
-            
-            # 迁移：添加缺失的列
-            try:
-                conn.execute('ALTER TABLE tools ADD COLUMN success_count INTEGER DEFAULT 0')
-            except sqlite3.OperationalError:
-                pass
-            
-            try:
-                conn.execute('ALTER TABLE tools ADD COLUMN failure_count INTEGER DEFAULT 0')
-            except sqlite3.OperationalError:
-                pass
-            
-            try:
-                conn.execute('ALTER TABLE tools ADD COLUMN enabled INTEGER DEFAULT 1')
-            except sqlite3.OperationalError:
-                pass
-            
-            try:
-                conn.execute('ALTER TABLE tools ADD COLUMN last_used TEXT')
-            except sqlite3.OperationalError:
-                pass
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS tools (
+                name TEXT PRIMARY KEY,
+                code TEXT,
+                description TEXT,
+                triggers TEXT,
+                usage_count INTEGER DEFAULT 0,
+                success_count INTEGER DEFAULT 0,
+                failure_count INTEGER DEFAULT 0,
+                created_at TEXT,
+                last_used TEXT,
+                enabled INTEGER DEFAULT 1
+            )
+        ''')
+        
+        # 迁移：添加缺失的列
+        try:
+            conn.execute('ALTER TABLE tools ADD COLUMN success_count INTEGER DEFAULT 0')
+        except sqlite3.OperationalError:
+            pass
+        
+        try:
+            conn.execute('ALTER TABLE tools ADD COLUMN failure_count INTEGER DEFAULT 0')
+        except sqlite3.OperationalError:
+            pass
+        
+        try:
+            conn.execute('ALTER TABLE tools ADD COLUMN enabled INTEGER DEFAULT 1')
+        except sqlite3.OperationalError:
+            pass
+        
+        try:
+            conn.execute('ALTER TABLE tools ADD COLUMN last_used TEXT')
+        except sqlite3.OperationalError:
+            pass
+        
+        conn.commit()
     
     def _cleanup_orphan_files(self):
         """清理孤立的工具文件"""
@@ -120,9 +122,10 @@ class ToolManager:
         if not existing_files:
             return
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute("SELECT name FROM tools")
-            db_tools = {row[0] for row in cursor.fetchall()}
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute("SELECT name FROM tools")
+        db_tools = {row[0] for row in cursor.fetchall()}
         
         for tool_file in existing_files:
             tool_name = tool_file.stem
@@ -191,18 +194,18 @@ class ToolManager:
             
             code = self._code_cache.get(name)
             if code is None:
-                with sqlite3.connect(self.db_path) as conn:
-                    conn.row_factory = sqlite3.Row
-                    cursor = conn.execute('SELECT code, enabled FROM tools WHERE name = ?', (name,))
-                    row = cursor.fetchone()
-                    if not row:
-                        logger.warning(f"工具不存在: {name}")
-                        return None
-                    if not row['enabled']:
-                        logger.warning(f"工具已禁用: {name}")
-                        return None
-                    code = row['code']
-                    self._code_cache[name] = code
+                db = DatabaseManager.get(self.db_path)
+                conn = db._get_conn()
+                cursor = conn.execute('SELECT code, enabled FROM tools WHERE name = ?', (name,))
+                row = cursor.fetchone()
+                if not row:
+                    logger.warning(f"工具不存在: {name}")
+                    return None
+                if not row['enabled']:
+                    logger.warning(f"工具已禁用: {name}")
+                    return None
+                code = row['code']
+                self._code_cache[name] = code
             
             is_valid, error = self._validate_code(code)
             if not is_valid:
@@ -328,24 +331,25 @@ class ToolManager:
     def _update_tool_stats(self, name: str, success: bool, duration: float):
         """更新工具统计"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                if success:
-                    conn.execute('''
-                        UPDATE tools
-                        SET usage_count = usage_count + 1,
-                            success_count = success_count + 1,
-                            last_used = ?
-                        WHERE name = ?
-                    ''', (datetime.now().isoformat(), name))
-                else:
-                    conn.execute('''
-                        UPDATE tools
-                        SET usage_count = usage_count + 1,
-                            failure_count = failure_count + 1,
-                            last_used = ?
-                        WHERE name = ?
-                    ''', (datetime.now().isoformat(), name))
-                conn.commit()
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            if success:
+                conn.execute('''
+                    UPDATE tools
+                    SET usage_count = usage_count + 1,
+                        success_count = success_count + 1,
+                        last_used = ?
+                    WHERE name = ?
+                ''', (datetime.now().isoformat(), name))
+            else:
+                conn.execute('''
+                    UPDATE tools
+                    SET usage_count = usage_count + 1,
+                        failure_count = failure_count + 1,
+                        last_used = ?
+                    WHERE name = ?
+                ''', (datetime.now().isoformat(), name))
+            conn.commit()
         except Exception as e:
             logger.warning(f"更新工具统计失败: {e}")
     
@@ -359,28 +363,28 @@ class ToolManager:
     
     def get_tool_info(self, name: str) -> Optional[Dict]:
         """获取工具信息"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute('''
-                SELECT name, description, triggers, usage_count,
-                       success_count, failure_count, created_at, last_used, enabled
-                FROM tools WHERE name = ?
-            ''', (name,))
-            row = cursor.fetchone()
-            if row:
-                return dict(row)
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT name, description, triggers, usage_count,
+                   success_count, failure_count, created_at, last_used, enabled
+            FROM tools WHERE name = ?
+        ''', (name,))
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
         return None
     
     def list_tools(self, include_disabled: bool = False) -> List[Dict]:
         """列出所有工具"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            query = 'SELECT name, description, usage_count, success_count, created_at, enabled FROM tools'
-            if not include_disabled:
-                query += ' WHERE enabled = 1'
-            query += ' ORDER BY usage_count DESC'
-            cursor = conn.execute(query)
-            return [dict(row) for row in cursor.fetchall()]
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        query = 'SELECT name, description, usage_count, success_count, created_at, enabled FROM tools'
+        if not include_disabled:
+            query += ' WHERE enabled = 1'
+        query += ' ORDER BY usage_count DESC'
+        cursor = conn.execute(query)
+        return [dict(row) for row in cursor.fetchall()]
     
     def create_tool(self, name: str, code: str, description: str,
                    triggers: List[str] = None) -> bool:
@@ -398,20 +402,21 @@ class ToolManager:
             triggers = triggers or []
             
             try:
-                with sqlite3.connect(self.db_path) as conn:
-                    conn.execute('''
-                        INSERT OR REPLACE INTO tools
-                        (name, code, description, triggers, usage_count,
-                         success_count, failure_count, created_at, last_used, enabled)
-                        VALUES (?, ?, ?, ?, 0, 0, 0, ?, NULL, 1)
-                    ''', (
-                        name,
-                        code,
-                        description,
-                        ','.join(triggers),
-                        datetime.now().isoformat()
-                    ))
-                    conn.commit()
+                db = DatabaseManager.get(self.db_path)
+                conn = db._get_conn()
+                conn.execute('''
+                    INSERT OR REPLACE INTO tools
+                    (name, code, description, triggers, usage_count,
+                     success_count, failure_count, created_at, last_used, enabled)
+                    VALUES (?, ?, ?, ?, 0, 0, 0, ?, NULL, 1)
+                ''', (
+                    name,
+                    code,
+                    description,
+                    ','.join(triggers),
+                    datetime.now().isoformat()
+                ))
+                conn.commit()
                 
                 self._ensure_tool_file(name, code, backup=True)
                 
@@ -429,9 +434,10 @@ class ToolManager:
         """删除工具"""
         with self._lock:
             try:
-                with sqlite3.connect(self.db_path) as conn:
-                    conn.execute('DELETE FROM tools WHERE name = ?', (name,))
-                    conn.commit()
+                db = DatabaseManager.get(self.db_path)
+                conn = db._get_conn()
+                conn.execute('DELETE FROM tools WHERE name = ?', (name,))
+                conn.commit()
                 
                 tool_file = self.tools_dir / f"{name}.py"
                 if tool_file.exists():
@@ -454,18 +460,20 @@ class ToolManager:
     
     def enable_tool(self, name: str) -> bool:
         """启用工具"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('UPDATE tools SET enabled = 1 WHERE name = ?', (name,))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('UPDATE tools SET enabled = 1 WHERE name = ?', (name,))
+        conn.commit()
         self._loaded_tools.pop(name, None)
         logger.info(f"工具已启用: {name}")
         return True
     
     def disable_tool(self, name: str) -> bool:
         """禁用工具"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('UPDATE tools SET enabled = 0 WHERE name = ?', (name,))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('UPDATE tools SET enabled = 0 WHERE name = ?', (name,))
+        conn.commit()
         self._loaded_tools.pop(name, None)
         logger.info(f"工具已禁用: {name}")
         return True
@@ -497,9 +505,10 @@ class ToolManager:
             self._loaded_tools.clear()
             self._code_cache.clear()
             
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute("SELECT name FROM tools WHERE enabled = 1")
-                tools = cursor.fetchall()
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.execute("SELECT name FROM tools WHERE enabled = 1")
+            tools = cursor.fetchall()
             
             for (name,) in tools:
                 self.load_tool(name)
@@ -508,22 +517,23 @@ class ToolManager:
     
     def get_tool_usage_stats(self) -> Dict:
         """获取工具使用统计"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('''
-                SELECT 
-                    COUNT(*) as total_tools,
-                    SUM(usage_count) as total_uses,
-                    AVG(success_count * 1.0 / NULLIF(usage_count, 0)) as avg_success_rate,
-                    SUM(usage_count) as total_usage
-                FROM tools
-                WHERE enabled = 1
-            ''')
-            row = cursor.fetchone()
-            return {
-                "total_tools": row[0] or 0,
-                "total_uses": row[1] or 0,
-                "avg_success_rate": row[2] if row[2] is not None else 0,
-            }
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT 
+                COUNT(*) as total_tools,
+                SUM(usage_count) as total_uses,
+                AVG(success_count * 1.0 / NULLIF(usage_count, 0)) as avg_success_rate,
+                SUM(usage_count) as total_usage
+            FROM tools
+            WHERE enabled = 1
+        ''')
+        row = cursor.fetchone()
+        return {
+            "total_tools": row[0] or 0,
+            "total_uses": row[1] or 0,
+            "avg_success_rate": row[2] if row[2] is not None else 0,
+        }
 
 
 tool_manager = ToolManager()

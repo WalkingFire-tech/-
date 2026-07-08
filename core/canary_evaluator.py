@@ -15,11 +15,11 @@
 """
 import logging
 import random
-import sqlite3
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 import json
+from infrastructure.database_manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class CanaryEvaluator:
     
     def is_canary(self, rule_id: int) -> bool:
         """判断某个规则是否处于金丝雀模式"""
-        conn = sqlite3.connect(self.rules_db)
+        conn = DatabaseManager.get(self.rules_db)._get_conn()
         
         try:
             cursor = conn.execute(
@@ -65,7 +65,7 @@ class CanaryEvaluator:
             row = cursor.fetchone()
             return row and row[0] == "canary"
         finally:
-            conn.close()
+            pass
     
     def should_apply_rule(self, rule_id: int) -> bool:
         """
@@ -91,8 +91,7 @@ class CanaryEvaluator:
             }
         """
         try:
-            conn = sqlite3.connect(self.rules_db)
-            conn.row_factory = sqlite3.Row
+            conn = DatabaseManager.get(self.rules_db)._get_conn()
             
             # 0. 检查观察期
             cursor = conn.execute(
@@ -106,18 +105,14 @@ class CanaryEvaluator:
                 age_days = (datetime.utcnow() - created_at).days
                 
                 if age_days < self.observation_days:
-                    conn.close()
                     return {
                         "status": "canary",
                         "reason": f"观察期未满 ({age_days}/{self.observation_days}天)",
                         "delta": 0.0
                     }
             
-            conn.close()
-            
             # 1. 获取使用该规则的金丝雀样本
-            conn = sqlite3.connect(self.reflection_db)
-            conn.row_factory = sqlite3.Row
+            conn = DatabaseManager.get(self.reflection_db)._get_conn()
             
             # 使用时间窗口限制（最近observation_days天）
             time_threshold = (datetime.utcnow() - timedelta(days=self.observation_days)).isoformat()
@@ -143,8 +138,6 @@ class CanaryEvaluator:
                 LIMIT ?
             ''', (rule_id, time_threshold, self.min_samples * 2))
             control_samples = [dict(row) for row in cursor.fetchall()]
-            
-            conn.close()
             
             # 3. 计算平均置信度
             if not canary_samples:
@@ -192,11 +185,11 @@ class CanaryEvaluator:
                 }
                 
         finally:
-            conn.close()
+            pass
     
     def _promote_rule(self, rule_id: int):
         """将规则晋升为全量"""
-        conn = sqlite3.connect(self.rules_db)
+        conn = DatabaseManager.get(self.rules_db)._get_conn()
         
         try:
             conn.execute('''
@@ -209,11 +202,11 @@ class CanaryEvaluator:
             logger.info(f"✅ 规则 {rule_id} 晋升为全量")
             
         finally:
-            conn.close()
+            pass
     
     def _reject_rule(self, rule_id: int, delta: float):
         """拒绝规则"""
-        conn = sqlite3.connect(self.rules_db)
+        conn = DatabaseManager.get(self.rules_db)._get_conn()
         
         try:
             conn.execute('''
@@ -226,7 +219,7 @@ class CanaryEvaluator:
             logger.info(f"❌ 规则 {rule_id} 被拒绝")
             
         finally:
-            conn.close()
+            pass
     
     async def evaluate_all_canary_rules(self) -> Dict[str, Any]:
         """
@@ -249,7 +242,7 @@ class CanaryEvaluator:
             "details": []
         }
         
-        conn = sqlite3.connect(self.rules_db)
+        conn = DatabaseManager.get(self.rules_db)._get_conn()
         
         try:
             # 获取所有金丝雀规则
@@ -289,7 +282,7 @@ class CanaryEvaluator:
             return result
             
         finally:
-            conn.close()
+            pass
     
     def create_canary_rule(
         self,
@@ -303,7 +296,7 @@ class CanaryEvaluator:
         
         新规则默认进入canary状态，等待验证
         """
-        conn = sqlite3.connect(self.rules_db)
+        conn = DatabaseManager.get(self.rules_db)._get_conn()
         
         try:
             cursor = conn.execute('''
@@ -319,11 +312,11 @@ class CanaryEvaluator:
             return rule_id
             
         finally:
-            conn.close()
+            pass
     
     def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""
-        conn = sqlite3.connect(self.rules_db)
+        conn = DatabaseManager.get(self.rules_db)._get_conn()
         
         try:
             total = conn.execute('SELECT COUNT(*) FROM learning_rules').fetchone()[0]
@@ -346,7 +339,7 @@ class CanaryEvaluator:
             }
             
         finally:
-            conn.close()
+            pass
 
 
 # 全局实例

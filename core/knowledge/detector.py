@@ -9,8 +9,8 @@
 """
 
 import json
-import sqlite3
 import numpy as np
+from infrastructure.database_manager import DatabaseManager
 from typing import Tuple, List, Optional, Dict
 from pathlib import Path
 from datetime import datetime
@@ -66,50 +66,50 @@ class SemanticGapDetector:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(exist_ok=True)
 
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS domain_knowledge (
-                    domain TEXT PRIMARY KEY,
-                    keywords TEXT,
-                    description TEXT,
-                    embedding TEXT,
-                    created_at TEXT
-                )
-            ''')
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS domain_knowledge (
+                domain TEXT PRIMARY KEY,
+                keywords TEXT,
+                description TEXT,
+                embedding TEXT,
+                created_at TEXT
+            )
+        ''')
 
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS knowledge_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    domain TEXT,
-                    question TEXT,
-                    answer TEXT,
-                    embedding TEXT,
-                    quality_score REAL DEFAULT 0.5,
-                    created_at TEXT
-                )
-            ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS knowledge_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain TEXT,
+                question TEXT,
+                answer TEXT,
+                embedding TEXT,
+                quality_score REAL DEFAULT 0.5,
+                created_at TEXT
+            )
+        ''')
 
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS uncertainty_words (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    word TEXT,
-                    language TEXT DEFAULT 'zh',
-                    confidence REAL DEFAULT 0.8,
-                    created_at TEXT,
-                    UNIQUE(word)
-                )
-            ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS uncertainty_words (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                word TEXT,
+                language TEXT DEFAULT 'zh',
+                confidence REAL DEFAULT 0.8,
+                created_at TEXT,
+                UNIQUE(word)
+            )
+        ''')
 
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS validation_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    query_hash TEXT,
-                    has_gap INTEGER,
-                    reason TEXT,
-                    confidence REAL,
-                    validated_at TEXT
-                )
-            ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS validation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query_hash TEXT,
+                has_gap INTEGER,
+                reason TEXT,
+                confidence REAL,
+                validated_at TEXT
+            )
+        ''')
 
     def _init_embedding(self):
         """初始化嵌入模型"""
@@ -126,10 +126,10 @@ class SemanticGapDetector:
     def _init_uncertainty_words(self):
         """从数据库加载不确定性词汇"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute("SELECT COUNT(*) FROM uncertainty_words")
-                if cursor.fetchone()[0] == 0:
-                    self._load_default_uncertainty_words()
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.execute("SELECT COUNT(*) FROM uncertainty_words")
+            if cursor.fetchone()[0] == 0:
+                self._load_default_uncertainty_words()
         except Exception as e:
             logger.warning(f"加载不确定性词汇失败: {e}")
 
@@ -154,20 +154,20 @@ class SemanticGapDetector:
                 json.dump(default_words, f, ensure_ascii=False, indent=2)
             words = default_words
 
-        with sqlite3.connect(self.db_path) as conn:
-            for word in words:
-                conn.execute(
-                    "INSERT OR IGNORE INTO uncertainty_words (word, created_at) VALUES (?, ?)",
-                    (word, datetime.now().isoformat())
-                )
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        for word in words:
+            conn.execute(
+                "INSERT OR IGNORE INTO uncertainty_words (word, created_at) VALUES (?, ?)",
+                (word, datetime.now().isoformat())
+            )
             conn.commit()
 
     def _get_uncertainty_words(self) -> List[str]:
         """从数据库获取不确定性词汇"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute("SELECT word FROM uncertainty_words")
-                return [row[0] for row in cursor.fetchall()]
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.execute("SELECT word FROM uncertainty_words")
+            return [row[0] for row in cursor.fetchall()]
         except:
             return []
 
@@ -185,12 +185,12 @@ class SemanticGapDetector:
 
     def learn_uncertainty_word(self, word: str):
         """学习新的不确定性词汇"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO uncertainty_words (word, created_at) VALUES (?, ?)",
-                (word, datetime.now().isoformat())
-            )
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute(
+            "INSERT OR IGNORE INTO uncertainty_words (word, created_at) VALUES (?, ?)",
+            (word, datetime.now().isoformat())
+        )
+        conn.commit()
         logger.info(f"📚 学习不确定性词汇: {word}")
 
     def detect_knowledge_gap(
@@ -258,15 +258,15 @@ class SemanticGapDetector:
     def _identify_domain_keyword(self, query: str) -> Tuple[Optional[str], float]:
         """关键词降级识别"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute("SELECT domain, keywords FROM domain_knowledge")
-                for domain, keywords_json in cursor.fetchall():
-                    if not keywords_json:
-                        continue
-                    keywords = json.loads(keywords_json)
-                    for kw in keywords:
-                        if kw in query:
-                            return domain, 0.7
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.execute("SELECT domain, keywords FROM domain_knowledge")
+            for domain, keywords_json in cursor.fetchall():
+                if not keywords_json:
+                    continue
+                keywords = json.loads(keywords_json)
+                for kw in keywords:
+                    if kw in query:
+                        return domain, 0.7
         except:
             pass
         return None, 0.0
@@ -277,15 +277,15 @@ class SemanticGapDetector:
             return self._domain_embeddings
 
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute(
-                    "SELECT domain, embedding FROM domain_knowledge WHERE embedding IS NOT NULL"
-                )
-                for domain, embedding_json in cursor.fetchall():
-                    if embedding_json:
-                        self._domain_embeddings[domain] = np.array(
-                            json.loads(embedding_json)
-                        )
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.execute(
+                "SELECT domain, embedding FROM domain_knowledge WHERE embedding IS NOT NULL"
+            )
+            for domain, embedding_json in cursor.fetchall():
+                if embedding_json:
+                    self._domain_embeddings[domain] = np.array(
+                        json.loads(embedding_json)
+                    )
         except:
             pass
 
@@ -313,25 +313,25 @@ class SemanticGapDetector:
     def _get_domain_coverage_count(self, domain: str) -> float:
         """基于数量的覆盖度计算"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute(
-                    "SELECT COUNT(*) FROM knowledge_items WHERE domain = ?",
-                    (domain,)
-                )
-                count = cursor.fetchone()[0]
-                return min(1.0, count / 5)
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM knowledge_items WHERE domain = ?",
+                (domain,)
+            )
+            count = cursor.fetchone()[0]
+            return min(1.0, count / 5)
         except:
             return 0.0
 
     def _get_domain_knowledge_vectors(self, domain: str) -> List[np.ndarray]:
         """获取领域内知识的向量"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute(
-                    "SELECT embedding FROM knowledge_items WHERE domain = ? AND embedding IS NOT NULL",
-                    (domain,)
-                )
-                return [np.array(json.loads(row[0])) for row in cursor.fetchall()]
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.execute(
+                "SELECT embedding FROM knowledge_items WHERE domain = ? AND embedding IS NOT NULL",
+                (domain,)
+            )
+            return [np.array(json.loads(row[0])) for row in cursor.fetchall()]
         except:
             return []
 
@@ -349,12 +349,12 @@ class SemanticGapDetector:
             except:
                 pass
 
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO domain_knowledge (domain, keywords, description, embedding, created_at) VALUES (?, ?, ?, ?, ?)",
-                (domain, json.dumps(keywords, ensure_ascii=False), description, embedding_json, datetime.now().isoformat())
-            )
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute(
+            "INSERT OR REPLACE INTO domain_knowledge (domain, keywords, description, embedding, created_at) VALUES (?, ?, ?, ?, ?)",
+            (domain, json.dumps(keywords, ensure_ascii=False), description, embedding_json, datetime.now().isoformat())
+        )
+        conn.commit()
 
         if embedding_json:
             self._domain_embeddings[domain] = np.array(json.loads(embedding_json))
@@ -371,12 +371,12 @@ class SemanticGapDetector:
             except:
                 pass
 
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                "INSERT INTO knowledge_items (domain, question, answer, embedding, quality_score, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (domain, question, answer, embedding_json, quality, datetime.now().isoformat())
-            )
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute(
+            "INSERT INTO knowledge_items (domain, question, answer, embedding, quality_score, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (domain, question, answer, embedding_json, quality, datetime.now().isoformat())
+        )
+        conn.commit()
 
     def should_learn_externally(self, user_query: str, response: str,
                                confidence: float = 1.0) -> Tuple[bool, str]:

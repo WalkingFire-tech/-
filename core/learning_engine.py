@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Callable
 from enum import Enum
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 
 class LearningMode(Enum):
@@ -50,35 +51,35 @@ class LearningEngine:
     
     def _init_db(self):
         """初始化数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS learning_tasks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    file_path TEXT UNIQUE,
-                    priority INTEGER,
-                    status TEXT DEFAULT 'pending',
-                    event_type TEXT,
-                    created_at TEXT,
-                    started_at TEXT,
-                    completed_at TEXT,
-                    error_msg TEXT,
-                    knowledge_count INTEGER DEFAULT 0,
-                    retry_count INTEGER DEFAULT 0
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS learning_stats (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    date TEXT,
-                    total_tasks INTEGER,
-                    completed_tasks INTEGER,
-                    failed_tasks INTEGER,
-                    total_knowledge INTEGER
-                )
-            ''')
-            
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS learning_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_path TEXT UNIQUE,
+                priority INTEGER,
+                status TEXT DEFAULT 'pending',
+                event_type TEXT,
+                created_at TEXT,
+                started_at TEXT,
+                completed_at TEXT,
+                error_msg TEXT,
+                knowledge_count INTEGER DEFAULT 0,
+                retry_count INTEGER DEFAULT 0
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS learning_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT,
+                total_tasks INTEGER,
+                completed_tasks INTEGER,
+                failed_tasks INTEGER,
+                total_knowledge INTEGER
+            )
+        ''')
+        
+        conn.commit()
     
     def set_mode(self, mode: str) -> Dict:
         """设置学习模式"""
@@ -150,34 +151,34 @@ class LearningEngine:
         
         priority = self._calculate_priority(file_path)
         
-        with sqlite3.connect(self.db_path) as conn:
-            try:
-                conn.execute('''
-                    INSERT INTO learning_tasks
-                    (file_path, priority, status, event_type, created_at)
-                    VALUES (?, ?, 'pending', ?, ?)
-                ''', (
-                    file_path,
-                    priority,
-                    event_type,
-                    datetime.now().isoformat()
-                ))
-                conn.commit()
-                
-                self.task_queue.put((priority, file_path))
-                
-                logger.info(f"添加学习任务: {file_path} (优先级={priority})")
-                
-                return {
-                    "success": True,
-                    "file_path": file_path,
-                    "priority": priority
-                }
-            except sqlite3.IntegrityError:
-                return {
-                    "success": False,
-                    "reason": "任务已存在"
-                }
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        try:
+            conn.execute('''
+                INSERT INTO learning_tasks
+                (file_path, priority, status, event_type, created_at)
+                VALUES (?, ?, 'pending', ?, ?)
+            ''', (
+                file_path,
+                priority,
+                event_type,
+                datetime.now().isoformat()
+            ))
+            conn.commit()
+            
+            self.task_queue.put((priority, file_path))
+            
+            logger.info(f"添加学习任务: {file_path} (优先级={priority})")
+            
+            return {
+                "success": True,
+                "file_path": file_path,
+                "priority": priority
+            }
+        except sqlite3.IntegrityError:
+            return {
+                "success": False,
+                "reason": "任务已存在"
+            }
     
     def force_learn(self, file_path: str) -> Dict:
         """强制学习文件"""
@@ -186,13 +187,13 @@ class LearningEngine:
     def process_task(self, file_path: str) -> Dict:
         """处理学习任务"""
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                UPDATE learning_tasks
-                SET status = 'processing', started_at = ?
-                WHERE file_path = ?
-            ''', (datetime.now().isoformat(), file_path))
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''
+            UPDATE learning_tasks
+            SET status = 'processing', started_at = ?
+            WHERE file_path = ?
+        ''', (datetime.now().isoformat(), file_path))
+        conn.commit()
         
         try:
             path = Path(file_path)
@@ -212,14 +213,14 @@ class LearningEngine:
                 content=content
             )
             
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    UPDATE learning_tasks
-                    SET status = 'completed', completed_at = ?, 
-                        knowledge_count = ?
-                    WHERE file_path = ?
-                ''', (datetime.now().isoformat(), knowledge_count, file_path))
-                conn.commit()
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            conn.execute('''
+                UPDATE learning_tasks
+                SET status = 'completed', completed_at = ?, 
+                    knowledge_count = ?
+                WHERE file_path = ?
+            ''', (datetime.now().isoformat(), knowledge_count, file_path))
+            conn.commit()
             
             logger.info(f"学习完成: {file_path}, 提取{knowledge_count}条知识")
             
@@ -233,14 +234,14 @@ class LearningEngine:
             error_msg = str(e)
             logger.error(f"学习失败: {file_path}: {error_msg}")
             
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    UPDATE learning_tasks
-                    SET status = 'failed', error_msg = ?, 
-                        retry_count = retry_count + 1
-                    WHERE file_path = ?
-                ''', (error_msg, file_path))
-                conn.commit()
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            conn.execute('''
+                UPDATE learning_tasks
+                SET status = 'failed', error_msg = ?, 
+                    retry_count = retry_count + 1
+                WHERE file_path = ?
+            ''', (error_msg, file_path))
+            conn.commit()
             
             return {
                 "success": False,
@@ -285,51 +286,49 @@ class LearningEngine:
     
     def get_stats(self) -> Dict:
         """获取学习统计"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            cursor = conn.execute('''
-                SELECT 
-                    COUNT(*) as total,
-                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-                    SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) as processing,
-                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
-                    SUM(knowledge_count) as total_knowledge
-                FROM learning_tasks
-            ''')
-            
-            row = cursor.fetchone()
-            
-            return {
-                "mode": self.mode.value,
-                "is_running": self.is_running,
-                "total_tasks": row['total'] or 0,
-                "pending_tasks": row['pending'] or 0,
-                "processing_tasks": row['processing'] or 0,
-                "completed_tasks": row['completed'] or 0,
-                "failed_tasks": row['failed'] or 0,
-                "total_knowledge": row['total_knowledge'] or 0
-            }
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        
+        cursor = conn.execute('''
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) as processing,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+                SUM(knowledge_count) as total_knowledge
+            FROM learning_tasks
+        ''')
+        
+        row = cursor.fetchone()
+        
+        return {
+            "mode": self.mode.value,
+            "is_running": self.is_running,
+            "total_tasks": row['total'] or 0,
+            "pending_tasks": row['pending'] or 0,
+            "processing_tasks": row['processing'] or 0,
+            "completed_tasks": row['completed'] or 0,
+            "failed_tasks": row['failed'] or 0,
+            "total_knowledge": row['total_knowledge'] or 0
+        }
     
     def get_recent_tasks(self, limit: int = 10) -> List[Dict]:
         """获取最近的学习任务"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute('''
-                SELECT file_path, status, knowledge_count, created_at, completed_at, error_msg
-                FROM learning_tasks
-                ORDER BY created_at DESC
-                LIMIT ?
-            ''', (limit,))
-            
-            return [dict(row) for row in cursor.fetchall()]
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        cursor = conn.execute('''
+            SELECT file_path, status, knowledge_count, created_at, completed_at, error_msg
+            FROM learning_tasks
+            ORDER BY created_at DESC
+            LIMIT ?
+        ''', (limit,))
+        
+        return [dict(row) for row in cursor.fetchall()]
     
     def clear_completed_tasks(self):
         """清理已完成的任务"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("DELETE FROM learning_tasks WHERE status = 'completed'")
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute("DELETE FROM learning_tasks WHERE status = 'completed'")
+        conn.commit()
         
         logger.info("已清理完成的学习任务")
 
