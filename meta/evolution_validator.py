@@ -2,12 +2,12 @@
 自我进化验证系统
 用于观察、度量和验证系统的自我进化能力
 """
-import sqlite3
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Any
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 
 class EvolutionValidator:
@@ -41,7 +41,7 @@ class EvolutionValidator:
     def _get_experience_metrics(self) -> Dict:
         """经验池指标"""
         try:
-            conn = sqlite3.connect(self.experience_db)
+            conn = DatabaseManager.get(self.experience_db)._get_conn()
             cursor = conn.cursor()
             
             # 总经验数
@@ -69,8 +69,6 @@ class EvolutionValidator:
             """)
             by_intent = {row[0]: {"count": row[1], "avg_quality": row[2]} for row in cursor.fetchall()}
             
-            conn.close()
-            
             return {
                 "total": total,
                 "high_quality": high_quality,
@@ -87,7 +85,7 @@ class EvolutionValidator:
     def _get_rule_metrics(self) -> Dict:
         """规则指标"""
         try:
-            conn = sqlite3.connect(self.rules_db)
+            conn = DatabaseManager.get(self.rules_db)._get_conn()
             cursor = conn.cursor()
             
             # 检查表名
@@ -134,8 +132,6 @@ class EvolutionValidator:
             except:
                 total_triggers = 0
             
-            conn.close()
-            
             return {
                 "total": total,
                 "active": active,
@@ -154,7 +150,7 @@ class EvolutionValidator:
     def _get_quality_metrics(self) -> Dict:
         """质量指标"""
         try:
-            conn = sqlite3.connect(self.stats_db)
+            conn = DatabaseManager.get(self.stats_db)._get_conn()
             cursor = conn.cursor()
             
             # 检查表名
@@ -205,8 +201,6 @@ class EvolutionValidator:
             except:
                 negative_feedback = 0
                 positive_feedback = 0
-            
-            conn.close()
             
             return {
                 "total_calls": total_calls,

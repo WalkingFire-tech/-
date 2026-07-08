@@ -8,13 +8,13 @@
 - get_best_tool()已标记为deprecated，建议使用ToolArbiter
 """
 import json
-import sqlite3
 import asyncio
 from pathlib import Path
 from typing import Dict, List, Optional, Type
 from datetime import datetime
 from loguru import logger
 from tools.base import Tool, ToolCategory, ToolResult
+from infrastructure.database_manager import DatabaseManager
 
 
 class ToolRegistry:
@@ -46,23 +46,23 @@ class ToolRegistry:
     
     def _init_stats_db(self):
         """初始化统计数据库"""
-        with sqlite3.connect(self._stats_db) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS tool_stats (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    tool_name TEXT,
-                    category TEXT,
-                    success BOOLEAN,
-                    execution_time REAL,
-                    error TEXT,
-                    timestamp TEXT,
-                    user_feedback INTEGER,
-                    input_params TEXT,
-                    output_summary TEXT
-                )
-            ''')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_tool ON tool_stats(tool_name)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_category ON tool_stats(category)')
+        conn = DatabaseManager.get(str(self._stats_db))._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS tool_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tool_name TEXT,
+                category TEXT,
+                success BOOLEAN,
+                execution_time REAL,
+                error TEXT,
+                timestamp TEXT,
+                user_feedback INTEGER,
+                input_params TEXT,
+                output_summary TEXT
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_tool ON tool_stats(tool_name)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_category ON tool_stats(category)')
     
     def register(self, tool: Tool, overwrite: bool = False):
         """注册工具"""
@@ -160,52 +160,52 @@ class ToolRegistry:
     def _record_stats(self, tool_name: str, category: ToolCategory, 
                      result: ToolResult, params: Dict):
         """记录统计"""
-        with sqlite3.connect(self._stats_db) as conn:
-            conn.execute('''
-                INSERT INTO tool_stats 
-                (tool_name, category, success, execution_time, error, timestamp, input_params, output_summary)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                tool_name,
-                category.value,
-                result.success,
-                result.execution_time,
-                result.error,
-                datetime.now().isoformat(),
-                json.dumps(params, ensure_ascii=False)[:500],
-                str(result.output)[:200] if result.output else None
-            ))
+        conn = DatabaseManager.get(str(self._stats_db))._get_conn()
+        conn.execute('''
+            INSERT INTO tool_stats 
+            (tool_name, category, success, execution_time, error, timestamp, input_params, output_summary)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            tool_name,
+            category.value,
+            result.success,
+            result.execution_time,
+            result.error,
+            datetime.now().isoformat(),
+            json.dumps(params, ensure_ascii=False)[:500],
+            str(result.output)[:200] if result.output else None
+        ))
     
     def get_tool_stats(self, tool_name: str) -> Dict:
         """获取工具统计"""
-        with sqlite3.connect(self._stats_db) as conn:
-            cur = conn.execute('''
-                SELECT 
-                    COUNT(*) as total,
-                    SUM(CASE WHEN success THEN 1 ELSE 0 END) as success_count,
-                    AVG(execution_time) as avg_time,
-                    AVG(CASE WHEN user_feedback IS NOT NULL THEN user_feedback ELSE 0 END) as avg_feedback
-                FROM tool_stats
-                WHERE tool_name = ?
-            ''', (tool_name,))
-            
-            row = cur.fetchone()
-            if row and row[0] > 0:
-                return {
-                    "total_calls": row[0],
-                    "success_count": row[1],
-                    "success_rate": row[1] / row[0],
-                    "avg_execution_time": row[2],
-                    "avg_feedback": row[3]
-                }
-            
+        conn = DatabaseManager.get(str(self._stats_db))._get_conn()
+        cur = conn.execute('''
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN success THEN 1 ELSE 0 END) as success_count,
+                AVG(execution_time) as avg_time,
+                AVG(CASE WHEN user_feedback IS NOT NULL THEN user_feedback ELSE 0 END) as avg_feedback
+            FROM tool_stats
+            WHERE tool_name = ?
+        ''', (tool_name,))
+        
+        row = cur.fetchone()
+        if row and row[0] > 0:
             return {
-                "total_calls": 0,
-                "success_count": 0,
-                "success_rate": 0.0,
-                "avg_execution_time": 0.0,
-                "avg_feedback": 0.0
+                "total_calls": row[0],
+                "success_count": row[1],
+                "success_rate": row[1] / row[0],
+                "avg_execution_time": row[2],
+                "avg_feedback": row[3]
             }
+        
+        return {
+            "total_calls": 0,
+            "success_count": 0,
+            "success_rate": 0.0,
+            "avg_execution_time": 0.0,
+            "avg_feedback": 0.0
+        }
     
     def get_best_tool(self, category: ToolCategory, min_success_rate: float = 0.5) -> Optional[Tool]:
         """
@@ -257,45 +257,45 @@ class ToolRegistry:
             feedback: 反馈值 (-1负面, 0中性, 1正面)
             record_id: 指定记录ID，None则更新最新记录
         """
-        with sqlite3.connect(self._stats_db) as conn:
-            if record_id:
-                conn.execute(
-                    'UPDATE tool_stats SET user_feedback = ? WHERE id = ?',
-                    (feedback, record_id)
+        conn = DatabaseManager.get(str(self._stats_db))._get_conn()
+        if record_id:
+            conn.execute(
+                'UPDATE tool_stats SET user_feedback = ? WHERE id = ?',
+                (feedback, record_id)
+            )
+        else:
+            conn.execute('''
+                UPDATE tool_stats
+                SET user_feedback = ?
+                WHERE id = (
+                    SELECT id FROM tool_stats
+                    WHERE tool_name = ?
+                    ORDER BY timestamp DESC LIMIT 1
                 )
-            else:
-                conn.execute('''
-                    UPDATE tool_stats
-                    SET user_feedback = ?
-                    WHERE id = (
-                        SELECT id FROM tool_stats
-                        WHERE tool_name = ?
-                        ORDER BY timestamp DESC LIMIT 1
-                    )
-                ''', (feedback, tool_name))
-            
-            conn.commit()
+            ''', (feedback, tool_name))
+        
+        conn.commit()
     
     def get_feedback_history(self, tool_name: str, limit: int = 10) -> List[Dict]:
         """获取工具反馈历史"""
-        with sqlite3.connect(self._stats_db) as conn:
-            cur = conn.execute('''
-                SELECT id, user_feedback, timestamp, success
-                FROM tool_stats
-                WHERE tool_name = ? AND user_feedback IS NOT NULL
-                ORDER BY timestamp DESC
-                LIMIT ?
-            ''', (tool_name, limit))
-            
-            return [
-                {
-                    "id": row[0],
-                    "feedback": row[1],
-                    "timestamp": row[2],
-                    "success": row[3]
-                }
-                for row in cur.fetchall()
-            ]
+        conn = DatabaseManager.get(str(self._stats_db))._get_conn()
+        cur = conn.execute('''
+            SELECT id, user_feedback, timestamp, success
+            FROM tool_stats
+            WHERE tool_name = ? AND user_feedback IS NOT NULL
+            ORDER BY timestamp DESC
+            LIMIT ?
+        ''', (tool_name, limit))
+        
+        return [
+            {
+                "id": row[0],
+                "feedback": row[1],
+                "timestamp": row[2],
+                "success": row[3]
+            }
+            for row in cur.fetchall()
+        ]
     
     def export_tools(self, file_path: str):
         """导出工具定义"""
@@ -316,25 +316,25 @@ class ToolRegistry:
     
     def get_statistics(self) -> Dict:
         """获取统计信息"""
-        with sqlite3.connect(self._stats_db) as conn:
-            # 总调用数
-            cur = conn.execute('SELECT COUNT(*) FROM tool_stats')
-            total_calls = cur.fetchone()[0]
-            
-            # 工具数量
-            total_tools = len(self._tools)
-            
-            # 按类别统计
-            cur = conn.execute('''
-                SELECT category, COUNT(*) as count
-                FROM tool_stats
-                GROUP BY category
-            ''')
-            by_category = {row[0]: row[1] for row in cur.fetchall()}
-            
-            # 成功率
-            cur = conn.execute('SELECT AVG(CASE WHEN success THEN 1.0 ELSE 0 END) FROM tool_stats')
-            success_rate = cur.fetchone()[0] or 0
+        conn = DatabaseManager.get(str(self._stats_db))._get_conn()
+        # 总调用数
+        cur = conn.execute('SELECT COUNT(*) FROM tool_stats')
+        total_calls = cur.fetchone()[0]
+        
+        # 工具数量
+        total_tools = len(self._tools)
+        
+        # 按类别统计
+        cur = conn.execute('''
+            SELECT category, COUNT(*) as count
+            FROM tool_stats
+            GROUP BY category
+        ''')
+        by_category = {row[0]: row[1] for row in cur.fetchall()}
+        
+        # 成功率
+        cur = conn.execute('SELECT AVG(CASE WHEN success THEN 1.0 ELSE 0 END) FROM tool_stats')
+        success_rate = cur.fetchone()[0] or 0
         
         return {
             "total_tools": total_tools,

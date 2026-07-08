@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from loguru import logger
 from infrastructure.event_bus import bus
 from infrastructure.config_manager import config
+from infrastructure.database_manager import DatabaseManager
 
 
 @dataclass
@@ -213,28 +214,26 @@ class ActiveLearner:
     
     def _save_learning_data(self, data: Dict):
         """保存学习数据到规则库"""
-        import sqlite3
-        
         db_path = config.get("learning_rules.db_path", "learning_rules.db")
         
         try:
-            with sqlite3.connect(db_path) as conn:
-                if data["type"] == "correction":
-                    # ✅ 修复SQL注入：对用户输入进行转义
-                    escaped_input = data['user_input'][:30].replace("'", "''")
-                    condition = f"raw_input LIKE '%{escaped_input}%'"
-                    action = f"correct_intent:{data.get('suggested_intent', 'chat')}"
-                    
-                    conn.execute('''
-                        INSERT INTO learning_rules
-                        (condition, action, priority, created_at, status, source)
-                        VALUES (?, ?, 5, ?, 'pending', 'user_correction')
-                    ''', (condition, action, datetime.now().isoformat()))
+            conn = DatabaseManager.get(db_path)._get_conn()
+            if data["type"] == "correction":
+                # ✅ 修复SQL注入：对用户输入进行转义
+                escaped_input = data['user_input'][:30].replace("'", "''")
+                condition = f"raw_input LIKE '%{escaped_input}%'"
+                action = f"correct_intent:{data.get('suggested_intent', 'chat')}"
                 
-                elif data["type"] == "confirmation":
-                    pass
-                
-                logger.debug(f"学习数据已保存: {data['type']}")
+                conn.execute('''
+                    INSERT INTO learning_rules
+                    (condition, action, priority, created_at, status, source)
+                    VALUES (?, ?, 5, ?, 'pending', 'user_correction')
+                ''', (condition, action, datetime.now().isoformat()))
+            
+            elif data["type"] == "confirmation":
+                pass
+            
+            logger.debug(f"学习数据已保存: {data['type']}")
         
         except Exception as e:
             logger.error(f"保存学习数据失败: {e}")
