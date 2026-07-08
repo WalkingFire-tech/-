@@ -101,24 +101,24 @@ class ReflectorAgent(BaseAgent):
         if not lessons:
             return
         try:
-            import sqlite3
+            from infrastructure.database_manager import DatabaseManager
             from datetime import datetime
-            with sqlite3.connect("data/spirit_lessons.db") as conn:
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS lessons (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        lesson TEXT,
-                        context TEXT,
-                        quality_score REAL,
-                        created_at TEXT
-                    )
-                ''')
-                for lesson in lessons:
-                    conn.execute(
-                        "INSERT INTO lessons (lesson, context, quality_score, created_at) VALUES (?, ?, ?, ?)",
-                        (lesson, query[:100], quality, datetime.now().isoformat()),
-                    )
-                conn.commit()
+            conn = DatabaseManager.get("data/spirit_lessons.db")._get_conn()
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS lessons (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lesson TEXT,
+                    context TEXT,
+                    quality_score REAL,
+                    created_at TEXT
+                )
+            ''')
+            for lesson in lessons:
+                conn.execute(
+                    "INSERT INTO lessons (lesson, context, quality_score, created_at) VALUES (?, ?, ?, ?)",
+                    (lesson, query[:100], quality, datetime.now().isoformat()),
+                )
+            conn.commit()
         except Exception as e:
             logger.debug(f"ReflectorAgent: 教训保存失败: {e}")
 

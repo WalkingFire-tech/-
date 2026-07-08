@@ -9,7 +9,7 @@ L4 自修复层 - 自动回滚 (Auto Rollback)
 import json
 import time
 import copy
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 from typing import Dict, List, Optional, Any
 from loguru import logger
 from datetime import datetime
@@ -27,7 +27,7 @@ class AutoRollback:
 
     def _init_db(self):
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = DatabaseManager.get(self.db_path)._get_conn()
             c = conn.cursor()
             c.execute('''CREATE TABLE IF NOT EXISTS snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +44,6 @@ class AutoRollback:
                 created_at TEXT
             )''')
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.debug(f"快照数据库初始化失败: {e}")
 
@@ -62,11 +61,10 @@ class AutoRollback:
         if len(self._snapshots[target]) > self.MAX_SNAPSHOTS:
             self._snapshots[target] = self._snapshots[target][-self.MAX_SNAPSHOTS:]
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = DatabaseManager.get(self.db_path)._get_conn()
             conn.execute("INSERT INTO snapshots (target, data, created_at) VALUES (?, ?, ?)",
                          (target, json.dumps(data, default=str, ensure_ascii=False)[:10000], datetime.now().isoformat()))
             conn.commit()
-            conn.close()
         except:
             pass
         return snapshot_id
@@ -87,11 +85,10 @@ class AutoRollback:
         if len(self._rollback_log) > 200:
             self._rollback_log = self._rollback_log[-200:]
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = DatabaseManager.get(self.db_path)._get_conn()
             conn.execute("INSERT INTO rollback_log (target, reason, entropy_before, entropy_after, created_at) VALUES (?, ?, ?, ?, ?)",
                          (target, reason, entropy, 0.0, datetime.now().isoformat()))
             conn.commit()
-            conn.close()
         except:
             pass
         logger.info(f"⏪ 自动回滚: {target} (原因: {reason}, 熵值: {entropy:.2f})")

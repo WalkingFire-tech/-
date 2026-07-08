@@ -12,7 +12,7 @@
 - 两者形成闭环：归因结果反馈给权重管理器
 """
 
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import time
 import json
 from typing import Dict, List, Tuple
@@ -28,18 +28,18 @@ class ContribAttributor:
     def _init_db(self):
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS attributions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    query TEXT,
-                    final_source TEXT,
-                    contributions TEXT,
-                    top_source TEXT,
-                    entropy REAL,
-                    created_at TEXT
-                )
-            ''')
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS attributions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query TEXT,
+                final_source TEXT,
+                contributions TEXT,
+                top_source TEXT,
+                entropy REAL,
+                created_at TEXT
+            )
+        ''')
 
     def compute_contributions(self, candidates: List[Dict], final_response: str,
                                final_source: str = "", query: str = "") -> Dict:
@@ -127,28 +127,28 @@ class ContribAttributor:
     def _save_attribution(self, query: str, final_source: str,
                            contributions: Dict, top_source: str, entropy: float):
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    INSERT INTO attributions (query, final_source, contributions, top_source, entropy, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (query[:200], final_source,
-                      json.dumps(contributions, ensure_ascii=False),
-                      top_source, entropy, datetime.now().isoformat()))
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            conn.execute('''
+                INSERT INTO attributions (query, final_source, contributions, top_source, entropy, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (query[:200], final_source,
+                  json.dumps(contributions, ensure_ascii=False),
+                  top_source, entropy, datetime.now().isoformat()))
         except Exception as e:
             logger.debug(f"归因保存失败: {e}")
 
     def get_recent_attributions(self, limit: int = 20) -> List[Dict]:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cur = conn.execute(
-                    "SELECT query, final_source, contributions, top_source, entropy, created_at FROM attributions ORDER BY id DESC LIMIT ?",
-                    (limit,)
-                )
-                return [
-                    {"query": r[0], "final_source": r[1], "contributions": json.loads(r[2]),
-                     "top_source": r[3], "entropy": r[4], "created_at": r[5]}
-                    for r in cur.fetchall()
-                ]
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cur = conn.execute(
+                "SELECT query, final_source, contributions, top_source, entropy, created_at FROM attributions ORDER BY id DESC LIMIT ?",
+                (limit,)
+            )
+            return [
+                {"query": r[0], "final_source": r[1], "contributions": json.loads(r[2]),
+                 "top_source": r[3], "entropy": r[4], "created_at": r[5]}
+                for r in cur.fetchall()
+            ]
         except Exception:
             return []
 

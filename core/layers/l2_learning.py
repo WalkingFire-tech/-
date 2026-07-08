@@ -16,7 +16,7 @@ L2: 学习层 - 集成状态报告
 from typing import Dict, Optional, List, Any
 from datetime import datetime
 from dataclasses import dataclass
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import os
 
 try:
@@ -81,23 +81,23 @@ class L2LearningLayer:
         db_path = "data/knowledge_store.db"
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         
-        with sqlite3.connect(db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS knowledge_items (
-                    id TEXT PRIMARY KEY,
-                    question TEXT,
-                    answer TEXT,
-                    source TEXT,
-                    knowledge_type TEXT,
-                    quality_score REAL,
-                    created_at TEXT,
-                    confidence REAL
-                )
-            ''')
-            
-            conn.commit()
+        conn = DatabaseManager.get(db_path)._get_conn()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS knowledge_items (
+                id TEXT PRIMARY KEY,
+                question TEXT,
+                answer TEXT,
+                source TEXT,
+                knowledge_type TEXT,
+                quality_score REAL,
+                created_at TEXT,
+                confidence REAL
+            )
+        ''')
+        
+        conn.commit()
     
     def learn(self, target: Dict, context: Optional[Dict] = None) -> LearningResult:
         """
@@ -223,26 +223,24 @@ class L2LearningLayer:
         try:
             db_path = "data/knowledge_store.db"
             
-            with sqlite3.connect(db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                
-                keywords = target.get('keywords', [])
-                if not keywords:
-                    return []
-                
-                # ✅ 修复SQL注入：使用参数化查询
-                placeholders = ' OR '.join(['question LIKE ?' for _ in keywords[:5]])
-                params = [f'%{kw}%' for kw in keywords[:5]]
-                
-                cursor = conn.execute(f'''
-                    SELECT id, question, answer, quality_score
-                    FROM knowledge_items
-                    WHERE {placeholders}
-                    ORDER BY quality_score DESC
-                    LIMIT 10
-                ''', params)
-                
-                return [dict(row) for row in cursor.fetchall()]
+            conn = DatabaseManager.get(db_path)._get_conn()
+            
+            keywords = target.get('keywords', [])
+            if not keywords:
+                return []
+            
+            placeholders = ' OR '.join(['question LIKE ?' for _ in keywords[:5]])
+            params = [f'%{kw}%' for kw in keywords[:5]]
+            
+            cursor = conn.execute(f'''
+                SELECT id, question, answer, quality_score
+                FROM knowledge_items
+                WHERE {placeholders}
+                ORDER BY quality_score DESC
+                LIMIT 10
+            ''', params)
+            
+            return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.warning(f"检索现有知识失败: {e}")
             return []
@@ -272,27 +270,26 @@ class L2LearningLayer:
         try:
             db_path = "data/knowledge_store.db"
             
-            with sqlite3.connect(db_path) as conn:
-                cursor = conn.cursor()
-                
-                for item in knowledge:
-                    # ✅ 使用 INSERT OR REPLACE 处理重复键
-                    cursor.execute('''
-                        INSERT OR REPLACE INTO knowledge_items 
-                        (id, question, answer, source, knowledge_type, quality_score, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        item.get('id', f"auto_{datetime.now().timestamp()}"),
-                        item.get('question', ''),
-                        item.get('answer', ''),
-                        item.get('source', 'unknown'),
-                        'external',
-                        item.get('quality_score', 50),
-                        datetime.now().isoformat()
-                    ))
-                    stored_ids.append(item.get('id', ''))
-                
-                conn.commit()
+            conn = DatabaseManager.get(db_path)._get_conn()
+            cursor = conn.cursor()
+            
+            for item in knowledge:
+                cursor.execute('''
+                    INSERT OR REPLACE INTO knowledge_items 
+                    (id, question, answer, source, knowledge_type, quality_score, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    item.get('id', f"auto_{datetime.now().timestamp()}"),
+                    item.get('question', ''),
+                    item.get('answer', ''),
+                    item.get('source', 'unknown'),
+                    'external',
+                    item.get('quality_score', 50),
+                    datetime.now().isoformat()
+                ))
+                stored_ids.append(item.get('id', ''))
+            
+            conn.commit()
         except Exception as e:
             logger.error(f"存储知识失败: {e}")
         

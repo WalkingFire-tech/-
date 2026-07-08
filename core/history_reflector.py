@@ -1,7 +1,7 @@
 """
 历史对话反思机制 - 从历史中自动发现错误并纠正
 """
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 from typing import List, Dict, Tuple
 from loguru import logger
 
@@ -148,25 +148,24 @@ class HistoryReflector:
         """获取最近的对话历史"""
         
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.execute('''
-                    SELECT question as user, answer as assistant, created_at
-                    FROM knowledge_items
-                    WHERE knowledge_type = 'chat'
-                    ORDER BY created_at DESC
-                    LIMIT ?
-                ''', (n,))
-                
-                history = []
-                for row in cursor.fetchall():
-                    history.append({
-                        'user': row['user'],
-                        'assistant': row['assistant'],
-                        'created_at': row['created_at']
-                    })
-                
-                return history
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.execute('''
+                SELECT question as user, answer as assistant, created_at
+                FROM knowledge_items
+                WHERE knowledge_type = 'chat'
+                ORDER BY created_at DESC
+                LIMIT ?
+            ''', (n,))
+            
+            history = []
+            for row in cursor.fetchall():
+                history.append({
+                    'user': row['user'],
+                    'assistant': row['assistant'],
+                    'created_at': row['created_at']
+                })
+            
+            return history
         except:
             return []
     

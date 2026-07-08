@@ -130,18 +130,17 @@ class LearningCommands:
     @staticmethod
     def knowledge_list(limit: int = 20) -> str:
         """列出知识库条目"""
-        import sqlite3
+        from infrastructure.database_manager import DatabaseManager
         
-        with sqlite3.connect('data/knowledge_store.db') as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute('''
-                SELECT question, source, knowledge_type, created_at
-                FROM knowledge_items
-                ORDER BY created_at DESC
-                LIMIT ?
-            ''', (limit,))
-            
-            rows = cursor.fetchall()
+        conn = DatabaseManager.get('data/knowledge_store.db')._get_conn()
+        cursor = conn.execute('''
+            SELECT question, source, knowledge_type, created_at
+            FROM knowledge_items
+            ORDER BY created_at DESC
+            LIMIT ?
+        ''', (limit,))
+        
+        rows = cursor.fetchall()
         
         if not rows:
             return "知识库为空"
@@ -160,17 +159,16 @@ class LearningCommands:
     @staticmethod
     def tools_list() -> str:
         """列出自动生成的工具"""
-        import sqlite3
+        from infrastructure.database_manager import DatabaseManager
         
-        with sqlite3.connect('data/knowledge_store.db') as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute('''
-                SELECT name, description, usage_count, created_at
-                FROM tools
-                ORDER BY usage_count DESC
-            ''')
-            
-            rows = cursor.fetchall()
+        conn = DatabaseManager.get('data/knowledge_store.db')._get_conn()
+        cursor = conn.execute('''
+            SELECT name, description, usage_count, created_at
+            FROM tools
+            ORDER BY usage_count DESC
+        ''')
+        
+        rows = cursor.fetchall()
         
         if not rows:
             return "暂无自动生成的工具"

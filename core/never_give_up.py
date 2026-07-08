@@ -194,12 +194,11 @@ class NeverGiveUpEngine:
     async def _try_knowledge_retrieval(self, question: str) -> Dict:
         """尝试知识检索"""
         try:
-            import sqlite3
-            conn = sqlite3.connect("data/knowledge_store.db")
+            from infrastructure.database_manager import DatabaseManager
+            conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
             cursor = conn.cursor()
             cursor.execute("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{question[:30]}%",))
             row = cursor.fetchone()
-            conn.close()
             if row:
                 return {"success": True, "answer": row[0], "confidence": 0.8}
         except:
@@ -267,12 +266,11 @@ class NeverGiveUpEngine:
     async def _try_experience_recall(self, question: str) -> Dict:
         """尝试经验回顾"""
         try:
-            import sqlite3
-            conn = sqlite3.connect("data/experience_pool.db")
+            from infrastructure.database_manager import DatabaseManager
+            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
             cursor = conn.cursor()
             cursor.execute("SELECT response FROM experiences WHERE query LIKE ? ORDER BY timestamp DESC LIMIT 1", (f"%{question[:20]}%",))
             row = cursor.fetchone()
-            conn.close()
             if row:
                 return {"success": True, "answer": row[0], "confidence": 0.6}
         except:

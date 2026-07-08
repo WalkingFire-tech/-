@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -213,48 +214,46 @@ class SystemIntrospector:
     def _check_data_loops(self) -> List[Anomaly]:
         anomalies = []
         try:
-            import sqlite3
-            with sqlite3.connect("data/experience_pool.db") as conn:
-                cur = conn.execute("SELECT COUNT(*) FROM experiences WHERE success = 0")
-                fail_count = cur.fetchone()[0]
-                cur2 = conn.execute("SELECT COUNT(*) FROM experiences")
-                total = cur2.fetchone()[0]
-                if total > 0 and fail_count / total > 0.5:
-                    anomalies.append(Anomaly(
-                        id=f"data_exp_{int(time.time())}",
-                        title="经验池失败率过高",
-                        description=f"经验池失败率{fail_count/total:.1%}({fail_count}/{total})",
-                        severity=AnomalySeverity.MAJOR,
-                        category=AnomalyCategory.DATA_LOOP,
-                        detected_at=datetime.now().isoformat(),
-                        metric_name="experience_failure_rate",
-                        metric_value=round(fail_count / total, 3),
-                        threshold=0.5,
-                        suggestion="检查推理路径配置，可能需要调整模型或搜索策略",
-                    ))
+            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
+            cur = conn.execute("SELECT COUNT(*) FROM experiences WHERE success = 0")
+            fail_count = cur.fetchone()[0]
+            cur2 = conn.execute("SELECT COUNT(*) FROM experiences")
+            total = cur2.fetchone()[0]
+            if total > 0 and fail_count / total > 0.5:
+                anomalies.append(Anomaly(
+                    id=f"data_exp_{int(time.time())}",
+                    title="经验池失败率过高",
+                    description=f"经验池失败率{fail_count/total:.1%}({fail_count}/{total})",
+                    severity=AnomalySeverity.MAJOR,
+                    category=AnomalyCategory.DATA_LOOP,
+                    detected_at=datetime.now().isoformat(),
+                    metric_name="experience_failure_rate",
+                    metric_value=round(fail_count / total, 3),
+                    threshold=0.5,
+                    suggestion="检查推理路径配置，可能需要调整模型或搜索策略",
+                ))
         except Exception:
             pass
 
         try:
-            import sqlite3
-            with sqlite3.connect("data/rule_store.db") as conn:
-                cur = conn.execute("SELECT COUNT(*) FROM rules WHERE apply_count > 0")
-                active = cur.fetchone()[0]
-                cur2 = conn.execute("SELECT COUNT(*) FROM rules WHERE status = 'active'")
-                total_active = cur2.fetchone()[0]
-                if total_active > 0 and active / total_active < 0.1:
-                    anomalies.append(Anomaly(
-                        id=f"data_rule_{int(time.time())}",
-                        title="规则使用率过低",
-                        description=f"活跃规则中使用率<10%: {active}/{total_active}",
-                        severity=AnomalySeverity.MINOR,
-                        category=AnomalyCategory.DATA_LOOP,
-                        detected_at=datetime.now().isoformat(),
-                        metric_name="rule_usage_rate",
-                        metric_value=round(active / total_active, 3),
-                        threshold=0.1,
-                        suggestion="检查规则条件是否过于严格，或context变量是否缺失",
-                    ))
+            conn = DatabaseManager.get("data/rule_store.db")._get_conn()
+            cur = conn.execute("SELECT COUNT(*) FROM rules WHERE apply_count > 0")
+            active = cur.fetchone()[0]
+            cur2 = conn.execute("SELECT COUNT(*) FROM rules WHERE status = 'active'")
+            total_active = cur2.fetchone()[0]
+            if total_active > 0 and active / total_active < 0.1:
+                anomalies.append(Anomaly(
+                    id=f"data_rule_{int(time.time())}",
+                    title="规则使用率过低",
+                    description=f"活跃规则中使用率<10%: {active}/{total_active}",
+                    severity=AnomalySeverity.MINOR,
+                    category=AnomalyCategory.DATA_LOOP,
+                    detected_at=datetime.now().isoformat(),
+                    metric_name="rule_usage_rate",
+                    metric_value=round(active / total_active, 3),
+                    threshold=0.1,
+                    suggestion="检查规则条件是否过于严格，或context变量是否缺失",
+                ))
         except Exception:
             pass
 
@@ -305,25 +304,24 @@ class SystemIntrospector:
     def _check_performance(self) -> List[Anomaly]:
         anomalies = []
         try:
-            import sqlite3
-            with sqlite3.connect("data/experience_pool.db") as conn:
-                cur = conn.execute(
-                    "SELECT AVG(duration) FROM experiences WHERE timestamp > datetime('now', '-1 hour')"
-                )
-                avg_duration = cur.fetchone()[0]
-                if avg_duration and avg_duration > 30:
-                    anomalies.append(Anomaly(
-                        id=f"perf_dur_{int(time.time())}",
-                        title="平均响应时间过长",
-                        description=f"近1小时平均响应时间{avg_duration:.1f}秒",
-                        severity=AnomalySeverity.MAJOR if avg_duration > 60 else AnomalySeverity.MINOR,
-                        category=AnomalyCategory.PERFORMANCE,
-                        detected_at=datetime.now().isoformat(),
-                        metric_name="avg_response_duration",
-                        metric_value=round(avg_duration, 1),
-                        threshold=30,
-                        suggestion="检查Ollama并发控制、模型加载时间、网络延迟",
-                    ))
+            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
+            cur = conn.execute(
+                "SELECT AVG(duration) FROM experiences WHERE timestamp > datetime('now', '-1 hour')"
+            )
+            avg_duration = cur.fetchone()[0]
+            if avg_duration and avg_duration > 30:
+                anomalies.append(Anomaly(
+                    id=f"perf_dur_{int(time.time())}",
+                    title="平均响应时间过长",
+                    description=f"近1小时平均响应时间{avg_duration:.1f}秒",
+                    severity=AnomalySeverity.MAJOR if avg_duration > 60 else AnomalySeverity.MINOR,
+                    category=AnomalyCategory.PERFORMANCE,
+                    detected_at=datetime.now().isoformat(),
+                    metric_name="avg_response_duration",
+                    metric_value=round(avg_duration, 1),
+                    threshold=30,
+                    suggestion="检查Ollama并发控制、模型加载时间、网络延迟",
+                ))
         except Exception:
             pass
         return anomalies

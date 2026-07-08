@@ -9,6 +9,7 @@ import schedule
 from pathlib import Path
 from datetime import datetime
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 ROOT_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT_DIR))
@@ -101,7 +102,7 @@ class ModelFreeEvolution:
     
     def _learn_from_external_search(self, target: dict):
         """通过外部搜索学习（无需LLM）"""
-        import sqlite3
+
         import json
         
         target_name = target['name']
@@ -120,29 +121,27 @@ class ModelFreeEvolution:
                     results = list(ddgs.text(f"{target_name} {keyword}", max_results=3))
                 
                 if results:
-                    # 直接存储搜索结果为知识
-                    with sqlite3.connect("data/knowledge_store.db") as conn:
-                        for result in results:
-                            question = f"{target_name}: {keyword}"
-                            answer = f"{result.get('title', '')}\n\n{result.get('body', '')}"
-                            source = result.get('href', 'external_search')
-                            
-                            # 检查是否已存在
-                            cursor = conn.execute(
-                                "SELECT id FROM knowledge_items WHERE question = ?",
-                                (question,)
-                            )
-                            
-                            if not cursor.fetchone():
-                                conn.execute('''
-                                    INSERT INTO knowledge_items 
-                                    (question, answer, source, knowledge_type, quality_score, created_at)
-                                    VALUES (?, ?, ?, 'external', 50.0, ?)
-                                ''', (question, answer, source, datetime.now().isoformat()))
-                                
-                                knowledge_gained += 1
+                    conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
+                    for result in results:
+                        question = f"{target_name}: {keyword}"
+                        answer = f"{result.get('title', '')}\n\n{result.get('body', '')}"
+                        source = result.get('href', 'external_search')
                         
-                        conn.commit()
+                        cursor = conn.execute(
+                            "SELECT id FROM knowledge_items WHERE question = ?",
+                            (question,)
+                        )
+                        
+                        if not cursor.fetchone():
+                            conn.execute('''
+                                INSERT INTO knowledge_items 
+                                (question, answer, source, knowledge_type, quality_score, created_at)
+                                VALUES (?, ?, ?, 'external', 50.0, ?)
+                            ''', (question, answer, source, datetime.now().isoformat()))
+                            
+                            knowledge_gained += 1
+                    
+                    conn.commit()
                 
                 logger.info(f"    - {keyword}: 获得{len(results)}条知识")
                 
@@ -180,49 +179,42 @@ class ModelFreeEvolution:
     
     def _collect_fitness_stats(self) -> dict:
         """收集适应度统计（纯数据分析）"""
-        import sqlite3
-        
         try:
-            with sqlite3.connect("data/knowledge_store.db") as conn:
-                conn.row_factory = sqlite3.Row
-                
-                # 知识命中率
-                cur = conn.execute('''
-                    SELECT 
-                        COUNT(CASE WHEN quality_score >= 60 THEN 1 END) as hits,
-                        COUNT(*) as total
-                    FROM knowledge_items
-                ''')
-                row = cur.fetchone()
-                hit_rate = (row['hits'] / row['total']) if row['total'] > 0 else 0.5
-                
-                # 平均质量
-                cur = conn.execute("SELECT AVG(quality_score) as avg FROM knowledge_items")
-                avg_quality = cur.fetchone()['avg'] or 50.0
-                
-                # 访问频率
-                cur = conn.execute('''
-                    SELECT AVG(access_count) as avg_access 
-                    FROM knowledge_items 
-                    WHERE access_count > 0
-                ''')
-                avg_access = cur.fetchone()['avg_access'] or 1.0
-                
-                # 知识多样性
-                cur = conn.execute('''
-                    SELECT COUNT(DISTINCT knowledge_type) as types
-                    FROM knowledge_items
-                ''')
-                diversity = cur.fetchone()['types'] / 10.0  # 归一化
-                
-                return {
-                    'like_rate': min(avg_access / 5.0, 1.0),  # 访问频率作为点赞代理
-                    'hit_rate': hit_rate,
-                    'dialog_reduction': 0.1,  # 默认值
-                    'external_reduction': 0.05,
-                    'efficiency': avg_quality / 100.0,
-                    'diversity': diversity
-                }
+            conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
+            
+            cur = conn.execute('''
+                SELECT 
+                    COUNT(CASE WHEN quality_score >= 60 THEN 1 END) as hits,
+                    COUNT(*) as total
+                FROM knowledge_items
+            ''')
+            row = cur.fetchone()
+            hit_rate = (row['hits'] / row['total']) if row['total'] > 0 else 0.5
+            
+            cur = conn.execute("SELECT AVG(quality_score) as avg FROM knowledge_items")
+            avg_quality = cur.fetchone()['avg'] or 50.0
+            
+            cur = conn.execute('''
+                SELECT AVG(access_count) as avg_access 
+                FROM knowledge_items 
+                WHERE access_count > 0
+            ''')
+            avg_access = cur.fetchone()['avg_access'] or 1.0
+            
+            cur = conn.execute('''
+                SELECT COUNT(DISTINCT knowledge_type) as types
+                FROM knowledge_items
+            ''')
+            diversity = cur.fetchone()['types'] / 10.0
+            
+            return {
+                'like_rate': min(avg_access / 5.0, 1.0),
+                'hit_rate': hit_rate,
+                'dialog_reduction': 0.1,
+                'external_reduction': 0.05,
+                'efficiency': avg_quality / 100.0,
+                'diversity': diversity
+            }
         except Exception as e:
             logger.error(f"收集统计失败: {e}")
             return {
@@ -272,29 +264,26 @@ class ModelFreeEvolution:
         """知识清理周期 - 基于质量衰减"""
         logger.info("🗑️ [知识清理] 清理低质量知识...")
         
-        import sqlite3
         from datetime import timedelta
         
         try:
-            with sqlite3.connect("data/knowledge_store.db") as conn:
-                # 质量衰减
-                conn.execute('''
-                    UPDATE knowledge_items
-                    SET quality_score = quality_score * 0.95
-                    WHERE last_accessed < ?
-                ''', ((datetime.now() - timedelta(days=30)).isoformat(),))
-                
-                # 删除低质量知识
-                cursor = conn.execute('''
-                    DELETE FROM knowledge_items
-                    WHERE quality_score < 10.0
-                    AND knowledge_type != 'important'
-                ''')
-                
-                deleted = cursor.rowcount
-                conn.commit()
-                
-                logger.info(f"  ✅ 清理{deleted}条低质量知识")
+            conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
+            conn.execute('''
+                UPDATE knowledge_items
+                SET quality_score = quality_score * 0.95
+                WHERE last_accessed < ?
+            ''', ((datetime.now() - timedelta(days=30)).isoformat(),))
+            
+            cursor = conn.execute('''
+                DELETE FROM knowledge_items
+                WHERE quality_score < 10.0
+                AND knowledge_type != 'important'
+            ''')
+            
+            deleted = cursor.rowcount
+            conn.commit()
+            
+            logger.info(f"  ✅ 清理{deleted}条低质量知识")
                 
         except Exception as e:
             logger.error(f"知识清理失败: {e}")

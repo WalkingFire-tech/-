@@ -29,19 +29,19 @@ class ReactEnhancer:
     def _init_db(self):
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
-        import sqlite3
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS gap_analysis (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    query TEXT,
-                    gap_type TEXT,
-                    focus TEXT,
-                    severity REAL,
-                    iteration INTEGER,
-                    timestamp TEXT
-                )
-            ''')
+        from infrastructure.database_manager import DatabaseManager
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS gap_analysis (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query TEXT,
+                gap_type TEXT,
+                focus TEXT,
+                severity REAL,
+                iteration INTEGER,
+                timestamp TEXT
+            )
+        ''')
 
     def identify_gap(self, previous_attempt: Dict) -> Dict:
         coverage = previous_attempt.get("coverage", {})
@@ -112,13 +112,13 @@ class ReactEnhancer:
 
     def _save_gap(self, gap: Dict, query: str, iteration: int):
         try:
-            import sqlite3
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    INSERT INTO gap_analysis (query, gap_type, focus, severity, iteration, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (query[:200], gap.get("gap_type", ""), gap.get("focus", ""),
-                      gap.get("severity", 0), iteration, datetime.now().isoformat()))
+            from infrastructure.database_manager import DatabaseManager
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            conn.execute('''
+                INSERT INTO gap_analysis (query, gap_type, focus, severity, iteration, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (query[:200], gap.get("gap_type", ""), gap.get("focus", ""),
+                  gap.get("severity", 0), iteration, datetime.now().isoformat()))
         except Exception as e:
             logger.debug(f"短板分析保存失败: {e}")
 

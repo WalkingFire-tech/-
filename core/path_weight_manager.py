@@ -13,7 +13,7 @@
 - 置信度分布 = 加权贡献度（类似SHAP值）
 """
 
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import time
 import json
 from typing import Dict, List, Optional
@@ -47,33 +47,33 @@ class PathWeightManager:
     def _init_db(self):
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS path_weights (
-                    path_name TEXT PRIMARY KEY,
-                    weight REAL,
-                    success_rate REAL,
-                    total_uses INTEGER DEFAULT 0,
-                    total_successes INTEGER DEFAULT 0,
-                    last_updated TEXT
-                )
-            ''')
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS weight_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    path_name TEXT,
-                    old_weight REAL,
-                    new_weight REAL,
-                    success BOOLEAN,
-                    confidence REAL,
-                    timestamp TEXT
-                )
-            ''')
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS path_weights (
+                path_name TEXT PRIMARY KEY,
+                weight REAL,
+                success_rate REAL,
+                total_uses INTEGER DEFAULT 0,
+                total_successes INTEGER DEFAULT 0,
+                last_updated TEXT
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS weight_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path_name TEXT,
+                old_weight REAL,
+                new_weight REAL,
+                success BOOLEAN,
+                confidence REAL,
+                timestamp TEXT
+            )
+        ''')
 
     def _load_weights(self):
-        with sqlite3.connect(self.db_path) as conn:
-            cur = conn.execute("SELECT path_name, weight, success_rate, total_uses, total_successes FROM path_weights")
-            rows = cur.fetchall()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        cur = conn.execute("SELECT path_name, weight, success_rate, total_uses, total_successes FROM path_weights")
+        rows = cur.fetchall()
         if rows:
             for name, weight, sr, uses, succ in rows:
                 self._paths[name] = {
@@ -95,14 +95,14 @@ class PathWeightManager:
             self._save_all_weights()
 
     def _save_all_weights(self):
-        with sqlite3.connect(self.db_path) as conn:
-            for name, info in self._paths.items():
-                conn.execute('''
-                    INSERT OR REPLACE INTO path_weights (path_name, weight, success_rate, total_uses, total_successes, last_updated)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (name, info["weight"], info["success_rate"],
-                      info["total_uses"], info["total_successes"],
-                      datetime.now().isoformat()))
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        for name, info in self._paths.items():
+            conn.execute('''
+                INSERT OR REPLACE INTO path_weights (path_name, weight, success_rate, total_uses, total_successes, last_updated)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (name, info["weight"], info["success_rate"],
+                  info["total_uses"], info["total_successes"],
+                  datetime.now().isoformat()))
 
     def update_weight(self, path: str, success: bool, confidence: float = 0.5,
                       uncertainty: float = None, retrieval_entropy: float = None):
@@ -167,17 +167,17 @@ class PathWeightManager:
 
     def _save_path_weight(self, path: str):
         info = self._paths[path]
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT OR REPLACE INTO path_weights (path_name, weight, success_rate, total_uses, total_successes, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (path, info["weight"], info["success_rate"],
-                  info["total_uses"], info["total_successes"],
-                  datetime.now().isoformat()))
-            conn.execute('''
-                INSERT INTO weight_history (path_name, old_weight, new_weight, success, confidence, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (path, info["weight"], info["weight"], True, 0.5, datetime.now().isoformat()))
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''
+            INSERT OR REPLACE INTO path_weights (path_name, weight, success_rate, total_uses, total_successes, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (path, info["weight"], info["success_rate"],
+              info["total_uses"], info["total_successes"],
+              datetime.now().isoformat()))
+        conn.execute('''
+            INSERT INTO weight_history (path_name, old_weight, new_weight, success, confidence, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (path, info["weight"], info["weight"], True, 0.5, datetime.now().isoformat()))
 
     def apply_decay(self):
         for name, info in self._paths.items():

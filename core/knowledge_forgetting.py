@@ -13,7 +13,7 @@
   - 淡化（fade）：保留价值中等，降低优先级但不删除
   - 清除（prune）：保留价值低，删除以释放资源
 """
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import json
 from typing import Dict, List, Tuple
 from datetime import datetime, timedelta
@@ -30,8 +30,8 @@ class KnowledgeForgetting:
         self.root_dir = root_dir
         self._last_report: Dict = {}
 
-    def _db(self, name: str) -> sqlite3.Connection:
-        return sqlite3.connect(f"{self.root_dir}/data/{name}")
+    def _db(self, name: str):
+        return DatabaseManager.get(f"{self.root_dir}/data/{name}")._get_conn()
 
     def evaluate_rules(self) -> dict:
         result = {"retain": [], "fade": [], "prune": [], "stats": {}}
@@ -40,7 +40,7 @@ class KnowledgeForgetting:
             c = conn.cursor()
             c.execute("SELECT id, condition, action, confidence, status, apply_count, last_applied, created_at, success_count, trial_count FROM learning_rules")
             rows = c.fetchall()
-            conn.close()
+
 
             for row in rows:
                 rid, condition, action, confidence, status, apply_count, last_applied, created_at, success_count, trial_count = row
@@ -88,7 +88,7 @@ class KnowledgeForgetting:
             total = c.fetchone()[0]
             c.execute("SELECT id, raw_input, success, quality_score, timestamp, intent_type FROM experiences ORDER BY timestamp DESC LIMIT 500")
             rows = c.fetchall()
-            conn.close()
+
 
             for row in rows:
                 eid, raw_input, success, quality, timestamp, intent_type = row
@@ -250,7 +250,7 @@ class KnowledgeForgetting:
 
             if not dry_run:
                 conn.commit()
-            conn.close()
+
         except Exception as e:
             logger.error(f"规则遗忘执行失败: {e}")
             result["error"] = str(e)[:100]
@@ -281,7 +281,7 @@ class KnowledgeForgetting:
 
             if not dry_run:
                 conn.commit()
-            conn.close()
+
         except Exception as e:
             logger.error(f"经验遗忘执行失败: {e}")
 

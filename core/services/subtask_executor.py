@@ -385,8 +385,8 @@ class SubTaskExecutor:
     def _store_execution_stats(self, stats: Dict):
         """存储执行统计到数据库"""
         try:
-            import sqlite3
-            conn = sqlite3.connect('data/task_decomposition.db')
+            from infrastructure.database_manager import DatabaseManager
+            conn = DatabaseManager.get('data/task_decomposition.db')._get_conn()
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS execution_stats (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -403,7 +403,7 @@ class SubTaskExecutor:
             ''', (stats['total'], stats['success'], stats['failed'], 
                   stats['total_duration'], stats['timestamp']))
             conn.commit()
-            conn.close()
+
         except Exception as e:
             logger.debug(f"存储执行统计失败: {e}")
     

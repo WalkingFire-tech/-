@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from collections import Counter
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import re
 from pathlib import Path
 
@@ -105,36 +105,34 @@ class CapabilityGapDiagnoser:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        with sqlite3.connect(self.db_path) as conn:
-            # 交互记录表
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS interactions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT NOT NULL,
-                    question TEXT NOT NULL,
-                    response TEXT,
-                    success INTEGER DEFAULT 0,
-                    failure_type TEXT,
-                    confidence REAL DEFAULT 0,
-                    metadata TEXT
-                )
-            ''')
-            
-            # 缺口报告表
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS gap_reports (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    period TEXT NOT NULL,
-                    generated_at TEXT NOT NULL,
-                    total_interactions INTEGER,
-                    failed_interactions INTEGER,
-                    failure_rate REAL,
-                    gaps TEXT,
-                    recommendations TEXT
-                )
-            ''')
-            
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS interactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                question TEXT NOT NULL,
+                response TEXT,
+                success INTEGER DEFAULT 0,
+                failure_type TEXT,
+                confidence REAL DEFAULT 0,
+                metadata TEXT
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS gap_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                period TEXT NOT NULL,
+                generated_at TEXT NOT NULL,
+                total_interactions INTEGER,
+                failed_interactions INTEGER,
+                failure_rate REAL,
+                gaps TEXT,
+                recommendations TEXT
+            )
+        ''')
+        
+        conn.commit()
         logger.info(f"🔍 能力缺口诊断器已初始化: {self.db_path}")
     
     def record_interaction(
@@ -159,21 +157,21 @@ class CapabilityGapDiagnoser:
         """
         import json
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT INTO interactions
-                (timestamp, question, response, success, failure_type, confidence, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                datetime.now().isoformat(),
-                question,
-                response,
-                1 if success else 0,
-                failure_type,
-                confidence,
-                json.dumps(metadata or {}, ensure_ascii=False)
-            ))
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''
+            INSERT INTO interactions
+            (timestamp, question, response, success, failure_type, confidence, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            datetime.now().isoformat(),
+            question,
+            response,
+            1 if success else 0,
+            failure_type,
+            confidence,
+            json.dumps(metadata or {}, ensure_ascii=False)
+        ))
+        conn.commit()
     
     def diagnose(self, period: str = "week") -> GapReport:
         """
@@ -197,16 +195,15 @@ class CapabilityGapDiagnoser:
             start_time = now - timedelta(weeks=1)
         
         # 查询交互记录
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            cursor = conn.execute('''
-                SELECT * FROM interactions
-                WHERE timestamp >= ?
-                ORDER BY timestamp DESC
-            ''', (start_time.isoformat(),))
-            
-            interactions = [dict(row) for row in cursor.fetchall()]
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        
+        cursor = conn.execute('''
+            SELECT * FROM interactions
+            WHERE timestamp >= ?
+            ORDER BY timestamp DESC
+        ''', (start_time.isoformat(),))
+        
+        interactions = [dict(row) for row in cursor.fetchall()]
         
         # 统计
         total = len(interactions)
@@ -333,29 +330,29 @@ class CapabilityGapDiagnoser:
         """保存报告"""
         import json
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT INTO gap_reports
-                (period, generated_at, total_interactions, failed_interactions,
-                 failure_rate, gaps, recommendations)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                report.period,
-                report.generated_at,
-                report.total_interactions,
-                report.failed_interactions,
-                report.failure_rate,
-                json.dumps([{
-                    'type': g.gap_type,
-                    'category': g.category,
-                    'frequency': g.frequency,
-                    'severity': g.severity,
-                    'module': g.suggested_module,
-                    'priority': g.priority
-                } for g in report.gaps], ensure_ascii=False),
-                json.dumps(report.recommendations, ensure_ascii=False)
-            ))
-            conn.commit()
+        conn = DatabaseManager.get(self.db_path)._get_conn()
+        conn.execute('''
+            INSERT INTO gap_reports
+            (period, generated_at, total_interactions, failed_interactions,
+             failure_rate, gaps, recommendations)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            report.period,
+            report.generated_at,
+            report.total_interactions,
+            report.failed_interactions,
+            report.failure_rate,
+            json.dumps([{
+                'type': g.gap_type,
+                'category': g.category,
+                'frequency': g.frequency,
+                'severity': g.severity,
+                'module': g.suggested_module,
+                'priority': g.priority
+            } for g in report.gaps], ensure_ascii=False),
+            json.dumps(report.recommendations, ensure_ascii=False)
+        ))
+        conn.commit()
     
     def format_report(self, report: GapReport) -> str:
         """格式化报告"""

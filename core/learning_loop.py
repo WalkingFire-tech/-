@@ -7,7 +7,7 @@
 4. 存储高质量知识
 5. 形成学习闭环
 """
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import json
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -75,20 +75,20 @@ class LearningLoop:
         
         # 4. 检查知识库是否有相关知识
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute(
-                    'SELECT COUNT(*) FROM knowledge_items WHERE question LIKE ? OR answer LIKE ?',
-                    (f'%{question[:30]}%', f'%{question[:30]}%')
-                )
-                knowledge_count = cursor.fetchone()[0]
-                
-                if knowledge_count == 0:
-                    result.update({
-                        "has_gap": True,
-                        "gap_type": "unknown_topic",
-                        "severity": 0.5,
-                        "learning_priority": "medium"
-                    })
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.execute(
+                'SELECT COUNT(*) FROM knowledge_items WHERE question LIKE ? OR answer LIKE ?',
+                (f'%{question[:30]}%', f'%{question[:30]}%')
+            )
+            knowledge_count = cursor.fetchone()[0]
+            
+            if knowledge_count == 0:
+                result.update({
+                    "has_gap": True,
+                    "gap_type": "unknown_topic",
+                    "severity": 0.5,
+                    "learning_priority": "medium"
+                })
         except:
             pass
         
@@ -224,29 +224,27 @@ class LearningLoop:
         saved_count = 0
         
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                # 存储搜索结果
-                for sr in search_results:
-                    answer = f"{sr.get('title', '')}\n\n{sr.get('body', '')}"
-                    source = sr.get('href', 'search_learned')
-                    
-                    conn.execute('''
-                        INSERT INTO knowledge_items 
-                        (question, answer, source, knowledge_type, quality_score, created_at)
-                        VALUES (?, ?, ?, 'search_learned', 50.0, ?)
-                    ''', (question, answer, source, datetime.now().isoformat()))
-                    saved_count += 1
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            for sr in search_results:
+                answer = f"{sr.get('title', '')}\n\n{sr.get('body', '')}"
+                source = sr.get('href', 'search_learned')
                 
-                # 存储分析结果
-                if analysis:
-                    conn.execute('''
-                        INSERT INTO knowledge_items 
-                        (question, answer, source, knowledge_type, quality_score, created_at)
-                        VALUES (?, ?, 'analysis', 'learning_analysis', 60.0, ?)
-                    ''', (f"{question} - 学习分析", analysis, datetime.now().isoformat()))
-                    saved_count += 1
-                
-                conn.commit()
+                conn.execute('''
+                    INSERT INTO knowledge_items 
+                    (question, answer, source, knowledge_type, quality_score, created_at)
+                    VALUES (?, ?, ?, 'search_learned', 50.0, ?)
+                ''', (question, answer, source, datetime.now().isoformat()))
+                saved_count += 1
+            
+            if analysis:
+                conn.execute('''
+                    INSERT INTO knowledge_items 
+                    (question, answer, source, knowledge_type, quality_score, created_at)
+                    VALUES (?, ?, 'analysis', 'learning_analysis', 60.0, ?)
+                ''', (f"{question} - 学习分析", analysis, datetime.now().isoformat()))
+                saved_count += 1
+            
+            conn.commit()
                 
         except Exception as e:
             logger.error(f"存储知识失败: {e}")
@@ -270,27 +268,25 @@ class LearningLoop:
             if not keywords:
                 return
             
-            with sqlite3.connect(self.db_path) as conn:
-                # 检查是否已有规则
-                cursor = conn.execute(
-                    'SELECT 1 FROM learning_rules WHERE trigger_pattern LIKE ?',
-                    (f'%{keywords[0]}%',)
-                )
-                
-                if not cursor.fetchone():
-                    # 创建新规则
-                    conn.execute('''
-                        INSERT INTO learning_rules 
-                        (trigger_pattern, action, confidence, source, created_at)
-                        VALUES (?, ?, ?, 'auto_learned', ?)
-                    ''', (
-                        f"问题包含'{keywords[0]}'",
-                        f"优先搜索学习关于'{keywords[0]}'的知识",
-                        0.7,
-                        datetime.now().isoformat()
-                    ))
-                    conn.commit()
-                    logger.info(f"生成学习规则: {keywords[0]}")
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cursor = conn.execute(
+                'SELECT 1 FROM learning_rules WHERE trigger_pattern LIKE ?',
+                (f'%{keywords[0]}%',)
+            )
+            
+            if not cursor.fetchone():
+                conn.execute('''
+                    INSERT INTO learning_rules 
+                    (trigger_pattern, action, confidence, source, created_at)
+                    VALUES (?, ?, ?, 'auto_learned', ?)
+                ''', (
+                    f"问题包含'{keywords[0]}'",
+                    f"优先搜索学习关于'{keywords[0]}'的知识",
+                    0.7,
+                    datetime.now().isoformat()
+                ))
+                conn.commit()
+                logger.info(f"生成学习规则: {keywords[0]}")
                     
         except Exception as e:
             logger.error(f"生成学习规则失败: {e}")

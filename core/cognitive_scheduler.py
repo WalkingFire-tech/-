@@ -5,7 +5,7 @@
 
 import threading
 import time
-import sqlite3
+from infrastructure.database_manager import DatabaseManager
 import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
@@ -302,30 +302,29 @@ class SystemStateSensor:
     def _get_knowledge_stats(self) -> Dict:
         """获取知识库统计"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                
-                cur = conn.execute('''
-                    SELECT 
-                        COUNT(*) as total,
-                        AVG(quality_score) as avg_quality,
-                        MAX(quality_score) as max_quality,
-                        MIN(quality_score) as min_quality,
-                        COUNT(CASE WHEN quality_score < 20 THEN 1 END) as low_quality,
-                        AVG(access_count) as avg_access
-                    FROM knowledge_items
-                    WHERE knowledge_type = 'qa'
-                ''')
-                row = cur.fetchone()
-                
-                return {
-                    'total': row['total'] or 0,
-                    'avg_quality': row['avg_quality'] or 50.0,
-                    'max_quality': row['max_quality'] or 0.0,
-                    'low_quality_count': row['low_quality'] or 0,
-                    'avg_access': row['avg_access'] or 0,
-                    'new_last_24h': 0
-                }
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            
+            cur = conn.execute('''
+                SELECT 
+                    COUNT(*) as total,
+                    AVG(quality_score) as avg_quality,
+                    MAX(quality_score) as max_quality,
+                    MIN(quality_score) as min_quality,
+                    COUNT(CASE WHEN quality_score < 20 THEN 1 END) as low_quality,
+                    AVG(access_count) as avg_access
+                FROM knowledge_items
+                WHERE knowledge_type = 'qa'
+            ''')
+            row = cur.fetchone()
+            
+            return {
+                'total': row['total'] or 0,
+                'avg_quality': row['avg_quality'] or 50.0,
+                'max_quality': row['max_quality'] or 0.0,
+                'low_quality_count': row['low_quality'] or 0,
+                'avg_access': row['avg_access'] or 0,
+                'new_last_24h': 0
+            }
         except Exception as e:
             return {'total': 0, 'avg_quality': 50, 'low_quality_count': 0}
     
@@ -341,23 +340,23 @@ class SystemStateSensor:
     def _get_health_stats(self) -> Dict:
         """获取健康状态"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cur = conn.execute('''
-                    SELECT COUNT(*) as error_count
-                    FROM knowledge_items
-                    WHERE quality_score < 15
-                ''')
-                error_count = cur.fetchone()[0]
-                
-                total = self._get_knowledge_stats().get('total', 1)
-                error_rate = error_count / max(total, 1)
-                
-                return {
-                    'error_rate': error_rate,
-                    'error_count': error_count,
-                    'health_score': max(0, 1 - error_rate * 5),
-                    'status': 'healthy' if error_rate < 0.1 else 'degraded'
-                }
+            conn = DatabaseManager.get(self.db_path)._get_conn()
+            cur = conn.execute('''
+                SELECT COUNT(*) as error_count
+                FROM knowledge_items
+                WHERE quality_score < 15
+            ''')
+            error_count = cur.fetchone()[0]
+            
+            total = self._get_knowledge_stats().get('total', 1)
+            error_rate = error_count / max(total, 1)
+            
+            return {
+                'error_rate': error_rate,
+                'error_count': error_count,
+                'health_score': max(0, 1 - error_rate * 5),
+                'status': 'healthy' if error_rate < 0.1 else 'degraded'
+            }
         except Exception as e:
             return {'error_rate': 0.05, 'health_score': 0.95, 'status': 'healthy'}
     

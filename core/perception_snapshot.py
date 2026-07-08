@@ -14,6 +14,7 @@ import time
 import threading
 from typing import Dict, Any, Optional
 from dataclasses import dataclass, field
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -122,21 +123,17 @@ def _collect_resource() -> Dict[str, Any]:
 def _collect_knowledge() -> Dict[str, Any]:
     result = {}
     try:
-        import sqlite3
-        conn = sqlite3.connect("data/experience_pool.db")
+        conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
         cur = conn.execute("SELECT COUNT(*) FROM experiences")
         result["experience_count"] = cur.fetchone()[0]
         cur = conn.execute("SELECT COUNT(*) FROM experiences WHERE timestamp > datetime('now', '-7 days')")
         result["recent_experiences"] = cur.fetchone()[0]
-        conn.close()
     except Exception:
         pass
     try:
-        import sqlite3
-        conn = sqlite3.connect("data/truths.db")
+        conn = DatabaseManager.get("data/truths.db")._get_conn()
         cur = conn.execute("SELECT COUNT(*) FROM truths")
         result["truth_count"] = cur.fetchone()[0]
-        conn.close()
     except Exception:
         pass
     try:
@@ -148,11 +145,9 @@ def _collect_knowledge() -> Dict[str, Any]:
     except Exception:
         pass
     try:
-        import sqlite3
-        conn = sqlite3.connect("data/knowledge_store.db")
+        conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
         cur = conn.execute("SELECT COUNT(*) FROM knowledge_items")
         result["knowledge_items"] = cur.fetchone()[0]
-        conn.close()
     except Exception:
         pass
     return result
@@ -206,13 +201,11 @@ def _collect_health() -> Dict[str, Any]:
 def _collect_identity() -> Dict[str, Any]:
     result = {}
     try:
-        import sqlite3
-        conn = sqlite3.connect("data/alignment_violations.db")
+        conn = DatabaseManager.get("data/alignment_violations.db")._get_conn()
         cur = conn.execute("SELECT COUNT(*) FROM deviations WHERE status='open'")
         result["open_deviations"] = cur.fetchone()[0]
         cur = conn.execute("SELECT COUNT(*) FROM deviations WHERE status='corrected'")
         result["corrected_deviations"] = cur.fetchone()[0]
-        conn.close()
     except Exception:
         pass
     try:

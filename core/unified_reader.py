@@ -117,13 +117,13 @@ class UnifiedReader:
         table: str = None
     ) -> Dict[str, Any]:
         """读取SQLite数据库"""
-        import sqlite3
+        from infrastructure.database_manager import DatabaseManager
         
         db_path = Path(path)
         if not db_path.exists():
             return {"type": "error", "content": "", "error": "数据库不存在"}
         
-        conn = sqlite3.connect(path)
+        conn = DatabaseManager.get(path)._get_conn()
         cursor = conn.cursor()
         
         try:
@@ -153,7 +153,7 @@ class UnifiedReader:
             }
             
         finally:
-            conn.close()
+            pass
     
     async def _read_web(self, url: str) -> Dict[str, Any]:
         """读取网页"""
