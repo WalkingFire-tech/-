@@ -62,7 +62,7 @@ echo ========================================
 echo.
 
 REM Open browser after delay
-start "" cmd /c "timeout /t 12 /nobreak >nul && start http://localhost:8000/"
+start "" cmd /c "timeout /t 20 /nobreak >nul && start http://localhost:8000/"
 
 REM Try smart starter with watchfiles-based reload (avoids Windows socketpair issue)
 python start_smart.py 2>nul

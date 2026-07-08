@@ -13,7 +13,7 @@ def get_last_response(query: str) -> str:
         cursor = conn.cursor()
         cursor.execute("SELECT response FROM experiences ORDER BY timestamp DESC LIMIT 1")
         row = cursor.fetchone()
-        conn.close()
+
         if row and row[0] and len(row[0]) > 20:
             return row[0]
     except Exception as e:
@@ -61,7 +61,7 @@ async def fetch_experience(query: str) -> dict:
             cursor = conn.cursor()
             cursor.execute("SELECT response, quality_score FROM experiences WHERE raw_input LIKE ? ORDER BY timestamp DESC LIMIT 3", (f"%{query[:20]}%",))
             rows = cursor.fetchall()
-            conn.close()
+
             return rows
         rows = await asyncio.wait_for(loop.run_in_executor(_fast_executor, _query_exp), timeout=5)
         if rows:
@@ -98,7 +98,7 @@ def get_experience_context(query: str) -> str:
             (f"%{query[:20]}%",)
         )
         rows = cursor.fetchall()
-        conn.close()
+
         if rows:
             context_parts = []
             for row in rows:

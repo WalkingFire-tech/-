@@ -128,7 +128,7 @@ async def feedback(request: dict):
             (score,)
         )
         conn.commit()
-        conn.close()
+
     except Exception:
         pass
     return {"success": True, "message": "感谢反馈"}

@@ -176,6 +176,16 @@ async def run_induction(request: dict):
         return {"success": False, "error": str(e), "patterns": 0, "rules": 0}
 
 
+@router.get("/cognitive-status")
+async def get_cognitive_status():
+    try:
+        from core.self.model import get_self_model
+        model = get_self_model()
+        return model.get_status_summary()
+    except Exception as e:
+        return {"error": str(e), "status": "unavailable"}
+
+
 @router.get("/recent_learning")
 async def get_recent_learning():
     try:
@@ -216,6 +226,14 @@ async def get_recent_learning():
         except Exception:
             pass
         items.sort(key=lambda x: x.get("time", ""), reverse=True)
+        try:
+            from core.self.model import get_self_model
+            sm = get_self_model()
+            snap = sm.snapshot()
+            for item in snap.get("recent_learning", [])[:3]:
+                items.append({"content": f"认知: {item.get('summary', '')[:30]}", "time": item.get("timestamp", "")[:10]})
+        except Exception:
+            pass
         return {"items": items[:8]}
     except Exception as e:
         return {"items": []}

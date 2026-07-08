@@ -73,11 +73,25 @@ try:
 except ImportError:
     _COGNITIVE_PLANNER_AVAILABLE = False
 
+try:
+    from core.self.model import get_self_model
+    _SELF_MODEL_AVAILABLE = True
+except ImportError:
+    _SELF_MODEL_AVAILABLE = False
+
 def _get_cognitive_planner():
     if not _COGNITIVE_PLANNER_AVAILABLE:
         return None
     try:
         return get_cognitive_planner()
+    except Exception:
+        return None
+
+def _get_self_model():
+    if not _SELF_MODEL_AVAILABLE:
+        return None
+    try:
+        return get_self_model()
     except Exception:
         return None
 
@@ -581,6 +595,16 @@ async def chat_stream(user_input: str, context: dict):
                 yield _emit("step", {"phase": "L1认知感知", "status": "done",
                     "detail": f"情绪={emotion}, 紧迫度={urgency:.1f}, 困惑度={confusion:.1f}"})
             logger.debug(f"L1认知感知: emotion={emotion}, urgency={urgency:.2f}, confusion={confusion:.2f}")
+            _sm = _get_self_model()
+            if _sm:
+                _sm.record_cognitive_cycle(perception=_cognitive_perception)
+            yield _emit("thinking", {
+                "phase": f"我感知到你的意图是「{intent_type}」",
+                "confidence": float(confidence),
+                "emotion": emotion,
+                "urgency": float(urgency),
+                "confusion": float(confusion),
+            })
         except Exception as e:
             logger.debug(f"L1认知感知跳过: {e}")
 
@@ -730,6 +754,11 @@ async def chat_stream(user_input: str, context: dict):
                 pass
 
     # ========== 阶段3：多策略并行尝试 ==========
+    yield _emit("thinking", {
+        "phase": f"我正在用多种策略同时思考你的问题",
+        "confidence": float(confidence) if 'confidence' in dir() else 0.5,
+        "sources": ["经验池", "知识库", "本地模型", "外部API"],
+    })
     from backend.services.parallel_router import execute_parallel_paths
     candidates = []
     async for event_or_candidates in execute_parallel_paths(
@@ -850,6 +879,15 @@ async def chat_stream(user_input: str, context: dict):
             logger.debug(f"L3认知整合: success={_cognitive_integration.get('success')}")
         except Exception as e:
             logger.debug(f"L3认知整合跳过: {e}")
+    _sm = _get_self_model()
+    if _sm and (_cognitive_learning or _cognitive_integration):
+        _sm.record_cognitive_cycle(learning=_cognitive_learning, integration=_cognitive_integration)
+    if _cognitive_learning and _cognitive_learning.get("knowledge_gained"):
+        yield _emit("learning", {
+            "summary": f"我从这次交互中获得了{_cognitive_learning.get('knowledge_gained', 0)}项新认知",
+            "confidence": float(_cognitive_learning.get("confidence", 0.5)),
+            "sources": _cognitive_learning.get("sources", []),
+        })
 
     # ========== 阶段4.5：本质推理与自洽验证 ==========
     essence_passed = True
@@ -1064,7 +1102,20 @@ async def chat_stream(user_input: str, context: dict):
         except Exception:
             pass
 
-        # 代码验证：对代码类回答做语法检查+模拟运行验证
+        _sm_growth = _get_self_model()
+        if _sm_growth:
+            try:
+                snap = _sm_growth.snapshot()
+                recent = snap.get("recent_learning", [])
+                if recent and len(recent) >= 1:
+                    latest = recent[-1]
+                    summary = latest.get("summary", "")
+                    if summary and len(summary) > 5:
+                        growth_note = f"\n\n💡 顺便说一下，{summary}"
+                        if growth_note not in final_response:
+                            final_response += growth_note
+            except Exception:
+                pass
         if intent_type == "code" and final_response:
             code_verify = _verify_code_response(user_input, final_response)
             if code_verify["passed"]:
@@ -1273,6 +1324,9 @@ async def chat_stream(user_input: str, context: dict):
             logger.debug(f"L4认知校验: status={val_status}, confidence={val_conf:.2f}, doubts={len(doubts)}")
         except Exception as e:
             logger.debug(f"L4认知校验跳过: {e}")
+    _sm = _get_self_model()
+    if _sm and _cognitive_validation:
+        _sm.record_cognitive_cycle(validation=_cognitive_validation)
 
     # ========== 阶段7：反思学习 + 基因微调 ==========
     yield _emit("step", {"phase": "反思学习", "status": "running", "detail": "从本次交互中学习，微调系统基因..."})
@@ -1310,6 +1364,14 @@ async def chat_stream(user_input: str, context: dict):
             logger.debug("认知信号已提交")
         except Exception as e:
             logger.debug(f"认知信号提交跳过: {e}")
+        _sm = _get_self_model()
+        if _sm:
+            try:
+                _sm.record_cognitive_cycle(introspection=_cognitive_introspection if '_cognitive_introspection' in dir() else None)
+                _sm.sync_from_cognitive_planner(cp)
+                _sm.evaluate_and_act()
+            except Exception as e:
+                logger.debug(f"SelfModel同步跳过: {e}")
 
     try:
         reflection = await _run_sync(_reflect_and_learn, user_input, final_response, attempts, start_time, comparison if candidates else [], timeout=5, phase="反思学习")
