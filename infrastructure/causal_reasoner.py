@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 from pathlib import Path
 from loguru import logger
 from infrastructure.config_manager import config
+from infrastructure.database_manager import DatabaseManager
 
 
 class CausalReasoner:
@@ -202,31 +203,30 @@ class CausalReasoner:
         chain = []
         
         try:
-            import sqlite3
             if not self.experience_db.exists():
                 return chain
             
-            with sqlite3.connect(self.experience_db) as conn:
-                # 查找相似问题的失败案例
-                cur = conn.execute('''
-                    SELECT raw_input, intent_type, success, quality_score
-                    FROM experiences
-                    WHERE success = 0
-                    ORDER BY timestamp DESC
-                    LIMIT 10
-                ''')
-                
-                failures = cur.fetchall()
-                
-                for raw_input, intent_type, success, quality in failures:
-                    # 简单相似度检查
-                    if self._is_similar(core_need, raw_input):
-                        chain.append({
-                            "cause": f"历史失败案例：{raw_input[:50]}",
-                            "effect": f"需要避免类似错误（质量：{quality}分）",
-                            "confidence": 0.70,
-                            "type": "experience"
-                        })
+            db = DatabaseManager.get(str(self.experience_db))
+            conn = db._get_conn()
+            cur = conn.execute('''
+                SELECT raw_input, intent_type, success, quality_score
+                FROM experiences
+                WHERE success = 0
+                ORDER BY timestamp DESC
+                LIMIT 10
+            ''')
+            
+            failures = cur.fetchall()
+            
+            for raw_input, intent_type, success, quality in failures:
+                # 简单相似度检查
+                if self._is_similar(core_need, raw_input):
+                    chain.append({
+                        "cause": f"历史失败案例：{raw_input[:50]}",
+                        "effect": f"需要避免类似错误（质量：{quality}分）",
+                        "confidence": 0.70,
+                        "type": "experience"
+                    })
         
         except Exception as e:
             logger.debug(f"经验池查询失败: {e}")

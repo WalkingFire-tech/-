@@ -1,9 +1,9 @@
-﻿import sqlite3
-import json
+﻿import json
 import threading
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 _write_lock = threading.Lock()
 
@@ -15,9 +15,8 @@ class ExperiencePool:
         self._init_db()
 
     def _connect(self):
-        conn = sqlite3.connect(self.db_path, timeout=10.0)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
         return conn
 
     def _init_db(self):
@@ -133,7 +132,6 @@ class ExperiencePool:
         params.append(limit)
 
         with self._connect() as conn:
-            conn.row_factory = sqlite3.Row
             cur = conn.execute(query, params)
             return [dict(row) for row in cur.fetchall()]
 
@@ -152,7 +150,6 @@ class ExperiencePool:
         params.append(limit)
 
         with self._connect() as conn:
-            conn.row_factory = sqlite3.Row
             cur = conn.execute(query, params)
             return [dict(row) for row in cur.fetchall()]
 

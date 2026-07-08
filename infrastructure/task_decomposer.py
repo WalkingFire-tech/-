@@ -7,7 +7,6 @@ import re
 from typing import List, Dict, Optional, Tuple
 from loguru import logger
 from datetime import datetime
-import sqlite3
 from pathlib import Path
 from infrastructure.database_manager import DatabaseManager
 
@@ -53,19 +52,20 @@ class TaskDecomposer:
     
     def _init_db(self):
         """初始化数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS decompositions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    original_task TEXT,
-                    subtasks TEXT,
-                    decomposition_strategy TEXT,
-                    success BOOLEAN,
-                    quality_score REAL,
-                    timestamp TEXT
-                )
-            ''')
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS decompositions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                original_task TEXT,
+                subtasks TEXT,
+                decomposition_strategy TEXT,
+                success BOOLEAN,
+                quality_score REAL,
+                timestamp TEXT
+            )
+        ''')
+        conn.commit()
     
     def detect_subtasks(self, user_input: str) -> List[Dict]:
         """检测子任务（基于规则）
@@ -250,34 +250,36 @@ class TaskDecomposer:
                           strategy: str = 'rule', success: bool = True,
                           quality_score: float = 0.0):
         """保存分解记录"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT INTO decompositions
-                (original_task, subtasks, decomposition_strategy, success, quality_score, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                original_task,
-                json.dumps(subtasks, ensure_ascii=False),
-                strategy,
-                success,
-                quality_score,
-                datetime.now().isoformat()
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            INSERT INTO decompositions
+            (original_task, subtasks, decomposition_strategy, success, quality_score, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (
+            original_task,
+            json.dumps(subtasks, ensure_ascii=False),
+            strategy,
+            success,
+            quality_score,
+            datetime.now().isoformat()
+        ))
+        conn.commit()
     
     def get_decomposition_stats(self) -> Dict:
         """获取分解统计"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('SELECT COUNT(*) FROM decompositions')
-            total = cursor.fetchone()[0]
-            
-            cursor = conn.execute('SELECT AVG(quality_score) FROM decompositions WHERE success = 1')
-            avg_quality = cursor.fetchone()[0] or 0.0
-            
-            return {
-                'total_decompositions': total,
-                'avg_quality': avg_quality
-            }
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('SELECT COUNT(*) FROM decompositions')
+        total = cursor.fetchone()[0]
+        
+        cursor = conn.execute('SELECT AVG(quality_score) FROM decompositions WHERE success = 1')
+        avg_quality = cursor.fetchone()[0] or 0.0
+        
+        return {
+            'total_decompositions': total,
+            'avg_quality': avg_quality
+        }
 
 
 task_decomposer = TaskDecomposer()
