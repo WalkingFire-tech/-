@@ -2,7 +2,7 @@
 触发决策反馈回路 - 让触发系统从错误中学习
 """
 
-import sqlite3
+
 import json
 import os
 import hashlib
@@ -16,6 +16,8 @@ try:
 except ImportError:
     import logging
     logger = logging.getLogger(__name__)
+
+from infrastructure.database_manager import DatabaseManager
 
 
 @dataclass
@@ -64,72 +66,74 @@ class TriggerFeedbackLoop:
         """初始化数据库"""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS trigger_events (
-                    id TEXT PRIMARY KEY,
-                    user_input TEXT,
-                    trigger_decision TEXT,
-                    processing_depth TEXT,
-                    route_reason TEXT,
-                    user_satisfied INTEGER,
-                    correction_needed INTEGER,
-                    actual_need TEXT,
-                    created_at TEXT
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pattern_weights (
-                    pattern TEXT PRIMARY KEY,
-                    weight REAL,
-                    occurrences INTEGER,
-                    successes INTEGER,
-                    failures INTEGER,
-                    last_updated TEXT
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS adjustment_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT,
-                    adjustment_type TEXT,
-                    previous_value REAL,
-                    new_value REAL,
-                    reason TEXT,
-                    effectiveness REAL
-                )
-            ''')
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS trigger_events (
+                id TEXT PRIMARY KEY,
+                user_input TEXT,
+                trigger_decision TEXT,
+                processing_depth TEXT,
+                route_reason TEXT,
+                user_satisfied INTEGER,
+                correction_needed INTEGER,
+                actual_need TEXT,
+                created_at TEXT
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pattern_weights (
+                pattern TEXT PRIMARY KEY,
+                weight REAL,
+                occurrences INTEGER,
+                successes INTEGER,
+                failures INTEGER,
+                last_updated TEXT
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS adjustment_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                adjustment_type TEXT,
+                previous_value REAL,
+                new_value REAL,
+                reason TEXT,
+                effectiveness REAL
+            )
+        ''')
+        
+        conn.commit()
     
     def record_decision(self, event: TriggerEvent):
         """记录触发决策"""
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO trigger_events
-                (id, user_input, trigger_decision, processing_depth, 
-                 route_reason, user_satisfied, correction_needed, actual_need, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                event.id,
-                event.user_input[:500],
-                event.trigger_decision,
-                event.processing_depth,
-                event.route_reason,
-                1 if event.user_satisfied else 0 if event.user_satisfied is not None else None,
-                1 if event.correction_needed else 0,
-                event.actual_need,
-                event.created_at
-            ))
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO trigger_events
+            (id, user_input, trigger_decision, processing_depth, 
+             route_reason, user_satisfied, correction_needed, actual_need, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            event.id,
+            event.user_input[:500],
+            event.trigger_decision,
+            event.processing_depth,
+            event.route_reason,
+            1 if event.user_satisfied else 0 if event.user_satisfied is not None else None,
+            1 if event.correction_needed else 0,
+            event.actual_need,
+            event.created_at
+        ))
+        
+        conn.commit()
         
         self.stats['total_decisions'] += 1
     
@@ -146,21 +150,22 @@ class TriggerFeedbackLoop:
             actual_need: 实际应该如何处理
         """
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                UPDATE trigger_events
-                SET user_satisfied = ?, correction_needed = ?, actual_need = ?
-                WHERE id = ?
-            ''', (
-                1 if satisfied else 0,
-                1 if correction_needed else 0,
-                actual_need,
-                event_id
-            ))
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE trigger_events
+            SET user_satisfied = ?, correction_needed = ?, actual_need = ?
+            WHERE id = ?
+        ''', (
+            1 if satisfied else 0,
+            1 if correction_needed else 0,
+            actual_need,
+            event_id
+        ))
+        
+        conn.commit()
         
         event = self._get_event(event_id)
         if not event:
@@ -181,28 +186,28 @@ class TriggerFeedbackLoop:
     
     def _get_event(self, event_id: str) -> Optional[TriggerEvent]:
         """获取事件"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                "SELECT * FROM trigger_events WHERE id = ?",
-                (event_id,)
-            )
-            row = cursor.fetchone()
-            
-            if not row:
-                return None
-            
-            return TriggerEvent(
-                id=row['id'],
-                user_input=row['user_input'],
-                trigger_decision=row['trigger_decision'],
-                processing_depth=row['processing_depth'],
-                route_reason=row['route_reason'],
-                user_satisfied=bool(row['user_satisfied']) if row['user_satisfied'] is not None else None,
-                correction_needed=bool(row['correction_needed']),
-                actual_need=row['actual_need'],
-                created_at=row['created_at']
-            )
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute(
+            "SELECT * FROM trigger_events WHERE id = ?",
+            (event_id,)
+        )
+        row = cursor.fetchone()
+        
+        if not row:
+            return None
+        
+        return TriggerEvent(
+            id=row['id'],
+            user_input=row['user_input'],
+            trigger_decision=row['trigger_decision'],
+            processing_depth=row['processing_depth'],
+            route_reason=row['route_reason'],
+            user_satisfied=bool(row['user_satisfied']) if row['user_satisfied'] is not None else None,
+            correction_needed=bool(row['correction_needed']),
+            actual_need=row['actual_need'],
+            created_at=row['created_at']
+        )
     
     def _adjust_thresholds(self, direction: str):
         """调整触发阈值"""
@@ -233,24 +238,24 @@ class TriggerFeedbackLoop:
         
         patterns = defaultdict(lambda: {'count': 0, 'false_positives': 0, 'false_negatives': 0})
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        
+        cursor = conn.execute('''
+            SELECT * FROM trigger_events
+            ORDER BY created_at DESC LIMIT 100
+        ''')
+        
+        for row in cursor:
+            route_reason = row['route_reason']
+            pattern = self._extract_pattern(route_reason)
             
-            cursor = conn.execute('''
-                SELECT * FROM trigger_events
-                ORDER BY created_at DESC LIMIT 100
-            ''')
+            patterns[pattern]['count'] += 1
             
-            for row in cursor:
-                route_reason = row['route_reason']
-                pattern = self._extract_pattern(route_reason)
-                
-                patterns[pattern]['count'] += 1
-                
-                if row['trigger_decision'] == 'triggered' and row['correction_needed']:
-                    patterns[pattern]['false_positives'] += 1
-                elif row['trigger_decision'] == 'not_triggered' and row['correction_needed']:
-                    patterns[pattern]['false_negatives'] += 1
+            if row['trigger_decision'] == 'triggered' and row['correction_needed']:
+                patterns[pattern]['false_positives'] += 1
+            elif row['trigger_decision'] == 'not_triggered' and row['correction_needed']:
+                patterns[pattern]['false_negatives'] += 1
         
         return {
             p: s for p, s in patterns.items()
@@ -280,22 +285,23 @@ class TriggerFeedbackLoop:
     def _record_adjustment(self, pattern: str, old_value: float, new_value: float):
         """记录调整历史"""
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO adjustment_history
-                (timestamp, adjustment_type, previous_value, new_value, reason)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (
-                datetime.now().isoformat(),
-                pattern,
-                old_value,
-                new_value,
-                f"基于误判分析自动调整"
-            ))
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO adjustment_history
+            (timestamp, adjustment_type, previous_value, new_value, reason)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (
+            datetime.now().isoformat(),
+            pattern,
+            old_value,
+            new_value,
+            f"基于误判分析自动调整"
+        ))
+        
+        conn.commit()
     
     def get_learning_summary(self) -> Dict:
         """获取学习摘要"""

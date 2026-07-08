@@ -11,8 +11,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from enum import Enum
 import json
-import sqlite3
 from pathlib import Path
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -66,47 +66,45 @@ class FeedbackSignalCapture:
         """初始化数据库"""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS feedback_signals (
-                    id TEXT PRIMARY KEY,
-                    conversation_id TEXT,
-                    turn_id TEXT,
-                    feedback_type TEXT,
-                    value TEXT,
-                    context TEXT,
-                    response_id TEXT,
-                    user_id TEXT,
-                    source TEXT,
-                    timestamp TEXT,
-                    processed INTEGER DEFAULT 0
-                )
-            """)
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_conv ON feedback_signals(conversation_id)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_type ON feedback_signals(feedback_type)')
-            conn.commit()
+        db = DatabaseManager.get(str(self.db_path))
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS feedback_signals (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT,
+                turn_id TEXT,
+                feedback_type TEXT,
+                value TEXT,
+                context TEXT,
+                response_id TEXT,
+                user_id TEXT,
+                source TEXT,
+                timestamp TEXT,
+                processed INTEGER DEFAULT 0
+            )
+        """)
+        db.execute('CREATE INDEX IF NOT EXISTS idx_conv ON feedback_signals(conversation_id)')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_type ON feedback_signals(feedback_type)', commit=True)
     
     def capture(self, signal: FeedbackSignal) -> str:
         """捕获一个反馈信号"""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute("""
-                INSERT INTO feedback_signals
-                (id, conversation_id, turn_id, feedback_type, value, context,
-                 response_id, user_id, source, timestamp, processed)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-            """, (
-                signal.signal_id,
-                signal.conversation_id,
-                signal.turn_id,
-                signal.feedback_type.value,
-                json.dumps(signal.value, ensure_ascii=False),
-                json.dumps(signal.context, ensure_ascii=False),
-                signal.response_id,
-                signal.user_id,
-                signal.source,
-                signal.timestamp
-            ))
-            conn.commit()
+        db = DatabaseManager.get(str(self.db_path))
+        db.execute("""
+            INSERT INTO feedback_signals
+            (id, conversation_id, turn_id, feedback_type, value, context,
+             response_id, user_id, source, timestamp, processed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        """, (
+            signal.signal_id,
+            signal.conversation_id,
+            signal.turn_id,
+            signal.feedback_type.value,
+            json.dumps(signal.value, ensure_ascii=False),
+            json.dumps(signal.context, ensure_ascii=False),
+            signal.response_id,
+            signal.user_id,
+            signal.source,
+            signal.timestamp
+        ), commit=True)
         
         logger.debug(f"捕获反馈信号: {signal.feedback_type.value} (ID={signal.signal_id})")
         
@@ -114,32 +112,30 @@ class FeedbackSignalCapture:
     
     def get_signals_by_conversation(self, conversation_id: str) -> List[Dict]:
         """获取一个对话的所有反馈信号"""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                "SELECT * FROM feedback_signals WHERE conversation_id = ? ORDER BY timestamp",
-                (conversation_id,)
-            )
-            return [dict(row) for row in cursor.fetchall()]
+        db = DatabaseManager.get(str(self.db_path))
+        rows = db.query(
+            "SELECT * FROM feedback_signals WHERE conversation_id = ? ORDER BY timestamp",
+            (conversation_id,)
+        )
+        return [dict(r) for r in rows]
     
     def get_unprocessed_signals(self, limit: int = 100) -> List[Dict]:
         """获取未处理的信号（用于后台处理）"""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                "SELECT * FROM feedback_signals WHERE processed = 0 ORDER BY timestamp LIMIT ?",
-                (limit,)
-            )
-            return [dict(row) for row in cursor.fetchall()]
+        db = DatabaseManager.get(str(self.db_path))
+        rows = db.query(
+            "SELECT * FROM feedback_signals WHERE processed = 0 ORDER BY timestamp LIMIT ?",
+            (limit,)
+        )
+        return [dict(r) for r in rows]
     
     def mark_processed(self, signal_id: str):
         """标记信号为已处理"""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute(
-                "UPDATE feedback_signals SET processed = 1 WHERE id = ?",
-                (signal_id,)
-            )
-            conn.commit()
+        db = DatabaseManager.get(str(self.db_path))
+        db.execute(
+            "UPDATE feedback_signals SET processed = 1 WHERE id = ?",
+            (signal_id,),
+            commit=True
+        )
 
 
 signal_capture = FeedbackSignalCapture()

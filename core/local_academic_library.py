@@ -4,7 +4,6 @@
 三层知识源体系 - 第一层：本地知识库
 """
 
-import sqlite3
 import hashlib
 import json
 import os
@@ -12,6 +11,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 
 class LocalAcademicLibrary:
@@ -39,36 +39,37 @@ class LocalAcademicLibrary:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS documents (
-                    id TEXT PRIMARY KEY,
-                    title TEXT,
-                    authors TEXT,
-                    abstract TEXT,
-                    filename TEXT,
-                    file_path TEXT,
-                    tags TEXT,
-                    source TEXT,
-                    language TEXT,
-                    content TEXT,
-                    embedding TEXT,
-                    indexed_at TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS library_stats (
-                    key TEXT PRIMARY KEY,
-                    value TEXT
-                )
-            ''')
-            
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_title ON documents(title)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_tags ON documents(tags)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_source ON documents(source)')
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS documents (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                authors TEXT,
+                abstract TEXT,
+                filename TEXT,
+                file_path TEXT,
+                tags TEXT,
+                source TEXT,
+                language TEXT,
+                content TEXT,
+                embedding TEXT,
+                indexed_at TEXT
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS library_stats (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        ''')
+        
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_title ON documents(title)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_tags ON documents(tags)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_source ON documents(source)')
+        
+        conn.commit()
     
     def _init_embedding(self):
         """初始化嵌入模型（用于语义搜索）"""
@@ -124,26 +125,27 @@ class LocalAcademicLibrary:
                 except:
                     pass
             
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    INSERT OR REPLACE INTO documents
-                    (id, title, authors, abstract, filename, file_path, tags, source, language, content, embedding, indexed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    doc_id,
-                    title,
-                    authors,
-                    abstract,
-                    file_path.name,
-                    str(file_path),
-                    json.dumps(tags, ensure_ascii=False),
-                    source,
-                    language,
-                    content[:10000],
-                    embedding,
-                    datetime.now().isoformat()
-                ))
-                conn.commit()
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            conn.execute('''
+                INSERT OR REPLACE INTO documents
+                (id, title, authors, abstract, filename, file_path, tags, source, language, content, embedding, indexed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                doc_id,
+                title,
+                authors,
+                abstract,
+                file_path.name,
+                str(file_path),
+                json.dumps(tags, ensure_ascii=False),
+                source,
+                language,
+                content[:10000],
+                embedding,
+                datetime.now().isoformat()
+            ))
+            conn.commit()
             
             logger.info(f"📄 已索引PDF: {file_path.name}")
             
@@ -194,55 +196,27 @@ class LocalAcademicLibrary:
             try:
                 query_vec = self._embedding_model.encode(query)
                 
-                with sqlite3.connect(self.db_path) as conn:
-                    conn.row_factory = sqlite3.Row
-                    cursor = conn.execute('''
-                        SELECT id, title, authors, abstract, file_path, tags, source
-                        FROM documents
-                        WHERE embedding IS NOT NULL
-                    ''')
-                    
-                    import numpy as np
-                    
-                    similarities = []
-                    for row in cursor.fetchall():
-                        embedding = row['embedding']
-                        if embedding:
-                            doc_vec = np.array(json.loads(embedding))
-                            sim = np.dot(query_vec, doc_vec) / (np.linalg.norm(query_vec) * np.linalg.norm(doc_vec))
-                            similarities.append((row, float(sim)))
-                    
-                    similarities.sort(key=lambda x: x[1], reverse=True)
-                    
-                    for row, sim in similarities[:limit]:
-                        results.append({
-                            "id": row['id'],
-                            "title": row['title'],
-                            "authors": row['authors'],
-                            "abstract": row['abstract'][:300],
-                            "file_path": row['file_path'],
-                            "tags": json.loads(row['tags']) if row['tags'] else [],
-                            "source": row['source'],
-                            "similarity": sim
-                        })
-                    
-                    if results:
-                        logger.info(f"语义搜索返回 {len(results)} 条结果")
-                        return results
-            except Exception as e:
-                logger.debug(f"语义搜索失败: {e}")
-        
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
+                db = DatabaseManager.get(self.db_path)
+                conn = db._get_conn()
                 cursor = conn.execute('''
                     SELECT id, title, authors, abstract, file_path, tags, source
                     FROM documents
-                    WHERE title LIKE ? OR abstract LIKE ? OR content LIKE ?
-                    LIMIT ?
-                ''', (f'%{query}%', f'%{query}%', f'%{query}%', limit))
+                    WHERE embedding IS NOT NULL
+                ''')
                 
+                import numpy as np
+                
+                similarities = []
                 for row in cursor.fetchall():
+                    embedding = row['embedding']
+                    if embedding:
+                        doc_vec = np.array(json.loads(embedding))
+                        sim = np.dot(query_vec, doc_vec) / (np.linalg.norm(query_vec) * np.linalg.norm(doc_vec))
+                        similarities.append((row, float(sim)))
+                
+                similarities.sort(key=lambda x: x[1], reverse=True)
+                
+                for row, sim in similarities[:limit]:
                     results.append({
                         "id": row['id'],
                         "title": row['title'],
@@ -250,8 +224,36 @@ class LocalAcademicLibrary:
                         "abstract": row['abstract'][:300],
                         "file_path": row['file_path'],
                         "tags": json.loads(row['tags']) if row['tags'] else [],
-                        "source": row['source']
+                        "source": row['source'],
+                        "similarity": sim
                     })
+                
+                if results:
+                    logger.info(f"语义搜索返回 {len(results)} 条结果")
+                    return results
+            except Exception as e:
+                logger.debug(f"语义搜索失败: {e}")
+        
+        try:
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.execute('''
+                SELECT id, title, authors, abstract, file_path, tags, source
+                FROM documents
+                WHERE title LIKE ? OR abstract LIKE ? OR content LIKE ?
+                LIMIT ?
+            ''', (f'%{query}%', f'%{query}%', f'%{query}%', limit))
+            
+            for row in cursor.fetchall():
+                results.append({
+                    "id": row['id'],
+                    "title": row['title'],
+                    "authors": row['authors'],
+                    "abstract": row['abstract'][:300],
+                    "file_path": row['file_path'],
+                    "tags": json.loads(row['tags']) if row['tags'] else [],
+                    "source": row['source']
+                })
             
             logger.info(f"关键词搜索返回 {len(results)} 条结果")
         except Exception as e:
@@ -262,26 +264,26 @@ class LocalAcademicLibrary:
     def get_document(self, doc_id: str) -> Optional[Dict]:
         """获取单个文档"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.execute(
-                    'SELECT * FROM documents WHERE id = ?',
-                    (doc_id,)
-                )
-                row = cursor.fetchone()
-                
-                if row:
-                    return {
-                        "id": row['id'],
-                        "title": row['title'],
-                        "authors": row['authors'],
-                        "abstract": row['abstract'],
-                        "content": row['content'],
-                        "file_path": row['file_path'],
-                        "tags": json.loads(row['tags']) if row['tags'] else [],
-                        "source": row['source'],
-                        "indexed_at": row['indexed_at']
-                    }
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.execute(
+                'SELECT * FROM documents WHERE id = ?',
+                (doc_id,)
+            )
+            row = cursor.fetchone()
+            
+            if row:
+                return {
+                    "id": row['id'],
+                    "title": row['title'],
+                    "authors": row['authors'],
+                    "abstract": row['abstract'],
+                    "content": row['content'],
+                    "file_path": row['file_path'],
+                    "tags": json.loads(row['tags']) if row['tags'] else [],
+                    "source": row['source'],
+                    "indexed_at": row['indexed_at']
+                }
         except Exception as e:
             logger.error(f"获取文档失败: {e}")
         
@@ -290,35 +292,37 @@ class LocalAcademicLibrary:
     def get_stats(self) -> Dict:
         """获取统计信息"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute("SELECT COUNT(*) FROM documents")
-                total = cursor.fetchone()[0]
-                
-                cursor = conn.execute(
-                    "SELECT source, COUNT(*) FROM documents GROUP BY source"
-                )
-                by_source = {row[0]: row[1] for row in cursor.fetchall()}
-                
-                cursor = conn.execute(
-                    "SELECT language, COUNT(*) FROM documents GROUP BY language"
-                )
-                by_language = {row[0]: row[1] for row in cursor.fetchall()}
-                
-                return {
-                    "total_documents": total,
-                    "by_source": by_source,
-                    "by_language": by_language,
-                    "embedding_available": self._embedding_available
-                }
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.execute("SELECT COUNT(*) FROM documents")
+            total = cursor.fetchone()[0]
+            
+            cursor = conn.execute(
+                "SELECT source, COUNT(*) FROM documents GROUP BY source"
+            )
+            by_source = {row[0]: row[1] for row in cursor.fetchall()}
+            
+            cursor = conn.execute(
+                "SELECT language, COUNT(*) FROM documents GROUP BY language"
+            )
+            by_language = {row[0]: row[1] for row in cursor.fetchall()}
+            
+            return {
+                "total_documents": total,
+                "by_source": by_source,
+                "by_language": by_language,
+                "embedding_available": self._embedding_available
+            }
         except Exception as e:
             return {"total_documents": 0, "error": str(e)}
     
     def clear(self):
         """清空库"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute("DELETE FROM documents")
-                conn.commit()
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            conn.execute("DELETE FROM documents")
+            conn.commit()
             logger.info("本地学术库已清空")
         except Exception as e:
             logger.error(f"清空失败: {e}")

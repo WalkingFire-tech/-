@@ -9,7 +9,7 @@
 """
 import re
 import json
-import sqlite3
+
 from typing import Tuple, List, Dict, Optional
 from pathlib import Path
 from datetime import datetime
@@ -19,6 +19,8 @@ try:
 except ImportError:
     import logging
     logger = logging.getLogger(__name__)
+
+from infrastructure.database_manager import DatabaseManager
 
 
 class KnowledgeGapDetector:
@@ -64,39 +66,40 @@ class KnowledgeGapDetector:
         """初始化数据库（存储学习到的规则）"""
         Path(self.db_path).parent.mkdir(exist_ok=True)
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS domain_rules (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    domain TEXT,
-                    keywords TEXT,
-                    confidence_threshold REAL,
-                    created_at TEXT,
-                    source TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS error_patterns (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    pattern_type TEXT,
-                    pattern TEXT,
-                    correction TEXT,
-                    confidence REAL,
-                    created_at TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS validation_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    query_hash TEXT,
-                    has_gap INTEGER,
-                    reason TEXT,
-                    confidence REAL,
-                    validated_at TEXT
-                )
-            ''')
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS domain_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain TEXT,
+                keywords TEXT,
+                confidence_threshold REAL,
+                created_at TEXT,
+                source TEXT
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS error_patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern_type TEXT,
+                pattern TEXT,
+                correction TEXT,
+                confidence REAL,
+                created_at TEXT
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS validation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query_hash TEXT,
+                has_gap INTEGER,
+                reason TEXT,
+                confidence REAL,
+                validated_at TEXT
+            )
+        ''')
     
     def detect_knowledge_gap(self, user_query: str, response: str,
                             confidence: float = 1.0,
@@ -191,14 +194,15 @@ class KnowledgeGapDetector:
             return True
         
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute(
-                    "SELECT keywords FROM domain_rules WHERE confidence_threshold >= 0.8"
-                )
-                for row in cursor:
-                    keywords = json.loads(row[0])
-                    if any(kw in query for kw in keywords):
-                        return True
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.execute(
+                "SELECT keywords FROM domain_rules WHERE confidence_threshold >= 0.8"
+            )
+            for row in cursor:
+                keywords = json.loads(row[0])
+                if any(kw in query for kw in keywords):
+                    return True
         except:
             pass
         
@@ -243,14 +247,15 @@ class KnowledgeGapDetector:
     def _check_error_patterns(self, user_query: str, response: str) -> Tuple[bool, str]:
         """检查已知错误模式"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute(
-                    "SELECT pattern_type, pattern, correction FROM error_patterns WHERE confidence >= 0.7"
-                )
-                for row in cursor:
-                    pattern_type, pattern, correction = row
-                    if re.search(pattern, response):
-                        return True, f"匹配错误模式({pattern_type})，应修正为: {correction}"
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.execute(
+                "SELECT pattern_type, pattern, correction FROM error_patterns WHERE confidence >= 0.7"
+            )
+            for row in cursor:
+                pattern_type, pattern, correction = row
+                if re.search(pattern, response):
+                    return True, f"匹配错误模式({pattern_type})，应修正为: {correction}"
         except:
             pass
         
@@ -260,13 +265,14 @@ class KnowledgeGapDetector:
                            correction: str, confidence: float = 0.8):
         """学习新的错误模式"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    "INSERT INTO error_patterns (pattern_type, pattern, correction, confidence, created_at) VALUES (?, ?, ?, ?, ?)",
-                    (pattern_type, pattern, correction, confidence, datetime.now().isoformat())
-                )
-                conn.commit()
-                logger.info(f"学习错误模式: {pattern_type}")
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            conn.execute(
+                "INSERT INTO error_patterns (pattern_type, pattern, correction, confidence, created_at) VALUES (?, ?, ?, ?, ?)",
+                (pattern_type, pattern, correction, confidence, datetime.now().isoformat())
+            )
+            conn.commit()
+            logger.info(f"学习错误模式: {pattern_type}")
         except Exception as e:
             logger.warning(f"学习失败: {e}")
     
@@ -274,13 +280,14 @@ class KnowledgeGapDetector:
                        confidence_threshold: float = 0.8):
         """添加领域规则"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    "INSERT INTO domain_rules (domain, keywords, confidence_threshold, created_at, source) VALUES (?, ?, ?, ?, ?)",
-                    (domain, json.dumps(keywords, ensure_ascii=False), confidence_threshold, datetime.now().isoformat(), "user_added")
-                )
-                conn.commit()
-                logger.info(f"添加领域规则: {domain}")
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            conn.execute(
+                "INSERT INTO domain_rules (domain, keywords, confidence_threshold, created_at, source) VALUES (?, ?, ?, ?, ?)",
+                (domain, json.dumps(keywords, ensure_ascii=False), confidence_threshold, datetime.now().isoformat(), "user_added")
+            )
+            conn.commit()
+            logger.info(f"添加领域规则: {domain}")
         except Exception as e:
             logger.warning(f"添加规则失败: {e}")
     
@@ -308,12 +315,13 @@ class KnowledgeGapDetector:
         """记录验证历史"""
         try:
             query_hash = str(hash(query))[:12]
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    "INSERT INTO validation_history (query_hash, has_gap, reason, confidence, validated_at) VALUES (?, ?, ?, ?, ?)",
-                    (query_hash, int(has_gap), reason, confidence, datetime.now().isoformat())
-                )
-                conn.commit()
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            conn.execute(
+                "INSERT INTO validation_history (query_hash, has_gap, reason, confidence, validated_at) VALUES (?, ?, ?, ?, ?)",
+                (query_hash, int(has_gap), reason, confidence, datetime.now().isoformat())
+            )
+            conn.commit()
         except:
             pass
 

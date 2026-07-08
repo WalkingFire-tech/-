@@ -12,13 +12,13 @@
 - 两者协同：权重高的路径产生的知识增量更可信
 """
 
-import sqlite3
 import time
 import json
 import math
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 
 class DeltaKnowledgeUpdater:
@@ -31,27 +31,28 @@ class DeltaKnowledgeUpdater:
     def _init_db(self):
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS knowledge_base (
-                    topic TEXT PRIMARY KEY,
-                    content TEXT,
-                    version INTEGER DEFAULT 1,
-                    last_updated TEXT,
-                    created_at TEXT
-                )
-            ''')
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS delta_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    topic TEXT,
-                    delta_size INTEGER,
-                    total_size INTEGER,
-                    compression_ratio REAL,
-                    version INTEGER,
-                    timestamp TEXT
-                )
-            ''')
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS knowledge_base (
+                topic TEXT PRIMARY KEY,
+                content TEXT,
+                version INTEGER DEFAULT 1,
+                last_updated TEXT,
+                created_at TEXT
+            )
+        ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS delta_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                topic TEXT,
+                delta_size INTEGER,
+                total_size INTEGER,
+                compression_ratio REAL,
+                version INTEGER,
+                timestamp TEXT
+            )
+        ''')
 
     def compute_delta(self, new_knowledge: Dict, old_knowledge: Dict) -> Dict:
         delta = {}
@@ -109,18 +110,19 @@ class DeltaKnowledgeUpdater:
 
     def get_delta_stats(self, topic: str = "", limit: int = 20) -> List[Dict]:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                if topic:
-                    cur = conn.execute(
-                        "SELECT topic, delta_size, total_size, compression_ratio, version, timestamp FROM delta_history WHERE topic=? ORDER BY id DESC LIMIT ?",
-                        (topic, limit))
-                else:
-                    cur = conn.execute(
-                        "SELECT topic, delta_size, total_size, compression_ratio, version, timestamp FROM delta_history ORDER BY id DESC LIMIT ?",
-                        (limit,))
-                return [{"topic": r[0], "delta_size": r[1], "total_size": r[2],
-                         "compression_ratio": r[3], "version": r[4], "timestamp": r[5]}
-                        for r in cur.fetchall()]
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            if topic:
+                cur = conn.execute(
+                    "SELECT topic, delta_size, total_size, compression_ratio, version, timestamp FROM delta_history WHERE topic=? ORDER BY id DESC LIMIT ?",
+                    (topic, limit))
+            else:
+                cur = conn.execute(
+                    "SELECT topic, delta_size, total_size, compression_ratio, version, timestamp FROM delta_history ORDER BY id DESC LIMIT ?",
+                    (limit,))
+            return [{"topic": r[0], "delta_size": r[1], "total_size": r[2],
+                     "compression_ratio": r[3], "version": r[4], "timestamp": r[5]}
+                    for r in cur.fetchall()]
         except Exception:
             return []
 
@@ -137,29 +139,32 @@ class DeltaKnowledgeUpdater:
 
     def _load_topic(self, topic: str) -> Optional[Dict]:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cur = conn.execute("SELECT content FROM knowledge_base WHERE topic=?", (topic,))
-                row = cur.fetchone()
-                if row:
-                    return json.loads(row[0])
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cur = conn.execute("SELECT content FROM knowledge_base WHERE topic=?", (topic,))
+            row = cur.fetchone()
+            if row:
+                return json.loads(row[0])
         except Exception:
             pass
         return None
 
     def _save_topic(self, topic: str, knowledge: Dict, version: int = 1):
         now = datetime.now().isoformat()
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT OR REPLACE INTO knowledge_base (topic, content, version, last_updated, created_at)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (topic, json.dumps(knowledge, ensure_ascii=False), version, now, now))
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            INSERT OR REPLACE INTO knowledge_base (topic, content, version, last_updated, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (topic, json.dumps(knowledge, ensure_ascii=False), version, now, now))
 
     def _get_version(self, topic: str) -> int:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cur = conn.execute("SELECT version FROM knowledge_base WHERE topic=?", (topic,))
-                row = cur.fetchone()
-                return row[0] if row else 0
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cur = conn.execute("SELECT version FROM knowledge_base WHERE topic=?", (topic,))
+            row = cur.fetchone()
+            return row[0] if row else 0
         except Exception:
             return 0
 
@@ -168,11 +173,12 @@ class DeltaKnowledgeUpdater:
         delta_size = len(delta)
         total_size = delta_size
         compression = delta_size / max(1, total_size)
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT INTO delta_history (topic, delta_size, total_size, compression_ratio, version, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (topic, delta_size, total_size, compression, version, now))
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            INSERT INTO delta_history (topic, delta_size, total_size, compression_ratio, version, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (topic, delta_size, total_size, compression, version, now))
 
 
 delta_knowledge_updater = DeltaKnowledgeUpdater()

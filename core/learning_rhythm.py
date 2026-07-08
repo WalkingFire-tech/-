@@ -12,13 +12,13 @@
 - 预警模式：达到阈值后发出信号，系统自行决定
 """
 
-import sqlite3
 import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from infrastructure.database_manager import DatabaseManager
 
 try:
     from loguru import logger
@@ -78,35 +78,33 @@ class LearningRhythmMonitor:
         """初始化数据库"""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS learning_records (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT,
-                    source TEXT,
-                    quality_score REAL,
-                    content_hash TEXT,
-                    alignment_status TEXT,
-                    metadata TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS rhythm_alerts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT,
-                    alert_type TEXT,
-                    message TEXT,
-                    severity TEXT,
-                    action_taken TEXT,
-                    resolved INTEGER DEFAULT 0
-                )
-            ''')
-            
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON learning_records(timestamp)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_source ON learning_records(source)')
-            
-            conn.commit()
+        db = DatabaseManager.get(str(self.db_path))
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS learning_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                source TEXT,
+                quality_score REAL,
+                content_hash TEXT,
+                alignment_status TEXT,
+                metadata TEXT
+            )
+        ''')
+        
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS rhythm_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                alert_type TEXT,
+                message TEXT,
+                severity TEXT,
+                action_taken TEXT,
+                resolved INTEGER DEFAULT 0
+            )
+        ''')
+        
+        db.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON learning_records(timestamp)')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_source ON learning_records(source)', commit=True)
     
     def record(self, source: str, quality_score: float = 0.0, 
                content_hash: str = "", alignment_status: str = "pass",
@@ -119,20 +117,19 @@ class LearningRhythmMonitor:
         """
         metadata = metadata or {}
         
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute('''
-                INSERT INTO learning_records
-                (timestamp, source, quality_score, content_hash, alignment_status, metadata)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                datetime.now().isoformat(),
-                source,
-                quality_score,
-                content_hash,
-                alignment_status,
-                json.dumps(metadata, ensure_ascii=False)
-            ))
-            conn.commit()
+        db = DatabaseManager.get(str(self.db_path))
+        db.execute('''
+            INSERT INTO learning_records
+            (timestamp, source, quality_score, content_hash, alignment_status, metadata)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (
+            datetime.now().isoformat(),
+            source,
+            quality_score,
+            content_hash,
+            alignment_status,
+            json.dumps(metadata, ensure_ascii=False)
+        ), commit=True)
         
         status = self.get_status()
         
@@ -148,48 +145,45 @@ class LearningRhythmMonitor:
         week_start = today_start - timedelta(days=now.weekday())
         month_start = today_start.replace(day=1)
         
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            cursor = conn.execute('''
-                SELECT COUNT(*) as count, AVG(quality_score) as avg_quality
-                FROM learning_records
-                WHERE timestamp >= ?
-            ''', (today_start.isoformat(),))
-            today_row = cursor.fetchone()
-            today_count = today_row['count']
-            today_quality = today_row['avg_quality'] or 0.0
-            
-            cursor = conn.execute('''
-                SELECT COUNT(*) as count
-                FROM learning_records
-                WHERE timestamp >= ?
-            ''', (week_start.isoformat(),))
-            week_count = cursor.fetchone()['count']
-            
-            cursor = conn.execute('''
-                SELECT COUNT(*) as count
-                FROM learning_records
-                WHERE timestamp >= ?
-            ''', (month_start.isoformat(),))
-            month_count = cursor.fetchone()['count']
-            
-            cursor = conn.execute('''
-                SELECT source, COUNT(*) as count
-                FROM learning_records
-                WHERE timestamp >= ?
-                GROUP BY source
-            ''', (week_start.isoformat(),))
-            sources_distribution = {row['source']: row['count'] for row in cursor.fetchall()}
-            
-            cursor = conn.execute('''
-                SELECT COUNT(*) as count, AVG(quality_score) as avg_quality
-                FROM learning_records
-                WHERE timestamp >= ?
-            ''', ((now - timedelta(days=7)).isoformat(),))
-            week_row = cursor.fetchone()
-            avg_daily = week_row['count'] / 7 if week_row['count'] > 0 else 0
-            week_quality = week_row['avg_quality'] or 0.0
+        db = DatabaseManager.get(str(self.db_path))
+        
+        today_row = db.query_one('''
+            SELECT COUNT(*) as count, AVG(quality_score) as avg_quality
+            FROM learning_records
+            WHERE timestamp >= ?
+        ''', (today_start.isoformat(),))
+        today_count = today_row['count']
+        today_quality = today_row['avg_quality'] or 0.0
+        
+        week_row = db.query_one('''
+            SELECT COUNT(*) as count
+            FROM learning_records
+            WHERE timestamp >= ?
+        ''', (week_start.isoformat(),))
+        week_count = week_row['count']
+        
+        month_row = db.query_one('''
+            SELECT COUNT(*) as count
+            FROM learning_records
+            WHERE timestamp >= ?
+        ''', (month_start.isoformat(),))
+        month_count = month_row['count']
+        
+        source_rows = db.query('''
+            SELECT source, COUNT(*) as count
+            FROM learning_records
+            WHERE timestamp >= ?
+            GROUP BY source
+        ''', (week_start.isoformat(),))
+        sources_distribution = {r['source']: r['count'] for r in source_rows}
+        
+        week_row2 = db.query_one('''
+            SELECT COUNT(*) as count, AVG(quality_score) as avg_quality
+            FROM learning_records
+            WHERE timestamp >= ?
+        ''', ((now - timedelta(days=7)).isoformat(),))
+        avg_daily = week_row2['count'] / 7 if week_row2['count'] > 0 else 0
+        week_quality = week_row2['avg_quality'] or 0.0
         
         rhythm = self._analyze_rhythm()
         
@@ -212,22 +206,21 @@ class LearningRhythmMonitor:
         """分析学习节奏"""
         now = datetime.now()
         
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.row_factory = sqlite3.Row
+        db = DatabaseManager.get(str(self.db_path))
+        
+        daily_counts = []
+        for i in range(7):
+            day_start = (now - timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_start + timedelta(days=1)
             
-            daily_counts = []
-            for i in range(7):
-                day_start = (now - timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
-                day_end = day_start + timedelta(days=1)
-                
-                cursor = conn.execute('''
-                    SELECT COUNT(*) as count
-                    FROM learning_records
-                    WHERE timestamp >= ? AND timestamp < ?
-                ''', (day_start.isoformat(), day_end.isoformat()))
-                daily_counts.append(cursor.fetchone()['count'])
-            
-            daily_counts.reverse()
+            row = db.query_one('''
+                SELECT COUNT(*) as count
+                FROM learning_records
+                WHERE timestamp >= ? AND timestamp < ?
+            ''', (day_start.isoformat(), day_end.isoformat()))
+            daily_counts.append(row['count'])
+        
+        daily_counts.reverse()
         
         if len(daily_counts) < 3:
             return LearningRhythm.NORMAL
@@ -292,18 +285,17 @@ class LearningRhythmMonitor:
         for alert in alerts:
             severity = "high" if "🚨" in alert else "medium" if "⚠️" in alert else "low"
             
-            with sqlite3.connect(str(self.db_path)) as conn:
-                conn.execute('''
-                    INSERT INTO rhythm_alerts
-                    (timestamp, alert_type, message, severity)
-                    VALUES (?, ?, ?, ?)
-                ''', (
-                    datetime.now().isoformat(),
-                    "rhythm_alert",
-                    alert,
-                    severity
-                ))
-                conn.commit()
+            db = DatabaseManager.get(str(self.db_path))
+            db.execute('''
+                INSERT INTO rhythm_alerts
+                (timestamp, alert_type, message, severity)
+                VALUES (?, ?, ?, ?)
+            ''', (
+                datetime.now().isoformat(),
+                "rhythm_alert",
+                alert,
+                severity
+            ), commit=True)
             
             logger.warning(f"⚠️ 学习预警: {alert}")
     

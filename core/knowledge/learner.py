@@ -9,7 +9,6 @@
 """
 
 import json
-import sqlite3
 import hashlib
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
@@ -20,6 +19,8 @@ try:
 except ImportError:
     import logging
     logger = logging.getLogger(__name__)
+
+from infrastructure.database_manager import DatabaseManager
 
 
 class DomainKnowledgeLearner:
@@ -42,41 +43,42 @@ class DomainKnowledgeLearner:
 
     def _init_database(self):
         """初始化数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS domain_knowledge (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    domain TEXT UNIQUE,
-                    semantic_vector TEXT,
-                    sample_queries TEXT,
-                    confidence REAL,
-                    occurrences INTEGER DEFAULT 1,
-                    created_at TEXT,
-                    updated_at TEXT
-                )
-            ''')
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS domain_knowledge (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain TEXT UNIQUE,
+                semantic_vector TEXT,
+                sample_queries TEXT,
+                confidence REAL,
+                occurrences INTEGER DEFAULT 1,
+                created_at TEXT,
+                updated_at TEXT
+            )
+        ''')
 
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS type_mappings (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_type TEXT,
-                    target_type TEXT,
-                    similarity REAL,
-                    confidence REAL,
-                    created_at TEXT
-                )
-            ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS type_mappings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type TEXT,
+                target_type TEXT,
+                similarity REAL,
+                confidence REAL,
+                created_at TEXT
+            )
+        ''')
 
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS learning_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    query TEXT,
-                    correct_domain TEXT,
-                    wrong_domain TEXT,
-                    confidence REAL,
-                    learned_at TEXT
-                )
-            ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS learning_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query TEXT,
+                correct_domain TEXT,
+                wrong_domain TEXT,
+                confidence REAL,
+                learned_at TEXT
+            )
+        ''')
 
     def _init_embedding(self):
         """初始化语义嵌入模型（延迟加载）"""
@@ -119,11 +121,12 @@ class DomainKnowledgeLearner:
 
             query_vec = self._embedding_model.encode(query)
 
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute(
-                    "SELECT domain, semantic_vector FROM domain_knowledge WHERE semantic_vector IS NOT NULL"
-                )
-                rows = cursor.fetchall()
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.execute(
+                "SELECT domain, semantic_vector FROM domain_knowledge WHERE semantic_vector IS NOT NULL"
+            )
+            rows = cursor.fetchall()
 
             if not rows:
                 return None, 0.0
@@ -147,11 +150,12 @@ class DomainKnowledgeLearner:
     def _detect_by_keyword(self, query: str) -> Tuple[Optional[str], float]:
         """关键词降级匹配（从知识库查询）"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute(
-                    "SELECT domain, sample_queries FROM domain_knowledge"
-                )
-                rows = cursor.fetchall()
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.execute(
+                "SELECT domain, sample_queries FROM domain_knowledge"
+            )
+            rows = cursor.fetchall()
 
             query_lower = query.lower()
             best_domain = None
@@ -199,88 +203,90 @@ class DomainKnowledgeLearner:
             except Exception as e:
                 logger.warning(f"向量生成失败: {e}")
 
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
-                "SELECT id, semantic_vector, sample_queries, occurrences FROM domain_knowledge WHERE domain = ?",
-                (correct_domain,)
-            )
-            row = cursor.fetchone()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute(
+            "SELECT id, semantic_vector, sample_queries, occurrences FROM domain_knowledge WHERE domain = ?",
+            (correct_domain,)
+        )
+        row = cursor.fetchone()
 
-            if row:
-                existing_queries = json.loads(row[2]) if row[2] else []
-                if query not in existing_queries:
-                    existing_queries.append(query)
-                if len(existing_queries) > 20:
-                    existing_queries = existing_queries[-20:]
-
-                conn.execute('''
-                    UPDATE domain_knowledge
-                    SET semantic_vector = ?,
-                        sample_queries = ?,
-                        occurrences = occurrences + 1,
-                        confidence = ?,
-                        updated_at = ?
-                    WHERE domain = ?
-                ''', (
-                    vector_json or row[1],
-                    json.dumps(existing_queries, ensure_ascii=False),
-                    min(1.0, confidence + 0.05 * row[3]),
-                    datetime.now().isoformat(),
-                    correct_domain
-                ))
-            else:
-                conn.execute('''
-                    INSERT INTO domain_knowledge
-                    (domain, semantic_vector, sample_queries, confidence, occurrences, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    correct_domain,
-                    vector_json,
-                    json.dumps([query], ensure_ascii=False),
-                    confidence,
-                    1,
-                    datetime.now().isoformat(),
-                    datetime.now().isoformat()
-                ))
+        if row:
+            existing_queries = json.loads(row[2]) if row[2] else []
+            if query not in existing_queries:
+                existing_queries.append(query)
+            if len(existing_queries) > 20:
+                existing_queries = existing_queries[-20:]
 
             conn.execute('''
-                INSERT INTO learning_history
-                (query, correct_domain, wrong_domain, confidence, learned_at)
-                VALUES (?, ?, ?, ?, ?)
+                UPDATE domain_knowledge
+                SET semantic_vector = ?,
+                    sample_queries = ?,
+                    occurrences = occurrences + 1,
+                    confidence = ?,
+                    updated_at = ?
+                WHERE domain = ?
             ''', (
-                query,
+                vector_json or row[1],
+                json.dumps(existing_queries, ensure_ascii=False),
+                min(1.0, confidence + 0.05 * row[3]),
+                datetime.now().isoformat(),
+                correct_domain
+            ))
+        else:
+            conn.execute('''
+                INSERT INTO domain_knowledge
+                (domain, semantic_vector, sample_queries, confidence, occurrences, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
                 correct_domain,
-                wrong_domain,
+                vector_json,
+                json.dumps([query], ensure_ascii=False),
                 confidence,
+                1,
+                datetime.now().isoformat(),
                 datetime.now().isoformat()
             ))
 
-            conn.commit()
+        conn.execute('''
+            INSERT INTO learning_history
+            (query, correct_domain, wrong_domain, confidence, learned_at)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (
+            query,
+            correct_domain,
+            wrong_domain,
+            confidence,
+            datetime.now().isoformat()
+        ))
+
+        conn.commit()
 
         logger.info(f"📚 学习: '{query[:30]}...' → {correct_domain} (置信度: {confidence:.2f})")
 
     def get_domain_stats(self) -> Dict:
         """获取领域统计"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute('''
-                    SELECT domain, occurrences, confidence, updated_at
-                    FROM domain_knowledge
-                    ORDER BY occurrences DESC
-                ''')
-                domains = cursor.fetchall()
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.execute('''
+                SELECT domain, occurrences, confidence, updated_at
+                FROM domain_knowledge
+                ORDER BY occurrences DESC
+            ''')
+            domains = cursor.fetchall()
 
-                cursor = conn.execute("SELECT COUNT(*) FROM learning_history")
-                total_learned = cursor.fetchone()[0]
+            cursor = conn.execute("SELECT COUNT(*) FROM learning_history")
+            total_learned = cursor.fetchone()[0]
 
-                return {
-                    "total_domains": len(domains),
-                    "total_learned": total_learned,
-                    "domains": [
-                        {"domain": d[0], "occurrences": d[1], "confidence": d[2], "updated": d[3]}
-                        for d in domains[:10]
-                    ]
-                }
+            return {
+                "total_domains": len(domains),
+                "total_learned": total_learned,
+                "domains": [
+                    {"domain": d[0], "occurrences": d[1], "confidence": d[2], "updated": d[3]}
+                    for d in domains[:10]
+                ]
+            }
         except Exception as e:
             logger.error(f"获取领域统计失败: {e}")
             return {"total_domains": 0, "total_learned": 0, "domains": []}
@@ -288,15 +294,15 @@ class DomainKnowledgeLearner:
     def get_learning_history(self, limit: int = 20) -> List[Dict]:
         """获取学习历史"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.execute('''
-                    SELECT query, correct_domain, wrong_domain, confidence, learned_at
-                    FROM learning_history
-                    ORDER BY learned_at DESC
-                    LIMIT ?
-                ''', (limit,))
-                return [dict(row) for row in cursor.fetchall()]
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.execute('''
+                SELECT query, correct_domain, wrong_domain, confidence, learned_at
+                FROM learning_history
+                ORDER BY learned_at DESC
+                LIMIT ?
+            ''', (limit,))
+            return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"获取学习历史失败: {e}")
             return []

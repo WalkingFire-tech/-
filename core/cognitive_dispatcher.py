@@ -32,8 +32,8 @@ from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 from loguru import logger
 from pathlib import Path
-import sqlite3
 import threading
+from infrastructure.database_manager import DatabaseManager
 
 
 class CognitiveDispatcher:
@@ -84,9 +84,8 @@ class CognitiveDispatcher:
     def _init_dispatch_history_db(self):
         """初始化调度决策历史数据库"""
         try:
-            conn = sqlite3.connect("data/dispatch_history.db")
-            cursor = conn.cursor()
-            cursor.execute('''
+            db = DatabaseManager.get("data/dispatch_history.db")
+            db.execute('''
                 CREATE TABLE IF NOT EXISTS dispatch_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     query TEXT,
@@ -99,9 +98,7 @@ class CognitiveDispatcher:
                     elapsed_ms INTEGER,
                     timestamp TEXT
                 )
-            ''')
-            conn.commit()
-            conn.close()
+            ''', commit=True)
         except Exception as e:
             logger.debug(f"调度历史数据库初始化失败: {e}")
     
@@ -536,20 +533,19 @@ class CognitiveDispatcher:
     def _get_reflection_lessons(self, query: str, intent_type: str) -> List[Dict]:
         """P1-7: 从spirit_lessons.db读取相关反思教训，回流到规划"""
         try:
-            with sqlite3.connect("data/spirit_lessons.db", timeout=3) as conn:
-                conn.row_factory = sqlite3.Row
-                rows = conn.execute(
+            db = DatabaseManager.get("data/spirit_lessons.db")
+            rows = db.query(
+                "SELECT lesson_type, lesson_text, severity, context FROM spirit_lessons "
+                "WHERE lesson_text LIKE ? OR context LIKE ? "
+                "ORDER BY severity DESC, created_at DESC LIMIT 5",
+                (f"%{query[:15]}%", f"%{intent_type}%")
+            )
+            if not rows:
+                rows = db.query(
                     "SELECT lesson_type, lesson_text, severity, context FROM spirit_lessons "
-                    "WHERE lesson_text LIKE ? OR context LIKE ? "
-                    "ORDER BY severity DESC, created_at DESC LIMIT 5",
-                    (f"%{query[:15]}%", f"%{intent_type}%")
-                ).fetchall()
-                if not rows:
-                    rows = conn.execute(
-                        "SELECT lesson_type, lesson_text, severity, context FROM spirit_lessons "
-                        "WHERE severity >= 3 ORDER BY created_at DESC LIMIT 3"
-                    ).fetchall()
-                return [dict(r) for r in rows]
+                    "WHERE severity >= 3 ORDER BY created_at DESC LIMIT 3"
+                )
+            return [dict(r) for r in rows]
         except Exception:
             return []
     
@@ -662,9 +658,8 @@ class CognitiveDispatcher:
     def _record_dispatch(self, result: Dict, query: str):
         """记录调度决策历史（为自进化提供数据）"""
         try:
-            conn = sqlite3.connect("data/dispatch_history.db")
-            cursor = conn.cursor()
-            cursor.execute(
+            db = DatabaseManager.get("data/dispatch_history.db")
+            db.execute(
                 """INSERT INTO dispatch_history 
                    (query, intent_type, confidence, complexity, route, execution_plan, reasoning, elapsed_ms, timestamp)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -678,28 +673,21 @@ class CognitiveDispatcher:
                     result.get("reasoning", ""),
                     result.get("elapsed_ms", 0),
                     datetime.now().isoformat()
-                )
+                ),
+                commit=True
             )
-            conn.commit()
-            conn.close()
         except Exception as e:
             logger.debug(f"调度历史记录失败: {e}")
     
     def get_dispatch_history(self, limit: int = 10) -> List[Dict]:
         """获取调度决策历史"""
         try:
-            conn = sqlite3.connect("data/dispatch_history.db")
-            cursor = conn.cursor()
-            cursor.execute(
+            db = DatabaseManager.get("data/dispatch_history.db")
+            rows = db.query(
                 "SELECT * FROM dispatch_history ORDER BY id DESC LIMIT ?",
                 (limit,)
             )
-            rows = cursor.fetchall()
-            conn.close()
-            
-            columns = ["id", "query", "intent_type", "confidence", "complexity", 
-                       "route", "execution_plan", "reasoning", "elapsed_ms", "timestamp"]
-            return [dict(zip(columns, row)) for row in rows]
+            return [dict(r) for r in rows]
         except Exception as e:
             logger.debug(f"获取调度历史失败: {e}")
             return []
@@ -707,22 +695,19 @@ class CognitiveDispatcher:
     def analyze_dispatch_patterns(self) -> Dict:
         """分析调度决策模式（为自进化提供洞察）"""
         try:
-            conn = sqlite3.connect("data/dispatch_history.db")
-            cursor = conn.cursor()
+            db = DatabaseManager.get("data/dispatch_history.db")
             
-            cursor.execute("SELECT COUNT(*) FROM dispatch_history")
-            total = cursor.fetchone()[0]
+            total_row = db.query_one("SELECT COUNT(*) as cnt FROM dispatch_history")
+            total = total_row['cnt'] if total_row else 0
             
-            cursor.execute("SELECT route, COUNT(*) FROM dispatch_history GROUP BY route")
-            route_distribution = dict(cursor.fetchall())
+            route_rows = db.query("SELECT route, COUNT(*) as cnt FROM dispatch_history GROUP BY route")
+            route_distribution = {r['route']: r['cnt'] for r in route_rows}
             
-            cursor.execute("SELECT intent_type, COUNT(*) FROM dispatch_history GROUP BY intent_type")
-            intent_distribution = dict(cursor.fetchall())
+            intent_rows = db.query("SELECT intent_type, COUNT(*) as cnt FROM dispatch_history GROUP BY intent_type")
+            intent_distribution = {r['intent_type']: r['cnt'] for r in intent_rows}
             
-            cursor.execute("SELECT AVG(elapsed_ms) FROM dispatch_history")
-            avg_elapsed = cursor.fetchone()[0] or 0
-            
-            conn.close()
+            avg_row = db.query_one("SELECT AVG(elapsed_ms) as avg_ms FROM dispatch_history")
+            avg_elapsed = avg_row['avg_ms'] if avg_row and avg_row['avg_ms'] is not None else 0
             
             return {
                 "total_decisions": total,

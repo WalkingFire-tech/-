@@ -2,13 +2,13 @@
 自动学习触发器 - 基于学习目标列表自动触发学习
 """
 import yaml
-import sqlite3
 import time
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 
 class AutoLearningTrigger:
@@ -52,36 +52,35 @@ class AutoLearningTrigger:
     def _init_db(self):
         """初始化学习进度数据库"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS learning_progress (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        target_name TEXT NOT NULL,
-                        target_type TEXT NOT NULL,
-                        progress INTEGER DEFAULT 0,
-                        status TEXT DEFAULT 'pending',
-                        last_learning TIMESTAMP,
-                        success_count INTEGER DEFAULT 0,
-                        failure_count INTEGER DEFAULT 0,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(target_name, target_type)
-                    )
-                ''')
-                
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS learning_history (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        target_name TEXT NOT NULL,
-                        target_type TEXT NOT NULL,
-                        action TEXT,
-                        result TEXT,
-                        knowledge_gained INTEGER DEFAULT 0,
-                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
-                
-                conn.commit()
-                logger.info("学习进度数据库已初始化")
+            db = DatabaseManager.get(self.db_path)
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS learning_progress (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    target_name TEXT NOT NULL,
+                    target_type TEXT NOT NULL,
+                    progress INTEGER DEFAULT 0,
+                    status TEXT DEFAULT 'pending',
+                    last_learning TIMESTAMP,
+                    success_count INTEGER DEFAULT 0,
+                    failure_count INTEGER DEFAULT 0,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(target_name, target_type)
+                )
+            ''')
+            
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS learning_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    target_name TEXT NOT NULL,
+                    target_type TEXT NOT NULL,
+                    action TEXT,
+                    result TEXT,
+                    knowledge_gained INTEGER DEFAULT 0,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''', commit=True)
+            
+            logger.info("学习进度数据库已初始化")
         except Exception as e:
             logger.error(f"初始化学习进度数据库失败: {e}")
     
@@ -186,17 +185,13 @@ class AutoLearningTrigger:
     def _get_topic_progress(self, topic_name: str) -> int:
         """获取主题学习进度（知识条数）"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                
-                # 查询相关知识的数量
-                cursor.execute('''
-                    SELECT COUNT(*) FROM knowledge_items
-                    WHERE question LIKE ? OR answer LIKE ?
-                ''', (f'%{topic_name}%', f'%{topic_name}%'))
-                
-                count = cursor.fetchone()[0]
-                return count
+            db = DatabaseManager.get(self.db_path)
+            row = db.query_one('''
+                SELECT COUNT(*) as cnt FROM knowledge_items
+                WHERE question LIKE ? OR answer LIKE ?
+            ''', (f'%{topic_name}%', f'%{topic_name}%'))
+            count = row['cnt'] if row else 0
+            return count
         except Exception as e:
             logger.error(f"获取主题进度失败: {topic_name}, 错误: {str(e)}")
             return 0
@@ -204,26 +199,22 @@ class AutoLearningTrigger:
     def _get_skill_success_rate(self, skill_name: str) -> float:
         """获取技能成功率"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                
-                # 查询技能成功记录
-                cursor.execute('''
-                    SELECT 
-                        SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
-                        COUNT(*) as total_count
-                    FROM experiences
-                    WHERE intent_type = ?
-                ''', (skill_name,))
-                
-                result = cursor.fetchone()
-                success_count = result[0] or 0
-                total_count = result[1] or 0
-                
-                if total_count == 0:
-                    return 0.0
-                
-                return success_count / total_count
+            db = DatabaseManager.get(self.db_path)
+            row = db.query_one('''
+                SELECT 
+                    SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
+                    COUNT(*) as total_count
+                FROM experiences
+                WHERE intent_type = ?
+            ''', (skill_name,))
+            
+            success_count = row['success_count'] if row and row['success_count'] is not None else 0
+            total_count = row['total_count'] if row else 0
+            
+            if total_count == 0:
+                return 0.0
+            
+            return success_count / total_count
         except Exception as e:
             logger.error(f"获取技能成功率失败: {skill_name}, 错误: {str(e)}")
             return 0.0
@@ -311,50 +302,42 @@ class AutoLearningTrigger:
                                  action: str, result: str, knowledge_gained: int = 0):
         """记录学习历史"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    INSERT INTO learning_history 
-                    (target_name, target_type, action, result, knowledge_gained, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (target_name, target_type, action, result, knowledge_gained, datetime.now()))
-                
-                conn.commit()
+            db = DatabaseManager.get(self.db_path)
+            db.execute('''
+                INSERT INTO learning_history 
+                (target_name, target_type, action, result, knowledge_gained, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (target_name, target_type, action, result, knowledge_gained, datetime.now()), commit=True)
         except Exception as e:
             logger.error(f"记录学习历史失败: {e}")
     
     def _update_progress(self, target_name: str, target_type: str, result: Dict):
         """更新学习进度"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                # 获取当前进度
-                cursor = conn.cursor()
-                cursor.execute('''
-                    SELECT progress, success_count FROM learning_progress
+            db = DatabaseManager.get(self.db_path)
+            row = db.query_one('''
+                SELECT progress, success_count FROM learning_progress
+                WHERE target_name = ? AND target_type = ?
+            ''', (target_name, target_type))
+            
+            if row:
+                new_progress = row['progress'] + result.get('knowledge_gained', 0)
+                new_success = row['success_count'] + 1
+                
+                db.execute('''
+                    UPDATE learning_progress
+                    SET progress = ?, success_count = ?, 
+                        last_learning = ?, updated_at = ?
                     WHERE target_name = ? AND target_type = ?
-                ''', (target_name, target_type))
-                
-                row = cursor.fetchone()
-                
-                if row:
-                    new_progress = row[0] + result.get('knowledge_gained', 0)
-                    new_success = row[1] + 1
-                    
-                    conn.execute('''
-                        UPDATE learning_progress
-                        SET progress = ?, success_count = ?, 
-                            last_learning = ?, updated_at = ?
-                        WHERE target_name = ? AND target_type = ?
-                    ''', (new_progress, new_success, datetime.now(), datetime.now(),
-                          target_name, target_type))
-                else:
-                    conn.execute('''
-                        INSERT INTO learning_progress
-                        (target_name, target_type, progress, status, success_count, last_learning, updated_at)
-                        VALUES (?, ?, ?, 'in_progress', 1, ?, ?)
-                    ''', (target_name, target_type, result.get('knowledge_gained', 0),
-                          datetime.now(), datetime.now()))
-                
-                conn.commit()
+                ''', (new_progress, new_success, datetime.now(), datetime.now(),
+                      target_name, target_type), commit=True)
+            else:
+                db.execute('''
+                    INSERT INTO learning_progress
+                    (target_name, target_type, progress, status, success_count, last_learning, updated_at)
+                    VALUES (?, ?, ?, 'in_progress', 1, ?, ?)
+                ''', (target_name, target_type, result.get('knowledge_gained', 0),
+                      datetime.now(), datetime.now()), commit=True)
         except Exception as e:
             logger.error(f"更新学习进度失败: {e}")
     

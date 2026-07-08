@@ -1,12 +1,13 @@
 """
 知识健康度评估 - 多维度评估系统知识水平
 """
-import sqlite3
 import json
 from datetime import datetime, timedelta
 from typing import Dict, List
 from collections import Counter
 from loguru import logger
+
+from infrastructure.database_manager import DatabaseManager
 
 
 class KnowledgeHealthChecker:
@@ -55,223 +56,223 @@ class KnowledgeHealthChecker:
     
     def _check_knowledge(self) -> Dict:
         """检查知识总量"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            # 总数
-            cur = conn.execute("SELECT COUNT(*) FROM knowledge_items")
-            total = cur.fetchone()[0]
-            
-            # 按类型统计
-            cur = conn.execute('''
-                SELECT knowledge_type, COUNT(*) as cnt
-                FROM knowledge_items
-                GROUP BY knowledge_type
-            ''')
-            by_type = {row['knowledge_type']: row['cnt'] for row in cur.fetchall()}
-            
-            # 按来源统计
-            cur = conn.execute('''
-                SELECT source, COUNT(*) as cnt
-                FROM knowledge_items
-                GROUP BY source
-                ORDER BY cnt DESC
-                LIMIT 5
-            ''')
-            top_sources = [{"source": row['source'], "count": row['cnt']} for row in cur.fetchall()]
-            
-            return {
-                "total": total,
-                "by_type": by_type,
-                "top_sources": top_sources,
-                "has_data": total > 0
-            }
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        
+        # 总数
+        cur = conn.execute("SELECT COUNT(*) FROM knowledge_items")
+        total = cur.fetchone()[0]
+        
+        # 按类型统计
+        cur = conn.execute('''
+            SELECT knowledge_type, COUNT(*) as cnt
+            FROM knowledge_items
+            GROUP BY knowledge_type
+        ''')
+        by_type = {row['knowledge_type']: row['cnt'] for row in cur.fetchall()}
+        
+        # 按来源统计
+        cur = conn.execute('''
+            SELECT source, COUNT(*) as cnt
+            FROM knowledge_items
+            GROUP BY source
+            ORDER BY cnt DESC
+            LIMIT 5
+        ''')
+        top_sources = [{"source": row['source'], "count": row['cnt']} for row in cur.fetchall()]
+        
+        return {
+            "total": total,
+            "by_type": by_type,
+            "top_sources": top_sources,
+            "has_data": total > 0
+        }
     
     def _check_memory_layers(self) -> Dict:
         """检查记忆层级"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            cur = conn.execute('''
-                SELECT memory_layer, COUNT(*) as cnt
-                FROM knowledge_items
-                WHERE memory_layer IS NOT NULL
-                GROUP BY memory_layer
-            ''')
-            
-            layers = {row['memory_layer']: row['cnt'] for row in cur.fetchall()}
-            
-            total = sum(layers.values()) if layers else 0
-            
-            return {
-                "layers": {
-                    "L1_核心记忆": layers.get(1, 0),
-                    "L2_框架记忆": layers.get(2, 0),
-                    "L3_情境碎片": layers.get(3, 0)
-                },
-                "total": total,
-                "layer1_ratio": layers.get(1, 0) / total if total > 0 else 0
-            }
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        
+        cur = conn.execute('''
+            SELECT memory_layer, COUNT(*) as cnt
+            FROM knowledge_items
+            WHERE memory_layer IS NOT NULL
+            GROUP BY memory_layer
+        ''')
+        
+        layers = {row['memory_layer']: row['cnt'] for row in cur.fetchall()}
+        
+        total = sum(layers.values()) if layers else 0
+        
+        return {
+            "layers": {
+                "L1_核心记忆": layers.get(1, 0),
+                "L2_框架记忆": layers.get(2, 0),
+                "L3_情境碎片": layers.get(3, 0)
+            },
+            "total": total,
+            "layer1_ratio": layers.get(1, 0) / total if total > 0 else 0
+        }
     
     def _check_skills(self) -> Dict:
         """检查技能库"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            cur = conn.execute("SELECT COUNT(*) FROM tools")
-            total = cur.fetchone()[0]
-            
-            cur = conn.execute("""
-                SELECT name, usage_count, created_at
-                FROM tools
-                ORDER BY usage_count DESC
-                LIMIT 5
-            """)
-            top_tools = [dict(row) for row in cur.fetchall()]
-            
-            cur = conn.execute("SELECT AVG(usage_count) FROM tools")
-            avg_usage = cur.fetchone()[0] or 0
-            
-            return {
-                "total": total,
-                "top_tools": top_tools,
-                "avg_usage": avg_usage,
-                "has_skills": total > 0
-            }
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        
+        cur = conn.execute("SELECT COUNT(*) FROM tools")
+        total = cur.fetchone()[0]
+        
+        cur = conn.execute("""
+            SELECT name, usage_count, created_at
+            FROM tools
+            ORDER BY usage_count DESC
+            LIMIT 5
+        """)
+        top_tools = [dict(row) for row in cur.fetchall()]
+        
+        cur = conn.execute("SELECT AVG(usage_count) FROM tools")
+        avg_usage = cur.fetchone()[0] or 0
+        
+        return {
+            "total": total,
+            "top_tools": top_tools,
+            "avg_usage": avg_usage,
+            "has_skills": total > 0
+        }
     
     def _check_rules(self) -> Dict:
         """检查规则库"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            cur = conn.execute("SELECT COUNT(*) FROM learning_rules")
-            total = cur.fetchone()[0]
-            
-            cur = conn.execute("""
-                SELECT status, COUNT(*) as cnt
-                FROM learning_rules
-                GROUP BY status
-            """)
-            by_status = {row['status']: row['cnt'] for row in cur.fetchall()}
-            
-            cur = conn.execute("""
-                SELECT AVG(confidence) as avg_confidence
-                FROM learning_rules
-            """)
-            avg_confidence = cur.fetchone()['avg_confidence'] or 0
-            
-            return {
-                "total": total,
-                "by_status": by_status,
-                "active": by_status.get('active', 0),
-                "avg_confidence": avg_confidence
-            }
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        
+        cur = conn.execute("SELECT COUNT(*) FROM learning_rules")
+        total = cur.fetchone()[0]
+        
+        cur = conn.execute("""
+            SELECT status, COUNT(*) as cnt
+            FROM learning_rules
+            GROUP BY status
+        """)
+        by_status = {row['status']: row['cnt'] for row in cur.fetchall()}
+        
+        cur = conn.execute("""
+            SELECT AVG(confidence) as avg_confidence
+            FROM learning_rules
+        """)
+        avg_confidence = cur.fetchone()['avg_confidence'] or 0
+        
+        return {
+            "total": total,
+            "by_status": by_status,
+            "active": by_status.get('active', 0),
+            "avg_confidence": avg_confidence
+        }
     
     def _check_quality(self) -> Dict:
         """检查知识质量"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            cur = conn.execute("""
-                SELECT 
-                    AVG(quality_score) as avg_quality,
-                    AVG(salience) as avg_salience,
-                    AVG(access_count) as avg_access
-                FROM knowledge_items
-            """)
-            row = cur.fetchone()
-            
-            cur = conn.execute("""
-                SELECT COUNT(*) as cnt
-                FROM knowledge_items
-                WHERE quality_score >= 80
-            """)
-            high_quality = cur.fetchone()['cnt']
-            
-            cur = conn.execute("""
-                SELECT COUNT(*) as cnt
-                FROM knowledge_items
-                WHERE quality_score < 30
-            """)
-            low_quality = cur.fetchone()['cnt']
-            
-            total = self._check_knowledge()['total']
-            
-            return {
-                "avg_quality": row['avg_quality'] or 0,
-                "avg_salience": row['avg_salience'] or 0,
-                "avg_access": row['avg_access'] or 0,
-                "high_quality_count": high_quality,
-                "high_quality_ratio": high_quality / total if total > 0 else 0,
-                "low_quality_count": low_quality,
-                "low_quality_ratio": low_quality / total if total > 0 else 0
-            }
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        
+        cur = conn.execute("""
+            SELECT 
+                AVG(quality_score) as avg_quality,
+                AVG(salience) as avg_salience,
+                AVG(access_count) as avg_access
+            FROM knowledge_items
+        """)
+        row = cur.fetchone()
+        
+        cur = conn.execute("""
+            SELECT COUNT(*) as cnt
+            FROM knowledge_items
+            WHERE quality_score >= 80
+        """)
+        high_quality = cur.fetchone()['cnt']
+        
+        cur = conn.execute("""
+            SELECT COUNT(*) as cnt
+            FROM knowledge_items
+            WHERE quality_score < 30
+        """)
+        low_quality = cur.fetchone()['cnt']
+        
+        total = self._check_knowledge()['total']
+        
+        return {
+            "avg_quality": row['avg_quality'] or 0,
+            "avg_salience": row['avg_salience'] or 0,
+            "avg_access": row['avg_access'] or 0,
+            "high_quality_count": high_quality,
+            "high_quality_ratio": high_quality / total if total > 0 else 0,
+            "low_quality_count": low_quality,
+            "low_quality_ratio": low_quality / total if total > 0 else 0
+        }
     
     def _check_topics(self) -> Dict:
         """检查知识覆盖领域"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            cur = conn.execute("""
-                SELECT question FROM knowledge_items
-                WHERE question IS NOT NULL
-                LIMIT 100
-            """)
-            
-            questions = [row['question'] for row in cur.fetchall()]
-            
-            # 简单关键词提取
-            import re
-            keywords = []
-            for q in questions:
-                words = re.findall(r'\w+', q.lower())
-                keywords.extend([w for w in words if len(w) > 3])
-            
-            keyword_counts = Counter(keywords).most_common(10)
-            
-            return {
-                "total_keywords": len(keywords),
-                "unique_keywords": len(set(keywords)),
-                "top_keywords": [{"word": w, "count": c} for w, c in keyword_counts[:10]]
-            }
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        
+        cur = conn.execute("""
+            SELECT question FROM knowledge_items
+            WHERE question IS NOT NULL
+            LIMIT 100
+        """)
+        
+        questions = [row['question'] for row in cur.fetchall()]
+        
+        # 简单关键词提取
+        import re
+        keywords = []
+        for q in questions:
+            words = re.findall(r'\w+', q.lower())
+            keywords.extend([w for w in words if len(w) > 3])
+        
+        keyword_counts = Counter(keywords).most_common(10)
+        
+        return {
+            "total_keywords": len(keywords),
+            "unique_keywords": len(set(keywords)),
+            "top_keywords": [{"word": w, "count": c} for w, c in keyword_counts[:10]]
+        }
     
     def _check_trend(self) -> Dict:
         """检查学习趋势"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            # 最近7天的知识增长
-            week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-            cur = conn.execute("""
-                SELECT COUNT(*) as cnt
-                FROM knowledge_items
-                WHERE created_at >= ?
-            """, (week_ago,))
-            week_growth = cur.fetchone()['cnt']
-            
-            # 最近30天的知识增长
-            month_ago = (datetime.now() - timedelta(days=30)).isoformat()
-            cur = conn.execute("""
-                SELECT COUNT(*) as cnt
-                FROM knowledge_items
-                WHERE created_at >= ?
-            """, (month_ago,))
-            month_growth = cur.fetchone()['cnt']
-            
-            # 总遗忘数
-            cur = conn.execute("""
-                SELECT COUNT(*) as cnt
-                FROM knowledge_items
-                WHERE salience < 0.2 AND memory_layer = 3
-            """)
-            fading = cur.fetchone()['cnt']
-            
-            return {
-                "week_growth": week_growth,
-                "month_growth": month_growth,
-                "fading_count": fading,
-                "growth_rate": month_growth / 30 if month_growth > 0 else 0
-            }
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        
+        # 最近7天的知识增长
+        week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+        cur = conn.execute("""
+            SELECT COUNT(*) as cnt
+            FROM knowledge_items
+            WHERE created_at >= ?
+        """, (week_ago,))
+        week_growth = cur.fetchone()['cnt']
+        
+        # 最近30天的知识增长
+        month_ago = (datetime.now() - timedelta(days=30)).isoformat()
+        cur = conn.execute("""
+            SELECT COUNT(*) as cnt
+            FROM knowledge_items
+            WHERE created_at >= ?
+        """, (month_ago,))
+        month_growth = cur.fetchone()['cnt']
+        
+        # 总遗忘数
+        cur = conn.execute("""
+            SELECT COUNT(*) as cnt
+            FROM knowledge_items
+            WHERE salience < 0.2 AND memory_layer = 3
+        """)
+        fading = cur.fetchone()['cnt']
+        
+        return {
+            "week_growth": week_growth,
+            "month_growth": month_growth,
+            "fading_count": fading,
+            "growth_rate": month_growth / 30 if month_growth > 0 else 0
+        }
     
     def _calculate_score(self, data: Dict) -> Dict:
         """计算综合评分 (0-100)"""

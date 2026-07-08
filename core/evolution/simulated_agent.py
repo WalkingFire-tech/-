@@ -7,13 +7,13 @@
 - 独立的技能集
 - 可评估的适应度
 """
-import sqlite3
 import tempfile
 import os
 import json
 from typing import Dict, List, Optional
 from datetime import datetime
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 
 class SimulatedGenome:
@@ -135,76 +135,71 @@ class SimulatedAgent:
     
     def _init_db(self):
         """初始化临时数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS knowledge (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    question TEXT,
-                    answer TEXT,
-                    confidence REAL DEFAULT 0.5,
-                    created_at TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS skills (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT,
-                    code TEXT,
-                    trigger TEXT
-                )
-            ''')
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS knowledge (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question TEXT,
+                answer TEXT,
+                confidence REAL DEFAULT 0.5,
+                created_at TEXT
+            )
+        ''')
+        
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS skills (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                code TEXT,
+                trigger TEXT
+            )
+        ''', commit=True)
     
     def _add_skill(self, skill: Dict):
         """添加技能"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT INTO skills (name, code, trigger)
-                VALUES (?, ?, ?)
-            ''', (skill.get('name', ''), skill.get('code', ''), skill.get('trigger', '')))
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            INSERT INTO skills (name, code, trigger)
+            VALUES (?, ?, ?)
+        ''', (skill.get('name', ''), skill.get('code', ''), skill.get('trigger', '')), commit=True)
     
     def learn(self, question: str, answer: str, confidence: float = 0.7):
         """学习知识"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT INTO knowledge (question, answer, confidence, created_at)
-                VALUES (?, ?, ?, ?)
-            ''', (question, answer, confidence, datetime.now().isoformat()))
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            INSERT INTO knowledge (question, answer, confidence, created_at)
+            VALUES (?, ?, ?, ?)
+        ''', (question, answer, confidence, datetime.now().isoformat()), commit=True)
     
     def retrieve(self, query: str) -> Optional[Dict]:
         """检索知识"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            # 精确匹配
-            cur = conn.execute('''
-                SELECT answer, confidence FROM knowledge
-                WHERE question = ?
-                ORDER BY confidence DESC LIMIT 1
-            ''', (query,))
-            
-            row = cur.fetchone()
-            if row and row['confidence'] >= self.genome.retrieval_threshold:
-                return {
-                    'answer': row['answer'],
-                    'confidence': row['confidence'],
-                    'source': 'exact'
-                }
-            
-            # 模糊匹配
-            cur = conn.execute('''
-                SELECT answer, confidence FROM knowledge
-                WHERE question LIKE ?
-                ORDER BY confidence DESC LIMIT 1
-            ''', (f'%{query[:20]}%',))
-            
-            row = cur.fetchone()
-            if row and row['confidence'] >= self.genome.retrieval_threshold * 0.8:
-                return {
-                    'answer': row['answer'],
-                    'confidence': row['confidence'] * 0.8,
-                    'source': 'fuzzy'
-                }
+        db = DatabaseManager.get(self.db_path)
+        
+        row = db.query_one('''
+            SELECT answer, confidence FROM knowledge
+            WHERE question = ?
+            ORDER BY confidence DESC LIMIT 1
+        ''', (query,))
+        
+        if row and row['confidence'] >= self.genome.retrieval_threshold:
+            return {
+                'answer': row['answer'],
+                'confidence': row['confidence'],
+                'source': 'exact'
+            }
+        
+        row = db.query_one('''
+            SELECT answer, confidence FROM knowledge
+            WHERE question LIKE ?
+            ORDER BY confidence DESC LIMIT 1
+        ''', (f'%{query[:20]}%',))
+        
+        if row and row['confidence'] >= self.genome.retrieval_threshold * 0.8:
+            return {
+                'answer': row['answer'],
+                'confidence': row['confidence'] * 0.8,
+                'source': 'fuzzy'
+            }
         
         return None
     
@@ -270,44 +265,38 @@ class SimulatedAgent:
     
     def learn_from_experience(self):
         """从情景记忆抽象出技能（认知转化：L3情景→L2技能）"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        db = DatabaseManager.get(self.db_path)
+        
+        patterns = db.query('''
+            SELECT question, answer, COUNT(*) as cnt
+            FROM knowledge
+            GROUP BY question
+            HAVING cnt >= 3
+            ORDER BY cnt DESC
+            LIMIT 5
+        ''')
+        
+        for row in patterns:
+            question = row['question']
+            answer = row['answer']
+            cnt = row['cnt']
             
-            # 获取高频问题（出现≥3次）
-            cur = conn.execute('''
-                SELECT question, answer, COUNT(*) as cnt
-                FROM knowledge
-                GROUP BY question
-                HAVING cnt >= 3
-                ORDER BY cnt DESC
-                LIMIT 5
-            ''')
+            existing = db.query_one('''
+                SELECT 1 as found FROM skills
+                WHERE trigger LIKE ?
+            ''', (f'%{question[:20]}%',))
             
-            patterns = cur.fetchall()
-            
-            for row in patterns:
-                question = row['question']
-                answer = row['answer']
-                cnt = row['cnt']
+            if not existing:
+                skill_name = f"auto_skill_{len(self.skills) + 1}"
+                skill = {
+                    'name': skill_name,
+                    'code': f"# 自动从{cnt}次经验生成\n# 问题: {question[:50]}\n# 答案: {answer[:100]}",
+                    'trigger': question[:30]
+                }
                 
-                # 检查是否已有对应技能
-                cur2 = conn.execute('''
-                    SELECT 1 FROM skills
-                    WHERE trigger LIKE ?
-                ''', (f'%{question[:20]}%',))
-                
-                if not cur2.fetchone():
-                    # 生成技能
-                    skill_name = f"auto_skill_{len(self.skills) + 1}"
-                    skill = {
-                        'name': skill_name,
-                        'code': f"# 自动从{cnt}次经验生成\n# 问题: {question[:50]}\n# 答案: {answer[:100]}",
-                        'trigger': question[:30]
-                    }
-                    
-                    self._add_skill(skill)
-                    self.skills.append(skill)
-                    logger.debug(f"智能体{self.id}从经验中生成技能: {skill_name} (来自{cnt}次经验)")
+                self._add_skill(skill)
+                self.skills.append(skill)
+                logger.debug(f"智能体{self.id}从经验中生成技能: {skill_name} (来自{cnt}次经验)")
     
     def cleanup(self):
         """清理临时数据库"""

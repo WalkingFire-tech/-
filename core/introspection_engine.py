@@ -7,7 +7,7 @@ import threading
 import time
 import os
 import json
-import sqlite3
+
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Callable
 from enum import Enum
@@ -19,6 +19,8 @@ try:
 except ImportError:
     import logging
     logger = logging.getLogger(__name__)
+
+from infrastructure.database_manager import DatabaseManager
 
 
 class AnomalySeverity(Enum):
@@ -135,66 +137,67 @@ class IntrospectionEngine:
         """初始化数据库"""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS system_states (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT,
-                    state_json TEXT
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS anomalies (
-                    id TEXT PRIMARY KEY,
-                    type TEXT,
-                    severity TEXT,
-                    description TEXT,
-                    context TEXT,
-                    detected_at TEXT,
-                    root_cause TEXT,
-                    healing_strategy TEXT,
-                    healing_result TEXT,
-                    healed_at TEXT
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS healing_results (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    anomaly_id TEXT,
-                    status TEXT,
-                    action_taken TEXT,
-                    effect TEXT,
-                    learned INTEGER,
-                    timestamp TEXT
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS anomaly_patterns (
-                    pattern_key TEXT PRIMARY KEY,
-                    count INTEGER,
-                    success_rate REAL,
-                    last_occurrence TEXT,
-                    common_context TEXT
-                )
-            ''')
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS predictions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    prediction_type TEXT,
-                    predicted_at TEXT,
-                    predicted_for TEXT,
-                    actual_occurred INTEGER,
-                    verified_at TEXT
-                )
-            ''')
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS system_states (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                state_json TEXT
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS anomalies (
+                id TEXT PRIMARY KEY,
+                type TEXT,
+                severity TEXT,
+                description TEXT,
+                context TEXT,
+                detected_at TEXT,
+                root_cause TEXT,
+                healing_strategy TEXT,
+                healing_result TEXT,
+                healed_at TEXT
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS healing_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                anomaly_id TEXT,
+                status TEXT,
+                action_taken TEXT,
+                effect TEXT,
+                learned INTEGER,
+                timestamp TEXT
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS anomaly_patterns (
+                pattern_key TEXT PRIMARY KEY,
+                count INTEGER,
+                success_rate REAL,
+                last_occurrence TEXT,
+                common_context TEXT
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS predictions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prediction_type TEXT,
+                predicted_at TEXT,
+                predicted_for TEXT,
+                actual_occurred INTEGER,
+                verified_at TEXT
+            )
+        ''')
+        
+        conn.commit()
     
     def _register_healing_strategies(self):
         """注册修复策略"""
@@ -805,38 +808,40 @@ class IntrospectionEngine:
     
     def _save_state(self, state: SystemState):
         """保存状态"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO system_states (timestamp, state_json)
-                VALUES (?, ?)
-            ''', (state.timestamp, json.dumps({
-                'architecture_health': state.architecture_health,
-                'behavior_consistency': state.behavior_consistency,
-                'cognition_completeness': state.cognition_completeness,
-                'boundary_safety': state.boundary_safety,
-                'evolution_health': state.evolution_health,
-                'introspection_health': state.introspection_health
-            })))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO system_states (timestamp, state_json)
+            VALUES (?, ?)
+        ''', (state.timestamp, json.dumps({
+            'architecture_health': state.architecture_health,
+            'behavior_consistency': state.behavior_consistency,
+            'cognition_completeness': state.cognition_completeness,
+            'boundary_safety': state.boundary_safety,
+            'evolution_health': state.evolution_health,
+            'introspection_health': state.introspection_health
+        })))
+        conn.commit()
     
     def _save_anomaly(self, anomaly: Anomaly):
         """保存异常"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT OR REPLACE INTO anomalies
-                (id, type, severity, description, context, detected_at, 
-                 root_cause, healing_strategy, healing_result, healed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                anomaly.id, anomaly.type.value, anomaly.severity.value,
-                anomaly.description, json.dumps(anomaly.context),
-                anomaly.detected_at, anomaly.root_cause,
-                anomaly.healing_strategy, anomaly.healing_result,
-                anomaly.healed_at
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO anomalies
+            (id, type, severity, description, context, detected_at, 
+             root_cause, healing_strategy, healing_result, healed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            anomaly.id, anomaly.type.value, anomaly.severity.value,
+            anomaly.description, json.dumps(anomaly.context),
+            anomaly.detected_at, anomaly.root_cause,
+            anomaly.healing_strategy, anomaly.healing_result,
+            anomaly.healed_at
+        ))
+        conn.commit()
     
     def _update_anomaly(self, anomaly: Anomaly):
         """更新异常"""
@@ -844,46 +849,49 @@ class IntrospectionEngine:
     
     def _save_healing_result(self, result: HealingResult):
         """保存修复结果"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO healing_results
-                (anomaly_id, status, action_taken, effect, learned, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                result.anomaly_id, result.status.value,
-                result.action_taken, json.dumps(result.effect),
-                1 if result.learned else 0, result.timestamp
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO healing_results
+            (anomaly_id, status, action_taken, effect, learned, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (
+            result.anomaly_id, result.status.value,
+            result.action_taken, json.dumps(result.effect),
+            1 if result.learned else 0, result.timestamp
+        ))
+        conn.commit()
     
     def _save_pattern(self, pattern_key: str, pattern: Dict):
         """保存模式"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT OR REPLACE INTO anomaly_patterns
-                (pattern_key, count, success_rate, last_occurrence)
-                VALUES (?, ?, ?, ?)
-            ''', (
-                pattern_key, pattern['count'], pattern['success_rate'],
-                datetime.now().isoformat()
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO anomaly_patterns
+            (pattern_key, count, success_rate, last_occurrence)
+            VALUES (?, ?, ?, ?)
+        ''', (
+            pattern_key, pattern['count'], pattern['success_rate'],
+            datetime.now().isoformat()
+        ))
+        conn.commit()
     
     def _save_prediction(self, prediction: Dict):
         """保存预测"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO predictions
-                (prediction_type, predicted_at, predicted_for, actual_occurred)
-                VALUES (?, ?, ?, ?)
-            ''', (
-                prediction['type'], datetime.now().isoformat(),
-                prediction['predicted_for'], 0
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO predictions
+            (prediction_type, predicted_at, predicted_for, actual_occurred)
+            VALUES (?, ?, ?, ?)
+        ''', (
+            prediction['type'], datetime.now().isoformat(),
+            prediction['predicted_for'], 0
+        ))
+        conn.commit()
     
     def _get_threshold_pattern(self, key: str) -> Optional[Dict]:
         """获取阈值模式"""

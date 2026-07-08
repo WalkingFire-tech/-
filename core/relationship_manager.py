@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 from enum import Enum
 import json
-import sqlite3
 from pathlib import Path
 import threading
 
@@ -17,6 +16,8 @@ try:
 except ImportError:
     import logging
     logger = logging.getLogger(__name__)
+
+from infrastructure.database_manager import DatabaseManager
 
 
 class RelationshipStage(Enum):
@@ -107,43 +108,44 @@ class RelationshipManager:
     
     def _init_database(self):
         """初始化数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS relationships (
-                    user_id TEXT PRIMARY KEY,
-                    stage TEXT NOT NULL,
-                    trust_score REAL NOT NULL,
-                    depth REAL NOT NULL,
-                    understanding REAL NOT NULL,
-                    satisfaction_history TEXT,
-                    interaction_count INTEGER DEFAULT 0,
-                    positive_interactions INTEGER DEFAULT 0,
-                    negative_interactions INTEGER DEFAULT 0,
-                    first_interaction TEXT,
-                    last_interaction TEXT,
-                    preferences TEXT,
-                    topics_of_interest TEXT,
-                    communication_style TEXT
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS interactions (
-                    interaction_id TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL,
-                    type TEXT NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    content TEXT,
-                    sentiment REAL,
-                    impact REAL,
-                    context TEXT
-                )
-            ''')
-            
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_interactions_user ON interactions(user_id)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_interactions_time ON interactions(timestamp)')
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS relationships (
+                user_id TEXT PRIMARY KEY,
+                stage TEXT NOT NULL,
+                trust_score REAL NOT NULL,
+                depth REAL NOT NULL,
+                understanding REAL NOT NULL,
+                satisfaction_history TEXT,
+                interaction_count INTEGER DEFAULT 0,
+                positive_interactions INTEGER DEFAULT 0,
+                negative_interactions INTEGER DEFAULT 0,
+                first_interaction TEXT,
+                last_interaction TEXT,
+                preferences TEXT,
+                topics_of_interest TEXT,
+                communication_style TEXT
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS interactions (
+                interaction_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                content TEXT,
+                sentiment REAL,
+                impact REAL,
+                context TEXT
+            )
+        ''')
+        
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_interactions_user ON interactions(user_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_interactions_time ON interactions(timestamp)')
+        
+        conn.commit()
     
     def record_interaction(
         self,
@@ -171,22 +173,23 @@ class RelationshipManager:
         )
         
         with self._lock:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    INSERT INTO interactions
-                    (interaction_id, user_id, type, timestamp, content, sentiment, impact, context)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    interaction_id,
-                    user_id,
-                    interaction_type.value,
-                    interaction.timestamp.isoformat(),
-                    content,
-                    sentiment,
-                    impact,
-                    json.dumps(context or {}, ensure_ascii=False),
-                ))
-                conn.commit()
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            conn.execute('''
+                INSERT INTO interactions
+                (interaction_id, user_id, type, timestamp, content, sentiment, impact, context)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                interaction_id,
+                user_id,
+                interaction_type.value,
+                interaction.timestamp.isoformat(),
+                content,
+                sentiment,
+                impact,
+                json.dumps(context or {}, ensure_ascii=False),
+            ))
+            conn.commit()
             
             self._update_relationship(user_id, interaction)
         
@@ -265,32 +268,33 @@ class RelationshipManager:
         if user_id in self.relationships:
             return self.relationships[user_id]
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
-                'SELECT * FROM relationships WHERE user_id = ?',
-                (user_id,)
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute(
+            'SELECT * FROM relationships WHERE user_id = ?',
+            (user_id,)
+        )
+        row = cursor.fetchone()
+        
+        if row:
+            profile = RelationshipProfile(
+                user_id=row[0],
+                stage=RelationshipStage(row[1]),
+                trust_score=row[2],
+                depth=row[3],
+                understanding=row[4],
+                satisfaction_history=json.loads(row[5]) if row[5] else [],
+                interaction_count=row[6],
+                positive_interactions=row[7],
+                negative_interactions=row[8],
+                first_interaction=datetime.fromisoformat(row[9]) if row[9] else None,
+                last_interaction=datetime.fromisoformat(row[10]) if row[10] else None,
+                preferences=json.loads(row[11]) if row[11] else {},
+                topics_of_interest=json.loads(row[12]) if row[12] else [],
+                communication_style=json.loads(row[13]) if row[13] else {},
             )
-            row = cursor.fetchone()
-            
-            if row:
-                profile = RelationshipProfile(
-                    user_id=row[0],
-                    stage=RelationshipStage(row[1]),
-                    trust_score=row[2],
-                    depth=row[3],
-                    understanding=row[4],
-                    satisfaction_history=json.loads(row[5]) if row[5] else [],
-                    interaction_count=row[6],
-                    positive_interactions=row[7],
-                    negative_interactions=row[8],
-                    first_interaction=datetime.fromisoformat(row[9]) if row[9] else None,
-                    last_interaction=datetime.fromisoformat(row[10]) if row[10] else None,
-                    preferences=json.loads(row[11]) if row[11] else {},
-                    topics_of_interest=json.loads(row[12]) if row[12] else [],
-                    communication_style=json.loads(row[13]) if row[13] else {},
-                )
-                self.relationships[user_id] = profile
-                return profile
+            self.relationships[user_id] = profile
+            return profile
         
         profile = RelationshipProfile(
             user_id=user_id,
@@ -304,31 +308,32 @@ class RelationshipManager:
     
     def _save_relationship(self, profile: RelationshipProfile):
         """保存关系档案"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                INSERT OR REPLACE INTO relationships
-                (user_id, stage, trust_score, depth, understanding,
-                 satisfaction_history, interaction_count, positive_interactions,
-                 negative_interactions, first_interaction, last_interaction,
-                 preferences, topics_of_interest, communication_style)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                profile.user_id,
-                profile.stage.value,
-                profile.trust_score,
-                profile.depth,
-                profile.understanding,
-                json.dumps(profile.satisfaction_history),
-                profile.interaction_count,
-                profile.positive_interactions,
-                profile.negative_interactions,
-                profile.first_interaction.isoformat() if profile.first_interaction else None,
-                profile.last_interaction.isoformat() if profile.last_interaction else None,
-                json.dumps(profile.preferences, ensure_ascii=False),
-                json.dumps(profile.topics_of_interest, ensure_ascii=False),
-                json.dumps(profile.communication_style),
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            INSERT OR REPLACE INTO relationships
+            (user_id, stage, trust_score, depth, understanding,
+             satisfaction_history, interaction_count, positive_interactions,
+             negative_interactions, first_interaction, last_interaction,
+             preferences, topics_of_interest, communication_style)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            profile.user_id,
+            profile.stage.value,
+            profile.trust_score,
+            profile.depth,
+            profile.understanding,
+            json.dumps(profile.satisfaction_history),
+            profile.interaction_count,
+            profile.positive_interactions,
+            profile.negative_interactions,
+            profile.first_interaction.isoformat() if profile.first_interaction else None,
+            profile.last_interaction.isoformat() if profile.last_interaction else None,
+            json.dumps(profile.preferences, ensure_ascii=False),
+            json.dumps(profile.topics_of_interest, ensure_ascii=False),
+            json.dumps(profile.communication_style),
+        ))
+        conn.commit()
     
     def update_preferences(
         self,
@@ -411,42 +416,44 @@ class RelationshipManager:
     
     def get_all_relationships(self) -> List[Dict[str, Any]]:
         """获取所有关系"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('''
-                SELECT user_id, stage, trust_score, depth, interaction_count, last_interaction
-                FROM relationships
-                ORDER BY trust_score DESC
-            ''')
-            
-            relationships = []
-            for row in cursor.fetchall():
-                relationships.append({
-                    "user_id": row[0],
-                    "stage": row[1],
-                    "trust_score": row[2],
-                    "depth": row[3],
-                    "interaction_count": row[4],
-                    "last_interaction": row[5],
-                })
-            
-            return relationships
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT user_id, stage, trust_score, depth, interaction_count, last_interaction
+            FROM relationships
+            ORDER BY trust_score DESC
+        ''')
+        
+        relationships = []
+        for row in cursor.fetchall():
+            relationships.append({
+                "user_id": row[0],
+                "stage": row[1],
+                "trust_score": row[2],
+                "depth": row[3],
+                "interaction_count": row[4],
+                "last_interaction": row[5],
+            })
+        
+        return relationships
     
     def decay_trust(self):
         """信任度衰减（时间因素）"""
         with self._lock:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute('SELECT user_id, trust_score FROM relationships')
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.execute('SELECT user_id, trust_score FROM relationships')
+            
+            for row in cursor.fetchall():
+                user_id, trust = row
+                new_trust = max(0.5, trust - self.trust_decay_rate)
                 
-                for row in cursor.fetchall():
-                    user_id, trust = row
-                    new_trust = max(0.5, trust - self.trust_decay_rate)
-                    
-                    conn.execute(
-                        'UPDATE relationships SET trust_score = ? WHERE user_id = ?',
-                        (new_trust, user_id)
-                    )
-                
-                conn.commit()
+                conn.execute(
+                    'UPDATE relationships SET trust_score = ? WHERE user_id = ?',
+                    (new_trust, user_id)
+                )
+            
+            conn.commit()
         
         logger.debug("信任度衰减完成")
 

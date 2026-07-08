@@ -3,11 +3,11 @@
 """
 import threading
 import time
-import sqlite3
 import json
 from datetime import datetime, timedelta
 from typing import Dict, List
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 
 class ActiveScheduler:
@@ -106,38 +106,35 @@ class ActiveScheduler:
         decay_rate = 0.99
         days_threshold = 30
         
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                UPDATE knowledge_items
-                SET quality_score = quality_score * ?
-                WHERE last_accessed < ?
-                AND knowledge_type = 'qa'
-            ''', (
-                decay_rate,
-                (datetime.now() - timedelta(days=days_threshold)).isoformat()
-            ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            UPDATE knowledge_items
+            SET quality_score = quality_score * ?
+            WHERE last_accessed < ?
+            AND knowledge_type = 'qa'
+        ''', (
+            decay_rate,
+            (datetime.now() - timedelta(days=days_threshold)).isoformat()
+        ), commit=True)
     
     def _cleanup_old_knowledge(self):
         """清理低质量知识"""
         min_quality = 10.0
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('''
-                DELETE FROM knowledge_items
-                WHERE quality_score < ?
-                AND knowledge_type = 'qa'
-                AND access_count < 2
-            ''', (min_quality,))
+        db = DatabaseManager.get(self.db_path)
+        cursor = db.execute('''
+            DELETE FROM knowledge_items
+            WHERE quality_score < ?
+            AND knowledge_type = 'qa'
+            AND access_count < 2
+        ''', (min_quality,), commit=True)
+        
+        deleted = cursor.rowcount
+        
+        if deleted > 0:
+            logger.info(f"清理了 {deleted} 条低质量知识")
             
-            deleted = cursor.rowcount
-            conn.commit()
-            
-            if deleted > 0:
-                logger.info(f"清理了 {deleted} 条低质量知识")
-                
-                # 记录遗忘通知
-                self._add_forget_notification(deleted)
+            self._add_forget_notification(deleted)
     
     def _generate_memory_review(self):
         """生成记忆回顾报告"""
@@ -271,44 +268,41 @@ class ActiveScheduler:
     def _collect_fitness_stats(self) -> Dict:
         """收集适应度统计"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                
-                # 用户点赞率（简化：使用访问次数作为代理）
-                cur = conn.execute('''
-                    SELECT 
-                        AVG(CASE WHEN access_count > 1 THEN 1.0 ELSE 0.5 END) as like_rate
-                    FROM knowledge_items
-                    WHERE knowledge_type = 'qa'
-                ''')
-                like_rate = cur.fetchone()['like_rate'] or 0.5
-                
-                # 知识库命中率
-                cur = conn.execute('''
-                    SELECT 
-                        COUNT(CASE WHEN quality_score >= 60 THEN 1 END) as hits,
-                        COUNT(*) as total
-                    FROM knowledge_items
-                    WHERE knowledge_type = 'qa'
-                ''')
-                row = cur.fetchone()
-                hit_rate = (row['hits'] / row['total']) if row['total'] > 0 else 0.5
-                
-                # 效率（简化：使用平均质量分数）
-                cur = conn.execute('''
-                    SELECT AVG(quality_score) as avg_quality
-                    FROM knowledge_items
-                    WHERE knowledge_type = 'qa'
-                ''')
-                efficiency = (cur.fetchone()['avg_quality'] or 50) / 100.0
-                
-                return {
-                    "like_rate": like_rate,
-                    "hit_rate": hit_rate,
-                    "dialog_reduction": 0.1,  # 默认值
-                    "external_reduction": 0.05,  # 默认值
-                    "efficiency": efficiency
-                }
+            db = DatabaseManager.get(self.db_path)
+            
+            like_rate_row = db.query_one('''
+                SELECT 
+                    AVG(CASE WHEN access_count > 1 THEN 1.0 ELSE 0.5 END) as like_rate
+                FROM knowledge_items
+                WHERE knowledge_type = 'qa'
+            ''')
+            like_rate = like_rate_row['like_rate'] if like_rate_row and like_rate_row['like_rate'] is not None else 0.5
+            
+            hit_row = db.query_one('''
+                SELECT 
+                    COUNT(CASE WHEN quality_score >= 60 THEN 1 END) as hits,
+                    COUNT(*) as total
+                FROM knowledge_items
+                WHERE knowledge_type = 'qa'
+            ''')
+            hits = hit_row['hits'] if hit_row else 0
+            total = hit_row['total'] if hit_row else 0
+            hit_rate = (hits / total) if total > 0 else 0.5
+            
+            eff_row = db.query_one('''
+                SELECT AVG(quality_score) as avg_quality
+                FROM knowledge_items
+                WHERE knowledge_type = 'qa'
+            ''')
+            efficiency = ((eff_row['avg_quality'] if eff_row and eff_row['avg_quality'] is not None else 50) or 50) / 100.0
+            
+            return {
+                "like_rate": like_rate,
+                "hit_rate": hit_rate,
+                "dialog_reduction": 0.1,
+                "external_reduction": 0.05,
+                "efficiency": efficiency
+            }
         except Exception as e:
             logger.error(f"收集适应度统计失败: {e}")
             return {
@@ -404,66 +398,58 @@ class ActiveScheduler:
             from core.genome_evolver import genome_evolver
             
             # 更新基因值
-            with sqlite3.connect(genome_evolver.db_path) as conn:
-                # 获取当前活跃基因组
-                cur = conn.execute("SELECT gene_values FROM genomes WHERE id = ?", 
-                                 (genome_evolver.active_genome_id,))
-                row = cur.fetchone()
+            db = DatabaseManager.get(genome_evolver.db_path)
+            cur = db.query_one("SELECT gene_values FROM genomes WHERE id = ?", 
+                             (genome_evolver.active_genome_id,))
+            
+            if cur:
+                current_values = json.loads(cur['gene_values'])
                 
-                if row:
-                    current_values = json.loads(row[0])
-                    
-                    # 更新值
-                    if 'retrieval_threshold' in genome:
-                        current_values['G002'] = str(genome['retrieval_threshold'])
-                    if 'external_threshold' in genome:
-                        current_values['G007'] = str(genome['external_threshold'])
-                    if 'memory_decay' in genome:
-                        current_values['G008'] = str(genome['memory_decay'])
-                    if 'exploration' in genome:
-                        current_values['G010'] = str(genome['exploration'])
-                    if 'social' in genome:
-                        current_values['G009'] = str(genome['social'])
-                    if 'answer_style' in genome:
-                        current_values['G006'] = str(genome['answer_style'])
-                    
-                    # 保存
-                    conn.execute("UPDATE genomes SET gene_values = ? WHERE id = ?",
-                               (json.dumps(current_values), genome_evolver.active_genome_id))
-                    conn.commit()
-                    
-                    logger.info(f"已应用进化基因组: {genome}")
+                if 'retrieval_threshold' in genome:
+                    current_values['G002'] = str(genome['retrieval_threshold'])
+                if 'external_threshold' in genome:
+                    current_values['G007'] = str(genome['external_threshold'])
+                if 'memory_decay' in genome:
+                    current_values['G008'] = str(genome['memory_decay'])
+                if 'exploration' in genome:
+                    current_values['G010'] = str(genome['exploration'])
+                if 'social' in genome:
+                    current_values['G009'] = str(genome['social'])
+                if 'answer_style' in genome:
+                    current_values['G006'] = str(genome['answer_style'])
+                
+                db.execute("UPDATE genomes SET gene_values = ? WHERE id = ?",
+                           (json.dumps(current_values), genome_evolver.active_genome_id), commit=True)
+                
+                logger.info(f"已应用进化基因组: {genome}")
         except Exception as e:
             logger.error(f"应用进化基因组失败: {e}")
     
     def _import_evolved_skills(self, skills: List[Dict]):
         """导入进化后的技能"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                for skill in skills:
-                    name = skill.get('name', f"evolved_skill_{hash(str(skill)) % 10000}")
-                    code = skill.get('code', '')
-                    trigger = skill.get('trigger', '')
-                    
-                    # 检查是否已存在
-                    cur = conn.execute("SELECT 1 FROM tools WHERE name = ?", (name,))
-                    if cur.fetchone():
-                        continue
-                    
-                    # 注册工具
-                    conn.execute('''
-                        INSERT INTO tools (name, code, description, triggers, usage_count, created_at)
-                        VALUES (?, ?, ?, ?, 0, ?)
-                    ''', (
-                        name,
-                        code,
-                        f"进化产生的技能",
-                        json.dumps([trigger]),
-                        datetime.now().isoformat()
-                    ))
+            db = DatabaseManager.get(self.db_path)
+            for skill in skills:
+                name = skill.get('name', f"evolved_skill_{hash(str(skill)) % 10000}")
+                code = skill.get('code', '')
+                trigger = skill.get('trigger', '')
                 
-                conn.commit()
-                logger.info(f"已导入{len(skills)}个进化技能")
+                existing = db.query_one("SELECT 1 FROM tools WHERE name = ?", (name,))
+                if existing:
+                    continue
+                
+                db.execute('''
+                    INSERT INTO tools (name, code, description, triggers, usage_count, created_at)
+                    VALUES (?, ?, ?, ?, 0, ?)
+                ''', (
+                    name,
+                    code,
+                    f"进化产生的技能",
+                    json.dumps([trigger]),
+                    datetime.now().isoformat()
+                ), commit=True)
+            
+            logger.info(f"已导入{len(skills)}个进化技能")
         except Exception as e:
             logger.error(f"导入进化技能失败: {e}")
     
