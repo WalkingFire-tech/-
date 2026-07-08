@@ -16,6 +16,7 @@ import threading
 from typing import Callable, Dict, List, Optional
 from dataclasses import dataclass, field
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 
 @dataclass
@@ -254,15 +255,14 @@ class ScheduledTaskManager:
                 except Exception:
                     pass
                 try:
-                    import sqlite3 as _sqlite3
-                    _conn = _sqlite3.connect("data/experience_pool.db")
+                    db = DatabaseManager.get("data/experience_pool.db")
+                    _conn = db._get_conn()
                     _conn.execute(
                         "INSERT INTO experiences (raw_input, response, quality_score, intent_type, timestamp) VALUES (?, ?, ?, ?, datetime('now'))",
                         (f"[主动性:{decision.action_type.value if decision.action_type else 'unknown'}] {decision.reason}",
                          decision.content, int(decision.confidence * 50), "proactivity")
                     )
                     _conn.commit()
-                    _conn.close()
                 except Exception:
                     pass
                 try:
@@ -332,11 +332,10 @@ class ScheduledTaskManager:
 
                 elif category == "DATA_LOOP" and "规则" in title:
                     try:
-                        import sqlite3
-                        conn = sqlite3.connect("data/learning_rules.db")
+                        db = DatabaseManager.get("data/learning_rules.db")
+                        conn = db._get_conn()
                         conn.execute("DELETE FROM rules WHERE apply_count = 0 AND created_at < datetime('now', '-7 days')")
                         conn.commit()
-                        conn.close()
                         logger.info("自动修复: 清理7天未使用的trial规则")
                     except Exception:
                         pass
@@ -398,14 +397,13 @@ class ScheduledTaskManager:
                         continue
 
                     try:
-                        import sqlite3
-                        conn = sqlite3.connect("data/experience_pool.db")
+                        db = DatabaseManager.get("data/experience_pool.db")
+                        conn = db._get_conn()
                         conn.execute(
                             "INSERT OR IGNORE INTO experiences (raw_input, response, quality_score, intent_type, timestamp) VALUES (?, ?, ?, ?, datetime('now'))",
                             (original_input[:200], f"[延迟深度处理] 骨架: {skeleton.get('topic', 'unknown')}, 类型: {skeleton.get('question_type', 'unknown')}, 实体: {','.join(skeleton.get('entities', [])[:5])}", 30, "deferred_learning")
                         )
                         conn.commit()
-                        conn.close()
                     except Exception as e:
                         logger.debug(f"延迟输入存入经验池失败: {e}")
 
@@ -449,11 +447,11 @@ class ScheduledTaskManager:
 
     def _job_sleep_consolidation(self):
         try:
-            import sqlite3
             consolidated = 0
             forgotten = 0
 
-            conn = sqlite3.connect("data/experience_pool.db")
+            db = DatabaseManager.get("data/experience_pool.db")
+            conn = db._get_conn()
             cur = conn.execute(
                 "SELECT COUNT(*) FROM experiences WHERE quality_score >= 70 AND timestamp > datetime('now', '-7 days')"
             )
@@ -470,16 +468,15 @@ class ScheduledTaskManager:
             consolidated = cur.rowcount
 
             conn.commit()
-            conn.close()
 
             try:
-                conn2 = sqlite3.connect("data/learning_rules.db")
+                db2 = DatabaseManager.get("data/learning_rules.db")
+                conn2 = db2._get_conn()
                 cur2 = conn2.execute(
                     "DELETE FROM rules WHERE apply_count = 0 AND created_at < datetime('now', '-14 days')"
                 )
                 rules_forgotten = cur2.rowcount
                 conn2.commit()
-                conn2.close()
             except Exception:
                 rules_forgotten = 0
 

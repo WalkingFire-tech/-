@@ -2,11 +2,12 @@
 能力矩阵 - 多维度评估模型能力
 为多模型联邦调度提供决策依据
 """
-import sqlite3
+
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from loguru import logger
 from pathlib import Path
+from infrastructure.database_manager import DatabaseManager
 
 
 class ModelCapability:
@@ -39,29 +40,30 @@ class ModelCapability:
     
     def _init_db(self):
         """初始化数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS model_capabilities (
-                    model_name TEXT,
-                    dimension TEXT,
-                    score REAL,
-                    sample_count INTEGER,
-                    last_updated TEXT,
-                    PRIMARY KEY (model_name, dimension)
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS task_dimensions (
-                    task_type TEXT,
-                    dimension TEXT,
-                    weight REAL,
-                    PRIMARY KEY (task_type, dimension)
-                )
-            ''')
-            
-            self._init_default_task_dimensions(conn)
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS model_capabilities (
+                model_name TEXT,
+                dimension TEXT,
+                score REAL,
+                sample_count INTEGER,
+                last_updated TEXT,
+                PRIMARY KEY (model_name, dimension)
+            )
+        ''')
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS task_dimensions (
+                task_type TEXT,
+                dimension TEXT,
+                weight REAL,
+                PRIMARY KEY (task_type, dimension)
+            )
+        ''')
+        
+        self._init_default_task_dimensions(conn)
+        conn.commit()
     
     def _init_default_task_dimensions(self, conn):
         """初始化默认任务维度映射"""
@@ -86,14 +88,15 @@ class ModelCapability:
         
         now = datetime.now().isoformat()
         
-        with sqlite3.connect(self.db_path) as conn:
-            for dimension, score in capabilities.items():
-                conn.execute('''
-                    INSERT OR REPLACE INTO model_capabilities
-                    (model_name, dimension, score, sample_count, last_updated)
-                    VALUES (?, ?, ?, 0, ?)
-                ''', (model_name, dimension, score, now))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        for dimension, score in capabilities.items():
+            conn.execute('''
+                INSERT OR REPLACE INTO model_capabilities
+                (model_name, dimension, score, sample_count, last_updated)
+                VALUES (?, ?, ?, 0, ?)
+            ''', (model_name, dimension, score, now))
+        conn.commit()
         
         logger.info(f"已注册模型能力: {model_name}, 维度: {len(capabilities)}")
     
@@ -107,72 +110,75 @@ class ModelCapability:
             score: 新得分 (0-1)
             sample_weight: 样本权重
         """
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('''
-                SELECT score, sample_count FROM model_capabilities
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT score, sample_count FROM model_capabilities
+            WHERE model_name = ? AND dimension = ?
+        ''', (model_name, dimension))
+        
+        row = cursor.fetchone()
+        
+        if row:
+            old_score, old_count = row
+            new_count = old_count + sample_weight
+            new_score = (old_score * old_count + score * sample_weight) / new_count
+            
+            conn.execute('''
+                UPDATE model_capabilities
+                SET score = ?, sample_count = ?, last_updated = ?
                 WHERE model_name = ? AND dimension = ?
-            ''', (model_name, dimension))
-            
-            row = cursor.fetchone()
-            
-            if row:
-                old_score, old_count = row
-                new_count = old_count + sample_weight
-                new_score = (old_score * old_count + score * sample_weight) / new_count
-                
-                conn.execute('''
-                    UPDATE model_capabilities
-                    SET score = ?, sample_count = ?, last_updated = ?
-                    WHERE model_name = ? AND dimension = ?
-                ''', (new_score, new_count, datetime.now().isoformat(),
-                      model_name, dimension))
-            else:
-                conn.execute('''
-                    INSERT INTO model_capabilities
-                    (model_name, dimension, score, sample_count, last_updated)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (model_name, dimension, score, sample_weight,
-                      datetime.now().isoformat()))
-            
-            conn.commit()
+            ''', (new_score, new_count, datetime.now().isoformat(),
+                  model_name, dimension))
+        else:
+            conn.execute('''
+                INSERT INTO model_capabilities
+                (model_name, dimension, score, sample_count, last_updated)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (model_name, dimension, score, sample_weight,
+                  datetime.now().isoformat()))
+        
+        conn.commit()
     
     def get_model_capability(self, model_name: str) -> Dict[str, float]:
         """获取模型能力画像"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('''
-                SELECT dimension, score FROM model_capabilities
-                WHERE model_name = ?
-            ''', (model_name,))
-            
-            capabilities = {}
-            for row in cursor.fetchall():
-                capabilities[row[0]] = row[1]
-            
-            if not capabilities:
-                return self.DEFAULT_DIMENSIONS.copy()
-            
-            for dim, default_score in self.DEFAULT_DIMENSIONS.items():
-                if dim not in capabilities:
-                    capabilities[dim] = default_score
-            
-            return capabilities
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT dimension, score FROM model_capabilities
+            WHERE model_name = ?
+        ''', (model_name,))
+        
+        capabilities = {}
+        for row in cursor.fetchall():
+            capabilities[row[0]] = row[1]
+        
+        if not capabilities:
+            return self.DEFAULT_DIMENSIONS.copy()
+        
+        for dim, default_score in self.DEFAULT_DIMENSIONS.items():
+            if dim not in capabilities:
+                capabilities[dim] = default_score
+        
+        return capabilities
     
     def get_task_requirements(self, task_type: str) -> Dict[str, float]:
         """获取任务能力需求"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('''
-                SELECT dimension, weight FROM task_dimensions
-                WHERE task_type = ?
-            ''', (task_type,))
-            
-            requirements = {}
-            for row in cursor.fetchall():
-                requirements[row[0]] = row[1]
-            
-            if not requirements:
-                return self.TASK_DIMENSION_MAPPING.get('default', {}).copy()
-            
-            return requirements
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT dimension, weight FROM task_dimensions
+            WHERE task_type = ?
+        ''', (task_type,))
+        
+        requirements = {}
+        for row in cursor.fetchall():
+            requirements[row[0]] = row[1]
+        
+        if not requirements:
+            return self.TASK_DIMENSION_MAPPING.get('default', {}).copy()
+        
+        return requirements
     
     def score_model_for_task(self, model_name: str, task_type: str) -> float:
         """计算模型对任务的匹配得分
@@ -217,11 +223,12 @@ class ModelCapability:
             排序后的(模型名, 得分)列表
         """
         if models is None:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute('''
-                    SELECT DISTINCT model_name FROM model_capabilities
-                ''')
-                models = [row[0] for row in cursor.fetchall()]
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.execute('''
+                SELECT DISTINCT model_name FROM model_capabilities
+            ''')
+            models = [row[0] for row in cursor.fetchall()]
         
         # 过滤不可用模型
         if available_only:
@@ -259,14 +266,15 @@ class ModelCapability:
         for dimension in requirements.keys():
             current = self.get_model_capability(model_name).get(dimension, 0.5)
             
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute('''
-                    SELECT sample_count FROM model_capabilities
-                    WHERE model_name = ? AND dimension = ?
-                ''', (model_name, dimension))
-                
-                row = cursor.fetchone()
-                sample_count = row[0] if row else 0
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cursor = conn.execute('''
+                SELECT sample_count FROM model_capabilities
+                WHERE model_name = ? AND dimension = ?
+            ''', (model_name, dimension))
+            
+            row = cursor.fetchone()
+            sample_count = row[0] if row else 0
             
             # 优化：指数衰减学习率，避免初期变化剧烈
             base_lr = 0.05
@@ -287,25 +295,27 @@ class ModelCapability:
     
     def get_capability_matrix(self) -> Dict[str, Dict[str, float]]:
         """获取完整能力矩阵"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('''
-                SELECT model_name, dimension, score FROM model_capabilities
-            ''')
-            
-            matrix = {}
-            for row in cursor.fetchall():
-                model_name, dimension, score = row
-                if model_name not in matrix:
-                    matrix[model_name] = {}
-                matrix[model_name][dimension] = score
-            
-            return matrix
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT model_name, dimension, score FROM model_capabilities
+        ''')
+        
+        matrix = {}
+        for row in cursor.fetchall():
+            model_name, dimension, score = row
+            if model_name not in matrix:
+                matrix[model_name] = {}
+            matrix[model_name][dimension] = score
+        
+        return matrix
     
     def get_registered_models(self) -> List[str]:
         """获取所有已注册的模型名称"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('SELECT DISTINCT model_name FROM model_capabilities')
-            return [row[0] for row in cursor.fetchall()]
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('SELECT DISTINCT model_name FROM model_capabilities')
+        return [row[0] for row in cursor.fetchall()]
     
     def ensure_model_registered(self, model_name: str, 
                                default_capabilities: Optional[Dict[str, float]] = None):
@@ -323,17 +333,18 @@ class ModelCapability:
     
     def add_dimension(self, dimension: str, default_score: float = 0.5):
         """添加新能力维度"""
-        with sqlite3.connect(self.db_path) as conn:
-            models = self.get_registered_models()
-            
-            for model_name in models:
-                conn.execute('''
-                    INSERT OR IGNORE INTO model_capabilities
-                    (model_name, dimension, score, sample_count, last_updated)
-                    VALUES (?, ?, ?, 0, ?)
-                ''', (model_name, dimension, default_score, datetime.now().isoformat()))
-            
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        models = self.get_registered_models()
+        
+        for model_name in models:
+            conn.execute('''
+                INSERT OR IGNORE INTO model_capabilities
+                (model_name, dimension, score, sample_count, last_updated)
+                VALUES (?, ?, ?, 0, ?)
+            ''', (model_name, dimension, default_score, datetime.now().isoformat()))
+        
+        conn.commit()
         
         logger.info(f"已添加新能力维度: {dimension}, 默认得分: {default_score}")
     
@@ -344,54 +355,56 @@ class ModelCapability:
             decay_factor: 衰减因子（0.98表示每天衰减2%）
             days_threshold: 超过多少天未使用才衰减
         """
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('''
-                SELECT model_name, dimension, score, last_updated
-                FROM model_capabilities
-            ''')
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT model_name, dimension, score, last_updated
+            FROM model_capabilities
+        ''')
+        
+        for row in cursor.fetchall():
+            model_name, dimension, score, last_updated = row
             
-            for row in cursor.fetchall():
-                model_name, dimension, score, last_updated = row
+            try:
+                last_time = datetime.fromisoformat(last_updated)
+                days_since = (datetime.now() - last_time).days
                 
-                try:
-                    last_time = datetime.fromisoformat(last_updated)
-                    days_since = (datetime.now() - last_time).days
+                if days_since > days_threshold:
+                    new_score = score * (decay_factor ** (days_since - days_threshold))
+                    new_score = max(0.1, new_score)
                     
-                    if days_since > days_threshold:
-                        new_score = score * (decay_factor ** (days_since - days_threshold))
-                        new_score = max(0.1, new_score)
-                        
-                        conn.execute('''
-                            UPDATE model_capabilities
-                            SET score = ?
-                            WHERE model_name = ? AND dimension = ?
-                        ''', (new_score, model_name, dimension))
-                
-                except Exception as e:
-                    logger.debug(f"衰减计算失败: {e}")
+                    conn.execute('''
+                        UPDATE model_capabilities
+                        SET score = ?
+                        WHERE model_name = ? AND dimension = ?
+                    ''', (new_score, model_name, dimension))
             
-            conn.commit()
+            except Exception as e:
+                logger.debug(f"衰减计算失败: {e}")
+        
+        conn.commit()
         
         logger.info(f"已应用时效衰减: 因子={decay_factor}, 阈值={days_threshold}天")
     
     def export_stats(self) -> Dict:
         """导出统计信息"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('SELECT COUNT(DISTINCT model_name) FROM model_capabilities')
-            model_count = cursor.fetchone()[0]
-            
-            cursor = conn.execute('SELECT COUNT(DISTINCT dimension) FROM model_capabilities')
-            dimension_count = cursor.fetchone()[0]
-            
-            cursor = conn.execute('SELECT COUNT(*) FROM task_dimensions')
-            task_count = cursor.fetchone()[0]
-            
-            return {
-                'registered_models': model_count,
-                'dimensions': dimension_count,
-                'task_types': task_count,
-                'matrix_size': model_count * dimension_count
-            }
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('SELECT COUNT(DISTINCT model_name) FROM model_capabilities')
+        model_count = cursor.fetchone()[0]
+        
+        cursor = conn.execute('SELECT COUNT(DISTINCT dimension) FROM model_capabilities')
+        dimension_count = cursor.fetchone()[0]
+        
+        cursor = conn.execute('SELECT COUNT(*) FROM task_dimensions')
+        task_count = cursor.fetchone()[0]
+        
+        return {
+            'registered_models': model_count,
+            'dimensions': dimension_count,
+            'task_types': task_count,
+            'matrix_size': model_count * dimension_count
+        }
 
 
 model_capability = ModelCapability()

@@ -6,8 +6,8 @@ import asyncio
 from typing import List, Dict, Optional
 from loguru import logger
 from datetime import datetime
-import sqlite3
 from pathlib import Path
+from infrastructure.database_manager import DatabaseManager
 
 try:
     import aiohttp
@@ -34,20 +34,21 @@ class ModelDiscovery:
     
     def _init_db(self):
         """初始化数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS discovered_models (
-                    name TEXT PRIMARY KEY,
-                    source TEXT,
-                    model_type TEXT,
-                    size_gb REAL,
-                    parameters TEXT,
-                    capabilities TEXT,
-                    last_seen TEXT,
-                    available BOOLEAN
-                )
-            ''')
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS discovered_models (
+                name TEXT PRIMARY KEY,
+                source TEXT,
+                model_type TEXT,
+                size_gb REAL,
+                parameters TEXT,
+                capabilities TEXT,
+                last_seen TEXT,
+                available BOOLEAN
+            )
+        ''')
+        conn.commit()
     
     async def discover_ollama_models(self, url: str = None) -> List[Dict]:
         """发现Ollama模型
@@ -158,79 +159,82 @@ class ModelDiscovery:
     
     def _save_discovered_models(self, models: List[Dict]):
         """保存发现的模型"""
-        with sqlite3.connect(self.db_path) as conn:
-            for model in models:
-                import json
-                conn.execute('''
-                    INSERT OR REPLACE INTO discovered_models
-                    (name, source, model_type, size_gb, parameters, 
-                     capabilities, last_seen, available)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    model['name'],
-                    model['source'],
-                    model['model_type'],
-                    model.get('size_gb', 0),
-                    model.get('parameters', 'unknown'),
-                    json.dumps(model.get('capabilities', {})),
-                    model['last_seen'],
-                    model['available']
-                ))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        for model in models:
+            import json
+            conn.execute('''
+                INSERT OR REPLACE INTO discovered_models
+                (name, source, model_type, size_gb, parameters, 
+                 capabilities, last_seen, available)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                model['name'],
+                model['source'],
+                model['model_type'],
+                model.get('size_gb', 0),
+                model.get('parameters', 'unknown'),
+                json.dumps(model.get('capabilities', {})),
+                model['last_seen'],
+                model['available']
+            ))
+        conn.commit()
         
         logger.info(f"已保存 {len(models)} 个发现的模型")
     
     def get_discovered_models(self) -> List[Dict]:
         """获取已发现的模型"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('''
-                SELECT name, source, model_type, size_gb, parameters, 
-                       capabilities, last_seen, available
-                FROM discovered_models
-                WHERE available = 1
-            ''')
-            
-            models = []
-            for row in cursor.fetchall():
-                import json
-                models.append({
-                    'name': row[0],
-                    'source': row[1],
-                    'model_type': row[2],
-                    'size_gb': row[3],
-                    'parameters': row[4],
-                    'capabilities': json.loads(row[5]) if row[5] else {},
-                    'last_seen': row[6],
-                    'available': row[7]
-                })
-            
-            return models
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT name, source, model_type, size_gb, parameters, 
+                   capabilities, last_seen, available
+            FROM discovered_models
+            WHERE available = 1
+        ''')
+        
+        models = []
+        for row in cursor.fetchall():
+            import json
+            models.append({
+                'name': row[0],
+                'source': row[1],
+                'model_type': row[2],
+                'size_gb': row[3],
+                'parameters': row[4],
+                'capabilities': json.loads(row[5]) if row[5] else {},
+                'last_seen': row[6],
+                'available': row[7]
+            })
+        
+        return models
     
     def get_model_info(self, model_name: str) -> Optional[Dict]:
         """获取特定模型信息"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute('''
-                SELECT name, source, model_type, size_gb, parameters, 
-                       capabilities, last_seen, available
-                FROM discovered_models
-                WHERE name = ?
-            ''', (model_name,))
-            
-            row = cursor.fetchone()
-            if row:
-                import json
-                return {
-                    'name': row[0],
-                    'source': row[1],
-                    'model_type': row[2],
-                    'size_gb': row[3],
-                    'parameters': row[4],
-                    'capabilities': json.loads(row[5]) if row[5] else {},
-                    'last_seen': row[6],
-                    'available': row[7]
-                }
-            
-            return None
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        cursor = conn.execute('''
+            SELECT name, source, model_type, size_gb, parameters, 
+                   capabilities, last_seen, available
+            FROM discovered_models
+            WHERE name = ?
+        ''', (model_name,))
+        
+        row = cursor.fetchone()
+        if row:
+            import json
+            return {
+                'name': row[0],
+                'source': row[1],
+                'model_type': row[2],
+                'size_gb': row[3],
+                'parameters': row[4],
+                'capabilities': json.loads(row[5]) if row[5] else {},
+                'last_seen': row[6],
+                'available': row[7]
+            }
+        
+        return None
     
     async def refresh(self) -> Dict:
         """刷新模型发现"""
@@ -280,13 +284,14 @@ class ModelDiscovery:
     
     def mark_unavailable(self, model_name: str):
         """标记模型不可用"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                UPDATE discovered_models
-                SET available = 0, last_seen = ?
-                WHERE name = ?
-            ''', (datetime.now().isoformat(), model_name))
-            conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            UPDATE discovered_models
+            SET available = 0, last_seen = ?
+            WHERE name = ?
+        ''', (datetime.now().isoformat(), model_name))
+        conn.commit()
         
         logger.info(f"已标记模型不可用: {model_name}")
 

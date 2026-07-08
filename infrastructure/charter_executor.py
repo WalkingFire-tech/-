@@ -2,7 +2,6 @@
 章程执行器 - 实现生命章程的具体条款
 自动学习、配置管理、经验归档、资源限制
 """
-import sqlite3
 import json
 import time
 import threading
@@ -10,6 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 from loguru import logger
+from infrastructure.database_manager import DatabaseManager
 
 
 class CharterExecutor:
@@ -46,7 +46,8 @@ class CharterExecutor:
         logger.info("回顾失败案例...")
         
         try:
-            conn = sqlite3.connect('data/experience_pool.db')
+            db = DatabaseManager.get('data/experience_pool.db')
+            conn = db._get_conn()
             
             # 查询最近7天的失败案例
             cursor = conn.execute('''
@@ -58,7 +59,6 @@ class CharterExecutor:
             ''')
             
             failures = cursor.fetchall()
-            conn.close()
             
             # 按意图类型分组
             failure_groups = {}
@@ -112,7 +112,8 @@ class CharterExecutor:
     def _save_learning_tasks(self, tasks: List[Dict]):
         """保存学习任务"""
         try:
-            conn = sqlite3.connect('data/learning_rules.db')
+            db = DatabaseManager.get('data/learning_rules.db')
+            conn = db._get_conn()
             
             for task in tasks:
                 conn.execute('''
@@ -126,7 +127,6 @@ class CharterExecutor:
                 ))
             
             conn.commit()
-            conn.close()
             
             logger.info(f"已创建 {len(tasks)} 个学习任务")
             
@@ -145,7 +145,8 @@ class CharterExecutor:
         
         try:
             # 检查并行调度使用情况
-            conn = sqlite3.connect('data/scheduler_stats.db')
+            db = DatabaseManager.get('data/scheduler_stats.db')
+            conn = db._get_conn()
             cursor = conn.execute('''
                 SELECT COUNT(*), MAX(start_time)
                 FROM parallel_calls
@@ -153,18 +154,17 @@ class CharterExecutor:
             ''')
             
             parallel_calls = cursor.fetchone()
-            conn.close()
             
             # 检查任务分解使用情况
-            conn = sqlite3.connect('data/task_decomposition.db')
-            cursor = conn.execute('''
+            db2 = DatabaseManager.get('data/task_decomposition.db')
+            conn2 = db2._get_conn()
+            cursor = conn2.execute('''
                 SELECT COUNT(*), MAX(timestamp)
                 FROM decompositions
                 WHERE timestamp >= datetime('now', '-7 days')
             ''')
             
             decompositions = cursor.fetchone()
-            conn.close()
             
             usage = {
                 'parallel_scheduling': {
@@ -363,7 +363,8 @@ class CharterExecutor:
         logger.info(f"开始归档 {days} 天前的低重要性经验...")
         
         try:
-            conn = sqlite3.connect('data/experience_pool.db')
+            db = DatabaseManager.get('data/experience_pool.db')
+            conn = db._get_conn()
             
             # 查询符合条件的经验
             cursor = conn.execute('''
@@ -405,7 +406,6 @@ class CharterExecutor:
             ''', experience_ids)
             
             conn.commit()
-            conn.close()
             
             logger.info(f"已归档 {len(old_experiences)} 条经验至 {archive_file}")
             

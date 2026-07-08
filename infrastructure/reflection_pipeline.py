@@ -18,8 +18,8 @@ import traceback
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from pathlib import Path
-import sqlite3
 import uuid
+from infrastructure.database_manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -77,45 +77,46 @@ class ReflectionPipeline:
         """初始化日志数据库（含字段迁移）"""
         Path(self.log_db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        with sqlite3.connect(self.log_db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS reflection_log (
-                    id TEXT PRIMARY KEY,
-                    timestamp TEXT,
-                    query TEXT,
-                    plan TEXT,
-                    tool_calls TEXT,
-                    final_answer TEXT,
-                    confidence REAL,
-                    model_used TEXT,
-                    user_id TEXT,
-                    session_id TEXT,
-                    duration_ms INTEGER,
-                    extra_metadata TEXT
-                )
-            ''')
-            conn.commit()
-            
-            cursor = conn.execute("PRAGMA table_info(reflection_log)")
-            columns = [row[1] for row in cursor.fetchall()]
-            
-            required_columns = {
-                "consolidated": "INTEGER DEFAULT 0",
-                "consolidated_at": "TEXT",
-                "rule_used": "INTEGER",
-                "is_canary_sample": "INTEGER DEFAULT 0",
-                "success": "INTEGER DEFAULT 0"
-            }
-            
-            for col, col_type in required_columns.items():
-                if col not in columns:
-                    try:
-                        conn.execute(f"ALTER TABLE reflection_log ADD COLUMN {col} {col_type}")
-                        logger.info(f"  ✓ 添加字段: {col}")
-                    except Exception as e:
-                        logger.warning(f"  ⚠ 添加字段 {col} 失败: {e}")
-            
-            conn.commit()
+        db = DatabaseManager.get(self.log_db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS reflection_log (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT,
+                query TEXT,
+                plan TEXT,
+                tool_calls TEXT,
+                final_answer TEXT,
+                confidence REAL,
+                model_used TEXT,
+                user_id TEXT,
+                session_id TEXT,
+                duration_ms INTEGER,
+                extra_metadata TEXT
+            )
+        ''')
+        conn.commit()
+        
+        cursor = conn.execute("PRAGMA table_info(reflection_log)")
+        columns = [row[1] for row in cursor.fetchall()]
+        
+        required_columns = {
+            "consolidated": "INTEGER DEFAULT 0",
+            "consolidated_at": "TEXT",
+            "rule_used": "INTEGER",
+            "is_canary_sample": "INTEGER DEFAULT 0",
+            "success": "INTEGER DEFAULT 0"
+        }
+        
+        for col, col_type in required_columns.items():
+            if col not in columns:
+                try:
+                    conn.execute(f"ALTER TABLE reflection_log ADD COLUMN {col} {col_type}")
+                    logger.info(f"  ✓ 添加字段: {col}")
+                except Exception as e:
+                    logger.warning(f"  ⚠ 添加字段 {col} 失败: {e}")
+        
+        conn.commit()
     
     async def process(self, execution_context: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -299,21 +300,22 @@ class ReflectionPipeline:
             return
         
         try:
-            with sqlite3.connect("data/spirit_lessons.db", timeout=3) as conn:
-                conn.execute('''CREATE TABLE IF NOT EXISTS spirit_lessons (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    lesson_type TEXT,
-                    lesson_text TEXT,
-                    severity INTEGER DEFAULT 1,
-                    context TEXT,
-                    created_at TEXT
-                )''')
-                now = datetime.now().isoformat()
-                for lesson in lessons:
-                    conn.execute(
-                        "INSERT INTO spirit_lessons (lesson_type, lesson_text, severity, context, created_at) VALUES (?,?,?,?,?)",
-                        (lesson["lesson_type"], lesson["lesson_text"], lesson["severity"], lesson["context"], now)
-                    )
+            db = DatabaseManager.get("data/spirit_lessons.db")
+            conn = db._get_conn()
+            conn.execute('''CREATE TABLE IF NOT EXISTS spirit_lessons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lesson_type TEXT,
+                lesson_text TEXT,
+                severity INTEGER DEFAULT 1,
+                context TEXT,
+                created_at TEXT
+            )''')
+            now = datetime.now().isoformat()
+            for lesson in lessons:
+                conn.execute(
+                    "INSERT INTO spirit_lessons (lesson_type, lesson_text, severity, context, created_at) VALUES (?,?,?,?,?)",
+                    (lesson["lesson_type"], lesson["lesson_text"], lesson["severity"], lesson["context"], now)
+                )
         except Exception as e:
             logger.debug(f"教训写入失败: {e}")
     
@@ -346,36 +348,37 @@ class ReflectionPipeline:
     async def _write_campfire_log(self, context: Dict[str, Any]) -> None:
         """写入营火日志（异步写入）"""
         def _write():
-            with sqlite3.connect(self.log_db_path) as conn:
-                cursor = conn.execute("PRAGMA table_info(reflection_log)")
-                columns = [row[1] for row in cursor.fetchall()]
-                
-                base_sql = """INSERT INTO reflection_log 
-                   (id, timestamp, query, plan, tool_calls, final_answer, 
-                    confidence, model_used, user_id, session_id, duration_ms, extra_metadata"""
-                values = [
-                    context["reflection_id"],
-                    context["timestamp"],
-                    context.get("query", ""),
-                    json.dumps(context.get("plan", {}), ensure_ascii=False),
-                    json.dumps(context.get("tool_calls", []), ensure_ascii=False),
-                    context.get("final_answer", ""),
-                    context.get("confidence", 0.0),
-                    context.get("model_used", "unknown"),
-                    context.get("user_id", ""),
-                    context.get("session_id", ""),
-                    context.get("duration_ms", 0),
-                    json.dumps(context.get("extra", {}), ensure_ascii=False)
-                ]
-                
-                if "success" in columns:
-                    base_sql += ", success"
-                    values.append(1 if context.get("success", False) else 0)
-                
-                base_sql += ") VALUES (" + ",".join(["?"] * len(values)) + ")"
-                
-                conn.execute(base_sql, tuple(values))
-                conn.commit()
+            db = DatabaseManager.get(self.log_db_path)
+            conn = db._get_conn()
+            cursor = conn.execute("PRAGMA table_info(reflection_log)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            base_sql = """INSERT INTO reflection_log 
+               (id, timestamp, query, plan, tool_calls, final_answer, 
+                confidence, model_used, user_id, session_id, duration_ms, extra_metadata"""
+            values = [
+                context["reflection_id"],
+                context["timestamp"],
+                context.get("query", ""),
+                json.dumps(context.get("plan", {}), ensure_ascii=False),
+                json.dumps(context.get("tool_calls", []), ensure_ascii=False),
+                context.get("final_answer", ""),
+                context.get("confidence", 0.0),
+                context.get("model_used", "unknown"),
+                context.get("user_id", ""),
+                context.get("session_id", ""),
+                context.get("duration_ms", 0),
+                json.dumps(context.get("extra", {}), ensure_ascii=False)
+            ]
+            
+            if "success" in columns:
+                base_sql += ", success"
+                values.append(1 if context.get("success", False) else 0)
+            
+            base_sql += ") VALUES (" + ",".join(["?"] * len(values)) + ")"
+            
+            conn.execute(base_sql, tuple(values))
+            conn.commit()
         
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, _write)
@@ -473,10 +476,11 @@ class ReflectionPipeline:
         """获取反思管道统计信息"""
         try:
             # 统计日志数量
-            with sqlite3.connect(self.log_db_path) as conn:
-                log_count = conn.execute(
-                    "SELECT COUNT(*) FROM reflection_log"
-                ).fetchone()[0]
+            db = DatabaseManager.get(self.log_db_path)
+            conn = db._get_conn()
+            log_count = conn.execute(
+                "SELECT COUNT(*) FROM reflection_log"
+            ).fetchone()[0]
             
             # 统计JSONL样本数量
             jsonl_count = 0

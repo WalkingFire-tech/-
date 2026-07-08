@@ -7,9 +7,9 @@ import threading
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from loguru import logger
-import sqlite3
 from pathlib import Path
 from collections import defaultdict
+from infrastructure.database_manager import DatabaseManager
 
 ALLOWED_TASK_TYPES = {
     'code', 'question', 'chat', 'memory', 'calculation',
@@ -37,22 +37,23 @@ class CounterfactualSimulator:
     
     def _init_db(self):
         """初始化反事实历史数据库"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS counterfactual_records (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT,
-                    task_id TEXT,
-                    actual_model TEXT,
-                    actual_score REAL,
-                    counterfactual_model TEXT,
-                    counterfactual_score REAL,
-                    gap REAL,
-                    insight TEXT,
-                    applied BOOLEAN
-                )
-            ''')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_task ON counterfactual_records(task_id)')
+        db = DatabaseManager.get(self.db_path)
+        conn = db._get_conn()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS counterfactual_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                task_id TEXT,
+                actual_model TEXT,
+                actual_score REAL,
+                counterfactual_model TEXT,
+                counterfactual_score REAL,
+                gap REAL,
+                insight TEXT,
+                applied BOOLEAN
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_task ON counterfactual_records(task_id)')
     
     async def simulate_alternatives(
         self,
@@ -227,23 +228,24 @@ class CounterfactualSimulator:
     def _save_counterfactual(self, result: Dict):
         """保存反事实记录"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    INSERT INTO counterfactual_records
-                    (timestamp, task_id, actual_model, actual_score,
-                     counterfactual_model, counterfactual_score, gap, insight, applied)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    result['timestamp'],
-                    result['task_id'],
-                    result['actual_model'],
-                    result['actual_score'],
-                    result['counterfactual_model'],
-                    result['counterfactual_score'],
-                    result['gap'],
-                    '',
-                    False
-                ))
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            conn.execute('''
+                INSERT INTO counterfactual_records
+                (timestamp, task_id, actual_model, actual_score,
+                 counterfactual_model, counterfactual_score, gap, insight, applied)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                result['timestamp'],
+                result['task_id'],
+                result['actual_model'],
+                result['actual_score'],
+                result['counterfactual_model'],
+                result['counterfactual_score'],
+                result['gap'],
+                '',
+                False
+            ))
         except Exception as e:
             logger.warning(f"反事实记录保存失败: {e}")
     
@@ -315,7 +317,6 @@ class CounterfactualSimulator:
     def _generate_learning_rule_from_insight(self, insight: Dict, task_type: str, recommended_model: str):
         """从洞察生成学习规则"""
         try:
-            import sqlite3
             from datetime import datetime
             
             if task_type not in ALLOWED_TASK_TYPES:
@@ -332,13 +333,14 @@ class CounterfactualSimulator:
             gap = insight.get('confidence', 0) * 20
             confidence = min(0.95, 0.6 + gap / 50)
             
-            with sqlite3.connect("data/learning_rules.db") as conn:
-                conn.execute('''
-                    INSERT INTO learning_rules
-                    (condition, action, confidence, status, source, priority, created_at)
-                    VALUES (?, ?, ?, 'active', 'counterfactual_auto', 8, ?)
-                ''', (condition, action, confidence, datetime.now().isoformat()))
-                conn.commit()
+            db = DatabaseManager.get("data/learning_rules.db")
+            conn = db._get_conn()
+            conn.execute('''
+                INSERT INTO learning_rules
+                (condition, action, confidence, status, source, priority, created_at)
+                VALUES (?, ?, ?, 'active', 'counterfactual_auto', 8, ?)
+            ''', (condition, action, confidence, datetime.now().isoformat()))
+            conn.commit()
             
             logger.info(f"自动生成规则: {condition} → {action} (置信度: {confidence:.2f})")
             
@@ -348,19 +350,18 @@ class CounterfactualSimulator:
     def _activate_high_confidence_rules(self):
         """激活高置信度规则"""
         try:
-            import sqlite3
+            db = DatabaseManager.get("data/learning_rules.db")
+            conn = db._get_conn()
+            cursor = conn.execute('''
+                UPDATE learning_rules
+                SET status = 'active'
+                WHERE status = 'pending' AND confidence >= 0.7
+            ''')
+            activated = cursor.rowcount
+            conn.commit()
             
-            with sqlite3.connect("data/learning_rules.db") as conn:
-                cursor = conn.execute('''
-                    UPDATE learning_rules
-                    SET status = 'active'
-                    WHERE status = 'pending' AND confidence >= 0.7
-                ''')
-                activated = cursor.rowcount
-                conn.commit()
-                
-                if activated > 0:
-                    logger.info(f"自动激活 {activated} 条高置信度规则")
+            if activated > 0:
+                logger.info(f"自动激活 {activated} 条高置信度规则")
                     
         except Exception as e:
             logger.warning(f"激活规则失败: {e}")
@@ -368,34 +369,36 @@ class CounterfactualSimulator:
     def _mark_insights_applied(self):
         """标记洞察已应用"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
-                    UPDATE counterfactual_records
-                    SET applied = TRUE
-                    WHERE applied = FALSE AND gap > 10
-                ''')
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            conn.execute('''
+                UPDATE counterfactual_records
+                SET applied = TRUE
+                WHERE applied = FALSE AND gap > 10
+            ''')
         except Exception as e:
             logger.warning(f"标记失败: {e}")
     
     def get_statistics(self) -> Dict:
         """获取统计信息"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cur = conn.execute('SELECT COUNT(*) FROM counterfactual_records')
-                total_simulations = cur.fetchone()[0]
-                
-                cur = conn.execute('SELECT COUNT(*) FROM counterfactual_records WHERE applied = TRUE')
-                applied_insights = cur.fetchone()[0]
-                
-                cur = conn.execute('SELECT AVG(gap) FROM counterfactual_records WHERE gap > 0')
-                avg_improvement = cur.fetchone()[0] or 0
-                
-                return {
-                    "total_simulations": total_simulations,
-                    "applied_insights": applied_insights,
-                    "avg_improvement": round(avg_improvement, 2),
-                    "pending_insights": len(self.get_top_insights(limit=100))
-                }
+            db = DatabaseManager.get(self.db_path)
+            conn = db._get_conn()
+            cur = conn.execute('SELECT COUNT(*) FROM counterfactual_records')
+            total_simulations = cur.fetchone()[0]
+            
+            cur = conn.execute('SELECT COUNT(*) FROM counterfactual_records WHERE applied = TRUE')
+            applied_insights = cur.fetchone()[0]
+            
+            cur = conn.execute('SELECT AVG(gap) FROM counterfactual_records WHERE gap > 0')
+            avg_improvement = cur.fetchone()[0] or 0
+            
+            return {
+                "total_simulations": total_simulations,
+                "applied_insights": applied_insights,
+                "avg_improvement": round(avg_improvement, 2),
+                "pending_insights": len(self.get_top_insights(limit=100))
+            }
         except Exception as e:
             logger.warning(f"统计获取失败: {e}")
             return {}
