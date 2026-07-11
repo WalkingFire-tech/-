@@ -75,7 +75,7 @@ class KnowledgeHealthChecker:
             ORDER BY cnt DESC
             LIMIT 5
         ''')
-        top_sources = [{"source": row['source'], "count": row['cnt']} for row in rows}
+        top_sources = [{"source": row['source'], "count": row['cnt']} for row in rows]
         
         return {
             "total": total,
