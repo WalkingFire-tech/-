@@ -346,6 +346,7 @@ async def chat_stream(user_input: str, context: dict):
     # L1认知感知层：通过CognitivePlanner获取情绪/紧迫度/困惑度信号
     _cognitive_perception = {}
     cp = _get_cognitive_planner()
+    _cognitive_bypass_future = None
     if cp:
         try:
             _cognitive_perception = cp._perceive(user_input, context)
@@ -375,6 +376,16 @@ async def chat_stream(user_input: str, context: dict):
                 logger.info(f"🤔 困惑度高({confusion:.1f})，启用本质推理")
         except Exception as e:
             logger.debug(f"L1认知感知跳过: {e}")
+
+        # Phase 2: 提前启动认知旁路（异步），后续阶段可使用结果
+        try:
+            _bypass_ctx = {"history": context.get("history", [])[:5]} if isinstance(context, dict) else {}
+            loop = asyncio.get_running_loop()
+            _cognitive_bypass_future = loop.run_in_executor(
+                _fast_executor, lambda: cp.process(user_input, _bypass_ctx)
+            )
+        except Exception:
+            pass
 
     # ========== 阶段1.5：规则匹配与执行 ==========
 
@@ -768,27 +779,37 @@ async def chat_stream(user_input: str, context: dict):
     # L2学习层 + L3整合层：通过CognitivePlanner从交互中学习并整合知识
     _cognitive_learning = {}
     _cognitive_integration = {}
+    _bypass_result_l2l3 = None
+    if _cognitive_bypass_future:
+        try:
+            _bypass_result_l2l3 = await asyncio.wait_for(_cognitive_bypass_future, timeout=8)
+        except (asyncio.TimeoutError, Exception):
+            pass
     if cp and _cognitive_perception:
-        try:
-            _cognitive_learning = cp._learn(user_input, _cognitive_perception)
-            knowledge_gained = _cognitive_learning.get("knowledge_gained", 0)
-            if knowledge_gained > 0:
-                yield _emit("step", {"phase": "L2认知学习", "status": "done",
-                    "detail": f"获得{knowledge_gained}项知识, 置信度={_cognitive_learning.get('confidence', 0.7):.0%}"})
-            logger.debug(f"L2认知学习: gained={knowledge_gained}, sources={_cognitive_learning.get('sources', [])}")
-        except Exception as e:
-            logger.debug(f"L2认知学习跳过: {e}")
-            _alchemize_error(e, context={"user_input": user_input[:50]}, phase="L2_cognitive_learning")
-        try:
-            _cognitive_integration = cp._integrate(_cognitive_learning)
-            if _cognitive_integration.get("success"):
-                core_know = _cognitive_integration.get("core_knowledge", [])
-                if core_know:
-                    yield _emit("step", {"phase": "L3认知整合", "status": "done",
-                        "detail": f"整合{len(core_know)}项核心知识"})
-            logger.debug(f"L3认知整合: success={_cognitive_integration.get('success')}")
-        except Exception as e:
-            logger.debug(f"L3认知整合跳过: {e}")
+        if _bypass_result_l2l3 and _bypass_result_l2l3.success:
+            _cognitive_learning = _bypass_result_l2l3.learning or {}
+            _cognitive_integration = _bypass_result_l2l3.integration or {}
+            logger.debug("L2/L3: 使用认知旁路结果")
+        else:
+            try:
+                _cognitive_learning = cp._learn(user_input, _cognitive_perception)
+            except Exception as e:
+                logger.debug(f"L2认知学习跳过: {e}")
+                _alchemize_error(e, context={"user_input": user_input[:50]}, phase="L2_cognitive_learning")
+            try:
+                _cognitive_integration = cp._integrate(_cognitive_learning)
+            except Exception as e:
+                logger.debug(f"L3认知整合跳过: {e}")
+        knowledge_gained = _cognitive_learning.get("knowledge_gained", 0)
+        if knowledge_gained > 0:
+            yield _emit("step", {"phase": "L2认知学习", "status": "done",
+                "detail": f"获得{knowledge_gained}项知识, 置信度={_cognitive_learning.get('confidence', 0.7):.0%}"})
+        if _cognitive_integration.get("success"):
+            core_know = _cognitive_integration.get("core_knowledge", [])
+            if core_know:
+                yield _emit("step", {"phase": "L3认知整合", "status": "done",
+                    "detail": f"整合{len(core_know)}项核心知识"})
+
     _sm = _get_self_model()
     if _sm and (_cognitive_learning or _cognitive_integration):
         _sm.record_cognitive_cycle(learning=_cognitive_learning, integration=_cognitive_integration)
@@ -1388,71 +1409,75 @@ async def chat_stream(user_input: str, context: dict):
     _l4_should_correct = False
     if cp and _cognitive_integration and final_response:
         try:
-            _cognitive_validation, _cognitive_response = cp._validate_and_respond(
-                _cognitive_integration, user_input, _cognitive_perception
-            )
-            val_status = _cognitive_validation.get("status", "unknown")
-            val_conf = _cognitive_validation.get("confidence", 0)
-            doubts = _cognitive_validation.get("doubts", [])
-            _l4_doubts = doubts if isinstance(doubts, list) else []
-            if val_status == "pass" and val_conf >= 0.7:
-                attempts.append(("L4认知校验", True, f"校验通过(置信度{val_conf:.0%})"))
-            elif doubts:
-                attempts.append(("L4认知校验", True, f"存疑{len(doubts)}项(置信度{val_conf:.0%})"))
-            logger.debug(f"L4认知校验: status={val_status}, confidence={val_conf:.2f}, doubts={len(doubts)}")
+            if _bypass_result_l2l3 and _bypass_result_l2l3.success and _bypass_result_l2l3.validation:
+                _cognitive_validation = _bypass_result_l2l3.validation
+                _cognitive_response = _bypass_result_l2l3.response if hasattr(_bypass_result_l2l3, 'response') else ""
+                logger.debug("L4: 使用认知旁路校验结果")
+            else:
+                _cognitive_validation, _cognitive_response = cp._validate_and_respond(
+                    _cognitive_integration, user_input, _cognitive_perception
+                )
+                val_status = _cognitive_validation.get("status", "unknown")
+                val_conf = _cognitive_validation.get("confidence", 0)
+                doubts = _cognitive_validation.get("doubts", [])
+                _l4_doubts = doubts if isinstance(doubts, list) else []
+                if val_status == "pass" and val_conf >= 0.7:
+                    attempts.append(("L4认知校验", True, f"校验通过(置信度{val_conf:.0%})"))
+                elif doubts:
+                    attempts.append(("L4认知校验", True, f"存疑{len(doubts)}项(置信度{val_conf:.0%})"))
 
-            # 【墙上的画→引擎】L4 doubts触发回复修正
-            # 之前：doubts仅记录到attempts，不影响任何决策
-            # 现在：严重doubts(置信度<0.5或存在critical质疑)触发修正推理
-            _l4_critical_doubts = [d for d in _l4_doubts if isinstance(d, dict) and d.get("severity") == "critical"]
-            _l4_major_doubts = [d for d in _l4_doubts if isinstance(d, dict) and d.get("severity") == "major"]
-            if val_conf < 0.5 or len(_l4_critical_doubts) > 0:
-                _l4_should_correct = True
-                _doubt_descs = []
-                for _d in (_l4_critical_doubts + _l4_major_doubts)[:3]:
-                    if isinstance(_d, dict):
-                        _doubt_descs.append(_d.get("description", str(_d))[:80])
-                    else:
-                        _doubt_descs.append(str(_d)[:80])
-                yield _emit("step", {"phase": "L4认知校验", "status": "done",
-                    "detail": f"⚠️ L4发现{len(_l4_critical_doubts)}个严重质疑，触发修正: {'; '.join(_doubt_descs)}"})
-                logger.info(f"L4质疑触发修正: {len(_l4_critical_doubts)} critical, {len(_l4_major_doubts)} major, conf={val_conf:.2f}")
-
-                # 将L4质疑注入到essence_issues，让自我验证阶段知道
-                for _d in (_l4_critical_doubts + _l4_major_doubts)[:3]:
-                    if isinstance(_d, dict):
-                        _desc = _d.get("description", "")
-                        if _desc and _desc not in essence_issues:
-                            essence_issues.append(f"[L4质疑] {_desc}")
-                essence_passed = False
-                if val_conf < essence_confidence:
-                    essence_confidence = val_conf
-
-                # L4质疑触发修正推理：用Ollama重新生成
-                if not essence_cross_validated:
-                    _l4_model = await _get_available_ollama_model_async()
-                    if _l4_model:
-                        yield _emit("step", {"phase": "L4修正推理", "status": "running",
-                            "detail": f"L4质疑触发修正，调用 {_l4_model} 重新推理..."})
-                        _l4_correction_prompt = user_input
-                        if truth_insights:
-                            _l4_correction_prompt = f"{user_input}\n\n参考信息:\n{truth_insights[:500]}"
-                        _l4_retry = await _fetch_ollama(_l4_correction_prompt, _l4_model, timeout=20, conversation_context=conversation_context)
-                        if _l4_retry and _l4_retry.get("response") and len(_l4_retry["response"]) > len(final_response) * 0.5:
-                            _l4_retry_score = _score_response(_l4_retry, user_input)
-                            _l4_current_score = _score_response(best, user_input) if best else 0
-                            if _l4_retry_score > _l4_current_score * 0.8:
-                                final_response = _l4_retry["response"]
-                                _save_to_experience_pool(user_input, final_response, success=True, intent_type="l4_correction", model_name=_l4_model)
-                                attempts.append(("L4修正推理", True, f"修正成功(评分{_l4_retry_score:.0f})"))
-                                yield _emit("step", {"phase": "L4修正推理", "status": "done", "detail": f"L4修正成功 ✅"})
-                            else:
-                                attempts.append(("L4修正推理", False, f"修正评分{_l4_retry_score:.0f}未显著优于原{_l4_current_score:.0f}"))
-                                yield _emit("step", {"phase": "L4修正推理", "status": "done", "detail": "L4修正未显著改善"})
+                # 【墙上的画→引擎】L4 doubts触发回复修正
+                # 之前：doubts仅记录到attempts，不影响任何决策
+                # 现在：严重doubts(置信度<0.5或存在critical质疑)触发修正推理
+                _l4_critical_doubts = [d for d in _l4_doubts if isinstance(d, dict) and d.get("severity") == "critical"]
+                _l4_major_doubts = [d for d in _l4_doubts if isinstance(d, dict) and d.get("severity") == "major"]
+                if val_conf < 0.5 or len(_l4_critical_doubts) > 0:
+                    _l4_should_correct = True
+                    _doubt_descs = []
+                    for _d in (_l4_critical_doubts + _l4_major_doubts)[:3]:
+                        if isinstance(_d, dict):
+                            _doubt_descs.append(_d.get("description", str(_d))[:80])
                         else:
-                            yield _emit("step", {"phase": "L4修正推理", "status": "done", "detail": "L4修正未返回有效结果"})
-                    else:
-                        yield _emit("step", {"phase": "L4修正推理", "status": "done", "detail": "无可用模型"})
+                            _doubt_descs.append(str(_d)[:80])
+                    yield _emit("step", {"phase": "L4认知校验", "status": "done",
+                        "detail": f"⚠️ L4发现{len(_l4_critical_doubts)}个严重质疑，触发修正: {'; '.join(_doubt_descs)}"})
+                    logger.info(f"L4质疑触发修正: {len(_l4_critical_doubts)} critical, {len(_l4_major_doubts)} major, conf={val_conf:.2f}")
+
+                    # 将L4质疑注入到essence_issues，让自我验证阶段知道
+                    for _d in (_l4_critical_doubts + _l4_major_doubts)[:3]:
+                        if isinstance(_d, dict):
+                            _desc = _d.get("description", "")
+                            if _desc and _desc not in essence_issues:
+                                essence_issues.append(f"[L4质疑] {_desc}")
+                    essence_passed = False
+                    if val_conf < essence_confidence:
+                        essence_confidence = val_conf
+
+                    # L4质疑触发修正推理：用Ollama重新生成
+                    if not essence_cross_validated:
+                        _l4_model = await _get_available_ollama_model_async()
+                        if _l4_model:
+                            yield _emit("step", {"phase": "L4修正推理", "status": "running",
+                                "detail": f"L4质疑触发修正，调用 {_l4_model} 重新推理..."})
+                            _l4_correction_prompt = user_input
+                            if truth_insights:
+                                _l4_correction_prompt = f"{user_input}\n\n参考信息:\n{truth_insights[:500]}"
+                            _l4_retry = await _fetch_ollama(_l4_correction_prompt, _l4_model, timeout=20, conversation_context=conversation_context)
+                            if _l4_retry and _l4_retry.get("response") and len(_l4_retry["response"]) > len(final_response) * 0.5:
+                                _l4_retry_score = _score_response(_l4_retry, user_input)
+                                _l4_current_score = _score_response(best, user_input) if best else 0
+                                if _l4_retry_score > _l4_current_score * 0.8:
+                                    final_response = _l4_retry["response"]
+                                    _save_to_experience_pool(user_input, final_response, success=True, intent_type="l4_correction", model_name=_l4_model)
+                                    attempts.append(("L4修正推理", True, f"修正成功(评分{_l4_retry_score:.0f})"))
+                                    yield _emit("step", {"phase": "L4修正推理", "status": "done", "detail": f"L4修正成功 ✅"})
+                                else:
+                                    attempts.append(("L4修正推理", False, f"修正评分{_l4_retry_score:.0f}未显著优于原{_l4_current_score:.0f}"))
+                                    yield _emit("step", {"phase": "L4修正推理", "status": "done", "detail": "L4修正未显著改善"})
+                            else:
+                                yield _emit("step", {"phase": "L4修正推理", "status": "done", "detail": "L4修正未返回有效结果"})
+                        else:
+                            yield _emit("step", {"phase": "L4修正推理", "status": "done", "detail": "无可用模型"})
         except Exception as e:
             logger.debug(f"L4认知校验跳过: {e}")
             _alchemize_error(e, context={"user_input": user_input[:50]}, phase="L4_validation")
@@ -1464,51 +1489,21 @@ async def chat_stream(user_input: str, context: dict):
     yield _emit("step", {"phase": "反思学习", "status": "running", "detail": "从本次交互中学习，微调系统基因..."})
 
     # L5进化层(异步) + L6内省层：通过CognitivePlanner触发进化引擎和自我认知
+    _bypass_side_effects_done = bool(_bypass_result_l2l3 and _bypass_result_l2l3.success)
     if cp and _cognitive_perception:
-        try:
-            _conv_id = f"conv_{int(time.time())}"
-            cp._trigger_async_evolution(
-                _conv_id, user_input,
-                final_response or "", _cognitive_perception,
-                _cognitive_validation
-            )
-            logger.debug("L5进化层已异步触发")
-        except Exception as e:
-            logger.debug(f"L5进化层触发跳过: {e}")
-
-        # 【认知增强旁路 Phase 1】异步运行cp.process()做交叉验证
-        # process()是CognitivePlanner的核心入口，完整L1-L6认知循环
-        # 旁路结果用于信号补充，不影响主流程
-        _cognitive_bypass_result = None
-        if cp and final_response:
+        if not _bypass_side_effects_done:
             try:
-                _bypass_ctx = {"history": context.get("history", [])[:5]} if isinstance(context, dict) else {}
-                loop = asyncio.get_running_loop()
-                _cognitive_bypass_result = await asyncio.wait_for(
-                    loop.run_in_executor(_fast_executor, lambda: cp.process(user_input, _bypass_ctx)),
-                    timeout=15
+                _conv_id = f"conv_{int(time.time())}"
+                cp._trigger_async_evolution(
+                    _conv_id, user_input,
+                    final_response or "", _cognitive_perception,
+                    _cognitive_validation
                 )
-                if _cognitive_bypass_result and _cognitive_bypass_result.success:
-                    _bp = _cognitive_bypass_result
-                    _bp_perception = _bp.perception or {}
-                    _bp_validation = _bp.validation or {}
-
-                    if _bp_perception.get("urgency", 0) > 0.8 and _cognitive_perception.get("urgency", 0.5) <= 0.7:
-                        logger.info(f"认知旁路: 检测到高紧迫度信号 urgency={_bp_perception['urgency']:.2f}（主管道未捕获）")
-
-                    if _bp_validation.get("status") == "fail" and _cognitive_validation.get("status") != "fail":
-                        logger.warning(f"认知旁路: 校验失败但主管道通过 confidence={_bp_validation.get('confidence', 0):.2f}")
-                        attempts.append(("认知旁路校验", True, f"旁路发现校验问题(conf={_bp_validation.get('confidence', 0):.2f})"))
-
-                    _bp_emotion = _bp_perception.get("emotion", "neutral")
-                    if _bp_emotion != "neutral" and _cognitive_perception.get("emotion", "neutral") == "neutral":
-                        logger.info(f"认知旁路: 捕获情绪信号 emotion={_bp_emotion}（主管道未捕获）")
-
-                    logger.debug(f"认知旁路完成: success={_bp.success}, time={_bp.processing_time_ms:.0f}ms")
-            except asyncio.TimeoutError:
-                logger.debug("认知旁路超时(15秒)，跳过")
+                logger.debug("L5进化层已异步触发")
             except Exception as e:
-                logger.debug(f"认知旁路异常: {e}")
+                logger.debug(f"L5进化层触发跳过: {e}")
+        else:
+            logger.debug("L5进化层: 旁路已包含副作用，跳过手动触发")
 
         # 【墙上的画→引擎】进化岛结果反馈到技能库和基因池
         # 之前：L5进化结果仅停留在L5内部（_sync_to_layers只向state_collector报告）
@@ -1556,32 +1551,33 @@ async def chat_stream(user_input: str, context: dict):
         except Exception as e:
             logger.debug(f"进化岛结果反馈跳过: {e}")
         try:
-            _cognitive_introspection = cp._get_introspection()
-            if _cognitive_introspection:
-                logger.debug(f"L6内省层: 获取到内省报告")
-            if _cognitive_bypass_result and _cognitive_bypass_result.introspection:
-                if not _cognitive_introspection:
-                    _cognitive_introspection = _cognitive_bypass_result.introspection
-                else:
-                    _cognitive_introspection.update(_cognitive_bypass_result.introspection)
-                logger.debug("L6内省层: 旁路内省报告已融合")
+            if _bypass_side_effects_done and _bypass_result_l2l3.introspection:
+                _cognitive_introspection = _bypass_result_l2l3.introspection
+                logger.debug("L6内省层: 使用旁路内省结果")
+            else:
+                _cognitive_introspection = cp._get_introspection()
+                if _cognitive_introspection:
+                    logger.debug("L6内省层: 获取到内省报告")
         except Exception as e:
             logger.debug(f"L6内省层跳过: {e}")
-        try:
-            cp._save_memory(user_input, final_response or "", _cognitive_perception, _cognitive_validation)
-            logger.debug("认知记忆已保存")
-        except Exception as e:
-            logger.debug(f"认知记忆保存跳过: {e}")
-        try:
-            cp._update_relationship(user_input, final_response or "", _cognitive_perception, _cognitive_validation)
-            logger.debug("认知关系模型已更新")
-        except Exception as e:
-            logger.debug(f"认知关系模型更新跳过: {e}")
-        try:
-            cp._submit_signals(_cognitive_perception, _cognitive_validation)
-            logger.debug("认知信号已提交")
-        except Exception as e:
-            logger.debug(f"认知信号提交跳过: {e}")
+        if not _bypass_side_effects_done:
+            try:
+                cp._save_memory(user_input, final_response or "", _cognitive_perception, _cognitive_validation)
+                logger.debug("认知记忆已保存")
+            except Exception as e:
+                logger.debug(f"认知记忆保存跳过: {e}")
+            try:
+                cp._update_relationship(user_input, final_response or "", _cognitive_perception, _cognitive_validation)
+                logger.debug("认知关系模型已更新")
+            except Exception as e:
+                logger.debug(f"认知关系模型更新跳过: {e}")
+            try:
+                cp._submit_signals(_cognitive_perception, _cognitive_validation)
+                logger.debug("认知信号已提交")
+            except Exception as e:
+                logger.debug(f"认知信号提交跳过: {e}")
+        else:
+            logger.debug("认知副作用(记忆/关系/信号): 旁路已包含，跳过")
         _sm = _get_self_model()
         if _sm:
             try:
