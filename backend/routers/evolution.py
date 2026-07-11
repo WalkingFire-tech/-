@@ -1,7 +1,7 @@
 """
 进化与认知路由 — genes/skills/truths/evolution/cbnr/presence/memory/relationship/agent/tools/perception
 """
-import sqlite3
+
 import asyncio
 import json
 from pathlib import Path

@@ -484,6 +484,27 @@ class ReActEngine:
 
             plan = tool_registry.plan_tools(query, intent_type)
             if not plan:
+                # 能力创造回路：无工具匹配时，尝试用行动解决问题
+                logger.info(f"无工具匹配查询，启动能力创造回路: {query[:60]}")
+                try:
+                    from core.capability_creation_loop import capability_creation_loop
+                    result = await capability_creation_loop.handle(
+                        query, {"intent_type": intent_type, "strategy": "tool_first"}
+                    )
+                    if result.get("handled") and result.get("data"):
+                        logger.info(f"能力创造回路成功: {str(result['data'])[:80]}")
+                        return {
+                            "candidates": [{
+                                "source": "capability_creation",
+                                "response": str(result["data"]),
+                                "quality": 60,
+                            }],
+                            "response": str(result["data"]),
+                            "quality": 60,
+                        }
+                except Exception as e:
+                    logger.debug(f"能力创造回路执行失败: {e}")
+
                 return None
 
             used = set()

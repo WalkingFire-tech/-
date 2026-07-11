@@ -1,5 +1,6 @@
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Optional, List, Any, Dict
 from loguru import logger
@@ -30,17 +31,25 @@ class DatabaseManager:
             conn = sqlite3.connect(str(self._path), timeout=self._timeout, check_same_thread=False)
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA busy_timeout=5000")
             conn.row_factory = sqlite3.Row
             self._local.conn = conn
         return self._local.conn
 
     def execute(self, sql: str, params=(), commit: bool = False) -> sqlite3.Cursor:
-        with self._lock:
-            conn = self._get_conn()
-            cursor = conn.execute(sql, params)
-            if commit:
-                conn.commit()
-            return cursor
+        for attempt in range(3):
+            try:
+                with self._lock:
+                    conn = self._get_conn()
+                    cursor = conn.execute(sql, params)
+                    if commit:
+                        conn.commit()
+                    return cursor
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e).lower() and attempt < 2:
+                    time.sleep(0.1 * (attempt + 1))
+                    continue
+                raise
 
     def executemany(self, sql: str, seq_params, commit: bool = True) -> None:
         with self._lock:

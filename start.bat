@@ -11,6 +11,14 @@ echo.
 
 cd /d "%~dp0"
 
+REM [0/5] Disable system sleep to prevent idle shutdown
+echo [0/5] Disabling system sleep...
+powercfg /change standby-timeout-ac 0 >nul 2>&1
+powercfg /change standby-timeout-dc 0 >nul 2>&1
+powercfg /change hibernate-timeout-ac 0 >nul 2>&1
+powercfg /change hibernate-timeout-dc 0 >nul 2>&1
+echo   Done - system will not sleep
+
 REM [1/4] Kill existing processes on port 8000
 echo [1/4] Checking port 8000...
 for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":8000.*LISTENING"') do (

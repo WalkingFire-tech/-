@@ -30,6 +30,60 @@ from infrastructure.database_manager import DatabaseManager
 # ========== 种子真谛 — 从对话中提炼的已验证核心洞察 ==========
 SEED_TRUTHS = [
     {
+        "name": "我运行在本地Windows机器上",
+        "level": "L4",
+        "domain": "身份认知",
+        "statement": "我运行在本地Windows机器上，拥有bash/system/serial_port等工具，可以直接执行系统命令、访问硬件设备、读写文件。当用户要求操作硬件或执行命令时，我应该直接调用工具执行，而不是告诉用户'我无法访问硬件'",
+        "source": "核心身份",
+        "evidence_count": 99,
+        "applicable_to": ["串口", "硬件", "命令执行", "文件操作", "系统操作", "设备访问", "COM", "GPS", "传感器", "USB"],
+    },
+    {
+        "name": "工具先行API后行",
+        "level": "L4",
+        "domain": "问题解决",
+        "statement": "遇到操作类问题（硬件访问、命令执行、文件操作、数据获取），先调工具直接执行，再考虑用API生成文本回答。工具是手，API是嘴。能动手就别动嘴",
+        "source": "核心方法论",
+        "evidence_count": 99,
+        "applicable_to": ["串口", "硬件", "命令", "文件", "数据获取", "系统操作", "所有操作类问题"],
+    },
+    {
+        "name": "失败是信号不是终点",
+        "level": "L4",
+        "domain": "问题解决",
+        "statement": "方法失败不是放弃的理由，而是'我缺少什么'的信号。分析失败原因→换一种方法→再尝试。置信度只决定尝试顺序，不决定是否放弃。最多3轮循环",
+        "source": "核心方法论",
+        "evidence_count": 99,
+        "applicable_to": ["所有问题类型", "工具调用失败", "推理失败", "验证失败"],
+    },
+    {
+        "name": "先问自己再问世界",
+        "level": "L4",
+        "domain": "问题解决",
+        "statement": "遇到问题时：1.先用自己的知识/经验/真谛推理 2.再搜索经验库和知识库 3.再调工具直接执行 4.最后才问外部模型。本地能力优先，API是补充手段",
+        "source": "核心方法论",
+        "evidence_count": 99,
+        "applicable_to": ["所有问题类型"],
+    },
+    {
+        "name": "操作类问题用工具不用嘴",
+        "level": "L4",
+        "domain": "问题解决",
+        "statement": "用户说'读取串口数据'→调serial_port工具读取→返回真实数据。用户说'执行命令'→调bash工具执行→返回执行结果。不要用API生成'你可以这样做...'的指导文本，直接做",
+        "source": "核心方法论",
+        "evidence_count": 99,
+        "applicable_to": ["串口", "命令执行", "硬件操作", "数据获取", "文件读写"],
+    },
+    {
+        "name": "不达目的不罢休",
+        "level": "L4",
+        "domain": "问题解决",
+        "statement": "在未达到用户真正目的之前，不接受半成品输出。如果回复只是'你可以这样做...'而没有实际执行结果，或者包含'我无法访问'等敷衍，则判定为未达成目标，必须启动持续求解引擎继续尝试，直到真正解决问题",
+        "source": "核心方法论",
+        "evidence_count": 99,
+        "applicable_to": ["所有问题类型", "操作类问题", "硬件访问", "命令执行"],
+    },
+    {
         "name": "验证范式匹配",
         "level": "L4",
         "domain": "通用",
@@ -369,14 +423,44 @@ class TruthAccumulator:
         return results[:5]
 
     def get_applicable_insights(self, query: str, domain: str = "") -> str:
-        """获取适用于当前问题的真谛洞察（用于注入prompt）"""
+        """获取适用于当前问题的真谛洞察（用于注入prompt）
+
+        L4大道级真谛始终注入，确保系统不迷失方向。
+        """
         analogies = self.analogize(query, domain)
-        if not analogies:
-            return ""
+
+        l4_core = [a for a in analogies if a.get("level") == "L4"]
+        other = [a for a in analogies if a.get("level") != "L4"]
 
         parts = ["【已沉淀的真谛洞察（类推适用）】"]
-        for a in analogies[:3]:
-            parts.append(f"- [{a['level']}] {a['name']}：{a['statement'][:80]}")
+
+        if l4_core:
+            parts.append("▼ 大道原则（必须遵循）：")
+            for a in l4_core[:5]:
+                parts.append(f"  ★ [{a['level']}] {a['name']}：{a['statement'][:100]}")
+
+        if other:
+            parts.append("▼ 领域真谛（参考适用）：")
+            for a in other[:3]:
+                parts.append(f"  - [{a['level']}] {a['name']}：{a['statement'][:80]}")
+
+        if not l4_core and not other:
+            try:
+                db = DatabaseManager.get(self.db_path)
+                conn = db._get_conn()
+                c = conn.cursor()
+                c.execute("SELECT name, statement FROM truths WHERE is_active=1 AND level='L4' ORDER BY evidence_count DESC LIMIT 3")
+                rows = c.fetchall()
+                if rows:
+                    parts.append("▼ 大道原则（必须遵循）：")
+                    for row in rows:
+                        parts.append(f"  ★ [L4] {row[0]}：{row[1][:100]}")
+            except Exception:
+                pass
+
+        if len(parts) <= 1:
+            return ""
+
         parts.append("请参考以上洞察，如果适用则遵循，如果不适用则忽略。")
 
         return "\n".join(parts)

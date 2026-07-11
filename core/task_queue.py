@@ -122,10 +122,44 @@ class GenePool:
     def get(self, key: str) -> float:
         return self._genes.get(key, GENE_DEFAULTS.get(key, 0.5))
 
+    # 【R2渐进注入】待分步生效的基因变更队列
+    # 格式: {key: {"remaining_delta": float, "step": int, "trigger": str}}
+    _gradual_injection_queue = {}
+
+    GRADUAL_INJECTION_THRESHOLD = 0.1
+    GRADUAL_STEPS = [0.01, 0.20, 1.0]
+
     def mutate(self, key: str, delta: float, trigger: str = "", context: str = ""):
-        """微调基因参数（小量增量，强制安全基线）"""
+        """微调基因参数（小量增量，强制安全基线，R2渐进注入门控）"""
         old = self._genes.get(key, GENE_DEFAULTS.get(key, 0.5))
-        new = old + delta
+
+        # R2渐进注入：|delta|超过阈值时，分步生效而非立即
+        actual_delta = delta
+        if abs(delta) >= self.GRADUAL_INJECTION_THRESHOLD and trigger != "gradual_injection":
+            if key not in self._gradual_injection_queue:
+                self._gradual_injection_queue[key] = {
+                    "remaining_delta": delta,
+                    "step": 0,
+                    "trigger": trigger,
+                }
+                step_ratio = self.GRADUAL_STEPS[0]
+                actual_delta = delta * step_ratio
+                logger.info(f"🧬 R2渐进注入: {key} Δ{delta:+.3f} 超阈值，第1步注入{step_ratio:.0%}(Δ{actual_delta:+.4f})")
+            else:
+                actual_delta = delta
+        elif key in self._gradual_injection_queue:
+            _gi = self._gradual_injection_queue[key]
+            _gi["step"] += 1
+            if _gi["step"] < len(self.GRADUAL_STEPS):
+                step_ratio = self.GRADUAL_STEPS[_gi["step"]]
+                actual_delta = _gi["remaining_delta"] * step_ratio
+                logger.info(f"🧬 R2渐进注入: {key} 第{_gi['step']+1}步注入{step_ratio:.0%}(Δ{actual_delta:+.4f})")
+            else:
+                actual_delta = _gi["remaining_delta"]
+                del self._gradual_injection_queue[key]
+                logger.info(f"🧬 R2渐进注入: {key} 全量注入完成")
+
+        new = old + actual_delta
 
         bounds = GENE_SAFETY_BOUNDS.get(key)
         if bounds:

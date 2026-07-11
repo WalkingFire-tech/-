@@ -20,14 +20,35 @@ def score_response(result: dict, query: str) -> float:
             score -= 30
             break
 
+    if query_needs_tools(query):
+        hardware_copout = ["无法直接访问", "没有直接访问", "不能访问硬件", "无法获取数据", "无法访问您", "作为云端", "作为AI", "我无法访问"]
+        for kw in hardware_copout:
+            if kw in response:
+                score -= 50
+                break
+
     if any(kw in query.lower() for kw in ["认知", "意识", "思维", "智能", "什么是", "如何"]):
         if any(kw in response for kw in ["因为", "所以", "因此", "例如", "具体", "包括"]):
             score += 15
 
     if result["source"].startswith("Ollama"):
-        score += 10
+        pass
     elif result["source"] == "经验池":
-        score += 5
+        score += 15
+    elif result["source"] in ("serial_port", "bash", "file_reader", "project_scanner", "code_indexer", "dependency_analyzer", "工具调用"):
+        score += 15
+        real_data_patterns = ["$gpgga", "$gprmc", "$gpgsv", "nmea", "com", "serial",
+                              "波特率", "baud", "成功打开", "读取到", "执行结果",
+                              "exit code", "pid", "进程", "返回值",
+                              "stdout", "stderr", "output"]
+        if any(p in response.lower() for p in real_data_patterns):
+            score += 20
+    elif result["source"] == "事实锚点":
+        score += 10
+    elif result["source"] == "自我推理":
+        score += 12
+    elif "外部" in result["source"]:
+        score -= 5
 
     search_snippet_patterns = ["...", "…:", "CSDN", "博客园", "知乎", "Stack Overflow", "GitHub -"]
     snippet_count = sum(1 for p in search_snippet_patterns if p in response)
@@ -77,7 +98,7 @@ def compare_and_select(candidates: list, query: str, cbnr_ctx: dict = None) -> t
         pass
     _surprise_boost = 1.0
     _deep_sources = {"Ollama", "DeepSeek", "Ollama(qwen2.5-coder:7b)", "self_reasoning", "本质推理"}
-    _tool_sources = {"file_reader", "project_scanner", "code_indexer", "dependency_analyzer", "工具调用"}
+    _tool_sources = {"file_reader", "project_scanner", "code_indexer", "dependency_analyzer", "工具调用", "serial_port", "bash"}
     _query_is_tool_intent = query_needs_tools(query)
     if cbnr_ctx:
         _pred_err = cbnr_ctx.get("l1_prediction_error", 0.5)
@@ -110,11 +131,21 @@ async def self_verify(query: str, response: str) -> dict:
 
     if not response or len(response) < 20:
         issues.append("回复过短")
-    perfunctory = ["我不知道", "无法回答", "请稍后重试"]
+    perfunctory = ["我不知道", "无法回答", "请稍后重试", "无法访问", "无法直接", "没有能力", "不能访问", "无法获取数据",
+                   "我无法访问", "我无法直接", "我不能访问", "作为ai", "作为一个ai", "作为语言模型",
+                   "你需要手动", "你可以自己", "我建议你"]
     for kw in perfunctory:
-        if kw in response and len(response) < 80:
+        if kw in response:
             issues.append(f"包含敷衍性语言'{kw}'")
             break
+    if query_needs_tools(query):
+        hardware_copout = ["无法直接访问", "没有直接访问", "不能访问硬件", "无法获取", "无法访问您", "作为云端", "作为AI",
+                          "我无法访问", "我无法连接", "我无法执行", "你不能", "你需要手动",
+                          "你可以使用以下命令", "以下是具体步骤", "你可以尝试", "你可以这样做"]
+        for kw in hardware_copout:
+            if kw in response:
+                issues.append(f"硬件请求被拒绝或仅给指导'{kw}'")
+                break
     if any(kw in query.lower() for kw in ["如何", "怎么", "怎样", "什么是", "认知"]):
         if not any(kw in response for kw in ["因为", "所以", "例如", "包括", "方法", "步骤"]):
             issues.append("问题需要实质内容但回复缺乏深度")
