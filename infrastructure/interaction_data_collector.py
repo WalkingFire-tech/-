@@ -60,6 +60,7 @@ class InteractionDataCollector:
                 session_id TEXT NOT NULL,
                 question TEXT NOT NULL,
                 response TEXT NOT NULL,
+                conn.commit()
                 
                 -- 反馈
                 feedback_type TEXT,
@@ -160,6 +161,7 @@ class InteractionDataCollector:
             model_version, system_version, timestamp,
             json.dumps(metadata or {}, ensure_ascii=False)
         ))
+        conn.commit()
         
         interaction_id = cur.lastrowid
         

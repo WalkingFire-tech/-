@@ -55,6 +55,7 @@ class HealthDashboard:
             )
         ''')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON health_history(timestamp)')
+        conn.commit()
     
     def calculate_aphi(self) -> Dict:
         """计算联盟拓荒者健康度指数"""
@@ -309,6 +310,7 @@ class HealthDashboard:
                 metrics["mode"],
                 ""
             ))
+            conn.commit()
         except Exception as e:
             logger.warning(f"健康记录保存失败: {e}")
     

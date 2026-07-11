@@ -366,6 +366,7 @@ class SemanticRouter:
                     timestamp TEXT
                 )
             ''')
+            conn.commit()
             
             conn.execute('''
                 INSERT INTO routing_history 
@@ -420,6 +421,7 @@ class SemanticRouter:
                     updated_at TEXT
                 )
             ''')
+            conn.commit()
             
             for skill_name, vector in self.skill_vectors.items():
                 conn.execute('''

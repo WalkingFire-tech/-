@@ -136,7 +136,10 @@ class MetacognitiveExecutor:
             logger.warning("⚠️ 阶段3超时，使用默认验证")
             validation = {
                 "confidence": 0.5,
+                "quality_score": 50,
                 "is_valid": True,
+                "need_external_learning": True,
+                "success_rate": 0.0,
                 "reason": "验证超时"
             }
         
@@ -318,37 +321,7 @@ class MetacognitiveExecutor:
             "expected_confidence": 0.7
         }
     
-    async def _retrieve_metacognitive_examples(self, query: str) -> str:
-        """从255条闭环数据中检索相关范例"""
-        
-        try:
-            # 尝试从向量库检索
-            from infrastructure.vector_retriever import vector_retriever
-            results = vector_retriever.search_similar(
-                query=f"元认知: {query}",
-                top_k=3
-            )
-            
-            if results:
-                examples = []
-                for r in results[:3]:
-                    if r.get('answer'):
-                        examples.append(r['answer'][:200])
-                return "\n\n".join(examples)
-        except:
-            pass
-        
-        # 降级：返回默认范例
-        return """
-范例1：
-问题："计算圆的面积"
-计划：{"tasks": [{"type": "tool", "name": "calculator"}, {"type": "llm_reasoning"}]}
 
-范例2：
-问题："什么是机器学习？"
-计划：{"tasks": [{"type": "knowledge_retrieval"}, {"type": "llm_reasoning"}]}
-"""
-    
     def _create_default_plan(self, query: str) -> Dict:
         """创建默认执行计划"""
         return {
@@ -663,57 +636,7 @@ class MetacognitiveExecutor:
         except Exception as e:
             logger.error(f"反思沉淀失败: {e}")
     
-    async def _store_experience(self, experience: Dict):
-        """存储经验"""
-        try:
-            from infrastructure.experience_pool import ExperiencePool
-            pool = ExperiencePool()
-            
-            success = experience["validation"].get("confidence", 0.5) > 0.6
-            quality_score = int(experience["validation"].get("quality_score", 50))
-            
-            pool.add_experience(
-                intent_type="metacognitive",
-                raw_input=experience["query"],
-                plan=json.dumps(experience["plan"], ensure_ascii=False),
-                model_name="metacognitive_executor",
-                quality_score=quality_score,
-                user_feedback=None,
-                success=success,
-                duration=experience.get("elapsed", 0),
-                response=self._extract_best_answer(experience["results"])
-            )
-        except Exception as e:
-            logger.debug(f"经验存储失败: {e}")
-    
-    async def _trigger_meta_induction(self, experience: Dict):
-        """触发元归纳"""
-        try:
-            from meta.induction import induction_scheduler
-            induction_scheduler.run_induction(days=7)
-            logger.info("✓ 元归纳已触发")
-        except Exception as e:
-            logger.debug(f"元归纳触发失败: {e}")
-    
-    async def _convert_to_training_data(self, experience: Dict):
-        """转化为训练数据"""
-        try:
-            # 构建训练样本
-            if experience["validation"]["confidence"] > 0.6:
-                sample = {
-                    "question": experience["query"],
-                    "answer": self._extract_best_answer(experience["results"]),
-                    "source": "metacognitive_execution"
-                }
-                
-                # 存储为JSONL
-                with open("data/pending_training.jsonl", "a", encoding="utf-8") as f:
-                    f.write(json.dumps(sample, ensure_ascii=False) + "\n")
-                
-                logger.info("✓ 训练数据已生成")
-        except Exception as e:
-            logger.debug(f"训练数据生成失败: {e}")
-    
+
     def _extract_best_answer(self, results: Dict) -> str:
         """提取最佳答案"""
         for result in results.get("results", []):

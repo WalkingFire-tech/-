@@ -29,7 +29,20 @@ import json
 import re
 import time
 import asyncio
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, TypedDict
+
+
+class CognitiveDispatchResult(TypedDict, total=False):
+    route: str
+    complexity: float
+    intent_type: str
+    confidence: float
+    urgency: float
+    confusion: float
+    capabilities: Dict[str, Any]
+    execution_plan: Dict[str, Any]
+    reasoning: str
+    elapsed_ms: int
 from datetime import datetime
 from loguru import logger
 from pathlib import Path
@@ -299,9 +312,9 @@ class CognitiveDispatcher:
                 if pattern in query_clean_all or query_clean_all in pattern:
                     return "challenge", 0.9
         
-        # 匹配优先级：challenge > complex > simple > 其他
-        # 避免短模式误判长问题
-        match_order = ["challenge", "hardware", "complex_query", "learning_trigger", "simple_query", "history_query", "greeting", "confirmation"]
+        # 匹配优先级：hardware > challenge > complex > simple > 其他
+        # hardware优先于challenge：当用户说"时间不对"时更可能是要求重新执行硬件操作
+        match_order = ["hardware", "challenge", "complex_query", "learning_trigger", "simple_query", "history_query", "greeting", "confirmation"]
         short_match_intents = {"greeting", "confirmation", "challenge"}
         
         for intent_type in match_order:

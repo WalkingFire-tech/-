@@ -282,6 +282,7 @@ class DialogueStreamLearner:
                         LIMIT 1
                     )
                 """)
+                conn.commit()
                 
                 conn.commit()
             
@@ -325,6 +326,7 @@ class DialogueStreamLearner:
                     'correction',
                     time.time()
                 ))
+                conn.commit()
                 
                 conn.commit()
             

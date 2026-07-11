@@ -320,8 +320,16 @@ async def execute_parallel_paths(
         has_model_result = any(c.get("source", "") in ["Ollama", "DeepSeek", "OpenAI", "外部模型"] or "模型" in c.get("source", "") for c in candidates)
         has_search_result = any("搜索" in c.get("source", "") or "学习" in c.get("source", "") or "外部" in c.get("source", "") for c in candidates if c.get("quality", 0) >= 60)
         has_strong_self_reason = any("自我推理" in c.get("source", "") and c.get("quality", 0) >= 70 for c in candidates)
+        has_tool_result_95 = any(c.get("quality", 0) >= 95 and ("工具" in c.get("source", "") or "serial" in c.get("source", "").lower() or "bash" in c.get("source", "").lower()) for c in candidates)
 
-        if high_q >= 2 and heartbeat_sec >= 5:
+        if has_tool_result_95 and heartbeat_sec >= 3:
+            waiting_names = '+'.join(still_waiting)
+            yield _emit("step", {"phase": "智能调度", "status": "done",
+                "detail": f"工具结果评分>=95，无需等待慢路径({waiting_names})，取消后台任务"})
+            for t in list(pending_set):
+                t.cancel()
+            pending_set = set()
+            break
             if _tool_intent and tool_task and not tool_task.done():
                 pass
             else:

@@ -41,6 +41,7 @@ class RuleTrialManager:
              trial_count, trial_success, created_at)
             VALUES (?, ?, ?, 'trial', ?, 5, 0, 0, ?)
         ''', (condition, action, confidence, source, datetime.now().isoformat()))
+        conn.commit()
         
         rule_id = cursor.lastrowid
         conn.commit()
@@ -65,6 +66,7 @@ class RuleTrialManager:
                 trial_success = trial_success + ?
             WHERE id = ?
         ''', (1 if success else 0, rule_id))
+        conn.commit()
         
         # 获取当前状态
         cur = conn.execute('''

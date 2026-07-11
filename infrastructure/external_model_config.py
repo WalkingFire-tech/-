@@ -70,6 +70,7 @@ class ExternalModelConfig:
                 updated_at TEXT
             )
         ''')
+        conn.commit()
         
         conn.execute('''
             CREATE TABLE IF NOT EXISTS api_usage_log (
@@ -118,6 +119,7 @@ class ExternalModelConfig:
                 (name, api_url, api_key_encrypted, daily_limit, used_today, last_reset, created_at, updated_at)
                 VALUES (?, ?, ?, ?, 0, ?, ?, ?)
             ''', (name, api_url, encrypted_key, daily_limit, now, now, now))
+            conn.commit()
             
             logger.info(f"已添加外部模型: {name}")
             return True
@@ -177,6 +179,7 @@ class ExternalModelConfig:
             db = DatabaseManager.get(self.db_file)
             conn = db._get_conn()
             conn.execute('DELETE FROM external_models WHERE name = ?', (name,))
+            conn.commit()
             
             logger.info(f"已删除外部模型: {name}")
             return True
@@ -198,6 +201,7 @@ class ExternalModelConfig:
             (model_name, timestamp, tokens_used, success, error_message)
             VALUES (?, ?, ?, ?, ?)
         ''', (name, now, tokens, success, error))
+        conn.commit()
         
         cursor = conn.execute('''
             SELECT last_reset, used_today FROM external_models WHERE name = ?

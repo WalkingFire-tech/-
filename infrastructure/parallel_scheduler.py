@@ -54,6 +54,7 @@ class ParallelScheduler:
                 error_message TEXT
             )
         ''')
+        conn.commit()
         
         conn.execute('''
             CREATE TABLE IF NOT EXISTS task_results (
@@ -102,6 +103,7 @@ class ParallelScheduler:
                 (model_name, until_timestamp, reason, created_at)
                 VALUES (?, ?, ?, ?)
             ''', (model_name, until_timestamp, reason, datetime.now().isoformat()))
+            conn.commit()
         except Exception as e:
             logger.debug(f"保存黑名单失败: {e}")
     
@@ -391,6 +393,7 @@ class ParallelScheduler:
                 result.get('response', '')[:200] if result.get('response') else None,
                 result.get('error')
             ))
+            conn.commit()
         
         if best_result:
             import json

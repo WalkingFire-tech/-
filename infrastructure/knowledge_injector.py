@@ -42,6 +42,7 @@ class KnowledgeInjector:
         ''')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_question_hash ON knowledge_items(question_hash)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_intent_type ON knowledge_items(intent_type)')
+        conn.commit()
     
     def _hash_question(self, question: str) -> str:
         """问题哈希（用于快速查找）"""
@@ -90,6 +91,7 @@ class KnowledgeInjector:
                 datetime.now().isoformat(),
                 json.dumps(metadata or {}, ensure_ascii=False)
             ))
+            conn.commit()
             
             logger.info(f"知识注入成功: {question[:50]}... (来源: {source})")
             return True
@@ -144,6 +146,7 @@ class KnowledgeInjector:
                         last_accessed = ?
                     WHERE question_hash = ?
                 ''', (datetime.now().isoformat(), question_hash))
+                conn.commit()
                 
                 # 置信度随访问次数提升（贝叶斯更新）
                 confidence = min(0.95, 0.5 + access_count * 0.05)
@@ -230,6 +233,7 @@ class KnowledgeInjector:
                 SET quality_score = MAX(0, MIN(100, quality_score + ?))
                 WHERE question_hash = ?
             ''', (quality_delta, question_hash))
+            conn.commit()
             
             logger.debug(f"知识质量更新: {question[:30]}... ({quality_delta:+.1f})")
             

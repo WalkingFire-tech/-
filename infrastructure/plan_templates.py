@@ -51,6 +51,7 @@ class PlanTemplateLibrary:
                 tags TEXT
             )
         ''')
+        conn.commit()
         
         conn.execute('CREATE INDEX IF NOT EXISTS idx_intent ON plan_templates(intent_type)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_success ON plan_templates(success_count)')
@@ -89,6 +90,7 @@ class PlanTemplateLibrary:
             datetime.now().isoformat(),
             json.dumps(tags or [], ensure_ascii=False)
         ))
+        conn.commit()
         
         logger.info(f"保存新模板: {template_id}")
         return template_id
@@ -135,6 +137,7 @@ class PlanTemplateLibrary:
                     last_used_at = ?
                 WHERE template_id = ?
             ''', (datetime.now().isoformat(), template_id))
+            conn.commit()
     
     def retrieve_template(self, intent_type: str) -> Optional[PlanTemplate]:
         """检索最佳模板"""
@@ -210,6 +213,7 @@ class PlanTemplateLibrary:
             WHERE use_count >= ?
               AND (success_count * 1.0 / (success_count + failure_count)) < 0.3
         ''', (min_uses,))
+        conn.commit()
         
         deleted = conn.total_changes
         

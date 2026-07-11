@@ -204,8 +204,16 @@ async def execute_method(method_name: str, method_config: Dict) -> Tuple[bool, s
             opportunities = tb.identify_tool_opportunities()
             if opportunities:
                 build_result = tb.build_tool(opportunities[0])
-                if build_result.success:
-                    return True, f"已构建工具{build_result.tool_id}，下次可直接使用"
+                if build_result.success and build_result.tool and build_result.tool.implementation:
+                    try:
+                        tool_result = build_result.tool.implementation({"query": user_input})
+                        if isinstance(tool_result, dict) and tool_result.get("success") and tool_result.get("data"):
+                            return True, tool_result["data"]
+                        elif isinstance(tool_result, dict) and tool_result.get("data"):
+                            return True, str(tool_result["data"])
+                    except Exception as te:
+                        logger.debug(f"新建工具执行失败: {te}")
+                    return True, f"已构建工具{build_result.tool.name}，但首次执行未获得有效结果"
             return False, "工具构建失败"
 
         elif method_type == "decompose":

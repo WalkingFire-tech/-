@@ -93,7 +93,22 @@ class SerialPortTool(ToolInterface):
         baudrate = parsed.get("baudrate", baudrate)
 
         if action == "auto":
+            read_keywords = ["读取", "读取数据", "读数据", "read", "接收", "获取数据", "内容", "分析"]
+            is_read_intent = any(kw in query for kw in read_keywords)
+            if not port and is_read_intent:
+                ports = self._scan_port_list()
+                if ports:
+                    for p in ports:
+                        if "USB" in p.get("description", "") or "CH340" in p.get("description", "") or "CP210" in p.get("description", ""):
+                            port = p["port"]
+                            break
+                    if not port and ports:
+                        port = ports[-1]["port"]
             if not port:
+                if is_read_intent:
+                    scan_result = await self._scan_ports()
+                    scan_result.data["hint"] = "检测到串口但未指定端口，请指定COM编号（如COM3）后重新读取"
+                    return scan_result
                 action = "scan"
             else:
                 action = "read"
@@ -114,6 +129,14 @@ class SerialPortTool(ToolInterface):
             return await self._read_port(port, baudrate, bytesize, parity, stopbits, read_timeout, duration)
         else:
             return ToolResult(success=False, error=f"未知操作: {action}", source=self.name)
+
+    def _scan_port_list(self) -> list:
+        try:
+            import serial.tools.list_ports
+            ports = serial.tools.list_ports.comports()
+            return [{"port": p.device, "description": p.description, "hwid": p.hwid} for p in sorted(ports, key=lambda x: x.device)]
+        except Exception:
+            return []
 
     async def _scan_ports(self) -> ToolResult:
         try:
@@ -232,6 +255,9 @@ class SerialPortTool(ToolInterface):
                 if len(parts) >= 10:
                     try:
                         time_utc = parts[1][:2] + ":" + parts[1][2:4] + ":" + parts[1][4:6]
+                        utc_h = int(parts[1][:2])
+                        bj_h = (utc_h + 8) % 24
+                        time_bj = f"{bj_h:02d}:{parts[1][2:4]}:{parts[1][4:6]}"
                         lat_raw = float(parts[2])
                         lat = int(lat_raw / 100) + (lat_raw % 100) / 60
                         lat_dir = parts[3]
@@ -240,14 +266,28 @@ class SerialPortTool(ToolInterface):
                         lon_dir = parts[5]
                         fix = int(parts[6])
                         sats = int(parts[7])
+                        hdop = float(parts[8]) if len(parts) > 8 and parts[8] else 99.0
 
+                        result["北京时间"] = time_bj
                         result["UTC时间"] = time_utc
                         result["纬度"] = f"{lat:.6f}° {lat_dir}"
                         result["经度"] = f"{lon:.6f}° {lon_dir}"
                         result["定位状态"] = "有效" if fix > 0 else "无效"
                         result["卫星数"] = sats
-                        if len(parts) > 9:
-                            result["海拔(m)"] = parts[9]
+                        result["HDOP"] = hdop
+                        if len(parts) > 9 and parts[9]:
+                            alt_msl = float(parts[9])
+                            geoid_sep = float(parts[11]) if len(parts) > 11 and parts[11] else 0.0
+                            alt_wgs84 = alt_msl + geoid_sep
+                            if hdop > 10:
+                                result["海拔MSL(m)"] = f"{alt_msl} (⚠️HDOP={hdop}精度差)"
+                            else:
+                                result["海拔MSL(m)"] = f"{alt_msl}"
+                            result["海拔WGS84(m)"] = f"{alt_wgs84:.1f}"
+                            if geoid_sep != 0:
+                                result["大地水准面差距(m)"] = f"{geoid_sep}"
+                            if alt_msl < 0 and hdop < 4:
+                                result["海拔说明"] = f"MSL={alt_msl}m为相对大地水准面高度，WGS84椭球高={alt_wgs84:.1f}m。上海地区大地水准面低于WGS84椭球约{abs(geoid_sep):.1f}m，MSL为负值属正常现象"
                     except (ValueError, IndexError):
                         pass
                 break

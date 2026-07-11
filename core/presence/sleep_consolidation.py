@@ -284,6 +284,19 @@ class SleepConsolidationEngine:
         
         return workload
 
+    def consolidate(self, stage: SleepStage = SleepStage.LIGHT) -> Dict:
+        """公共接口：执行一次睡眠整合，返回结果dict"""
+        self._execute_sleep(stage)
+        if self._consolidation_history:
+            r = self._consolidation_history[-1]
+            return {
+                "consolidated": r.consolidated_memories,
+                "solidified": r.solidified_skills,
+                "impact": r.overall_impact,
+                "stage": r.stage.value,
+            }
+        return {"consolidated": 0, "solidified": 0, "impact": 0.0, "stage": stage.value}
+
     def _execute_sleep(self, stage: SleepStage) -> None:
         """执行睡眠整合"""
         self._is_sleeping = True

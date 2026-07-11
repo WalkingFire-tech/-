@@ -35,6 +35,7 @@ class FeedbackStore:
             )
         ''')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON feedback(timestamp)')
+        conn.commit()
     
     def add_feedback(self, user_input: str, assistant_response: str, score: int) -> bool:
         if not isinstance(score, int) or score not in (-1, 0, 1):
@@ -59,6 +60,7 @@ class FeedbackStore:
                     INSERT INTO feedback (timestamp, user_input, assistant_response, score)
                     VALUES (?, ?, ?, ?)
                 ''', (entry["timestamp"], entry["user_input"], entry["assistant_response"], entry["score"]))
+                conn.commit()
                 
                 cursor = conn.execute('SELECT COUNT(*) FROM feedback')
                 count = cursor.fetchone()[0]
@@ -132,6 +134,7 @@ class FeedbackStore:
             conn = db._get_conn()
             cursor = conn.execute('DELETE FROM feedback WHERE timestamp < ?', (cutoff_str,))
             deleted = cursor.rowcount
+            conn.commit()
             
             if deleted > 0:
                 logger.info(f"已清理 {deleted} 条旧反馈")

@@ -143,6 +143,7 @@ class ReflexRule:
                 str(safe_context)[:200],
                 datetime.now().isoformat()
             ))
+            conn.commit()
         except Exception as e:
             logger.error(f"反射日志记录失败: {e}")
 

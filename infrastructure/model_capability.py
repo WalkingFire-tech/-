@@ -52,6 +52,7 @@ class ModelCapability:
                 PRIMARY KEY (model_name, dimension)
             )
         ''')
+        conn.commit()
         
         conn.execute('''
             CREATE TABLE IF NOT EXISTS task_dimensions (
@@ -137,8 +138,8 @@ class ModelCapability:
                 VALUES (?, ?, ?, ?, ?)
             ''', (model_name, dimension, score, sample_weight,
                   datetime.now().isoformat()))
-        
-        conn.commit()
+            conn.commit()
+
     
     def get_model_capability(self, model_name: str) -> Dict[str, float]:
         """获取模型能力画像"""
@@ -343,6 +344,7 @@ class ModelCapability:
                 (model_name, dimension, score, sample_count, last_updated)
                 VALUES (?, ?, ?, 0, ?)
             ''', (model_name, dimension, default_score, datetime.now().isoformat()))
+            conn.commit()
         
         conn.commit()
         
@@ -378,6 +380,7 @@ class ModelCapability:
                         SET score = ?
                         WHERE model_name = ? AND dimension = ?
                     ''', (new_score, model_name, dimension))
+                    conn.commit()
             
             except Exception as e:
                 logger.debug(f"衰减计算失败: {e}")

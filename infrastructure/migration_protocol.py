@@ -403,6 +403,7 @@ class MigrationProtocol:
                         exp['success'],
                         datetime.now().isoformat()
                     ))
+                    conn.commit()
                 
                 logger.info(f"  经验池已恢复: {len(state['components']['experiences'])}条")
             
@@ -420,6 +421,7 @@ class MigrationProtocol:
                         rule['confidence'],
                         rule['status']
                     ))
+                    conn2.commit()
                 
                 logger.info(f"  学习规则已恢复: {len(state['components']['rules'])}条")
             

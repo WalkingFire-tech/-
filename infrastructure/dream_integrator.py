@@ -209,6 +209,7 @@ class DreamIntegrator:
                         f"用户在{intent_type}后常问{next_intent}",
                         datetime.now().isoformat()
                     ))
+                    conn.commit()
                     
                     new_rules.append({
                         "condition": condition_data,
@@ -274,6 +275,7 @@ class DreamIntegrator:
             AND timestamp < date('now', '-30 days')
         """)
         deleted_low_quality = conn.total_changes
+        conn.commit()
         
         conn.execute("""
             DELETE FROM experiences

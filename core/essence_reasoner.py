@@ -332,7 +332,7 @@ class EssenceReasoner:
             for row in rows:
                 if row[0] and len(row[0]) > 20:
                     truths.append({"keywords": row[0][:10].split(), "reasoning": row[0][:200], "verified": True})
-        except:
+        except Exception:
             pass
 
         return truths

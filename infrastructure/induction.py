@@ -235,6 +235,7 @@ class InductionEngine:
                 datetime.now().isoformat(),
                 rule.get("metadata", "{}")
             ))
+            conn.commit()
             
             rule_id = cur.lastrowid
             conn.commit()

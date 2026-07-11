@@ -177,8 +177,8 @@ class NeverGiveUpEngine:
     async def _try_understand_intent(self, question: str) -> Dict:
         """尝试理解意图"""
         try:
-            from core.cognitive_dispatcher import CognitiveDispatcher
-            dispatcher = CognitiveDispatcher()
+            from core.cognitive_dispatcher import get_cognitive_dispatcher
+            dispatcher = get_cognitive_dispatcher()
             result = dispatcher.dispatch(user_query=question)
             return {
                 "success": True,
@@ -201,7 +201,7 @@ class NeverGiveUpEngine:
             row = cursor.fetchone()
             if row:
                 return {"success": True, "answer": row[0], "confidence": 0.8}
-        except:
+        except Exception:
             pass
         return {"success": False}
     
@@ -273,7 +273,7 @@ class NeverGiveUpEngine:
             row = cursor.fetchone()
             if row:
                 return {"success": True, "answer": row[0], "confidence": 0.6}
-        except:
+        except Exception:
             pass
         return {"success": False}
     

@@ -316,6 +316,7 @@ class ReflectionPipeline:
                     "INSERT INTO spirit_lessons (lesson_type, lesson_text, severity, context, created_at) VALUES (?,?,?,?,?)",
                     (lesson["lesson_type"], lesson["lesson_text"], lesson["severity"], lesson["context"], now)
                 )
+                conn.commit()
         except Exception as e:
             logger.debug(f"教训写入失败: {e}")
     
@@ -370,6 +371,7 @@ class ReflectionPipeline:
                 context.get("duration_ms", 0),
                 json.dumps(context.get("extra", {}), ensure_ascii=False)
             ]
+            conn.commit()
             
             if "success" in columns:
                 base_sql += ", success"
