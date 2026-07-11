@@ -155,3 +155,21 @@
 - **根因**：三座孤岛（tool_builder.py 330行、skill_emergence.py 314行、capability_creation_loop.py 265行）互不知道对方存在，4个关键接线点断裂：①ToolBuilder构建后不注册 ②成熟技能不注册为工具 ③plan_tools()空时不查技能表 ④能力创造回路成功后不通知ToolBuilder
 - **修复**：约50行接线代码——①build_tool()成功后自动注册AutoToolWrapper到tool_registry ②_update_skill()成熟时调用_register_mature_skill() ③plan_tools()空时回退查询技能表 ④_register_tool()中调用builder.record_success()
 - **教训**：模块间"接线"比模块本身更重要；记录≠学习，只有闭环反馈才是真正的学习；架构巡检必须检查模块间连接而非仅检查模块功能
+
+### 24. 认知驱动断裂——理解是表演不是驱动力
+- **现象**：用户说"读取串口8"，EssenceReasoner理解了"串口数据读取"，但tool_path只能用正则重新理解，"串口8"匹配不到COM\d+，返回端口列表而非数据
+- **根因**：methodology在parallel_router→fetch_tool_results传递中被丢弃；tool_path用自己的正则重新理解世界，无视EssenceReasoner的结论；query_needs_tools与CognitiveDispatcher做两套独立的意图判断
+- **修复**：methodology参数沿调用链传递；extract_tool_params用methodology.domain指导参数提取（"串口8"→COM8）；plan_tools用methodology.domain指导工具优先级；methodology.strategy优先于query_needs_tools
+- **教训**：理解必须驱动行动，否则理解只是表演；模块间信息传递不能有"漏斗"；同一系统对同一问题不能做两次不同的理解（SpiritCore逻辑自洽原则）
+
+### 25. chat_history.py写入缺少commit导致历史记录丢失
+- **现象**：历史记录只显示很早的内容，最近的对话全没了
+- **根因**：从sqlite3.connect()迁移到DatabaseManager._get_conn()时，遗漏了所有写操作的conn.commit()。Python的with sqlite3.connect()上下文管理器正常退出时自动commit，但_get_conn()返回持久连接不会自动提交
+- **修复**：全部改用db.execute(sql, params, commit=True)和db.query()，自动获得线程锁+retry+自动提交
+- **教训**：迁移数据库访问方式时必须检查commit语义变化；_get_conn()绕过了DatabaseManager的锁+retry+commit机制，应优先使用高级API；infrastructure/下191处_get_conn()直接操作可能存在同类问题
+
+### 26. CognitiveDispatcher不知道系统有什么工具
+- **现象**：串口类查询被分类为complex_query(56%)而非hardware，导致走错路径
+- **根因**：_scan_capabilities_fast()直接返回空工具列表，完全跳过了工具扫描；没有hardware意图类型
+- **修复**：从tool_registry.list_tools()读取已注册工具；新增hardware意图类型(串口/serial/硬件/设备等关键词)；hardware走slow路径
+- **教训**：认知调度器必须知道系统的能力边界，否则无法做出正确的路由决策
