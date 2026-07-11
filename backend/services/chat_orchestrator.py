@@ -1476,6 +1476,40 @@ async def chat_stream(user_input: str, context: dict):
         except Exception as e:
             logger.debug(f"L5进化层触发跳过: {e}")
 
+        # 【认知增强旁路 Phase 1】异步运行cp.process()做交叉验证
+        # process()是CognitivePlanner的核心入口，完整L1-L6认知循环
+        # 旁路结果用于信号补充，不影响主流程
+        _cognitive_bypass_result = None
+        if cp and final_response:
+            try:
+                _bypass_ctx = {"history": context.get("history", [])[:5]} if isinstance(context, dict) else {}
+                loop = asyncio.get_running_loop()
+                _cognitive_bypass_result = await asyncio.wait_for(
+                    loop.run_in_executor(_fast_executor, lambda: cp.process(user_input, _bypass_ctx)),
+                    timeout=15
+                )
+                if _cognitive_bypass_result and _cognitive_bypass_result.success:
+                    _bp = _cognitive_bypass_result
+                    _bp_perception = _bp.perception or {}
+                    _bp_validation = _bp.validation or {}
+
+                    if _bp_perception.get("urgency", 0) > 0.8 and _cognitive_perception.get("urgency", 0.5) <= 0.7:
+                        logger.info(f"认知旁路: 检测到高紧迫度信号 urgency={_bp_perception['urgency']:.2f}（主管道未捕获）")
+
+                    if _bp_validation.get("status") == "fail" and _cognitive_validation.get("status") != "fail":
+                        logger.warning(f"认知旁路: 校验失败但主管道通过 confidence={_bp_validation.get('confidence', 0):.2f}")
+                        attempts.append(("认知旁路校验", True, f"旁路发现校验问题(conf={_bp_validation.get('confidence', 0):.2f})"))
+
+                    _bp_emotion = _bp_perception.get("emotion", "neutral")
+                    if _bp_emotion != "neutral" and _cognitive_perception.get("emotion", "neutral") == "neutral":
+                        logger.info(f"认知旁路: 捕获情绪信号 emotion={_bp_emotion}（主管道未捕获）")
+
+                    logger.debug(f"认知旁路完成: success={_bp.success}, time={_bp.processing_time_ms:.0f}ms")
+            except asyncio.TimeoutError:
+                logger.debug("认知旁路超时(15秒)，跳过")
+            except Exception as e:
+                logger.debug(f"认知旁路异常: {e}")
+
         # 【墙上的画→引擎】进化岛结果反馈到技能库和基因池
         # 之前：L5进化结果仅停留在L5内部（_sync_to_layers只向state_collector报告）
         # 现在：将L5的基因值和技能写回到实际的gene_pool和skill_emergence
@@ -1525,6 +1559,12 @@ async def chat_stream(user_input: str, context: dict):
             _cognitive_introspection = cp._get_introspection()
             if _cognitive_introspection:
                 logger.debug(f"L6内省层: 获取到内省报告")
+            if _cognitive_bypass_result and _cognitive_bypass_result.introspection:
+                if not _cognitive_introspection:
+                    _cognitive_introspection = _cognitive_bypass_result.introspection
+                else:
+                    _cognitive_introspection.update(_cognitive_bypass_result.introspection)
+                logger.debug("L6内省层: 旁路内省报告已融合")
         except Exception as e:
             logger.debug(f"L6内省层跳过: {e}")
         try:
