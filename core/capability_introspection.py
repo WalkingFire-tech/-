@@ -84,7 +84,7 @@ class CapabilityIntrospection:
     def _scan_tools(self):
         """扫描工具能力"""
         try:
-            from tools.registry import tool_registry
+            from core.tool_registry import tool_registry
             tools = tool_registry.list_tools()
             
             for tool in tools:

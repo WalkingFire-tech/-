@@ -179,10 +179,9 @@ class CognitiveHighway:
         tools = []
         
         try:
-            from tools.registry import ToolRegistry
-            registry = ToolRegistry()
-            for tool in registry.list_tools():
-                tools.append(tool.name)
+            from core.tool_registry import tool_registry
+            for tool in tool_registry.list_tools():
+                tools.append(tool["name"])
         except Exception as e:
             logger.debug(f"工具扫描失败: {e}")
         
@@ -358,46 +357,22 @@ class CognitiveHighway:
         return results
     
     async def _call_tool(self, tool_name: str, query: str) -> str:
-        """统一工具调用适配器 - 自动适配不同工具接口"""
+        """统一工具调用适配器 - 使用core/tool_registry统一接口"""
         try:
-            from tools.registry import ToolRegistry
-            registry = ToolRegistry()
+            from core.tool_registry import tool_registry, tool_executor
             
-            # 查找工具
-            tool = None
-            for t in registry.list_tools():
-                if t.name == tool_name:
-                    tool = t
-                    break
-            
+            tool = tool_registry.get(tool_name)
             if not tool:
                 return f"工具 {tool_name} 不存在"
             
-            # 检查工具的execute方法签名
-            import inspect
-            sig = inspect.signature(tool.execute)
-            params = list(sig.parameters.keys())
+            result = await tool_executor.execute(tool_name, {"query": query})
             
-            # 智能传递参数
-            if "query" in params:
-                result = tool.execute(query=query)
-            elif "text" in params:
-                result = tool.execute(text=query)
-            elif "input" in params:
-                result = tool.execute(input=query)
-            elif "kwargs" in str(sig):
-                result = tool.execute(query=query)
+            if result.success and result.data:
+                return str(result.data)
+            elif result.success:
+                return "执行成功"
             else:
-                # 无参数工具，直接调用
-                result = tool.execute()
-            
-            # 处理结果
-            if hasattr(result, 'output'):
-                return str(result.output)
-            elif hasattr(result, 'success') and result.success:
-                return str(result.output) if hasattr(result, 'output') else "执行成功"
-            else:
-                return str(result)
+                return f"工具执行错误: {result.error}"
                 
         except Exception as e:
             logger.error(f"工具 {tool_name} 执行失败: {e}")
