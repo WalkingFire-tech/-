@@ -935,7 +935,26 @@ async def chat_stream(user_input: str, context: dict):
 
     if final_response:
         yield _emit("step", {"phase": "自我验证", "status": "running", "detail": "验证回复质量和逻辑性..."})
-        verification = await _self_verify(user_input, final_response)
+
+        if intent_type == "hardware" and final_response:
+            _intent_output_mismatch = False
+            _mismatch_reason = ""
+            q_lower = user_input.lower()
+            if any(kw in q_lower for kw in ["读取", "获取", "读出", "接收"]) and "扫描" in final_response and "数据" not in final_response[:200]:
+                _intent_output_mismatch = True
+                _mismatch_reason = "用户要读数据但返回了扫描结果"
+            if any(kw in q_lower for kw in ["串口", "serial", "com"]) and "端口" in final_response[:100] and "NMEA" not in final_response and "GPGGA" not in final_response and "GPRMC" not in final_response:
+                if any(kw in q_lower for kw in ["读取", "获取", "读", "数据"]):
+                    _intent_output_mismatch = True
+                    _mismatch_reason = "用户要读串口数据但返回了端口列表"
+            if _intent_output_mismatch:
+                logger.warning(f"[意图-产出对照] {_mismatch_reason}, 降低置信度")
+                verification = {"verified": False, "confidence": 0.3, "issues": [_mismatch_reason]}
+                yield _emit("step", {"phase": "意图-产出对照", "status": "warning", "detail": f"⚠️ {_mismatch_reason}"})
+            else:
+                verification = await _self_verify(user_input, final_response)
+        else:
+            verification = await _self_verify(user_input, final_response)
         v_conf = verification["confidence"]
         e_conf = essence_confidence
         if v_conf > 0 and e_conf > 0:
