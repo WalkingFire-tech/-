@@ -88,7 +88,9 @@ class _SpiritCoreMeta(type):
         'PRINCIPLE_LOGICAL_SELF_CONSISTENT', 'PRINCIPLE_LEARNING_FROM_FAILURE',
         'PRINCIPLE_STATE_SYNC', 'PRINCIPLE_PURSUE_ESSENCE',
         'PRINCIPLE_HONEST_WHEN_LOST', 'PRINCIPLE_MULTI_SOURCE_VERIFY',
+        'PRINCIPLE_THINK_BEFORE_ACT',
         'META_LAW_SANDBOX', 'META_LAW_GRADUAL', 'META_LAW_HUMAN_APPROVAL',
+        'META_LAW_SEVEN_DIM_CHECK',
         'ABILITIES', '_PRINCIPLES', '_META_LAWS',
     })
 
@@ -121,6 +123,7 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         "PURSUE_ESSENCE": "追求本质——从第一性原理出发，追溯本源，不满足于表面答案",
         "HONEST_WHEN_LOST": "困惑时坦诚——宁可诚实罗列分歧，不可强行牵强融合",
         "MULTI_SOURCE_VERIFY": "多源交叉验证——不依赖单一来源，综合批判性获取最真实最本质的东西",
+        "THINK_BEFORE_ACT": "三思后行——先理解全景再审视局部，先搜索既有讨论再行动，先根因思考再修复，七维自检通过才动手",
     })
 
     # ========== 元宪法——认知重组铁律（不可修改） ==========
@@ -128,6 +131,7 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         "SANDBOX": "未经沙盒验证的真谛，视同毒药",
         "GRADUAL": "未经渐进式注入的重组，视同自杀",
         "HUMAN_APPROVAL": "未经人类批准的进化，视同背叛",
+        "SEVEN_DIM_CHECK": "行动前七维自检——方向一致、看板衔接、最小侵入、无过度设计、治标+治本、可验证、精神内核对齐",
     })
     
     # 兼容旧代码的类属性访问（只读代理）
@@ -139,10 +143,12 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
     PRINCIPLE_PURSUE_ESSENCE: Final[str] = "追求本质——从第一性原理出发，追溯本源，不满足于表面答案"
     PRINCIPLE_HONEST_WHEN_LOST: Final[str] = "困惑时坦诚——宁可诚实罗列分歧，不可强行牵强融合"
     PRINCIPLE_MULTI_SOURCE_VERIFY: Final[str] = "多源交叉验证——不依赖单一来源，综合批判性获取最真实最本质的东西"
+    PRINCIPLE_THINK_BEFORE_ACT: Final[str] = "三思后行——先理解全景再审视局部，先搜索既有讨论再行动，先根因思考再修复，七维自检通过才动手"
     
     META_LAW_SANDBOX: Final[str] = "未经沙盒验证的真谛，视同毒药"
     META_LAW_GRADUAL: Final[str] = "未经渐进式注入的重组，视同自杀"
     META_LAW_HUMAN_APPROVAL: Final[str] = "未经人类批准的进化，视同背叛"
+    META_LAW_SEVEN_DIM_CHECK: Final[str] = "行动前七维自检——方向一致、看板衔接、最小侵入、无过度设计、治标+治本、可验证、精神内核对齐"
     
     # ========== 能力定义（不可修改） ==========
     ABILITIES: Final[dict] = {
