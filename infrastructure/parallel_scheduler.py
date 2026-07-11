@@ -40,8 +40,7 @@ class ParallelScheduler:
     def _init_db(self):
         """初始化数据库"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS parallel_calls (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_id TEXT,
@@ -52,11 +51,7 @@ class ParallelScheduler:
                 success BOOLEAN,
                 result_preview TEXT,
                 error_message TEXT
-            )
-        ''')
-        conn.commit()
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS task_results (
                 task_id TEXT PRIMARY KEY,
                 task_type TEXT,
@@ -65,10 +60,7 @@ class ParallelScheduler:
                 fusion_strategy TEXT,
                 quality_score REAL,
                 created_at TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS model_blacklist (
                 model_name TEXT PRIMARY KEY,
                 until_timestamp REAL,
@@ -81,14 +73,13 @@ class ParallelScheduler:
         """从数据库加载黑名单"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            rows = db.query('''
                 SELECT model_name, until_timestamp
                 FROM model_blacklist
                 WHERE until_timestamp > ?
             ''', (time.time(),))
             
-            for row in cursor.fetchall():
+            for row in rows:
                 self.model_blacklist[row[0]] = row[1]
         except Exception as e:
             logger.debug(f"加载黑名单失败: {e}")
@@ -97,13 +88,11 @@ class ParallelScheduler:
         """保存黑名单到数据库"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            conn.execute('''
+            db.execute('''
                 INSERT OR REPLACE INTO model_blacklist
                 (model_name, until_timestamp, reason, created_at)
                 VALUES (?, ?, ?, ?)
-            ''', (model_name, until_timestamp, reason, datetime.now().isoformat()))
-            conn.commit()
+            ''', (model_name, until_timestamp, reason, datetime.now().isoformat()), commit=True)
         except Exception as e:
             logger.debug(f"保存黑名单失败: {e}")
     
@@ -376,9 +365,8 @@ class ParallelScheduler:
                            duration: float):
         """保存并行调用记录"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         for result in results:
-            conn.execute('''
+            db.execute('''
                 INSERT INTO parallel_calls
                 (task_id, model_name, start_time, end_time, duration, 
                  success, result_preview, error_message)
@@ -392,14 +380,13 @@ class ParallelScheduler:
                 result['success'],
                 result.get('response', '')[:200] if result.get('response') else None,
                 result.get('error')
-            ))
-            conn.commit()
+            ), commit=True)
         
         if best_result:
             import json
             models_used = json.dumps([r['model_name'] for r in results])
             
-            conn.execute('''
+            db.execute('''
                 INSERT OR REPLACE INTO task_results
                 (task_id, task_type, models_used, best_model, 
                  fusion_strategy, quality_score, created_at)
@@ -412,9 +399,7 @@ class ParallelScheduler:
                 'parallel_best',
                 best_result.get('final_score', 0.5),
                 datetime.now().isoformat()
-            ))
-        
-        conn.commit()
+            ), commit=True)
     
     async def federated_call(self, prompt: str, task_type: str,
                             adapters: Dict[str, Any],
@@ -522,21 +507,16 @@ class ParallelScheduler:
     def get_stats(self, days: int = 7) -> Dict:
         """获取调度统计"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        row = db.query_one('''
             SELECT COUNT(*), AVG(duration), SUM(CASE WHEN success THEN 1 ELSE 0 END)
             FROM parallel_calls
             WHERE start_time >= datetime('now', ?)
         ''', (f'-{days} days',))
         
-        row = cursor.fetchone()
-        
-        cursor = conn.execute('''
+        task_count = db.query_one('''
             SELECT COUNT(DISTINCT task_id) FROM task_results
             WHERE created_at >= datetime('now', ?)
-        ''', (f'-{days} days',))
-        
-        task_count = cursor.fetchone()[0]
+        ''', (f'-{days} days',))[0]
         
         return {
             'total_calls': row[0] if row[0] else 0,

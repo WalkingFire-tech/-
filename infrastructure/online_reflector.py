@@ -193,8 +193,7 @@ class OnlineReflector:
         """查找更好的模型"""
         try:
             db = DatabaseManager.get("data/model_stats.db")
-            conn = db._get_conn()
-            cur = conn.execute('''
+            rows = db.query('''
                 SELECT model_name, AVG(quality)
                 FROM model_calls
                 WHERE intent_type = ?
@@ -203,7 +202,7 @@ class OnlineReflector:
                 LIMIT 3
             ''', (intent_type,))
             
-            for row in cur.fetchall():
+            for row in rows:
                 if row[0] != current_model:
                     return row[0]
             
@@ -216,8 +215,7 @@ class OnlineReflector:
     def _save_rule(self, rule: Dict):
         """保存规则到数据库"""
         db = DatabaseManager.get("data/learning_rules.db")
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             INSERT INTO learning_rules
             (condition, action, confidence, status, source, priority, created_at)
             VALUES (?, ?, ?, 'pending', ?, ?, ?)
@@ -228,8 +226,7 @@ class OnlineReflector:
             rule["source"],
             rule["priority"],
             rule["created_at"]
-        ))
-        conn.commit()
+        ), commit=True)
     
     def get_stats(self) -> Dict:
         """获取统计信息"""

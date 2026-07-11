@@ -41,8 +41,7 @@ class ModelCapability:
     def _init_db(self):
         """初始化数据库"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS model_capabilities (
                 model_name TEXT,
                 dimension TEXT,
@@ -50,31 +49,26 @@ class ModelCapability:
                 sample_count INTEGER,
                 last_updated TEXT,
                 PRIMARY KEY (model_name, dimension)
-            )
-        ''')
-        conn.commit()
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS task_dimensions (
                 task_type TEXT,
                 dimension TEXT,
                 weight REAL,
                 PRIMARY KEY (task_type, dimension)
-            )
+            );
         ''')
         
-        self._init_default_task_dimensions(conn)
-        conn.commit()
+        self._init_default_task_dimensions(db)
     
-    def _init_default_task_dimensions(self, conn):
+    def _init_default_task_dimensions(self, db):
         """初始化默认任务维度映射"""
         for task_type, dimensions in self.TASK_DIMENSION_MAPPING.items():
             for dimension, weight in dimensions.items():
-                conn.execute('''
+                db.execute('''
                     INSERT OR IGNORE INTO task_dimensions
                     (task_type, dimension, weight)
                     VALUES (?, ?, ?)
-                ''', (task_type, dimension, weight))
+                ''', (task_type, dimension, weight), commit=True)
     
     def register_model(self, model_name: str, 
                       capabilities: Optional[Dict[str, float]] = None):
@@ -90,14 +84,12 @@ class ModelCapability:
         now = datetime.now().isoformat()
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         for dimension, score in capabilities.items():
-            conn.execute('''
+            db.execute('''
                 INSERT OR REPLACE INTO model_capabilities
                 (model_name, dimension, score, sample_count, last_updated)
                 VALUES (?, ?, ?, 0, ?)
-            ''', (model_name, dimension, score, now))
-        conn.commit()
+            ''', (model_name, dimension, score, now), commit=True)
         
         logger.info(f"已注册模型能力: {model_name}, 维度: {len(capabilities)}")
     
@@ -112,46 +104,41 @@ class ModelCapability:
             sample_weight: 样本权重
         """
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        row = db.query_one('''
             SELECT score, sample_count FROM model_capabilities
             WHERE model_name = ? AND dimension = ?
         ''', (model_name, dimension))
-        
-        row = cursor.fetchone()
         
         if row:
             old_score, old_count = row
             new_count = old_count + sample_weight
             new_score = (old_score * old_count + score * sample_weight) / new_count
             
-            conn.execute('''
+            db.execute('''
                 UPDATE model_capabilities
                 SET score = ?, sample_count = ?, last_updated = ?
                 WHERE model_name = ? AND dimension = ?
             ''', (new_score, new_count, datetime.now().isoformat(),
-                  model_name, dimension))
+                  model_name, dimension), commit=True)
         else:
-            conn.execute('''
+            db.execute('''
                 INSERT INTO model_capabilities
                 (model_name, dimension, score, sample_count, last_updated)
                 VALUES (?, ?, ?, ?, ?)
             ''', (model_name, dimension, score, sample_weight,
-                  datetime.now().isoformat()))
-            conn.commit()
+                  datetime.now().isoformat()), commit=True)
 
     
     def get_model_capability(self, model_name: str) -> Dict[str, float]:
         """获取模型能力画像"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT dimension, score FROM model_capabilities
             WHERE model_name = ?
         ''', (model_name,))
         
         capabilities = {}
-        for row in cursor.fetchall():
+        for row in rows:
             capabilities[row[0]] = row[1]
         
         if not capabilities:
@@ -166,14 +153,13 @@ class ModelCapability:
     def get_task_requirements(self, task_type: str) -> Dict[str, float]:
         """获取任务能力需求"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT dimension, weight FROM task_dimensions
             WHERE task_type = ?
         ''', (task_type,))
         
         requirements = {}
-        for row in cursor.fetchall():
+        for row in rows:
             requirements[row[0]] = row[1]
         
         if not requirements:
@@ -225,11 +211,10 @@ class ModelCapability:
         """
         if models is None:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            rows = db.query('''
                 SELECT DISTINCT model_name FROM model_capabilities
             ''')
-            models = [row[0] for row in cursor.fetchall()]
+            models = [row[0] for row in rows]
         
         # 过滤不可用模型
         if available_only:
@@ -268,13 +253,11 @@ class ModelCapability:
             current = self.get_model_capability(model_name).get(dimension, 0.5)
             
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            row = db.query_one('''
                 SELECT sample_count FROM model_capabilities
                 WHERE model_name = ? AND dimension = ?
             ''', (model_name, dimension))
             
-            row = cursor.fetchone()
             sample_count = row[0] if row else 0
             
             # 优化：指数衰减学习率，避免初期变化剧烈
@@ -297,13 +280,12 @@ class ModelCapability:
     def get_capability_matrix(self) -> Dict[str, Dict[str, float]]:
         """获取完整能力矩阵"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT model_name, dimension, score FROM model_capabilities
         ''')
         
         matrix = {}
-        for row in cursor.fetchall():
+        for row in rows:
             model_name, dimension, score = row
             if model_name not in matrix:
                 matrix[model_name] = {}
@@ -314,9 +296,8 @@ class ModelCapability:
     def get_registered_models(self) -> List[str]:
         """获取所有已注册的模型名称"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute('SELECT DISTINCT model_name FROM model_capabilities')
-        return [row[0] for row in cursor.fetchall()]
+        rows = db.query('SELECT DISTINCT model_name FROM model_capabilities')
+        return [row[0] for row in rows]
     
     def ensure_model_registered(self, model_name: str, 
                                default_capabilities: Optional[Dict[str, float]] = None):
@@ -335,18 +316,14 @@ class ModelCapability:
     def add_dimension(self, dimension: str, default_score: float = 0.5):
         """添加新能力维度"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         models = self.get_registered_models()
         
         for model_name in models:
-            conn.execute('''
+            db.execute('''
                 INSERT OR IGNORE INTO model_capabilities
                 (model_name, dimension, score, sample_count, last_updated)
                 VALUES (?, ?, ?, 0, ?)
-            ''', (model_name, dimension, default_score, datetime.now().isoformat()))
-            conn.commit()
-        
-        conn.commit()
+            ''', (model_name, dimension, default_score, datetime.now().isoformat()), commit=True)
         
         logger.info(f"已添加新能力维度: {dimension}, 默认得分: {default_score}")
     
@@ -358,13 +335,12 @@ class ModelCapability:
             days_threshold: 超过多少天未使用才衰减
         """
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT model_name, dimension, score, last_updated
             FROM model_capabilities
         ''')
         
-        for row in cursor.fetchall():
+        for row in rows:
             model_name, dimension, score, last_updated = row
             
             try:
@@ -375,32 +351,29 @@ class ModelCapability:
                     new_score = score * (decay_factor ** (days_since - days_threshold))
                     new_score = max(0.1, new_score)
                     
-                    conn.execute('''
+                    db.execute('''
                         UPDATE model_capabilities
                         SET score = ?
                         WHERE model_name = ? AND dimension = ?
-                    ''', (new_score, model_name, dimension))
-                    conn.commit()
+                    ''', (new_score, model_name, dimension), commit=True)
             
             except Exception as e:
                 logger.debug(f"衰减计算失败: {e}")
         
-        conn.commit()
-        
+
         logger.info(f"已应用时效衰减: 因子={decay_factor}, 阈值={days_threshold}天")
     
     def export_stats(self) -> Dict:
         """导出统计信息"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute('SELECT COUNT(DISTINCT model_name) FROM model_capabilities')
-        model_count = cursor.fetchone()[0]
+        row = db.query_one('SELECT COUNT(DISTINCT model_name) FROM model_capabilities')
+        model_count = row[0]
         
-        cursor = conn.execute('SELECT COUNT(DISTINCT dimension) FROM model_capabilities')
-        dimension_count = cursor.fetchone()[0]
+        row = db.query_one('SELECT COUNT(DISTINCT dimension) FROM model_capabilities')
+        dimension_count = row[0]
         
-        cursor = conn.execute('SELECT COUNT(*) FROM task_dimensions')
-        task_count = cursor.fetchone()[0]
+        row = db.query_one('SELECT COUNT(*) FROM task_dimensions')
+        task_count = row[0]
         
         return {
             'registered_models': model_count,

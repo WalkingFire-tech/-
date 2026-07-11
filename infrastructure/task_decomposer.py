@@ -53,8 +53,7 @@ class TaskDecomposer:
     def _init_db(self):
         """初始化数据库"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             CREATE TABLE IF NOT EXISTS decompositions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 original_task TEXT,
@@ -64,8 +63,7 @@ class TaskDecomposer:
                 quality_score REAL,
                 timestamp TEXT
             )
-        ''')
-        conn.commit()
+        ''', commit=True)
     
     def detect_subtasks(self, user_input: str) -> List[Dict]:
         """检测子任务（基于规则）
@@ -251,8 +249,7 @@ class TaskDecomposer:
                           quality_score: float = 0.0):
         """保存分解记录"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             INSERT INTO decompositions
             (original_task, subtasks, decomposition_strategy, success, quality_score, timestamp)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -263,18 +260,15 @@ class TaskDecomposer:
             success,
             quality_score,
             datetime.now().isoformat()
-        ))
-        conn.commit()
+        ), commit=True)
     
     def get_decomposition_stats(self) -> Dict:
         """获取分解统计"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute('SELECT COUNT(*) FROM decompositions')
-        total = cursor.fetchone()[0]
+        total = db.query_one('SELECT COUNT(*) FROM decompositions')[0]
         
-        cursor = conn.execute('SELECT AVG(quality_score) FROM decompositions WHERE success = 1')
-        avg_quality = cursor.fetchone()[0] or 0.0
+        avg_row = db.query_one('SELECT AVG(quality_score) FROM decompositions WHERE success = 1')
+        avg_quality = avg_row[0] if avg_row[0] else 0.0
         
         return {
             'total_decompositions': total,

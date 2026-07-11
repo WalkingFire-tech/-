@@ -41,119 +41,90 @@ class FactStore:
         self._init_database()
         logger.info(f"📚 事实锚点库已初始化: {db_path}")
     
-    def _connect(self):
-        """获取线程安全的数据库连接"""
-        db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        return conn
+    def _db(self):
+        return DatabaseManager.get(self.db_path)
     
     def _write_op(self, func, *args, **kwargs):
         """线程安全的写操作"""
         with self._lock:
-            conn = self._connect()
+            db = self._db()
             try:
-                result = func(conn, *args, **kwargs)
-                conn.commit()
+                result = db.transaction(func, *args, **kwargs)
                 return result
             except Exception:
-                conn.rollback()
                 raise
     
     def _init_database(self):
         """初始化数据库表结构"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        with self._connect() as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS fact_assertions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    question_hash TEXT NOT NULL,
-                    question TEXT DEFAULT '',
-                    subject TEXT NOT NULL,
-                    predicate TEXT NOT NULL,
-                    object TEXT NOT NULL,
-                    source TEXT DEFAULT 'manual_seed',
-                    confidence REAL DEFAULT 0.9,
-                    is_negation BOOLEAN DEFAULT 0,
-                    is_seed BOOLEAN DEFAULT 0,
-                    version INTEGER DEFAULT 1,
-                    is_active BOOLEAN DEFAULT 1,
-                    superseded_by INTEGER DEFAULT NULL,
-                    last_used TIMESTAMP,
-                    use_count INTEGER DEFAULT 0,
-                    decay_factor REAL DEFAULT 1.0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_question_hash ON fact_assertions(question_hash)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_subject ON fact_assertions(subject)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_predicate ON fact_assertions(predicate)')
-            
+        db = self._db()
+        db.executescript('''
+            CREATE TABLE IF NOT EXISTS fact_assertions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question_hash TEXT NOT NULL,
+                question TEXT DEFAULT '',
+                subject TEXT NOT NULL,
+                predicate TEXT NOT NULL,
+                object TEXT NOT NULL,
+                source TEXT DEFAULT 'manual_seed',
+                confidence REAL DEFAULT 0.9,
+                is_negation BOOLEAN DEFAULT 0,
+                is_seed BOOLEAN DEFAULT 0,
+                version INTEGER DEFAULT 1,
+                is_active BOOLEAN DEFAULT 1,
+                superseded_by INTEGER DEFAULT NULL,
+                last_used TIMESTAMP,
+                use_count INTEGER DEFAULT 0,
+                decay_factor REAL DEFAULT 1.0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_question_hash ON fact_assertions(question_hash);
+            CREATE INDEX IF NOT EXISTS idx_subject ON fact_assertions(subject);
+            CREATE INDEX IF NOT EXISTS idx_predicate ON fact_assertions(predicate)
+        ''')
+        
+        for alter_sql in [
+            'ALTER TABLE fact_assertions ADD COLUMN question TEXT DEFAULT ""',
+            'ALTER TABLE fact_assertions ADD COLUMN is_seed BOOLEAN DEFAULT 0',
+            'ALTER TABLE fact_assertions ADD COLUMN version INTEGER DEFAULT 1',
+            'ALTER TABLE fact_assertions ADD COLUMN is_active BOOLEAN DEFAULT 1',
+            'ALTER TABLE fact_assertions ADD COLUMN superseded_by INTEGER DEFAULT NULL',
+            'ALTER TABLE fact_assertions ADD COLUMN last_used TIMESTAMP',
+            'ALTER TABLE fact_assertions ADD COLUMN use_count INTEGER DEFAULT 0',
+            'ALTER TABLE fact_assertions ADD COLUMN decay_factor REAL DEFAULT 1.0',
+        ]:
             try:
-                conn.execute('ALTER TABLE fact_assertions ADD COLUMN question TEXT DEFAULT ""')
+                db.execute(alter_sql, commit=True)
             except Exception:
                 pass
-            try:
-                conn.execute('ALTER TABLE fact_assertions ADD COLUMN is_seed BOOLEAN DEFAULT 0')
-            except Exception:
-                pass
-            try:
-                conn.execute('ALTER TABLE fact_assertions ADD COLUMN version INTEGER DEFAULT 1')
-            except Exception:
-                pass
-            try:
-                conn.execute('ALTER TABLE fact_assertions ADD COLUMN is_active BOOLEAN DEFAULT 1')
-            except Exception:
-                pass
-            try:
-                conn.execute('ALTER TABLE fact_assertions ADD COLUMN superseded_by INTEGER DEFAULT NULL')
-            except Exception:
-                pass
-            try:
-                conn.execute('ALTER TABLE fact_assertions ADD COLUMN last_used TIMESTAMP')
-            except Exception:
-                pass
-            try:
-                conn.execute('ALTER TABLE fact_assertions ADD COLUMN use_count INTEGER DEFAULT 0')
-            except Exception:
-                pass
-            try:
-                conn.execute('ALTER TABLE fact_assertions ADD COLUMN decay_factor REAL DEFAULT 1.0')
-            except Exception:
-                pass
-            
-            try:
-                conn.execute('CREATE INDEX IF NOT EXISTS idx_active ON fact_assertions(is_active)')
-            except Exception:
-                pass
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS correction_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    question_hash TEXT NOT NULL,
-                    old_assertion TEXT,
-                    new_assertion TEXT,
-                    correction_source TEXT,
-                    old_assertion_id INTEGER,
-                    new_assertion_id INTEGER,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS confidence_decay_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    assertion_id INTEGER NOT NULL,
-                    old_confidence REAL,
-                    new_confidence REAL,
-                    reason TEXT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            
-            conn.commit()
+        
+        try:
+            db.execute('CREATE INDEX IF NOT EXISTS idx_active ON fact_assertions(is_active)', commit=True)
+        except Exception:
+            pass
+        
+        db.executescript('''
+            CREATE TABLE IF NOT EXISTS correction_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question_hash TEXT NOT NULL,
+                old_assertion TEXT,
+                new_assertion TEXT,
+                correction_source TEXT,
+                old_assertion_id INTEGER,
+                new_assertion_id INTEGER,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS confidence_decay_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                assertion_id INTEGER NOT NULL,
+                old_confidence REAL,
+                new_confidence REAL,
+                reason TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
     
     @staticmethod
     def hash_question(question: str) -> str:
@@ -224,28 +195,28 @@ class FactStore:
         """获取问题关联的所有事实断言"""
         question_hash = self.hash_question(question)
         
-        with self._connect() as conn:
-            cursor = conn.execute('''
-                SELECT subject, predicate, object, source, confidence, is_negation
-                FROM fact_assertions
-                WHERE question_hash = ? AND is_negation = 0
-                ORDER BY confidence DESC
-            ''', (question_hash,))
-            
-            return [dict(row) for row in cursor.fetchall()]
+        db = self._db()
+        rows = db.query('''
+            SELECT subject, predicate, object, source, confidence, is_negation
+            FROM fact_assertions
+            WHERE question_hash = ? AND is_negation = 0
+            ORDER BY confidence DESC
+        ''', (question_hash,))
+        
+        return [dict(row) for row in rows]
     
     def get_negations(self, question: str) -> List[Dict]:
         """获取问题关联的否定性断言（错误示例）"""
         question_hash = self.hash_question(question)
         
-        with self._connect() as conn:
-            cursor = conn.execute('''
-                SELECT subject, predicate, object, source
-                FROM fact_assertions
-                WHERE question_hash = ? AND is_negation = 1
-            ''', (question_hash,))
-            
-            return [dict(row) for row in cursor.fetchall()]
+        db = self._db()
+        rows = db.query('''
+            SELECT subject, predicate, object, source
+            FROM fact_assertions
+            WHERE question_hash = ? AND is_negation = 1
+        ''', (question_hash,))
+        
+        return [dict(row) for row in rows]
     
     def check_assertion_exists(
         self,
@@ -257,13 +228,13 @@ class FactStore:
         """检查断言是否已存在"""
         question_hash = self.hash_question(question)
         
-        with self._connect() as conn:
-            cursor = conn.execute('''
-                SELECT COUNT(*) FROM fact_assertions
-                WHERE question_hash = ? AND subject = ? AND predicate = ? AND object = ?
-            ''', (question_hash, subject, predicate, obj))
-            
-            return cursor.fetchone()[0] > 0
+        db = self._db()
+        row = db.query_one('''
+            SELECT COUNT(*) FROM fact_assertions
+            WHERE question_hash = ? AND subject = ? AND predicate = ? AND object = ?
+        ''', (question_hash, subject, predicate, obj))
+        
+        return row[0] > 0
     
     def search_by_keywords(self, query: str, limit: int = 5) -> List[Dict]:
         """按关键词模糊搜索相关事实断言（subject/predicate/object匹配）"""
@@ -292,25 +263,25 @@ class FactStore:
         
         results = []
         seen_keys = set()
-        with self._connect() as conn:
-            for kw in keywords[:10]:
-                cursor = conn.execute('''
-                    SELECT subject, predicate, object, source, confidence
-                    FROM fact_assertions
-                    WHERE is_negation = 0 AND (
-                        subject LIKE ? OR predicate LIKE ? OR object LIKE ?
-                    )
-                    ORDER BY confidence DESC
-                    LIMIT ?
-                ''', (f"%{kw}%", f"%{kw}%", f"%{kw}%", limit))
-                for row in cursor.fetchall():
-                    d = dict(row)
-                    key = (d['subject'], d['predicate'], d['object'])
-                    if key not in seen_keys:
-                        seen_keys.add(key)
-                        results.append(d)
-                        if len(results) >= limit:
-                            return results
+        db = self._db()
+        for kw in keywords[:10]:
+            rows = db.query('''
+                SELECT subject, predicate, object, source, confidence
+                FROM fact_assertions
+                WHERE is_negation = 0 AND (
+                    subject LIKE ? OR predicate LIKE ? OR object LIKE ?
+                )
+                ORDER BY confidence DESC
+                LIMIT ?
+            ''', (f"%{kw}%", f"%{kw}%", f"%{kw}%", limit))
+            for row in rows:
+                d = dict(row)
+                key = (d['subject'], d['predicate'], d['object'])
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    results.append(d)
+                    if len(results) >= limit:
+                        return results
         return results
 
 
@@ -401,65 +372,62 @@ class FactStore:
 
     def get_stats(self) -> Dict:
         """获取统计信息"""
-        with self._connect() as conn:
-            total = conn.execute('SELECT COUNT(*) FROM fact_assertions').fetchone()[0]
-            positive = conn.execute('SELECT COUNT(*) FROM fact_assertions WHERE is_negation = 0').fetchone()[0]
-            negations = conn.execute('SELECT COUNT(*) FROM fact_assertions WHERE is_negation = 1').fetchone()[0]
-            corrections = conn.execute('SELECT COUNT(*) FROM correction_history').fetchone()[0]
-            by_source = {}
-            for row in conn.execute('SELECT source, COUNT(*) FROM fact_assertions GROUP BY source'):
-                by_source[row[0]] = row[1]
-            
-            return {
-                'total': total,
-                'positive': positive,
-                'negations': negations,
-                'corrections': corrections,
-                'by_source': by_source,
-            }
+        db = self._db()
+        total = db.query_one('SELECT COUNT(*) FROM fact_assertions')[0]
+        positive = db.query_one('SELECT COUNT(*) FROM fact_assertions WHERE is_negation = 0')[0]
+        negations = db.query_one('SELECT COUNT(*) FROM fact_assertions WHERE is_negation = 1')[0]
+        corrections = db.query_one('SELECT COUNT(*) FROM correction_history')[0]
+        by_source = {}
+        for row in db.query('SELECT source, COUNT(*) FROM fact_assertions GROUP BY source'):
+            by_source[row[0]] = row[1]
+        
+        return {
+            'total': total,
+            'positive': positive,
+            'negations': negations,
+            'corrections': corrections,
+            'by_source': by_source,
+        }
 
     def mark_used(self, assertion_id: int):
-        def _do(conn):
-            conn.execute(
-                'UPDATE fact_assertions SET use_count = use_count + 1, last_used = ? WHERE id = ?',
-                (datetime.now().isoformat(), assertion_id)
-            )
-        self._write_op(_do)
+        db = self._db()
+        db.execute(
+            'UPDATE fact_assertions SET use_count = use_count + 1, last_used = ? WHERE id = ?',
+            (datetime.now().isoformat(), assertion_id), commit=True
+        )
 
     def apply_decay(self, days_unused: int = 30, decay_rate: float = 0.95):
         cutoff = datetime.now().timestamp() - days_unused * 86400
         decayed = 0
 
-        def _do(conn):
-            nonlocal decayed
-            rows = conn.execute(
-                'SELECT id, confidence, use_count, last_used FROM fact_assertions WHERE is_negation = 0 AND is_active = 1'
-            ).fetchall()
-            for row in rows:
-                last = row['last_used'] if hasattr(row, 'keys') and 'last_used' in row.keys() else row[5]
-                if last:
-                    try:
-                        last_ts = datetime.fromisoformat(last).timestamp()
-                        if last_ts < cutoff:
-                            use_count = row['use_count'] if hasattr(row, 'keys') and 'use_count' in row.keys() else row[4]
-                            confidence = row['confidence'] if hasattr(row, 'keys') and 'confidence' in row.keys() else row[1]
-                            row_id = row['id'] if hasattr(row, 'keys') and 'id' in row.keys() else row[0]
-                            use_boost = min(use_count * 0.01, 0.1)
-                            new_conf = max(0.1, confidence * decay_rate + use_boost)
-                            if new_conf < confidence:
-                                conn.execute(
-                                    'UPDATE fact_assertions SET confidence = ?, decay_factor = ? WHERE id = ?',
-                                    (new_conf, decay_rate, row_id)
-                                )
-                                conn.execute(
-                                    'INSERT INTO confidence_decay_log (assertion_id, old_confidence, new_confidence, reason) VALUES (?, ?, ?, ?)',
-                                    (row_id, confidence, new_conf, f'unused_{days_unused}d')
-                                )
-                                decayed += 1
-                    except Exception:
-                        pass
+        db = self._db()
+        rows = db.query(
+            'SELECT id, confidence, use_count, last_used FROM fact_assertions WHERE is_negation = 0 AND is_active = 1'
+        )
+        for row in rows:
+            last = row['last_used']
+            if last:
+                try:
+                    last_ts = datetime.fromisoformat(last).timestamp()
+                    if last_ts < cutoff:
+                        use_count = row['use_count']
+                        confidence = row['confidence']
+                        row_id = row['id']
+                        use_boost = min(use_count * 0.01, 0.1)
+                        new_conf = max(0.1, confidence * decay_rate + use_boost)
+                        if new_conf < confidence:
+                            db.execute(
+                                'UPDATE fact_assertions SET confidence = ?, decay_factor = ? WHERE id = ?',
+                                (new_conf, decay_rate, row_id), commit=True
+                            )
+                            db.execute(
+                                'INSERT INTO confidence_decay_log (assertion_id, old_confidence, new_confidence, reason) VALUES (?, ?, ?, ?)',
+                                (row_id, confidence, new_conf, f'unused_{days_unused}d'), commit=True
+                            )
+                            decayed += 1
+                except Exception:
+                    pass
 
-        self._write_op(_do)
         if decayed > 0:
             logger.info(f"📉 置信度衰减: {decayed}条断言已衰减")
         return decayed
@@ -487,28 +455,29 @@ class FactStore:
     def get_active_assertions(self, question: str) -> List[Dict]:
         """获取有效断言（V3能力，版本感知）"""
         question_hash = self.hash_question(question)
-        with self._connect() as conn:
-            cursor = conn.execute('''
-                SELECT id, subject, predicate, object, source, confidence, version, is_negation
-                FROM fact_assertions
-                WHERE question_hash = ? AND is_active = 1 AND is_negation = 0
-                ORDER BY confidence DESC
-            ''', (question_hash,))
-            return [dict(row) for row in cursor.fetchall()]
+        db = self._db()
+        rows = db.query('''
+            SELECT id, subject, predicate, object, source, confidence, version, is_negation
+            FROM fact_assertions
+            WHERE question_hash = ? AND is_active = 1 AND is_negation = 0
+            ORDER BY confidence DESC
+        ''', (question_hash,))
+        return [dict(row) for row in rows]
 
     def get_assertion_history(self, question: str, subject: str, predicate: str) -> List[Dict]:
         """断言历史版本（V3能力）"""
         question_hash = self.hash_question(question)
-        with self._connect() as conn:
-            cursor = conn.execute('''
-                SELECT id, object, source, confidence, version, is_active, superseded_by, created_at
-                FROM fact_assertions
-                WHERE question_hash = ? AND subject = ? AND predicate = ?
-                ORDER BY version DESC
-            ''', (question_hash, subject, predicate))
-            return [dict(row) for row in cursor.fetchall()]
+        db = self._db()
+        rows = db.query('''
+            SELECT id, object, source, confidence, version, is_active, superseded_by, created_at
+            FROM fact_assertions
+            WHERE question_hash = ? AND subject = ? AND predicate = ?
+            ORDER BY version DESC
+        ''', (question_hash, subject, predicate))
+        return [dict(row) for row in rows]
 
     def rollback_to_version(self, assertion_id: int, target_version: int) -> bool:
+        db = self._db()
         def _do(conn):
             current = conn.execute('SELECT id, question_hash, subject, predicate FROM fact_assertions WHERE id = ?', (assertion_id,)).fetchone()
             if not current:
@@ -524,7 +493,7 @@ class FactStore:
             conn.execute('UPDATE fact_assertions SET is_active = 1 WHERE id = ?', (target['id'],))
             return True
 
-        result = self._write_op(_do)
+        result = db.transaction(_do)
         if result:
             logger.info(f"🔄 断言回滚: id={assertion_id} → version={target_version}")
         return result

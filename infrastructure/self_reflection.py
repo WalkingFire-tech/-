@@ -122,21 +122,17 @@ class SelfReflectionReport:
         """分析规则激活情况"""
         try:
             db = DatabaseManager.get('data/learning_rules.db')
-            conn = db._get_conn()
-            cursor = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
-            active_rules = cursor.fetchone()[0]
+            active_rules = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")[0]
             
-            cursor = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
-            pending_rules = cursor.fetchone()[0]
+            pending_rules = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")[0]
             
-            cursor = conn.execute('''
+            recent_rules = db.query('''
                 SELECT id, condition, action, confidence
                 FROM learning_rules
                 WHERE status='active'
                 ORDER BY last_applied DESC
                 LIMIT 5
             ''')
-            recent_rules = cursor.fetchall()
             
             insights = []
             if active_rules > 20:

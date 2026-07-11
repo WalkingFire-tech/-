@@ -24,18 +24,16 @@ class FeedbackStore:
     
     def _init_db(self):
         db = DatabaseManager.get(str(self.filepath))
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS feedback (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT,
                 user_input TEXT,
                 assistant_response TEXT,
                 score INTEGER
-            )
+            );
+            CREATE INDEX IF NOT EXISTS idx_timestamp ON feedback(timestamp)
         ''')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON feedback(timestamp)')
-        conn.commit()
     
     def add_feedback(self, user_input: str, assistant_response: str, score: int) -> bool:
         if not isinstance(score, int) or score not in (-1, 0, 1):
@@ -55,25 +53,23 @@ class FeedbackStore:
         with self._lock:
             try:
                 db = DatabaseManager.get(str(self.filepath))
-                conn = db._get_conn()
-                conn.execute('''
+                db.execute('''
                     INSERT INTO feedback (timestamp, user_input, assistant_response, score)
                     VALUES (?, ?, ?, ?)
-                ''', (entry["timestamp"], entry["user_input"], entry["assistant_response"], entry["score"]))
-                conn.commit()
+                ''', (entry["timestamp"], entry["user_input"], entry["assistant_response"], entry["score"]), commit=True)
                 
-                cursor = conn.execute('SELECT COUNT(*) FROM feedback')
-                count = cursor.fetchone()[0]
+                row = db.query_one('SELECT COUNT(*) FROM feedback')
+                count = row[0]
                 
                 if count > self.MAX_ENTRIES:
-                    conn.execute('''
+                    db.execute('''
                         DELETE FROM feedback 
                         WHERE id IN (
                             SELECT id FROM feedback 
                             ORDER BY timestamp ASC 
                             LIMIT ?
                         )
-                    ''', (count - self.MAX_ENTRIES,))
+                    ''', (count - self.MAX_ENTRIES,), commit=True)
                 
                 logger.info(f"已记录反馈评分: {score}")
                 return True
@@ -85,8 +81,7 @@ class FeedbackStore:
     def get_feedback(self, limit: int = 100, offset: int = 0) -> List[Dict]:
         with self._lock:
             db = DatabaseManager.get(str(self.filepath))
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            rows = db.query('''
                 SELECT timestamp, user_input, assistant_response, score
                 FROM feedback
                 ORDER BY timestamp DESC
@@ -100,21 +95,19 @@ class FeedbackStore:
                     "assistant_response": row[2],
                     "score": row[3]
                 }
-                for row in cursor.fetchall()
+                for row in rows
             ]
     
     def get_stats(self) -> Dict:
         with self._lock:
             db = DatabaseManager.get(str(self.filepath))
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            row = db.query_one('''
                 SELECT 
                     COUNT(*) as total,
                     SUM(CASE WHEN score > 0 THEN 1 ELSE 0 END) as positive,
                     SUM(CASE WHEN score < 0 THEN 1 ELSE 0 END) as negative
                 FROM feedback
             ''')
-            row = cursor.fetchone()
             
             total = row[0] if row[0] else 0
             return {
@@ -131,10 +124,8 @@ class FeedbackStore:
         
         with self._lock:
             db = DatabaseManager.get(str(self.filepath))
-            conn = db._get_conn()
-            cursor = conn.execute('DELETE FROM feedback WHERE timestamp < ?', (cutoff_str,))
+            cursor = db.execute('DELETE FROM feedback WHERE timestamp < ?', (cutoff_str,), commit=True)
             deleted = cursor.rowcount
-            conn.commit()
             
             if deleted > 0:
                 logger.info(f"已清理 {deleted} 条旧反馈")

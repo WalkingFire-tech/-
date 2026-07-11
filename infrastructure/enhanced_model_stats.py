@@ -19,9 +19,7 @@ class EnhancedModelStats:
     
     def _init_db(self):
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        # 主性能表
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS model_performance (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 model_name TEXT,
@@ -34,32 +32,23 @@ class EnhancedModelStats:
                 input_tokens INTEGER,
                 output_tokens INTEGER,
                 cost REAL DEFAULT 0.0
-            )
-        ''')
-        conn.commit()
-        
-        # 添加缺失的列
-        for column, definition in [
-            ("quality_score", "INTEGER"),
-            ("cost", "REAL DEFAULT 0.0")
-        ]:
-            try:
-                conn.execute(f'ALTER TABLE model_performance ADD COLUMN {column} {definition}')
-            except sqlite3.OperationalError:
-                pass
-        
-        # 索引
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_model_task ON model_performance(model_name, task_type)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON model_performance(timestamp)')
-        
-        # 模型成本配置表
-        conn.execute('''
+            );
+            CREATE INDEX IF NOT EXISTS idx_model_task ON model_performance(model_name, task_type);
+            CREATE INDEX IF NOT EXISTS idx_timestamp ON model_performance(timestamp);
             CREATE TABLE IF NOT EXISTS model_cost_config (
                 model_name TEXT PRIMARY KEY,
                 cost_per_1k_tokens REAL,
                 description TEXT
             )
         ''')
+        for column, definition in [
+            ("quality_score", "INTEGER"),
+            ("cost", "REAL DEFAULT 0.0")
+        ]:
+            try:
+                db.execute(f'ALTER TABLE model_performance ADD COLUMN {column} {definition}', commit=True)
+            except sqlite3.OperationalError:
+                pass
     
     def record_call(self, model_name: str, task_type: str, duration: float, success: bool,
                     user_feedback: int = None, input_tokens: int = 0, output_tokens: int = 0,
@@ -70,14 +59,12 @@ class EnhancedModelStats:
             cost = self._calculate_cost(model_name, input_tokens, output_tokens)
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             INSERT INTO model_performance 
             (model_name, task_type, duration, success, user_feedback, quality_score, timestamp, input_tokens, output_tokens, cost)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (model_name, task_type, duration, success, user_feedback, quality_score,
-              datetime.now().isoformat(), input_tokens, output_tokens, cost))
-        conn.commit()
+              datetime.now().isoformat(), input_tokens, output_tokens, cost), commit=True)
         
         logger.debug(f"记录调用: {model_name}, {task_type}, 耗时{duration:.2f}s, 质量{quality_score}, 成本${cost:.4f}")
     
@@ -104,12 +91,10 @@ class EnhancedModelStats:
         
         # 检查数据库配置
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cur = conn.execute(
+        row = db.query_one(
             'SELECT cost_per_1k_tokens FROM model_cost_config WHERE model_name = ?',
             (model_name,)
         )
-        row = cur.fetchone()
         if row:
             return row[0]
         
@@ -118,8 +103,7 @@ class EnhancedModelStats:
     def get_model_score(self, model_name: str, task_type: str) -> dict:
         """获取模型评分"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cur = conn.execute('''
+        row = db.query_one('''
             SELECT
                 COUNT(*) as total,
                 AVG(CASE WHEN success THEN 1.0 ELSE 0 END) as success_rate,
@@ -130,8 +114,6 @@ class EnhancedModelStats:
             FROM model_performance
             WHERE model_name = ? AND task_type = ?
         ''', (model_name, task_type))
-        
-        row = cur.fetchone()
         if row and row[0] > 0:
             return {
                 "total": row[0],
@@ -186,8 +168,7 @@ class EnhancedModelStats:
             constraints = {}
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cur = conn.execute('''
+        rows = db.query('''
             SELECT 
                 model_name,
                 COUNT(*) as total,
@@ -199,11 +180,11 @@ class EnhancedModelStats:
             FROM model_performance
             WHERE task_type = ?
             GROUP BY model_name
-            HAVING COUNT(*) >= 3  -- 至少3次调用才纳入考虑
+            HAVING COUNT(*) >= 3
         ''', (task_type,))
         
         candidates = []
-        for row in cur.fetchall():
+        for row in rows:
             model, total, success_rate, avg_duration, avg_feedback, avg_quality, avg_cost = row
             
             # 检查约束
@@ -281,8 +262,7 @@ class EnhancedModelStats:
     def update_last_feedback(self, model_name: str, task_type: str, feedback: int):
         """更新最近调用的反馈"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             UPDATE model_performance
             SET user_feedback = ?
             WHERE id = (
@@ -290,17 +270,15 @@ class EnhancedModelStats:
                 WHERE model_name = ? AND task_type = ?
                 ORDER BY timestamp DESC LIMIT 1
             )
-        ''', (feedback, model_name, task_type))
-        conn.commit()
+        ''', (feedback, model_name, task_type), commit=True)
         
         logger.debug(f"更新反馈: {model_name}, {task_type}, 反馈{feedback}")
     
     def get_model_ranking(self, task_type: str = None, limit: int = 10) -> List[Dict]:
         """获取模型排名"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         if task_type:
-            cur = conn.execute('''
+            rows = db.query('''
                 SELECT 
                     model_name,
                     COUNT(*) as total,
@@ -315,7 +293,7 @@ class EnhancedModelStats:
                 LIMIT ?
             ''', (task_type, limit))
         else:
-            cur = conn.execute('''
+            rows = db.query('''
                 SELECT 
                     model_name,
                     COUNT(*) as total,
@@ -330,7 +308,7 @@ class EnhancedModelStats:
             ''', (limit,))
         
         ranking = []
-        for row in cur.fetchall():
+        for row in rows:
             ranking.append({
                 "model": row[0],
                 "total_calls": row[1],
@@ -345,26 +323,20 @@ class EnhancedModelStats:
     def get_statistics_summary(self) -> Dict:
         """获取统计摘要"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        # 总调用数
-        cur = conn.execute('SELECT COUNT(*) FROM model_performance')
-        total_calls = cur.fetchone()[0]
+        row = db.query_one('SELECT COUNT(*) FROM model_performance')
+        total_calls = row[0]
         
-        # 模型数量
-        cur = conn.execute('SELECT COUNT(DISTINCT model_name) FROM model_performance')
-        total_models = cur.fetchone()[0]
+        row = db.query_one('SELECT COUNT(DISTINCT model_name) FROM model_performance')
+        total_models = row[0]
         
-        # 平均质量
-        cur = conn.execute('SELECT AVG(quality_score) FROM model_performance')
-        avg_quality = cur.fetchone()[0] or 0
+        row = db.query_one('SELECT AVG(quality_score) FROM model_performance')
+        avg_quality = row[0] or 0
         
-        # 总成本
-        cur = conn.execute('SELECT SUM(cost) FROM model_performance')
-        total_cost = cur.fetchone()[0] or 0
+        row = db.query_one('SELECT SUM(cost) FROM model_performance')
+        total_cost = row[0] or 0
         
-        # 成功率
-        cur = conn.execute('SELECT AVG(CASE WHEN success THEN 1.0 ELSE 0 END) FROM model_performance')
-        success_rate = cur.fetchone()[0] or 0
+        row = db.query_one('SELECT AVG(CASE WHEN success THEN 1.0 ELSE 0 END) FROM model_performance')
+        success_rate = row[0] or 0
         
         return {
             "total_calls": total_calls,

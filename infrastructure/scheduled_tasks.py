@@ -256,13 +256,12 @@ class ScheduledTaskManager:
                     pass
                 try:
                     db = DatabaseManager.get("data/experience_pool.db")
-                    _conn = db._get_conn()
-                    _conn.execute(
+                    db.execute(
                         "INSERT INTO experiences (raw_input, response, quality_score, intent_type, timestamp) VALUES (?, ?, ?, ?, datetime('now'))",
                         (f"[主动性:{decision.action_type.value if decision.action_type else 'unknown'}] {decision.reason}",
-                         decision.content, int(decision.confidence * 50), "proactivity")
+                         decision.content, int(decision.confidence * 50), "proactivity"),
+                        commit=True
                     )
-                    _conn.commit()
                 except Exception:
                     pass
                 try:
@@ -333,9 +332,7 @@ class ScheduledTaskManager:
                 elif category == "DATA_LOOP" and "规则" in title:
                     try:
                         db = DatabaseManager.get("data/learning_rules.db")
-                        conn = db._get_conn()
-                        conn.execute("DELETE FROM rules WHERE apply_count = 0 AND created_at < datetime('now', '-7 days')")
-                        conn.commit()
+                        db.execute("DELETE FROM rules WHERE apply_count = 0 AND created_at < datetime('now', '-7 days')", commit=True)
                         logger.info("自动修复: 清理7天未使用的trial规则")
                     except Exception:
                         pass
@@ -398,12 +395,11 @@ class ScheduledTaskManager:
 
                     try:
                         db = DatabaseManager.get("data/experience_pool.db")
-                        conn = db._get_conn()
-                        conn.execute(
+                        db.execute(
                             "INSERT OR IGNORE INTO experiences (raw_input, response, quality_score, intent_type, timestamp) VALUES (?, ?, ?, ?, datetime('now'))",
-                            (original_input[:200], f"[延迟深度处理] 骨架: {skeleton.get('topic', 'unknown')}, 类型: {skeleton.get('question_type', 'unknown')}, 实体: {','.join(skeleton.get('entities', [])[:5])}", 30, "deferred_learning")
+                            (original_input[:200], f"[延迟深度处理] 骨架: {skeleton.get('topic', 'unknown')}, 类型: {skeleton.get('question_type', 'unknown')}, 实体: {','.join(skeleton.get('entities', [])[:5])}", 30, "deferred_learning"),
+                            commit=True
                         )
-                        conn.commit()
                     except Exception as e:
                         logger.debug(f"延迟输入存入经验池失败: {e}")
 
@@ -451,33 +447,30 @@ class ScheduledTaskManager:
             forgotten = 0
 
             db = DatabaseManager.get("data/experience_pool.db")
-            conn = db._get_conn()
-            cur = conn.execute(
+            row = db.query_one(
                 "SELECT COUNT(*) FROM experiences WHERE quality_score >= 70 AND timestamp > datetime('now', '-7 days')"
             )
-            high_value_count = cur.fetchone()[0]
+            high_value_count = row[0]
 
-            cur = conn.execute(
-                "DELETE FROM experiences WHERE quality_score < 30 AND timestamp < datetime('now', '-30 days')"
+            cur = db.execute(
+                "DELETE FROM experiences WHERE quality_score < 30 AND timestamp < datetime('now', '-30 days')",
+                commit=True
             )
             forgotten = cur.rowcount
-            conn.commit()
 
-            cur = conn.execute(
-                "UPDATE experiences SET quality_score = MIN(quality_score + 5, 100) WHERE quality_score >= 70 AND timestamp > datetime('now', '-7 days')"
+            cur = db.execute(
+                "UPDATE experiences SET quality_score = MIN(quality_score + 5, 100) WHERE quality_score >= 70 AND timestamp > datetime('now', '-7 days')",
+                commit=True
             )
             consolidated = cur.rowcount
 
-            conn.commit()
-
             try:
                 db2 = DatabaseManager.get("data/learning_rules.db")
-                conn2 = db2._get_conn()
-                cur2 = conn2.execute(
-                    "DELETE FROM rules WHERE apply_count = 0 AND created_at < datetime('now', '-14 days')"
+                cur2 = db2.execute(
+                    "DELETE FROM rules WHERE apply_count = 0 AND created_at < datetime('now', '-14 days')",
+                    commit=True
                 )
                 rules_forgotten = cur2.rowcount
-                conn2.commit()
             except Exception:
                 rules_forgotten = 0
 

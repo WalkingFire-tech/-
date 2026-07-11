@@ -65,9 +65,8 @@ class InductionEngine:
             db_path = "experience_pool.db"
             
             db = DatabaseManager.get(db_path)
-            conn = db._get_conn()
             if intent_type:
-                cur = conn.execute('''
+                rows = db.query('''
                     SELECT intent_type, raw_input, plan, model_name, 
                            quality_score, success, user_feedback
                     FROM experiences
@@ -76,7 +75,7 @@ class InductionEngine:
                     LIMIT ?
                 ''', (min_quality, intent_type, limit))
             else:
-                cur = conn.execute('''
+                rows = db.query('''
                     SELECT intent_type, raw_input, plan, model_name,
                            quality_score, success, user_feedback
                     FROM experiences
@@ -85,7 +84,7 @@ class InductionEngine:
                     LIMIT ?
                 ''', (min_quality, limit))
             
-            return [dict(row) for row in cur.fetchall()]
+            return [dict(row) for row in rows]
         
         except Exception as e:
             logger.error(f"获取高质量经验失败: {e}")
@@ -98,9 +97,8 @@ class InductionEngine:
             db_path = "experience_pool.db"
             
             db = DatabaseManager.get(db_path)
-            conn = db._get_conn()
             if intent_type:
-                cur = conn.execute('''
+                rows = db.query('''
                     SELECT intent_type, raw_input, plan, model_name,
                            quality_score, success, user_feedback
                     FROM experiences
@@ -109,7 +107,7 @@ class InductionEngine:
                     LIMIT ?
                 ''', (intent_type, limit))
             else:
-                cur = conn.execute('''
+                rows = db.query('''
                     SELECT intent_type, raw_input, plan, model_name,
                            quality_score, success, user_feedback
                     FROM experiences
@@ -118,7 +116,7 @@ class InductionEngine:
                     LIMIT ?
                 ''', (limit,))
             
-            return [dict(row) for row in cur.fetchall()]
+            return [dict(row) for row in rows]
         
         except Exception as e:
             logger.error(f"获取失败经验失败: {e}")
@@ -221,8 +219,7 @@ class InductionEngine:
         """保存规则到数据库"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cur = conn.execute('''
+            cur = db.execute('''
                 INSERT INTO learning_rules
                 (condition, action, priority, confidence, status, source, created_at, metadata)
                 VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
@@ -234,11 +231,9 @@ class InductionEngine:
                 rule.get("source", "induction"),
                 datetime.now().isoformat(),
                 rule.get("metadata", "{}")
-            ))
-            conn.commit()
+            ), commit=True)
             
             rule_id = cur.lastrowid
-            conn.commit()
             
             logger.debug(f"规则已保存, ID: {rule_id}, 条件: {rule['condition'][:50]}")
             return rule_id

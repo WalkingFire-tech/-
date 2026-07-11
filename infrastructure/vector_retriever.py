@@ -498,9 +498,8 @@ class VectorRetriever:
         db_path = "data/experience_pool.db"
         try:
             db = DatabaseManager.get(db_path)
-            conn = db._get_conn()
             if intent_type:
-                cur = conn.execute('''
+                rows = db.query('''
                     SELECT intent_type, raw_input, plan, model_name,
                            quality_score, duration, response
                     FROM experiences
@@ -508,14 +507,14 @@ class VectorRetriever:
                     ORDER BY quality_score DESC LIMIT 100
                 ''', (intent_type, min_quality))
             else:
-                cur = conn.execute('''
+                rows = db.query('''
                     SELECT intent_type, raw_input, plan, model_name,
                            quality_score, duration, response
                     FROM experiences
                     WHERE quality_score >= ? AND success = 1
                     ORDER BY quality_score DESC LIMIT 100
                 ''', (min_quality,))
-            return [dict(row) for row in cur.fetchall()]
+            return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"获取成功计划失败: {e}")
             return []
