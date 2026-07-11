@@ -173,3 +173,37 @@
 - **根因**：_scan_capabilities_fast()直接返回空工具列表，完全跳过了工具扫描；没有hardware意图类型
 - **修复**：从tool_registry.list_tools()读取已注册工具；新增hardware意图类型(串口/serial/硬件/设备等关键词)；hardware走slow路径
 - **教训**：认知调度器必须知道系统的能力边界，否则无法做出正确的路由决策
+
+### 27. 元认知宪法修正——三思后行+七维自检写入基因
+- **现象**：多次修复局部问题时忽略全景，重复发明轮子，治标不治本
+- **根因**：缺乏行动前的系统性自检机制，没有"先理解再行动"的宪法级约束
+- **修复**：SpiritCore新增第9原则"三思后行"和第4元宪法"七维自检"；TruthAccumulator新增3条L4真谛（三思后行、七维自检、依赖链排序）
+- **七维自检**：①方向一致 ②看板衔接 ③最小侵入 ④无过度设计 ⑤治标+治本 ⑥可验证 ⑦精神内核对齐
+- **教训**：行动的质量取决于行动前的思考质量；"谋定而后动"不是建议是宪法；不做的事和要做的事同样重要
+
+---
+
+## 七、v4.0.0 infrastructure/ _get_conn()全面迁移（2026年7月）
+
+### 28. infrastructure/ 188处_get_conn()绕过线程安全机制
+- **现象**：infrastructure/下188处`db._get_conn()`裸cursor调用，绕过DatabaseManager的线程安全锁和重试机制
+- **根因**：历史代码直接使用`conn = db._get_conn(); cursor = conn.execute(sql); conn.commit()`模式，这是DatabaseManager内部实现细节，不应被外部调用。手动`conn.commit()`容易遗漏（已发现76处commit缺失）
+- **修复**：37个文件全部迁移到DatabaseManager高级API：
+  - 写操作: `db.execute(sql, params, commit=True)` — 自动获得线程锁+retry+commit
+  - 读多行: `db.query(sql, params)` — 返回`List[sqlite3.Row]`
+  - 读单行: `db.query_one(sql, params)` — 返回`Optional[sqlite3.Row]`
+  - DDL批量: `db.executescript(script)` — 多个CREATE TABLE/INDEX合并
+- **结果**：188处→6处（仅database_manager.py内部self._get_conn保留）
+- **教训**：数据库访问必须通过公共API，不应直接使用内部实现；_get_conn()是DatabaseManager的私有方法，外部调用违反封装原则；手动commit是系统性风险源
+
+### 29. closed_loop_orchestrator状态机卡住
+- **现象**：闭环调度器在迭代上限时返回False（不保护），导致状态机可能卡在ACCUMULATION→PROTECTION循环
+- **根因**：`_check_protection`中`iteration >= max_iterations`时直接返回False，意味着不触发保护机制；`_phase_metacognition`异常后未显式设置状态，导致状态机转移不正确
+- **修复**：迭代上限时有结果走ACCUMULATION，无结果走PROTECTION（而非返回False）；异常后显式设`state=METACOGNITION`
+- **教训**：状态机的每个分支都必须有明确的下一状态，不能有"无转移"的分支；异常路径必须显式设置状态
+
+### 30. CognitivePlanner.process()从未被调用
+- **现象**：CognitivePlanner的核心入口`process()`（完整L1-L6认知循环）从未被主路由调用，chat_orchestrator手动拆解了其内部私有方法
+- **根因**：process()设计为同步阻塞调用，而chat_orchestrator是异步流式管道；直接替换风险太高
+- **修复**：渐进式三阶段接入——Phase 1: 异步旁路（15秒超时，交叉验证信号补充）；Phase 2: 信号融合（逐步替代手动调用）；Phase 3: 主路由切换（process()成为主路由）
+- **教训**：高风险架构变更必须渐进式接入；旁路验证是安全替换的关键模式；私有方法(_perceive等)不应被外部直接调用
