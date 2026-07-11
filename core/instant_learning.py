@@ -55,10 +55,8 @@ class InstantLearningSystem:
     
     def _init_fact_db(self):
         """初始化事实库"""
-        conn = DatabaseManager.get(self.fact_db_path)._get_conn()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
+        db = DatabaseManager.get(self.fact_db_path)
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS facts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 concept TEXT NOT NULL,
@@ -68,13 +66,10 @@ class InstantLearningSystem:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 access_count INTEGER DEFAULT 0
-            )
+            );
+            CREATE INDEX IF NOT EXISTS idx_concept ON facts(concept);
+            CREATE INDEX IF NOT EXISTS idx_assertion ON facts(assertion);
         ''')
-        
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_concept ON facts(concept)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_assertion ON facts(assertion)')
-        
-        conn.commit()
         
         logger.info("✅ 事实库已初始化")
     
@@ -105,12 +100,11 @@ class InstantLearningSystem:
         keywords = self._extract_keywords(question)
         
         # 检索事实库
-        conn = DatabaseManager.get(self.fact_db_path)._get_conn()
-        cursor = conn.cursor()
+        db = DatabaseManager.get(self.fact_db_path)
         
         results = []
         for keyword in keywords:
-            cursor.execute('''
+            rows = db.query('''
                 SELECT concept, assertion, confidence, source, created_at, access_count
                 FROM facts
                 WHERE concept LIKE ? OR assertion LIKE ?
@@ -118,7 +112,7 @@ class InstantLearningSystem:
                 LIMIT ?
             ''', (f'%{keyword}%', f'%{keyword}%', top_k))
             
-            for row in cursor.fetchall():
+            for row in rows:
                 results.append({
                     'concept': row[0],
                     'assertion': row[1],
@@ -193,31 +187,27 @@ class InstantLearningSystem:
         logger.info(f"📚 即时学习: {concept[:30]}...")
         
         # 写入事实库
-        conn = DatabaseManager.get(self.fact_db_path)._get_conn()
-        cursor = conn.cursor()
+        db = DatabaseManager.get(self.fact_db_path)
         
         now = datetime.now().isoformat()
         
-        cursor.execute('SELECT id FROM facts WHERE concept = ?', (concept,))
-        existing = cursor.fetchone()
+        existing = db.query_one('SELECT id FROM facts WHERE concept = ?', (concept,))
         
         if existing:
-            cursor.execute('''
+            db.execute('''
                 UPDATE facts 
                 SET assertion = ?, confidence = ?, source = ?, updated_at = ?
                 WHERE concept = ?
-            ''', (assertion, confidence, source, now, concept))
+            ''', (assertion, confidence, source, now, concept), commit=True)
             
             action = 'updated'
         else:
-            cursor.execute('''
+            db.execute('''
                 INSERT INTO facts (concept, assertion, confidence, source, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
-            ''', (concept, assertion, confidence, source, now, now))
+            ''', (concept, assertion, confidence, source, now, now), commit=True)
             
             action = 'inserted'
-        
-        conn.commit()
         
         # 记录学习日志
         learning_record = {
@@ -289,20 +279,15 @@ class InstantLearningSystem:
         Returns:
             知识统计信息
         """
-        conn = DatabaseManager.get(self.fact_db_path)._get_conn()
-        cursor = conn.cursor()
+        db = DatabaseManager.get(self.fact_db_path)
         
-        cursor.execute('SELECT COUNT(*) FROM facts')
-        total_facts = cursor.fetchone()[0]
+        total_facts = db.query_one('SELECT COUNT(*) FROM facts')[0]
         
-        cursor.execute('SELECT source, COUNT(*) FROM facts GROUP BY source')
-        by_source = dict(cursor.fetchall())
+        by_source = dict(db.query('SELECT source, COUNT(*) FROM facts GROUP BY source'))
         
-        cursor.execute('SELECT AVG(confidence) FROM facts')
-        avg_confidence = cursor.fetchone()[0] or 0.0
+        avg_confidence = db.query_one('SELECT AVG(confidence) FROM facts')[0] or 0.0
         
-        cursor.execute('SELECT concept, created_at FROM facts ORDER BY created_at DESC LIMIT 5')
-        recent = cursor.fetchall()
+        recent = db.query('SELECT concept, created_at FROM facts ORDER BY created_at DESC LIMIT 5')
         
         return {
             'total_facts': total_facts,

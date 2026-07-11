@@ -70,12 +70,10 @@ class SystemGuardian:
     def _collect_health_metrics(self):
         try:
             from infrastructure.database_manager import DatabaseManager
-            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM experiences WHERE success=0")
-            failures = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM experiences")
-            total = c.fetchone()[0]
+            row = DatabaseManager.get("data/experience_pool.db").query_one("SELECT COUNT(*) FROM experiences WHERE success=0")
+            failures = row[0] if row else 0
+            row = DatabaseManager.get("data/experience_pool.db").query_one("SELECT COUNT(*) FROM experiences")
+            total = row[0] if row else 0
 
             if total > 0:
                 error_rate = failures / total

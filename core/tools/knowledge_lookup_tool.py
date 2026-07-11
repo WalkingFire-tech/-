@@ -56,15 +56,15 @@ class KnowledgeLookupTool(ToolInterface):
         try:
             from infrastructure.database_manager import DatabaseManager
             def _search_kb():
-                conn = DatabaseManager.get("data/knowledge_store.db", timeout=3)._get_conn()
+                db = DatabaseManager.get("data/knowledge_store.db", timeout=3)
                 try:
-                    cursor = conn.execute(
+                    rows = db.query(
                         "SELECT answer, source, quality_score FROM knowledge_items "
                         "WHERE question LIKE ? OR answer LIKE ? ORDER BY quality_score DESC LIMIT 5",
                         (f"%{query}%", f"%{query}%")
                     )
                     return [dict(zip(["content", "source", "quality"], row))
-                            for row in cursor.fetchall()]
+                            for row in rows]
                 finally:
                     pass
 

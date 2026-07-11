@@ -317,8 +317,7 @@ class VisibleClosedLoop:
             if result.get("success") and result.get("output"):
                 try:
                     from infrastructure.database_manager import DatabaseManager
-                    conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
-                    conn.execute('''
+                    DatabaseManager.get("data/knowledge_store.db").execute('''
                         INSERT INTO knowledge_items 
                         (question, answer, source, knowledge_type, quality_score, created_at)
                         VALUES (?, ?, ?, 'closed_loop', 60.0, ?)
@@ -327,8 +326,7 @@ class VisibleClosedLoop:
                         str(result["output"])[:500],
                         result["type"],
                         datetime.now().isoformat()
-                    ))
-                    conn.commit()
+                    ), commit=True)
                     gained.append(f"新增知识: {result['type']}")
                 except Exception as e:
                     logger.debug(f"知识存储失败: {e}")
@@ -340,8 +338,7 @@ class VisibleClosedLoop:
         # 记录经验
         try:
             from infrastructure.database_manager import DatabaseManager
-            conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
-            conn.execute('''
+            DatabaseManager.get("data/knowledge_store.db").execute('''
                 INSERT INTO experiences 
                 (timestamp, intent_type, success, quality_score, context)
                 VALUES (?, ?, ?, ?, ?)
@@ -351,8 +348,7 @@ class VisibleClosedLoop:
                 1,
                 results.get("evaluation", {}).get("avg_confidence", 0.5) * 100,
                 json.dumps(results, ensure_ascii=False)[:500]
-            ))
-            conn.commit()
+            ), commit=True)
         except:
             pass
         

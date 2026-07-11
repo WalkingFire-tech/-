@@ -113,37 +113,37 @@ class AlignmentGuard:
         self._init_db()
 
     def _connect(self):
-        return DatabaseManager.get(self.db_path, timeout=10.0)._get_conn()
+        return DatabaseManager.get(self.db_path, timeout=10.0)
 
     def _write_op(self, func, *args, **kwargs):
         with self._lock:
-            conn = self._connect()
+            db = self._connect()
             try:
-                result = func(conn, *args, **kwargs)
-                conn.commit()
+                result = func(db, *args, **kwargs)
                 return result
             except Exception:
-                conn.rollback()
                 raise
 
 
     def _init_db(self):
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        def _do(conn):
-            conn.execute('''CREATE TABLE IF NOT EXISTS deviations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                module TEXT NOT NULL,
-                deviation_type TEXT NOT NULL,
-                description TEXT NOT NULL,
-                evidence TEXT DEFAULT '',
-                severity TEXT NOT NULL,
-                detected_at TEXT NOT NULL,
-                correction TEXT DEFAULT '',
-                status TEXT DEFAULT 'open'
-            )''')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_dev_module ON deviations(module)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_dev_type ON deviations(deviation_type)')
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_dev_status ON deviations(status)')
+        def _do(db):
+            db.executescript('''
+                CREATE TABLE IF NOT EXISTS deviations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    module TEXT NOT NULL,
+                    deviation_type TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    evidence TEXT DEFAULT '',
+                    severity TEXT NOT NULL,
+                    detected_at TEXT NOT NULL,
+                    correction TEXT DEFAULT '',
+                    status TEXT DEFAULT 'open'
+                );
+                CREATE INDEX IF NOT EXISTS idx_dev_module ON deviations(module);
+                CREATE INDEX IF NOT EXISTS idx_dev_type ON deviations(deviation_type);
+                CREATE INDEX IF NOT EXISTS idx_dev_status ON deviations(status)
+            ''')
         self._write_op(_do)
 
     def record_deviation(
@@ -157,11 +157,12 @@ class AlignmentGuard:
         correction = self.CORRECTION_TEMPLATES.get(deviation_type, "")
         now = datetime.now().isoformat()
 
-        def _do(conn):
-            cur = conn.execute(
+        def _do(db):
+            cur = db.execute(
                 'INSERT INTO deviations (module, deviation_type, description, evidence, severity, detected_at, correction, status) '
                 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                (module, deviation_type.value, description, evidence, severity.value, now, correction, DeviationStatus.OPEN.value)
+                (module, deviation_type.value, description, evidence, severity.value, now, correction, DeviationStatus.OPEN.value),
+                commit=True
             )
             return cur.lastrowid
 
@@ -265,32 +266,36 @@ class AlignmentGuard:
         return dev_id
 
     def correct_deviation(self, dev_id: int, correction: str = ""):
-        def _do(conn):
-            conn.execute(
+        def _do(db):
+            db.execute(
                 'UPDATE deviations SET status = ?, correction = ? WHERE id = ?',
-                (DeviationStatus.CORRECTED.value, correction, dev_id)
+                (DeviationStatus.CORRECTED.value, correction, dev_id),
+                commit=True
             )
         self._write_op(_do)
         logger.info(f"偏离记录#{dev_id}已修正")
 
     def get_open_deviations(self, limit: int = 20) -> List[DeviationRecord]:
-        conn = self._connect()
-        rows = conn.execute(
+        db = self._connect()
+        rows = db.query(
             'SELECT * FROM deviations WHERE status = ? ORDER BY detected_at DESC LIMIT ?',
             (DeviationStatus.OPEN.value, limit)
-        ).fetchall()
+        )
         return [self._row_to_record(r) for r in rows]
 
     def get_stats(self) -> Dict:
-        conn = self._connect()
-        total = conn.execute('SELECT COUNT(*) FROM deviations').fetchone()[0]
-        open_count = conn.execute("SELECT COUNT(*) FROM deviations WHERE status = 'open'").fetchone()[0]
-        corrected = conn.execute("SELECT COUNT(*) FROM deviations WHERE status = 'corrected'").fetchone()[0]
+        db = self._connect()
+        total_row = db.query_one('SELECT COUNT(*) FROM deviations')
+        total = total_row[0] if total_row else 0
+        open_row = db.query_one("SELECT COUNT(*) FROM deviations WHERE status = 'open'")
+        open_count = open_row[0] if open_row else 0
+        corrected_row = db.query_one("SELECT COUNT(*) FROM deviations WHERE status = 'corrected'")
+        corrected = corrected_row[0] if corrected_row else 0
         by_type = {}
-        for row in conn.execute('SELECT deviation_type, COUNT(*) FROM deviations GROUP BY deviation_type'):
+        for row in db.query('SELECT deviation_type, COUNT(*) FROM deviations GROUP BY deviation_type'):
             by_type[row[0]] = row[1]
         by_severity = {}
-        for row in conn.execute('SELECT severity, COUNT(*) FROM deviations GROUP BY severity'):
+        for row in db.query('SELECT severity, COUNT(*) FROM deviations GROUP BY severity'):
             by_severity[row[0]] = row[1]
         return {
             "total": total,
@@ -301,8 +306,8 @@ class AlignmentGuard:
         }
 
     def _get_by_id(self, dev_id: int) -> DeviationRecord:
-        conn = self._connect()
-        row = conn.execute('SELECT * FROM deviations WHERE id = ?', (dev_id,)).fetchone()
+        db = self._connect()
+        row = db.query_one('SELECT * FROM deviations WHERE id = ?', (dev_id,))
         return self._row_to_record(row) if row else DeviationRecord(id=dev_id)
 
     def _row_to_record(self, row) -> DeviationRecord:

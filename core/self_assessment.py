@@ -51,19 +51,18 @@ class SelfAssessment:
         return report
 
     def _db(self, name: str):
-        return DatabaseManager.get(f"{self.root_dir}/data/{name}")._get_conn()
+        return DatabaseManager.get(f"{self.root_dir}/data/{name}")
 
     def _assess_loop_integrity(self) -> dict:
         result = {"stages": {}, "breaks": [], "score": 0.0}
         try:
-            conn = self._db("experience_pool.db")
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM experiences")
-            total_exp = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM experiences WHERE success=1")
-            success_exp = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM experiences WHERE intent_type IS NOT NULL AND intent_type != ''")
-            tagged_exp = c.fetchone()[0]
+            db = self._db("experience_pool.db")
+            row = db.query_one("SELECT COUNT(*) FROM experiences")
+            total_exp = row[0] if row else 0
+            row = db.query_one("SELECT COUNT(*) FROM experiences WHERE success=1")
+            success_exp = row[0] if row else 0
+            row = db.query_one("SELECT COUNT(*) FROM experiences WHERE intent_type IS NOT NULL AND intent_type != ''")
+            tagged_exp = row[0] if row else 0
 
             result["stages"]["experience_collection"] = {
                 "total": total_exp,
@@ -75,14 +74,13 @@ class SelfAssessment:
             result["stages"]["experience_collection"] = {"status": "error", "error": str(e)[:100]}
 
         try:
-            conn = self._db("learning_rules.db")
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
-            active_rules = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
-            pending_rules = c.fetchone()[0]
-            c.execute("SELECT AVG(confidence) FROM learning_rules WHERE status='active'")
-            avg_conf = c.fetchone()[0] or 0.5
+            db = self._db("learning_rules.db")
+            row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
+            active_rules = row[0] if row else 0
+            row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
+            pending_rules = row[0] if row else 0
+            row = db.query_one("SELECT AVG(confidence) FROM learning_rules WHERE status='active'")
+            avg_conf = (row[0] if row else None) or 0.5
 
             result["stages"]["reflection_to_rules"] = {
                 "active": active_rules,
@@ -100,12 +98,11 @@ class SelfAssessment:
             result["stages"]["reflection_to_rules"] = {"status": "error", "error": str(e)[:100]}
 
         try:
-            conn = self._db("skills.db")
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM skills WHERE success_count >= 3 AND success_rate >= 0.7 AND is_active=1")
-            mature = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM skills")
-            total_skills = c.fetchone()[0]
+            db = self._db("skills.db")
+            row = db.query_one("SELECT COUNT(*) FROM skills WHERE success_count >= 3 AND success_rate >= 0.7 AND is_active=1")
+            mature = row[0] if row else 0
+            row = db.query_one("SELECT COUNT(*) FROM skills")
+            total_skills = row[0] if row else 0
 
             result["stages"]["rules_to_skills"] = {
                 "total": total_skills,
@@ -117,12 +114,10 @@ class SelfAssessment:
             result["stages"]["rules_to_skills"] = {"status": "error", "error": str(e)[:100]}
 
         try:
-            conn = self._db("truths.db")
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM truths")
-            total_truths = c.fetchone()[0]
-            c.execute("SELECT level, COUNT(*) FROM truths GROUP BY level")
-            by_level = {str(row[0]): row[1] for row in c.fetchall()}
+            db = self._db("truths.db")
+            row = db.query_one("SELECT COUNT(*) FROM truths")
+            total_truths = row[0] if row else 0
+            by_level = {str(r[0]): r[1] for r in db.query("SELECT level, COUNT(*) FROM truths GROUP BY level")}
 
             result["stages"]["skills_to_truths"] = {
                 "total": total_truths,
@@ -157,13 +152,12 @@ class SelfAssessment:
     def _assess_knowledge_vitality(self) -> dict:
         result = {"metrics": {}, "dormant_count": 0, "score": 0.0}
         try:
-            conn = self._db("experience_pool.db")
-            c = conn.cursor()
+            db = self._db("experience_pool.db")
             week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-            c.execute("SELECT COUNT(*) FROM experiences WHERE timestamp >= ?", (week_ago,))
-            recent_exp = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM experiences")
-            total_exp = c.fetchone()[0]
+            row = db.query_one("SELECT COUNT(*) FROM experiences WHERE timestamp >= ?", (week_ago,))
+            recent_exp = row[0] if row else 0
+            row = db.query_one("SELECT COUNT(*) FROM experiences")
+            total_exp = row[0] if row else 0
             result["metrics"]["recent_experiences_7d"] = recent_exp
             result["metrics"]["experience_total"] = total_exp
             result["metrics"]["experience_activity"] = recent_exp / max(total_exp, 1)
@@ -171,14 +165,13 @@ class SelfAssessment:
             pass
 
         try:
-            conn = self._db("learning_rules.db")
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active' AND apply_count > 0")
-            used_rules = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
-            active_rules = c.fetchone()[0]
-            c.execute("SELECT AVG(apply_count) FROM learning_rules WHERE status='active'")
-            avg_apply = c.fetchone()[0] or 0
+            db = self._db("learning_rules.db")
+            row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active' AND apply_count > 0")
+            used_rules = row[0] if row else 0
+            row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
+            active_rules = row[0] if row else 0
+            row = db.query_one("SELECT AVG(apply_count) FROM learning_rules WHERE status='active'")
+            avg_apply = (row[0] if row else None) or 0
             result["metrics"]["used_active_rules"] = used_rules
             result["metrics"]["active_rules"] = active_rules
             result["metrics"]["rule_usage_rate"] = used_rules / max(active_rules, 1)
@@ -189,12 +182,11 @@ class SelfAssessment:
             pass
 
         try:
-            conn = self._db("skills.db")
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM skills WHERE success_count >= 3 AND success_rate >= 0.7 AND is_active=1")
-            mature = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM skills WHERE is_active=0 OR (success_count < 3 AND success_rate < 0.5)")
-            dormant_skills = c.fetchone()[0]
+            db = self._db("skills.db")
+            row = db.query_one("SELECT COUNT(*) FROM skills WHERE success_count >= 3 AND success_rate >= 0.7 AND is_active=1")
+            mature = row[0] if row else 0
+            row = db.query_one("SELECT COUNT(*) FROM skills WHERE is_active=0 OR (success_count < 3 AND success_rate < 0.5)")
+            dormant_skills = row[0] if row else 0
             result["metrics"]["mature_skills"] = mature
             result["metrics"]["dormant_skills"] = dormant_skills
             result["dormant_count"] += dormant_skills
@@ -209,12 +201,11 @@ class SelfAssessment:
     def _assess_learning_efficiency(self) -> dict:
         result = {"metrics": {}, "score": 0.0}
         try:
-            conn = self._db("experience_pool.db")
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM experiences WHERE success=1")
-            success = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM experiences WHERE success=0")
-            failure = c.fetchone()[0]
+            db = self._db("experience_pool.db")
+            row = db.query_one("SELECT COUNT(*) FROM experiences WHERE success=1")
+            success = row[0] if row else 0
+            row = db.query_one("SELECT COUNT(*) FROM experiences WHERE success=0")
+            failure = row[0] if row else 0
             total = success + failure
             result["metrics"]["success_count"] = success
             result["metrics"]["failure_count"] = failure
@@ -223,12 +214,11 @@ class SelfAssessment:
             pass
 
         try:
-            conn = self._db("learning_rules.db")
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
-            pending = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
-            active = c.fetchone()[0]
+            db = self._db("learning_rules.db")
+            row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
+            pending = row[0] if row else 0
+            row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
+            active = row[0] if row else 0
             conversion = active / max(active + pending, 1)
             result["metrics"]["pending_rules"] = pending
             result["metrics"]["active_rules"] = active
@@ -237,12 +227,11 @@ class SelfAssessment:
             pass
 
         try:
-            conn = self._db("skills.db")
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM skills WHERE success_count >= 3 AND success_rate >= 0.7 AND is_active=1")
-            mature = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM skills")
-            total_skills = c.fetchone()[0]
+            db = self._db("skills.db")
+            row = db.query_one("SELECT COUNT(*) FROM skills WHERE success_count >= 3 AND success_rate >= 0.7 AND is_active=1")
+            mature = row[0] if row else 0
+            row = db.query_one("SELECT COUNT(*) FROM skills")
+            total_skills = row[0] if row else 0
             result["metrics"]["skill_maturation_rate"] = mature / max(total_skills, 1)
         except:
             pass
@@ -256,12 +245,11 @@ class SelfAssessment:
     def _assess_behavior_deviation(self) -> dict:
         result = {"checks": {}, "deviations": [], "score": 1.0}
         try:
-            conn = self._db("experience_pool.db")
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM experiences WHERE success=0")
-            failures = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM experiences")
-            total = c.fetchone()[0]
+            db = self._db("experience_pool.db")
+            row = db.query_one("SELECT COUNT(*) FROM experiences WHERE success=0")
+            failures = row[0] if row else 0
+            row = db.query_one("SELECT COUNT(*) FROM experiences")
+            total = row[0] if row else 0
             error_rate = failures / max(total, 1)
             result["checks"]["error_rate"] = round(error_rate, 3)
             if error_rate > 0.15:
@@ -275,10 +263,9 @@ class SelfAssessment:
             pass
 
         try:
-            conn = self._db("learning_rules.db")
-            c = conn.cursor()
-            c.execute("SELECT AVG(confidence) FROM learning_rules WHERE status='active'")
-            avg_conf = c.fetchone()[0] or 0.5
+            db = self._db("learning_rules.db")
+            row = db.query_one("SELECT AVG(confidence) FROM learning_rules WHERE status='active'")
+            avg_conf = (row[0] if row else None) or 0.5
             result["checks"]["avg_rule_confidence"] = round(avg_conf, 3)
             if avg_conf < 0.4:
                 result["deviations"].append({
@@ -314,35 +301,32 @@ class SelfAssessment:
     def _assess_adaptation_speed(self) -> dict:
         result = {"metrics": {}, "score": 0.0}
         try:
-            conn = self._db("experience_pool.db")
-            c = conn.cursor()
+            db = self._db("experience_pool.db")
             day_ago = (datetime.now() - timedelta(days=1)).isoformat()
-            c.execute("SELECT COUNT(*) FROM experiences WHERE timestamp >= ?", (day_ago,))
-            daily_exp = c.fetchone()[0]
+            row = db.query_one("SELECT COUNT(*) FROM experiences WHERE timestamp >= ?", (day_ago,))
+            daily_exp = row[0] if row else 0
             week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-            c.execute("SELECT COUNT(*) FROM experiences WHERE timestamp >= ?", (week_ago,))
-            weekly_exp = c.fetchone()[0]
+            row = db.query_one("SELECT COUNT(*) FROM experiences WHERE timestamp >= ?", (week_ago,))
+            weekly_exp = row[0] if row else 0
             result["metrics"]["daily_experiences"] = daily_exp
             result["metrics"]["weekly_experiences"] = weekly_exp
         except:
             pass
 
         try:
-            conn = self._db("learning_rules.db")
-            c = conn.cursor()
+            db = self._db("learning_rules.db")
             week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-            c.execute("SELECT COUNT(*) FROM learning_rules WHERE created_at >= ?", (week_ago,))
-            new_rules = c.fetchone()[0]
+            row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE created_at >= ?", (week_ago,))
+            new_rules = row[0] if row else 0
             result["metrics"]["new_rules_7d"] = new_rules
         except:
             pass
 
         try:
-            conn = self._db("skills.db")
-            c = conn.cursor()
+            db = self._db("skills.db")
             week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-            c.execute("SELECT COUNT(*) FROM skills WHERE created_at >= ?", (week_ago,))
-            new_skills = c.fetchone()[0]
+            row = db.query_one("SELECT COUNT(*) FROM skills WHERE created_at >= ?", (week_ago,))
+            new_skills = row[0] if row else 0
             result["metrics"]["new_skills_7d"] = new_skills
         except:
             pass

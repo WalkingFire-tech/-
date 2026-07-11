@@ -34,8 +34,7 @@ class GenomeEvolver:
         Path(self.db_path).parent.mkdir(exist_ok=True)
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS genomes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 version INTEGER,
@@ -45,10 +44,7 @@ class GenomeEvolver:
                 created_at TEXT,
                 is_active BOOLEAN DEFAULT 0,
                 generation INTEGER DEFAULT 0
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS gene_definitions (
                 id TEXT PRIMARY KEY,
                 domain TEXT,
@@ -59,10 +55,7 @@ class GenomeEvolver:
                 mutatable BOOLEAN,
                 default_value TEXT,
                 unit TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS fitness_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 genome_id INTEGER,
@@ -74,11 +67,11 @@ class GenomeEvolver:
             )
         ''')
         
-        cursor = conn.execute("SELECT COUNT(*) FROM gene_definitions")
-        if cursor.fetchone()[0] == 0:
-            self._insert_default_genes(conn)
+        row = db.query_one("SELECT COUNT(*) FROM gene_definitions")
+        if row[0] == 0:
+            self._insert_default_genes()
     
-    def _insert_default_genes(self, conn):
+    def _insert_default_genes(self):
         """插入默认基因定义——统一使用task_queue.py的GENE_DEFAULTS作为唯一来源"""
         from core.task_queue import GENE_DEFAULTS, GENE_SAFETY_BOUNDS
         
@@ -96,26 +89,23 @@ class GenomeEvolver:
             domain = domain_map.get(key, "通用")
             genes.append((gid, domain, key, "float", bounds[0], bounds[1], 1, str(default_val), ""))
         
-        for g in genes:
-            conn.execute('''
-                INSERT INTO gene_definitions 
-                (id, domain, description, datatype, min_value, max_value, mutatable, default_value, unit)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', g)
+        db = DatabaseManager.get(self.db_path)
+        db.executemany('''
+            INSERT INTO gene_definitions 
+            (id, domain, description, datatype, min_value, max_value, mutatable, default_value, unit)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', genes)
     
     def _load_genes(self) -> Dict:
         """加载基因定义"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cur = conn.execute("SELECT * FROM gene_definitions")
-        return {row['id']: dict(row) for row in cur.fetchall()}
+        rows = db.query("SELECT * FROM gene_definitions")
+        return {row['id']: dict(row) for row in rows}
     
     def _get_active_genome_id(self) -> int:
         """获取活跃基因组ID"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cur = conn.execute("SELECT id FROM genomes WHERE is_active = 1 ORDER BY created_at DESC LIMIT 1")
-        row = cur.fetchone()
+        row = db.query_one("SELECT id FROM genomes WHERE is_active = 1 ORDER BY created_at DESC LIMIT 1")
         if row:
             return row[0]
         
@@ -127,8 +117,7 @@ class GenomeEvolver:
                      fitness_details: Dict = None) -> int:
         """保存基因组"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        cursor = db.execute('''
             INSERT INTO genomes (version, gene_values, fitness, fitness_details, created_at, is_active, generation)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (
@@ -139,17 +128,13 @@ class GenomeEvolver:
             datetime.now().isoformat(), 
             is_active,
             generation
-        ))
-        conn.commit()
+        ), commit=True)
         return cursor.lastrowid
     
     def get_gene_value(self, gene_id: str) -> any:
         """获取当前活跃基因值"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-
-        cur = conn.execute("SELECT gene_values FROM genomes WHERE id = ?", (self.active_genome_id,))
-        row = cur.fetchone()
+        row = db.query_one("SELECT gene_values FROM genomes WHERE id = ?", (self.active_genome_id,))
         
         if not row:
             return self._parse_gene_value(gene_id, self.genes[gene_id]['default_value'])
@@ -208,15 +193,13 @@ class GenomeEvolver:
         
         # 保存适应度
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute("UPDATE genomes SET fitness = ?, fitness_details = ? WHERE id = ?", 
+        db.execute("UPDATE genomes SET fitness = ?, fitness_details = ? WHERE id = ?", 
                     (fitness, json.dumps(stats, ensure_ascii=False), self.active_genome_id))
         
-        conn.execute('''
+        db.execute('''
             INSERT INTO fitness_history (genome_id, fitness, like_rate, hit_rate, efficiency, recorded_at)
             VALUES (?, ?, ?, ?, ?, ?)
-        ''', (self.active_genome_id, fitness, like_rate, hit_rate, efficiency, datetime.now().isoformat()))
-        conn.commit()
+        ''', (self.active_genome_id, fitness, like_rate, hit_rate, efficiency, datetime.now().isoformat()), commit=True)
         
         logger.info(f"适应度评估: {fitness:.3f} (点赞={like_rate:.2f}, 命中={hit_rate:.2f})")
         return fitness
@@ -237,12 +220,11 @@ class GenomeEvolver:
                         updated = True
             if updated:
                 db = DatabaseManager.get(self.db_path)
-                conn = db._get_conn()
-                conn.execute(
+                db.execute(
                     "UPDATE genomes SET gene_values = ? WHERE id = ?",
-                    (json.dumps(current_values, ensure_ascii=False), self.active_genome_id)
+                    (json.dumps(current_values, ensure_ascii=False), self.active_genome_id),
+                    commit=True
                 )
-                conn.commit()
                 logger.info("已从GenePool同步基因值到活跃基因组")
         except Exception as e:
             logger.debug(f"GenePool同步跳过: {e}")
@@ -304,38 +286,30 @@ class GenomeEvolver:
     def _get_genome_values(self, genome_id: int) -> Dict:
         """获取基因组值"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cur = conn.execute("SELECT gene_values FROM genomes WHERE id = ?", (genome_id,))
-        row = cur.fetchone()
+        row = db.query_one("SELECT gene_values FROM genomes WHERE id = ?", (genome_id,))
         return json.loads(row[0]) if row else {}
     
     def _get_generation(self, genome_id: int) -> int:
         """获取代数"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cur = conn.execute("SELECT generation FROM genomes WHERE id = ?", (genome_id,))
-        row = cur.fetchone()
+        row = db.query_one("SELECT generation FROM genomes WHERE id = ?", (genome_id,))
         return row[0] if row else 0
     
     def promote_candidate(self, candidate_id: int) -> bool:
         """升级候选基因组为主版本"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cur = conn.execute("SELECT fitness FROM genomes WHERE id = ?", (candidate_id,))
-        cand_row = cur.fetchone()
+        cand_row = db.query_one("SELECT fitness FROM genomes WHERE id = ?", (candidate_id,))
         if not cand_row or cand_row[0] is None:
             return False
         
         cand_fitness = cand_row[0]
         
-        cur = conn.execute("SELECT fitness FROM genomes WHERE id = ?", (self.active_genome_id,))
-        curr_row = cur.fetchone()
+        curr_row = db.query_one("SELECT fitness FROM genomes WHERE id = ?", (self.active_genome_id,))
         curr_fitness = curr_row[0] if curr_row and curr_row[0] else 0.5
         
         if cand_fitness > curr_fitness * 1.05:
-            conn.execute("UPDATE genomes SET is_active = 0 WHERE id = ?", (self.active_genome_id,))
-            conn.execute("UPDATE genomes SET is_active = 1 WHERE id = ?", (candidate_id,))
-            conn.commit()
+            db.execute("UPDATE genomes SET is_active = 0 WHERE id = ?", (self.active_genome_id,))
+            db.execute("UPDATE genomes SET is_active = 1 WHERE id = ?", (candidate_id,), commit=True)
             
             old_id = self.active_genome_id
             self.active_genome_id = candidate_id
@@ -348,27 +322,21 @@ class GenomeEvolver:
     def get_evolution_stats(self) -> Dict:
         """获取进化统计"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         
-        cur = conn.execute("SELECT COUNT(*) FROM genomes")
-        total_genomes = cur.fetchone()[0]
+        total_genomes = db.query_one("SELECT COUNT(*) FROM genomes")[0]
         
-        cur = conn.execute("SELECT AVG(fitness) FROM genomes WHERE fitness IS NOT NULL")
-        avg_fitness = cur.fetchone()[0] or 0
+        avg_fitness = db.query_one("SELECT AVG(fitness) FROM genomes WHERE fitness IS NOT NULL")[0] or 0
         
-        cur = conn.execute("SELECT MAX(fitness) FROM genomes")
-        max_fitness = cur.fetchone()[0] or 0
+        max_fitness = db.query_one("SELECT MAX(fitness) FROM genomes")[0] or 0
         
-        cur = conn.execute("SELECT generation FROM genomes WHERE id = ?", (self.active_genome_id,))
-        row = cur.fetchone()
+        row = db.query_one("SELECT generation FROM genomes WHERE id = ?", (self.active_genome_id,))
         current_gen = row[0] if row else 0
         
-        cur = conn.execute('''
+        history = [dict(r) for r in db.query('''
             SELECT fitness, recorded_at FROM fitness_history
             WHERE genome_id = ?
             ORDER BY recorded_at DESC LIMIT 10
-        ''', (self.active_genome_id,))
-        history = [dict(row) for row in cur.fetchall()]
+        ''', (self.active_genome_id,))]
         
         return {
             "total_genomes": total_genomes,

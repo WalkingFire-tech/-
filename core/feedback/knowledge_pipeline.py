@@ -29,8 +29,8 @@ class KnowledgePromotionPipeline:
     def _init_database(self):
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         
-        conn = DatabaseManager.get(str(self.db_path))._get_conn()
-        conn.execute("""
+        db = DatabaseManager.get(str(self.db_path))
+        db.executescript("""
             CREATE TABLE IF NOT EXISTS knowledge_candidates (
                 id TEXT PRIMARY KEY,
                 content TEXT,
@@ -41,9 +41,7 @@ class KnowledgePromotionPipeline:
                 related_signals TEXT,
                 created_at TEXT,
                 updated_at TEXT
-            )
-        """)
-        conn.execute("""
+            );
             CREATE TABLE IF NOT EXISTS golden_tests (
                 id TEXT PRIMARY KEY,
                 question TEXT,
@@ -53,14 +51,13 @@ class KnowledgePromotionPipeline:
                 created_at TEXT
             )
         """)
-        conn.commit()
     
     def add_candidate(self, content: str, source: str, signals: List[Dict]) -> str:
         """添加候选知识"""
         candidate_id = hashlib.md5(f"{content}{datetime.now().isoformat()}".encode()).hexdigest()[:12]
         
-        conn = DatabaseManager.get(str(self.db_path))._get_conn()
-        conn.execute("""
+        db = DatabaseManager.get(str(self.db_path))
+        db.execute("""
             INSERT INTO knowledge_candidates
             (id, content, source, status, related_signals, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -68,15 +65,14 @@ class KnowledgePromotionPipeline:
             candidate_id, content, source, KnowledgeStatus.RAW.value,
             json.dumps(signals, ensure_ascii=False),
             datetime.now().isoformat(), datetime.now().isoformat()
-        ))
-        conn.commit()
+        ), commit=True)
         
         return candidate_id
     
     def promote_to_verified(self, candidate_id: str, validation: Dict) -> bool:
         """晋升为已验证"""
-        conn = DatabaseManager.get(str(self.db_path))._get_conn()
-        conn.execute("""
+        db = DatabaseManager.get(str(self.db_path))
+        db.execute("""
             UPDATE knowledge_candidates
             SET status = ?, validation_score = ?, validation_details = ?, updated_at = ?
             WHERE id = ?
@@ -85,8 +81,7 @@ class KnowledgePromotionPipeline:
             validation.get("score", 0.0),
             json.dumps(validation, ensure_ascii=False),
             datetime.now().isoformat(), candidate_id
-        ))
-        conn.commit()
+        ), commit=True)
         return True
     
     def promote_to_golden(self, candidate_id: str, question: str, ideal_answer: str) -> bool:
@@ -107,13 +102,12 @@ class KnowledgePromotionPipeline:
         Returns:
             bool: 是否成功晋升
         """
-        conn = DatabaseManager.get(str(self.db_path))._get_conn()
+        db = DatabaseManager.get(str(self.db_path))
         
-        cursor = conn.execute(
+        candidate = db.query_one(
             "SELECT * FROM knowledge_candidates WHERE id = ?",
             (candidate_id,)
         )
-        candidate = cursor.fetchone()
         
         if not candidate:
             logger.warning(f"候选知识不存在: {candidate_id}")
@@ -140,7 +134,7 @@ class KnowledgePromotionPipeline:
         
         golden_id = hashlib.md5(f"{question}{datetime.now().isoformat()}".encode()).hexdigest()[:12]
         
-        conn.execute("""
+        db.execute("""
             INSERT INTO golden_tests
             (id, question, ideal_answer, source, confidence, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -151,13 +145,11 @@ class KnowledgePromotionPipeline:
             datetime.now().isoformat()
         ))
         
-        conn.execute("""
+        db.execute("""
             UPDATE knowledge_candidates
             SET status = ?, updated_at = ?
             WHERE id = ?
-        """, (KnowledgeStatus.GOLDEN.value, datetime.now().isoformat(), candidate_id))
-        
-        conn.commit()
+        """, (KnowledgeStatus.GOLDEN.value, datetime.now().isoformat(), candidate_id), commit=True)
         
         logger.success(f"✨ 知识晋升为黄金: {golden_id}")
         return True
@@ -181,13 +173,9 @@ class KnowledgePromotionPipeline:
         Returns:
             bool: 是否成功拒绝
         """
-        conn = DatabaseManager.get(str(self.db_path))._get_conn()
-        cursor = conn.execute(
-            "SELECT id FROM knowledge_candidates WHERE id = ?",
-            (candidate_id,)
-        )
+        db = DatabaseManager.get(str(self.db_path))
         
-        if not cursor.fetchone():
+        if not db.query_one("SELECT id FROM knowledge_candidates WHERE id = ?", (candidate_id,)):
             logger.warning(f"候选知识不存在: {candidate_id}")
             return False
         
@@ -197,7 +185,7 @@ class KnowledgePromotionPipeline:
             "rejected_at": datetime.now().isoformat()
         }
         
-        conn.execute("""
+        db.execute("""
             UPDATE knowledge_candidates
             SET status = ?, validation_details = ?, updated_at = ?
             WHERE id = ?
@@ -206,9 +194,7 @@ class KnowledgePromotionPipeline:
             json.dumps(rejection_record, ensure_ascii=False),
             datetime.now().isoformat(),
             candidate_id
-        ))
-        
-        conn.commit()
+        ), commit=True)
         
         logger.info(f"❌ 知识已拒绝: {candidate_id} - 原因: {reason}")
         return True
@@ -231,13 +217,9 @@ class KnowledgePromotionPipeline:
         Returns:
             bool: 是否成功延迟
         """
-        conn = DatabaseManager.get(str(self.db_path))._get_conn()
-        cursor = conn.execute(
-            "SELECT id FROM knowledge_candidates WHERE id = ?",
-            (candidate_id,)
-        )
+        db = DatabaseManager.get(str(self.db_path))
         
-        if not cursor.fetchone():
+        if not db.query_one("SELECT id FROM knowledge_candidates WHERE id = ?", (candidate_id,)):
             logger.warning(f"候选知识不存在: {candidate_id}")
             return False
         
@@ -251,7 +233,7 @@ class KnowledgePromotionPipeline:
             "review_after_days": review_after_days
         }
         
-        conn.execute("""
+        db.execute("""
             UPDATE knowledge_candidates
             SET status = ?, validation_details = ?, updated_at = ?
             WHERE id = ?
@@ -260,9 +242,7 @@ class KnowledgePromotionPipeline:
             json.dumps(postpone_record, ensure_ascii=False),
             datetime.now().isoformat(),
             candidate_id
-        ))
-        
-        conn.commit()
+        ), commit=True)
         
         logger.info(f"⏸️ 知识已延迟: {candidate_id} - {review_after_days}天后审核")
         return True
@@ -287,16 +267,14 @@ class KnowledgePromotionPipeline:
             "skipped": 0
         }
         
-        conn = DatabaseManager.get(str(self.db_path))._get_conn()
+        db = DatabaseManager.get(str(self.db_path))
         
-        cursor = conn.execute("""
+        candidates = db.query("""
             SELECT * FROM knowledge_candidates
             WHERE status = ?
             AND validation_score >= 0.85
             ORDER BY validation_score DESC
         """, (KnowledgeStatus.VERIFIED.value,))
-        
-        candidates = cursor.fetchall()
         
         for candidate in candidates:
             candidate_dict = dict(candidate)
@@ -356,9 +334,8 @@ class KnowledgePromotionPipeline:
         2. 质量基准
         3. 回答参考
         """
-        conn = DatabaseManager.get(str(self.db_path))._get_conn()
-        cursor = conn.execute("SELECT * FROM golden_tests ORDER BY created_at DESC")
-        return [dict(row) for row in cursor.fetchall()]
+        db = DatabaseManager.get(str(self.db_path))
+        return [dict(row) for row in db.query("SELECT * FROM golden_tests ORDER BY created_at DESC")]
     
     def get_pending_reviews(self) -> List[Dict]:
         """
@@ -366,9 +343,9 @@ class KnowledgePromotionPipeline:
         
         返回所有到达审核时间的POSTPONED知识
         """
-        conn = DatabaseManager.get(str(self.db_path))._get_conn()
+        db = DatabaseManager.get(str(self.db_path))
         
-        cursor = conn.execute("""
+        rows = db.query("""
             SELECT * FROM knowledge_candidates
             WHERE status = ?
             ORDER BY updated_at ASC
@@ -377,7 +354,7 @@ class KnowledgePromotionPipeline:
         pending = []
         now = datetime.now()
         
-        for row in cursor.fetchall():
+        for row in rows:
             candidate = dict(row)
             details = json.loads(candidate.get("validation_details", "{}"))
             review_date_str = details.get("review_date")
@@ -395,22 +372,22 @@ class KnowledgePromotionPipeline:
         
         返回各状态的知识数量和平均得分
         """
-        conn = DatabaseManager.get(str(self.db_path))._get_conn()
+        db = DatabaseManager.get(str(self.db_path))
         stats = {}
         
         for status in KnowledgeStatus:
-            cursor = conn.execute(
+            row = db.query_one(
                 "SELECT COUNT(*), AVG(validation_score) FROM knowledge_candidates WHERE status = ?",
                 (status.value,)
             )
-            count, avg_score = cursor.fetchone()
+            count, avg_score = row[0], row[1]
             stats[status.value] = {
                 "count": count,
                 "avg_score": avg_score or 0.0
             }
         
-        cursor = conn.execute("SELECT COUNT(*) FROM golden_tests")
-        stats["golden_count"] = cursor.fetchone()[0]
+        row = db.query_one("SELECT COUNT(*) FROM golden_tests")
+        stats["golden_count"] = row[0]
         
         return stats
 

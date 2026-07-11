@@ -44,8 +44,7 @@ class DomainKnowledgeLearner:
     def _init_database(self):
         """初始化数据库"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS domain_knowledge (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 domain TEXT UNIQUE,
@@ -55,10 +54,8 @@ class DomainKnowledgeLearner:
                 occurrences INTEGER DEFAULT 1,
                 created_at TEXT,
                 updated_at TEXT
-            )
-        ''')
+            );
 
-        conn.execute('''
             CREATE TABLE IF NOT EXISTS type_mappings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_type TEXT,
@@ -66,10 +63,8 @@ class DomainKnowledgeLearner:
                 similarity REAL,
                 confidence REAL,
                 created_at TEXT
-            )
-        ''')
+            );
 
-        conn.execute('''
             CREATE TABLE IF NOT EXISTS learning_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query TEXT,
@@ -77,7 +72,7 @@ class DomainKnowledgeLearner:
                 wrong_domain TEXT,
                 confidence REAL,
                 learned_at TEXT
-            )
+            );
         ''')
 
     def _init_embedding(self):
@@ -122,11 +117,9 @@ class DomainKnowledgeLearner:
             query_vec = self._embedding_model.encode(query)
 
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute(
+            rows = db.query(
                 "SELECT domain, semantic_vector FROM domain_knowledge WHERE semantic_vector IS NOT NULL"
             )
-            rows = cursor.fetchall()
 
             if not rows:
                 return None, 0.0
@@ -151,11 +144,9 @@ class DomainKnowledgeLearner:
         """关键词降级匹配（从知识库查询）"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute(
+            rows = db.query(
                 "SELECT domain, sample_queries FROM domain_knowledge"
             )
-            rows = cursor.fetchall()
 
             query_lower = query.lower()
             best_domain = None
@@ -204,12 +195,10 @@ class DomainKnowledgeLearner:
                 logger.warning(f"向量生成失败: {e}")
 
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute(
+        row = db.query_one(
             "SELECT id, semantic_vector, sample_queries, occurrences FROM domain_knowledge WHERE domain = ?",
             (correct_domain,)
         )
-        row = cursor.fetchone()
 
         if row:
             existing_queries = json.loads(row[2]) if row[2] else []
@@ -218,7 +207,7 @@ class DomainKnowledgeLearner:
             if len(existing_queries) > 20:
                 existing_queries = existing_queries[-20:]
 
-            conn.execute('''
+            db.execute('''
                 UPDATE domain_knowledge
                 SET semantic_vector = ?,
                     sample_queries = ?,
@@ -234,7 +223,7 @@ class DomainKnowledgeLearner:
                 correct_domain
             ))
         else:
-            conn.execute('''
+            db.execute('''
                 INSERT INTO domain_knowledge
                 (domain, semantic_vector, sample_queries, confidence, occurrences, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -248,7 +237,7 @@ class DomainKnowledgeLearner:
                 datetime.now().isoformat()
             ))
 
-        conn.execute('''
+        db.execute('''
             INSERT INTO learning_history
             (query, correct_domain, wrong_domain, confidence, learned_at)
             VALUES (?, ?, ?, ?, ?)
@@ -258,9 +247,7 @@ class DomainKnowledgeLearner:
             wrong_domain,
             confidence,
             datetime.now().isoformat()
-        ))
-
-        conn.commit()
+        ), commit=True)
 
         logger.info(f"📚 学习: '{query[:30]}...' → {correct_domain} (置信度: {confidence:.2f})")
 
@@ -268,16 +255,13 @@ class DomainKnowledgeLearner:
         """获取领域统计"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            domains = db.query('''
                 SELECT domain, occurrences, confidence, updated_at
                 FROM domain_knowledge
                 ORDER BY occurrences DESC
             ''')
-            domains = cursor.fetchall()
 
-            cursor = conn.execute("SELECT COUNT(*) FROM learning_history")
-            total_learned = cursor.fetchone()[0]
+            total_learned = db.query_one("SELECT COUNT(*) FROM learning_history")[0]
 
             return {
                 "total_domains": len(domains),
@@ -295,14 +279,12 @@ class DomainKnowledgeLearner:
         """获取学习历史"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            return [dict(row) for row in db.query('''
                 SELECT query, correct_domain, wrong_domain, confidence, learned_at
                 FROM learning_history
                 ORDER BY learned_at DESC
                 LIMIT ?
-            ''', (limit,))
-            return [dict(row) for row in cursor.fetchall()]
+            ''', (limit,))]
         except Exception as e:
             logger.error(f"获取学习历史失败: {e}")
             return []

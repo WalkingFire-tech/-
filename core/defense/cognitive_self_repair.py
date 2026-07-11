@@ -27,10 +27,8 @@ class CognitiveSelfRepair:
             "timestamp": datetime.now().isoformat(),
         }
         try:
-            conn = DatabaseManager.get("data/learning_rules.db")._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT id, pattern, action, confidence, status FROM learning_rules WHERE status='active'")
-            rules = c.fetchall()
+            db = DatabaseManager.get("data/learning_rules.db")
+            rules = db.query("SELECT id, pattern, action, confidence, status FROM learning_rules WHERE status='active'")
             pattern_map: Dict[str, List] = {}
             for rule in rules:
                 rid, pattern, action, confidence, status = rule
@@ -53,10 +51,9 @@ class CognitiveSelfRepair:
             logger.debug(f"规则诊断失败: {e}")
 
         try:
-            conn = DatabaseManager.get("data/essence_reasoning.db")._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT id, query, consistency_score FROM reasoning_chains WHERE consistency_score < 0.5 ORDER BY timestamp DESC LIMIT 10")
-            for row in c.fetchall():
+            db = DatabaseManager.get("data/essence_reasoning.db")
+            rows = db.query("SELECT id, query, consistency_score FROM reasoning_chains WHERE consistency_score < 0.5 ORDER BY timestamp DESC LIMIT 10")
+            for row in rows:
                 diagnosis["broken_chains"].append({
                     "id": row[0], "query": row[1][:50], "consistency": row[2],
                 })
@@ -68,14 +65,13 @@ class CognitiveSelfRepair:
     def repair_contradictions(self, contradictions: List[dict]) -> int:
         repaired = 0
         try:
-            conn = DatabaseManager.get("data/learning_rules.db")._get_conn()
-            c = conn.cursor()
+            db = DatabaseManager.get("data/learning_rules.db")
             for contra in contradictions:
                 rules = contra["rules"]
                 best = max(rules, key=lambda r: r["confidence"])
                 for rule in rules:
                     if rule["id"] != best["id"]:
-                        c.execute("UPDATE learning_rules SET status='superseded' WHERE id=?", (rule["id"],))
+                        db.execute("UPDATE learning_rules SET status='superseded' WHERE id=?", (rule["id"],), commit=True)
                         repaired += 1
                 self._repairs.append({
                     "type": "contradiction_resolved",
@@ -84,7 +80,6 @@ class CognitiveSelfRepair:
                     "superseded_count": len(rules) - 1,
                     "timestamp": datetime.now().isoformat(),
                 })
-            conn.commit()
         except Exception as e:
             logger.error(f"矛盾修复失败: {e}")
         if repaired:
@@ -94,14 +89,13 @@ class CognitiveSelfRepair:
     def repair_low_confidence(self, rules: List[dict]) -> int:
         demoted = 0
         try:
-            conn = DatabaseManager.get("data/learning_rules.db")._get_conn()
-            c = conn.cursor()
+            db = DatabaseManager.get("data/learning_rules.db")
             for rule in rules:
-                c.execute("UPDATE learning_rules SET status='dormant' WHERE id=? AND confidence < ?",
-                          (rule["id"], self.MIN_RULE_CONFIDENCE))
-                if c.rowcount > 0:
+                cur = db.execute("UPDATE learning_rules SET status='dormant' WHERE id=? AND confidence < ?",
+                          (rule["id"], self.MIN_RULE_CONFIDENCE), commit=True)
+                if cur.rowcount > 0:
                     demoted += 1
-            conn.commit()
+
         except Exception as e:
             logger.error(f"低置信度修复失败: {e}")
         if demoted:

@@ -52,8 +52,8 @@ class DynamicProbabilityField:
     def _init_db(self):
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS probability_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query TEXT,
@@ -169,29 +169,29 @@ class DynamicProbabilityField:
     def save_snapshot(self, query: str = ""):
         dist = self.get_distribution()
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get(self.db_path)
+            db.execute('''
                 INSERT INTO probability_snapshots
                 (query, distribution, entropy, top_candidate, top_probability, evidence_count, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (query[:200], json.dumps(dist["candidates"], ensure_ascii=False),
                   dist["entropy"], dist.get("top", {}).get("source", ""),
                   dist.get("top", {}).get("probability", 0),
-                  dist["evidence_count"], datetime.now().isoformat()))
+                  dist["evidence_count"], datetime.now().isoformat()), commit=True)
         except Exception as e:
             logger.debug(f"概率场快照保存失败: {e}")
 
     def get_recent_snapshots(self, limit: int = 20) -> List[Dict]:
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cur = conn.execute(
+            db = DatabaseManager.get(self.db_path)
+            rows = db.query(
                 "SELECT query, distribution, entropy, top_candidate, top_probability, evidence_count, timestamp FROM probability_snapshots ORDER BY id DESC LIMIT ?",
                 (limit,))
             return [
                 {"query": r[0], "distribution": json.loads(r[1]), "entropy": r[2],
                  "top_candidate": r[3], "top_probability": r[4],
                  "evidence_count": r[5], "timestamp": r[6]}
-                for r in cur.fetchall()
+                for r in rows
             ]
         except Exception:
             return []

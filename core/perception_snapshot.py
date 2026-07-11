@@ -123,17 +123,14 @@ def _collect_resource() -> Dict[str, Any]:
 def _collect_knowledge() -> Dict[str, Any]:
     result = {}
     try:
-        conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
-        cur = conn.execute("SELECT COUNT(*) FROM experiences")
-        result["experience_count"] = cur.fetchone()[0]
-        cur = conn.execute("SELECT COUNT(*) FROM experiences WHERE timestamp > datetime('now', '-7 days')")
-        result["recent_experiences"] = cur.fetchone()[0]
+        db = DatabaseManager.get("data/experience_pool.db")
+        result["experience_count"] = db.query_one("SELECT COUNT(*) FROM experiences")[0]
+        result["recent_experiences"] = db.query_one("SELECT COUNT(*) FROM experiences WHERE timestamp > datetime('now', '-7 days')")[0]
     except Exception:
         pass
     try:
-        conn = DatabaseManager.get("data/truths.db")._get_conn()
-        cur = conn.execute("SELECT COUNT(*) FROM truths")
-        result["truth_count"] = cur.fetchone()[0]
+        db = DatabaseManager.get("data/truths.db")
+        result["truth_count"] = db.query_one("SELECT COUNT(*) FROM truths")[0]
     except Exception:
         pass
     try:
@@ -145,9 +142,8 @@ def _collect_knowledge() -> Dict[str, Any]:
     except Exception:
         pass
     try:
-        conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
-        cur = conn.execute("SELECT COUNT(*) FROM knowledge_items")
-        result["knowledge_items"] = cur.fetchone()[0]
+        db = DatabaseManager.get("data/knowledge_store.db")
+        result["knowledge_items"] = db.query_one("SELECT COUNT(*) FROM knowledge_items")[0]
     except Exception:
         pass
     return result
@@ -201,11 +197,9 @@ def _collect_health() -> Dict[str, Any]:
 def _collect_identity() -> Dict[str, Any]:
     result = {}
     try:
-        conn = DatabaseManager.get("data/alignment_violations.db")._get_conn()
-        cur = conn.execute("SELECT COUNT(*) FROM deviations WHERE status='open'")
-        result["open_deviations"] = cur.fetchone()[0]
-        cur = conn.execute("SELECT COUNT(*) FROM deviations WHERE status='corrected'")
-        result["corrected_deviations"] = cur.fetchone()[0]
+        db = DatabaseManager.get("data/alignment_violations.db")
+        result["open_deviations"] = db.query_one("SELECT COUNT(*) FROM deviations WHERE status='open'")[0]
+        result["corrected_deviations"] = db.query_one("SELECT COUNT(*) FROM deviations WHERE status='corrected'")[0]
     except Exception:
         pass
     try:

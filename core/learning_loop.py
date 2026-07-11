@@ -75,12 +75,11 @@ class LearningLoop:
         
         # 4. 检查知识库是否有相关知识
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.execute(
+            db = DatabaseManager.get(self.db_path)
+            knowledge_count = db.query_one(
                 'SELECT COUNT(*) FROM knowledge_items WHERE question LIKE ? OR answer LIKE ?',
                 (f'%{question[:30]}%', f'%{question[:30]}%')
-            )
-            knowledge_count = cursor.fetchone()[0]
+            )[0]
             
             if knowledge_count == 0:
                 result.update({
@@ -224,27 +223,25 @@ class LearningLoop:
         saved_count = 0
         
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
+            db = DatabaseManager.get(self.db_path)
             for sr in search_results:
                 answer = f"{sr.get('title', '')}\n\n{sr.get('body', '')}"
                 source = sr.get('href', 'search_learned')
                 
-                conn.execute('''
+                db.execute('''
                     INSERT INTO knowledge_items 
                     (question, answer, source, knowledge_type, quality_score, created_at)
                     VALUES (?, ?, ?, 'search_learned', 50.0, ?)
-                ''', (question, answer, source, datetime.now().isoformat()))
+                ''', (question, answer, source, datetime.now().isoformat()), commit=True)
                 saved_count += 1
             
             if analysis:
-                conn.execute('''
+                db.execute('''
                     INSERT INTO knowledge_items 
                     (question, answer, source, knowledge_type, quality_score, created_at)
                     VALUES (?, ?, 'analysis', 'learning_analysis', 60.0, ?)
-                ''', (f"{question} - 学习分析", analysis, datetime.now().isoformat()))
+                ''', (f"{question} - 学习分析", analysis, datetime.now().isoformat()), commit=True)
                 saved_count += 1
-            
-            conn.commit()
                 
         except Exception as e:
             logger.error(f"存储知识失败: {e}")
@@ -268,14 +265,14 @@ class LearningLoop:
             if not keywords:
                 return
             
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.execute(
+            db = DatabaseManager.get(self.db_path)
+            existing = db.query_one(
                 'SELECT 1 FROM learning_rules WHERE trigger_pattern LIKE ?',
                 (f'%{keywords[0]}%',)
             )
             
-            if not cursor.fetchone():
-                conn.execute('''
+            if not existing:
+                db.execute('''
                     INSERT INTO learning_rules 
                     (trigger_pattern, action, confidence, source, created_at)
                     VALUES (?, ?, ?, 'auto_learned', ?)
@@ -284,8 +281,7 @@ class LearningLoop:
                     f"优先搜索学习关于'{keywords[0]}'的知识",
                     0.7,
                     datetime.now().isoformat()
-                ))
-                conn.commit()
+                ), commit=True)
                 logger.info(f"生成学习规则: {keywords[0]}")
                     
         except Exception as e:

@@ -40,8 +40,7 @@ class LocalAcademicLibrary:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS documents (
                 id TEXT PRIMARY KEY,
                 title TEXT,
@@ -55,21 +54,17 @@ class LocalAcademicLibrary:
                 content TEXT,
                 embedding TEXT,
                 indexed_at TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
+            
             CREATE TABLE IF NOT EXISTS library_stats (
                 key TEXT PRIMARY KEY,
                 value TEXT
-            )
+            );
+            
+            CREATE INDEX IF NOT EXISTS idx_title ON documents(title);
+            CREATE INDEX IF NOT EXISTS idx_tags ON documents(tags);
+            CREATE INDEX IF NOT EXISTS idx_source ON documents(source);
         ''')
-        
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_title ON documents(title)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_tags ON documents(tags)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_source ON documents(source)')
-        
-        conn.commit()
     
     def _init_embedding(self):
         """初始化嵌入模型（用于语义搜索）"""
@@ -126,8 +121,7 @@ class LocalAcademicLibrary:
                     pass
             
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            conn.execute('''
+            db.execute('''
                 INSERT OR REPLACE INTO documents
                 (id, title, authors, abstract, filename, file_path, tags, source, language, content, embedding, indexed_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -144,8 +138,7 @@ class LocalAcademicLibrary:
                 content[:10000],
                 embedding,
                 datetime.now().isoformat()
-            ))
-            conn.commit()
+            ), commit=True)
             
             logger.info(f"📄 已索引PDF: {file_path.name}")
             
@@ -197,8 +190,7 @@ class LocalAcademicLibrary:
                 query_vec = self._embedding_model.encode(query)
                 
                 db = DatabaseManager.get(self.db_path)
-                conn = db._get_conn()
-                cursor = conn.execute('''
+                rows = db.query('''
                     SELECT id, title, authors, abstract, file_path, tags, source
                     FROM documents
                     WHERE embedding IS NOT NULL
@@ -207,7 +199,7 @@ class LocalAcademicLibrary:
                 import numpy as np
                 
                 similarities = []
-                for row in cursor.fetchall():
+                for row in rows:
                     embedding = row['embedding']
                     if embedding:
                         doc_vec = np.array(json.loads(embedding))
@@ -236,15 +228,14 @@ class LocalAcademicLibrary:
         
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            rows = db.query('''
                 SELECT id, title, authors, abstract, file_path, tags, source
                 FROM documents
                 WHERE title LIKE ? OR abstract LIKE ? OR content LIKE ?
                 LIMIT ?
             ''', (f'%{query}%', f'%{query}%', f'%{query}%', limit))
             
-            for row in cursor.fetchall():
+            for row in rows:
                 results.append({
                     "id": row['id'],
                     "title": row['title'],
@@ -265,12 +256,10 @@ class LocalAcademicLibrary:
         """获取单个文档"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute(
+            row = db.query_one(
                 'SELECT * FROM documents WHERE id = ?',
                 (doc_id,)
             )
-            row = cursor.fetchone()
             
             if row:
                 return {
@@ -293,19 +282,18 @@ class LocalAcademicLibrary:
         """获取统计信息"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute("SELECT COUNT(*) FROM documents")
-            total = cursor.fetchone()[0]
+            total_row = db.query_one("SELECT COUNT(*) FROM documents")
+            total = total_row[0] if total_row else 0
             
-            cursor = conn.execute(
+            source_rows = db.query(
                 "SELECT source, COUNT(*) FROM documents GROUP BY source"
             )
-            by_source = {row[0]: row[1] for row in cursor.fetchall()}
+            by_source = {row[0]: row[1] for row in source_rows}
             
-            cursor = conn.execute(
+            language_rows = db.query(
                 "SELECT language, COUNT(*) FROM documents GROUP BY language"
             )
-            by_language = {row[0]: row[1] for row in cursor.fetchall()}
+            by_language = {row[0]: row[1] for row in language_rows}
             
             return {
                 "total_documents": total,
@@ -320,9 +308,7 @@ class LocalAcademicLibrary:
         """清空库"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            conn.execute("DELETE FROM documents")
-            conn.commit()
+            db.execute("DELETE FROM documents", commit=True)
             logger.info("本地学术库已清空")
         except Exception as e:
             logger.error(f"清空失败: {e}")

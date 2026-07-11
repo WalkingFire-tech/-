@@ -24,8 +24,7 @@ class AutoCuriosity:
         """扫描低质量但频繁访问的知识"""
         
         items = []
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute('''
+        rows = DatabaseManager.get(self.db_path).query('''
             SELECT question, answer, quality_score, access_count, source
             FROM knowledge_items
             WHERE quality_score < ?
@@ -35,7 +34,7 @@ class AutoCuriosity:
             LIMIT 10
         ''', (threshold, min_access))
         
-        items = [dict(row) for row in cursor.fetchall()]
+        items = [dict(row) for row in rows]
         
         if items:
             logger.info(f"发现 {len(items)} 条低质量但频繁访问的知识")
@@ -46,8 +45,7 @@ class AutoCuriosity:
         """扫描常见但未解答的问题模式"""
         
         patterns = []
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute('''
+        rows = DatabaseManager.get(self.db_path).query('''
             SELECT question, COUNT(*) as cnt
             FROM knowledge_items
             WHERE answer IS NULL OR answer = '' OR answer LIKE '%不确定%'
@@ -57,7 +55,7 @@ class AutoCuriosity:
             LIMIT 5
         ''')
         
-        patterns = [row[0] for row in cursor.fetchall()]
+        patterns = [row[0] for row in rows]
         
         if patterns:
             logger.info(f"发现 {len(patterns)} 个常见未解答问题")

@@ -117,28 +117,30 @@ class KnowledgeGraph:
 
     def _init_db(self):
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''CREATE TABLE IF NOT EXISTS nodes (
-            id TEXT PRIMARY KEY,
-            node_type TEXT NOT NULL,
-            content TEXT NOT NULL,
-            importance REAL DEFAULT 0.5,
-            access_count INTEGER DEFAULT 0,
-            metadata TEXT DEFAULT '{}',
-            created_at TEXT,
-            updated_at TEXT
-        )''')
-        conn.execute('''CREATE TABLE IF NOT EXISTS connections (
-            source_id TEXT NOT NULL,
-            target_id TEXT NOT NULL,
-            connection_type TEXT NOT NULL,
-            strength REAL DEFAULT 0.5,
-            evidence TEXT DEFAULT '',
-            PRIMARY KEY (source_id, target_id, connection_type)
-        )''')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_conn_source ON connections(source_id)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_conn_target ON connections(target_id)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(node_type)')
+        db = DatabaseManager.get(self.db_path)
+        db.executescript('''
+            CREATE TABLE IF NOT EXISTS nodes (
+                id TEXT PRIMARY KEY,
+                node_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                importance REAL DEFAULT 0.5,
+                access_count INTEGER DEFAULT 0,
+                metadata TEXT DEFAULT '{}',
+                created_at TEXT,
+                updated_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS connections (
+                source_id TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                connection_type TEXT NOT NULL,
+                strength REAL DEFAULT 0.5,
+                evidence TEXT DEFAULT '',
+                PRIMARY KEY (source_id, target_id, connection_type)
+            );
+            CREATE INDEX IF NOT EXISTS idx_conn_source ON connections(source_id);
+            CREATE INDEX IF NOT EXISTS idx_conn_target ON connections(target_id);
+            CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(node_type)
+        ''')
 
     def add_node(self, content: str, node_type: NodeType = NodeType.CONCEPT,
                  importance: float = 0.5, metadata: Dict = None,
@@ -160,13 +162,14 @@ class KnowledgeGraph:
             updated_at=now,
         )
         with self._lock:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            conn.execute(
+            db = DatabaseManager.get(self.db_path)
+            db.execute(
                 'INSERT OR REPLACE INTO nodes (id, node_type, content, importance, access_count, metadata, created_at, updated_at) '
                 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                 (node.id, node.node_type.value, node.content, node.importance,
                  node.access_count, json.dumps(node.metadata, ensure_ascii=False),
-                 node.created_at, node.updated_at)
+                 node.created_at, node.updated_at),
+                commit=True
             )
         if auto_connect:
             try:
@@ -176,9 +179,8 @@ class KnowledgeGraph:
         return node
 
     def get_node(self, node_id: str) -> Optional[KnowledgeNode]:
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cur = conn.execute('SELECT * FROM nodes WHERE id = ?', (node_id,))
-        row = cur.fetchone()
+        db = DatabaseManager.get(self.db_path)
+        row = db.query_one('SELECT * FROM nodes WHERE id = ?', (node_id,))
         if not row:
             return None
         return KnowledgeNode(
@@ -196,12 +198,13 @@ class KnowledgeGraph:
                        connection_type: ConnectionType = ConnectionType.RELATED_TO,
                        strength: float = 0.5, evidence: str = "") -> bool:
         with self._lock:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
+            db = DatabaseManager.get(self.db_path)
             try:
-                conn.execute(
+                db.execute(
                     'INSERT OR REPLACE INTO connections (source_id, target_id, connection_type, strength, evidence) '
                     'VALUES (?, ?, ?, ?, ?)',
-                    (source_id, target_id, connection_type.value, strength, evidence)
+                    (source_id, target_id, connection_type.value, strength, evidence),
+                    commit=True
                 )
                 return True
             except Exception:
@@ -263,9 +266,8 @@ class KnowledgeGraph:
         clusters = []
 
         all_node_ids = set()
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cur = conn.execute('SELECT id FROM nodes')
-        for row in cur:
+        db = DatabaseManager.get(self.db_path)
+        for row in db.query('SELECT id FROM nodes'):
             all_node_ids.add(row[0])
 
         for node_id in all_node_ids:
@@ -329,24 +331,24 @@ class KnowledgeGraph:
 
         if to_remove:
             with self._lock:
-                conn = DatabaseManager.get(self.db_path)._get_conn()
+                db = DatabaseManager.get(self.db_path)
                 placeholders = ",".join("?" * len(to_remove))
-                conn.execute(f'DELETE FROM nodes WHERE id IN ({placeholders})', to_remove)
-                conn.execute(f'DELETE FROM connections WHERE source_id IN ({placeholders})', to_remove)
-                conn.execute(f'DELETE FROM connections WHERE target_id IN ({placeholders})', to_remove)
+                db.execute(f'DELETE FROM nodes WHERE id IN ({placeholders})', to_remove, commit=True)
+                db.execute(f'DELETE FROM connections WHERE source_id IN ({placeholders})', to_remove, commit=True)
+                db.execute(f'DELETE FROM connections WHERE target_id IN ({placeholders})', to_remove, commit=True)
             logger.info(f"知识图谱修剪: 移除{len(to_remove)}个低价值节点")
 
     def get_stats(self) -> Dict:
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        node_count = conn.execute('SELECT COUNT(*) FROM nodes').fetchone()[0]
-        conn_count = conn.execute('SELECT COUNT(*) FROM connections').fetchone()[0]
+        db = DatabaseManager.get(self.db_path)
+        node_count = db.query_one('SELECT COUNT(*) FROM nodes')[0]
+        conn_count = db.query_one('SELECT COUNT(*) FROM connections')[0]
         type_dist = {}
-        for row in conn.execute('SELECT node_type, COUNT(*) FROM nodes GROUP BY node_type'):
+        for row in db.query('SELECT node_type, COUNT(*) FROM nodes GROUP BY node_type'):
             type_dist[row[0]] = row[1]
         conn_type_dist = {}
-        for row in conn.execute('SELECT connection_type, COUNT(*) FROM connections GROUP BY connection_type'):
+        for row in db.query('SELECT connection_type, COUNT(*) FROM connections GROUP BY connection_type'):
             conn_type_dist[row[0]] = row[1]
-        avg_importance = conn.execute('SELECT AVG(importance) FROM nodes').fetchone()[0] or 0
+        avg_importance = db.query_one('SELECT AVG(importance) FROM nodes')[0] or 0
 
         return {
             "node_count": node_count,
@@ -358,8 +360,8 @@ class KnowledgeGraph:
 
     def _get_all_nodes(self) -> List[KnowledgeNode]:
         nodes = []
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        for row in conn.execute('SELECT * FROM nodes'):
+        db = DatabaseManager.get(self.db_path)
+        for row in db.query('SELECT * FROM nodes'):
             nodes.append(KnowledgeNode(
                 id=row['id'],
                 node_type=NodeType(row['node_type']),
@@ -374,8 +376,8 @@ class KnowledgeGraph:
 
     def _build_adjacency(self) -> Dict[str, List[str]]:
         adj: Dict[str, List[str]] = {}
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        for row in conn.execute('SELECT source_id, target_id FROM connections'):
+        db = DatabaseManager.get(self.db_path)
+        for row in db.query('SELECT source_id, target_id FROM connections'):
             adj.setdefault(row[0], []).append(row[1])
             adj.setdefault(row[1], []).append(row[0])
         return adj

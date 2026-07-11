@@ -195,10 +195,7 @@ class NeverGiveUpEngine:
         """尝试知识检索"""
         try:
             from infrastructure.database_manager import DatabaseManager
-            conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
-            cursor = conn.cursor()
-            cursor.execute("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{question[:30]}%",))
-            row = cursor.fetchone()
+            row = DatabaseManager.get("data/knowledge_store.db").query_one("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{question[:30]}%",))
             if row:
                 return {"success": True, "answer": row[0], "confidence": 0.8}
         except Exception:
@@ -267,10 +264,7 @@ class NeverGiveUpEngine:
         """尝试经验回顾"""
         try:
             from infrastructure.database_manager import DatabaseManager
-            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
-            cursor = conn.cursor()
-            cursor.execute("SELECT response FROM experiences WHERE query LIKE ? ORDER BY timestamp DESC LIMIT 1", (f"%{question[:20]}%",))
-            row = cursor.fetchone()
+            row = DatabaseManager.get("data/experience_pool.db").query_one("SELECT response FROM experiences WHERE query LIKE ? ORDER BY timestamp DESC LIMIT 1", (f"%{question[:20]}%",))
             if row:
                 return {"success": True, "answer": row[0], "confidence": 0.6}
         except Exception:

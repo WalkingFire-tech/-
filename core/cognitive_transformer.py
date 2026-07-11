@@ -66,15 +66,15 @@ class CognitiveTransformer:
         skills_created = 0
         MAX_AUTO_TOOLS = 30
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        existing_count = conn.execute("SELECT COUNT(*) FROM tools WHERE enabled=1").fetchone()[0]
+        db = DatabaseManager.get(self.db_path)
+        existing_count = db.query_one("SELECT COUNT(*) FROM tools WHERE enabled=1")[0]
         if existing_count >= MAX_AUTO_TOOLS:
             logger.debug(f"自动工具已达上限({MAX_AUTO_TOOLS})，跳过技能转化")
             return 0
         
         remaining_slots = MAX_AUTO_TOOLS - existing_count
         
-        cur = conn.execute('''
+        candidates = db.query('''
             SELECT question, answer, COUNT(*) as freq
             FROM knowledge_items
             WHERE memory_layer = 3
@@ -86,8 +86,6 @@ class CognitiveTransformer:
             LIMIT 10
         ''')
         
-        candidates = cur.fetchall()
-        
         for row in candidates:
             if skills_created >= remaining_slots:
                 break
@@ -96,13 +94,12 @@ class CognitiveTransformer:
             freq = row['freq']
             
             tool_name = self._generate_tool_name(question)
-            cur2 = conn.execute("SELECT 1 FROM tools WHERE name = ?", (tool_name,))
-            if cur2.fetchone():
+            if db.query_one("SELECT 1 FROM tools WHERE name = ?", (tool_name,)):
                 continue
             
             tool_code = self._generate_tool_code(tool_name, question, answer)
             
-            conn.execute('''
+            db.execute('''
                 INSERT INTO tools (name, code, description, triggers, usage_count, created_at)
                 VALUES (?, ?, ?, ?, 0, ?)
             ''', (
@@ -111,18 +108,16 @@ class CognitiveTransformer:
                 f"从{freq}次成功经验中提取的技能: {question[:50]}",
                 json.dumps([question[:30]]),
                 datetime.now().isoformat()
-            ))
+            ), commit=True)
             
-            conn.execute('''
+            db.execute('''
                 UPDATE knowledge_items
                 SET metadata = json_set(metadata, '$.transformed_to', ?)
                 WHERE question = ? AND memory_layer = 3
-            ''', (tool_name, question))
+            ''', (tool_name, question), commit=True)
             
             skills_created += 1
             logger.info(f"情景→技能: {question[:40]} -> {tool_name}")
-        
-        conn.commit()
         
         return skills_created
     
@@ -135,17 +130,15 @@ class CognitiveTransformer:
         """
         reflexes_created = 0
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         
-        cur = conn.execute('''
+        candidates = db.query('''
             SELECT name, description, triggers, usage_count
             FROM tools
             WHERE usage_count >= 3
             ORDER BY usage_count DESC
             LIMIT 10
         ''')
-        
-        candidates = cur.fetchall()
         
         for row in candidates:
             tool_name = row['name']
@@ -155,15 +148,13 @@ class CognitiveTransformer:
                 continue
             
             for trigger in triggers:
-                cur2 = conn.execute('''
+                if db.query_one('''
                     SELECT 1 FROM learning_rules
                     WHERE trigger_pattern LIKE ?
-                ''', (f'%{trigger}%',))
-                
-                if cur2.fetchone():
+                ''', (f'%{trigger}%',)):
                     continue
                 
-                conn.execute('''
+                db.execute('''
                     INSERT INTO learning_rules
                     (trigger_pattern, action, confidence, source, status, created_at)
                     VALUES (?, ?, ?, ?, 'active', ?)
@@ -172,12 +163,10 @@ class CognitiveTransformer:
                     f"自动调用工具 {tool_name}",
                     0.85,
                     'reflex_from_skill'
-                ))
+                ), commit=True)
                 
                 reflexes_created += 1
                 logger.info(f"技能→反射: {tool_name} -> 触发'{trigger}'")
-        
-        conn.commit()
         
         return reflexes_created
     
@@ -190,9 +179,9 @@ class CognitiveTransformer:
         """
         abstractions_created = 0
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         
-        cur = conn.execute('''
+        situations = db.query('''
             SELECT question, answer, source, metadata
             FROM knowledge_items
             WHERE memory_layer = 3
@@ -200,8 +189,6 @@ class CognitiveTransformer:
             ORDER BY salience DESC
             LIMIT 20
         ''')
-        
-        situations = cur.fetchall()
         
         if len(situations) < 5:
             return 0
@@ -225,18 +212,16 @@ class CognitiveTransformer:
             
             abstract_question = f"关于{keyword}的通用原则"
             
-            cur2 = conn.execute('''
+            if db.query_one('''
                 SELECT 1 FROM knowledge_items
                 WHERE question = ? AND memory_layer = 1
-            ''', (abstract_question,))
-            
-            if cur2.fetchone():
+            ''', (abstract_question,)):
                 continue
             
             related_answers = [r['answer'][:100] for r in related[:3]]
             abstract_answer = f"根据{len(related)}次经验总结：\n" + "\n".join([f"- {a}" for a in related_answers])
             
-            conn.execute('''
+            db.execute('''
                 INSERT INTO knowledge_items
                 (question_hash, question, answer, source, knowledge_type, 
                  quality_score, memory_layer, salience, metadata, created_at)
@@ -248,12 +233,10 @@ class CognitiveTransformer:
                 "abstraction_from_situations",
                 json.dumps({"source_count": len(related), "keyword": keyword}),
                 datetime.now().isoformat()
-            ))
+            ), commit=True)
             
             abstractions_created += 1
             logger.info(f"情景→抽象: {keyword} (来自{len(related)}条情景)")
-        
-        conn.commit()
         
         return abstractions_created
     
@@ -280,19 +263,12 @@ class CognitiveTransformer:
     
     def get_transformation_stats(self) -> Dict:
         """获取转化统计"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         
-        cur = conn.execute("SELECT COUNT(*) FROM knowledge_items WHERE memory_layer = 3")
-        l3_count = cur.fetchone()[0]
-        
-        cur = conn.execute("SELECT COUNT(*) FROM tools")
-        tools_count = cur.fetchone()[0]
-        
-        cur = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE source = 'reflex_from_skill'")
-        reflexes_count = cur.fetchone()[0]
-        
-        cur = conn.execute("SELECT COUNT(*) FROM knowledge_items WHERE knowledge_type = 'abstract'")
-        abstractions_count = cur.fetchone()[0]
+        l3_count = db.query_one("SELECT COUNT(*) FROM knowledge_items WHERE memory_layer = 3")[0]
+        tools_count = db.query_one("SELECT COUNT(*) FROM tools")[0]
+        reflexes_count = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE source = 'reflex_from_skill'")[0]
+        abstractions_count = db.query_one("SELECT COUNT(*) FROM knowledge_items WHERE knowledge_type = 'abstract'")[0]
         
         return {
             "l3_situations": l3_count,

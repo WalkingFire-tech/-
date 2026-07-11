@@ -64,8 +64,8 @@ class StrategyEvolutionEngine:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS intent_patterns (
                 pattern_id TEXT PRIMARY KEY,
                 intent_type TEXT,
@@ -76,18 +76,9 @@ class StrategyEvolutionEngine:
                 created_at TEXT,
                 updated_at TEXT,
                 status TEXT
-            )
-        ''')
-        
-        conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_intent_type ON intent_patterns(intent_type)
-        ''')
-        
-        conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_pattern_status ON intent_patterns(status)
-        ''')
-        
-        conn.execute('''
+            );
+            CREATE INDEX IF NOT EXISTS idx_intent_type ON intent_patterns(intent_type);
+            CREATE INDEX IF NOT EXISTS idx_pattern_status ON intent_patterns(status);
             CREATE TABLE IF NOT EXISTS router_strategies (
                 strategy_id TEXT PRIMARY KEY,
                 strategy_type TEXT,
@@ -98,20 +89,14 @@ class StrategyEvolutionEngine:
                 created_at TEXT,
                 updated_at TEXT,
                 status TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS strategy_performance (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 strategy_id TEXT,
                 performance_score REAL,
                 context TEXT,
                 timestamp TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS intent_transitions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 from_intent TEXT,
@@ -119,10 +104,7 @@ class StrategyEvolutionEngine:
                 transition_count INTEGER,
                 success_count INTEGER,
                 last_seen TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS strategy_recommendations (
                 recommendation_id TEXT PRIMARY KEY,
                 strategy_type TEXT,
@@ -134,8 +116,6 @@ class StrategyEvolutionEngine:
                 created_at TEXT
             )
         ''')
-        
-        conn.commit()
     
     def record_intent_result(self, intent_type: str, pattern_text: str, 
                             success: bool, confidence: float = 0.7,
@@ -157,13 +137,12 @@ class StrategyEvolutionEngine:
             f"{intent_type}{pattern_text}".encode()
         ).hexdigest()[:12]
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        row = db.query_one('''
             SELECT success_rate, sample_count, confidence
             FROM intent_patterns
             WHERE pattern_id = ?
         ''', (pattern_id,))
-        row = cursor.fetchone()
         
         if row:
             old_rate = row[0]
@@ -172,13 +151,13 @@ class StrategyEvolutionEngine:
             new_rate = (old_rate * (sample_count - 1) + (1 if success else 0)) / sample_count
             new_confidence = min(1.0, old_confidence + 0.01 if success else max(0.0, old_confidence - 0.01))
             
-            conn.execute('''
+            db.execute('''
                 UPDATE intent_patterns
                 SET success_rate = ?, sample_count = ?, confidence = ?, updated_at = ?
                 WHERE pattern_id = ?
-            ''', (new_rate, sample_count, new_confidence, datetime.now().isoformat(), pattern_id))
+            ''', (new_rate, sample_count, new_confidence, datetime.now().isoformat(), pattern_id), commit=True)
         else:
-            conn.execute('''
+            db.execute('''
                 INSERT INTO intent_patterns
                 (pattern_id, intent_type, pattern_text, success_rate,
                  sample_count, confidence, created_at, updated_at, status)
@@ -193,39 +172,34 @@ class StrategyEvolutionEngine:
                 datetime.now().isoformat(),
                 datetime.now().isoformat(),
                 'active'
-            ))
-        
-        conn.commit()
+            ), commit=True)
         
         logger.debug(f"意图模式记录: {intent_type} -> {pattern_id} (成功={success})")
         return pattern_id
     
     def record_intent_transition(self, from_intent: str, to_intent: str, success: bool):
         """记录意图转换"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        row = db.query_one('''
             SELECT transition_count, success_count
             FROM intent_transitions
             WHERE from_intent = ? AND to_intent = ?
         ''', (from_intent, to_intent))
-        row = cursor.fetchone()
         
         if row:
             new_count = row[0] + 1
             new_success = row[1] + (1 if success else 0)
-            conn.execute('''
+            db.execute('''
                 UPDATE intent_transitions
                 SET transition_count = ?, success_count = ?, last_seen = ?
                 WHERE from_intent = ? AND to_intent = ?
-            ''', (new_count, new_success, datetime.now().isoformat(), from_intent, to_intent))
+            ''', (new_count, new_success, datetime.now().isoformat(), from_intent, to_intent), commit=True)
         else:
-            conn.execute('''
+            db.execute('''
                 INSERT INTO intent_transitions
                 (from_intent, to_intent, transition_count, success_count, last_seen)
                 VALUES (?, ?, ?, ?, ?)
-            ''', (from_intent, to_intent, 1, 1 if success else 0, datetime.now().isoformat()))
-        
-        conn.commit()
+            ''', (from_intent, to_intent, 1, 1 if success else 0, datetime.now().isoformat()), commit=True)
     
     def record_router_result(self, strategy_type: str, configuration: Dict,
                             success: bool, confidence: float = 0.7,
@@ -247,13 +221,12 @@ class StrategyEvolutionEngine:
             f"{strategy_type}{json.dumps(configuration)}".encode()
         ).hexdigest()[:12]
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        row = db.query_one('''
             SELECT success_count, failure_count, avg_confidence
             FROM router_strategies
             WHERE strategy_id = ?
         ''', (strategy_id,))
-        row = cursor.fetchone()
         
         if row:
             success_count = row[0] + (1 if success else 0)
@@ -261,13 +234,13 @@ class StrategyEvolutionEngine:
             total = success_count + failure_count
             avg_confidence = (row[2] * (total - 1) + confidence) / total
             
-            conn.execute('''
+            db.execute('''
                 UPDATE router_strategies
                 SET success_count = ?, failure_count = ?, avg_confidence = ?, updated_at = ?
                 WHERE strategy_id = ?
-            ''', (success_count, failure_count, avg_confidence, datetime.now().isoformat(), strategy_id))
+            ''', (success_count, failure_count, avg_confidence, datetime.now().isoformat(), strategy_id), commit=True)
         else:
-            conn.execute('''
+            db.execute('''
                 INSERT INTO router_strategies
                 (strategy_id, strategy_type, configuration, success_count,
                  failure_count, avg_confidence, created_at, updated_at, status)
@@ -282,16 +255,14 @@ class StrategyEvolutionEngine:
                 datetime.now().isoformat(),
                 datetime.now().isoformat(),
                 'active'
-            ))
+            ), commit=True)
         
         if performance_score is not None:
-            conn.execute('''
+            db.execute('''
                 INSERT INTO strategy_performance
                 (strategy_id, performance_score, context, timestamp)
                 VALUES (?, ?, ?, ?)
-            ''', (strategy_id, performance_score, json.dumps(configuration), datetime.now().isoformat()))
-        
-        conn.commit()
+            ''', (strategy_id, performance_score, json.dumps(configuration), datetime.now().isoformat()), commit=True)
         
         logger.debug(f"路由策略记录: {strategy_type} -> {strategy_id} (成功={success})")
         return strategy_id
@@ -302,8 +273,8 @@ class StrategyEvolutionEngine:
         
         返回成功率最低的模式，建议优化
         """
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        rows = db.query('''
             SELECT pattern_id, intent_type, pattern_text,
                    success_rate, sample_count, confidence
             FROM intent_patterns
@@ -313,7 +284,7 @@ class StrategyEvolutionEngine:
         ''', (limit,))
         
         optimizations = []
-        for row in cursor.fetchall():
+        for row in rows:
             opt = dict(row)
             
             if opt['success_rate'] < 0.5:
@@ -336,8 +307,8 @@ class StrategyEvolutionEngine:
         
         返回成功率最低的策略，建议优化
         """
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        rows = db.query('''
             SELECT strategy_id, strategy_type, configuration,
                    success_count, failure_count, avg_confidence
             FROM router_strategies
@@ -347,7 +318,7 @@ class StrategyEvolutionEngine:
         ''', (limit,))
         
         optimizations = []
-        for row in cursor.fetchall():
+        for row in rows:
             opt = dict(row)
             total = opt['success_count'] + opt['failure_count']
             success_rate = opt['success_count'] / total if total > 0 else 0.0
@@ -397,75 +368,70 @@ class StrategyEvolutionEngine:
     
     def deprecate_pattern(self, pattern_id: str, reason: str = "") -> bool:
         """废弃一个模式"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
             UPDATE intent_patterns
             SET status = 'deprecated', updated_at = ?
             WHERE pattern_id = ?
-        ''', (datetime.now().isoformat(), pattern_id))
-        conn.commit()
+        ''', (datetime.now().isoformat(), pattern_id), commit=True)
         
         logger.info(f"模式已废弃: {pattern_id} - {reason}")
         return True
     
     def activate_pattern(self, pattern_id: str) -> bool:
         """激活一个模式"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
             UPDATE intent_patterns
             SET status = 'active', updated_at = ?
             WHERE pattern_id = ?
-        ''', (datetime.now().isoformat(), pattern_id))
-        conn.commit()
+        ''', (datetime.now().isoformat(), pattern_id), commit=True)
         
         logger.info(f"模式已激活: {pattern_id}")
         return True
     
     def get_intent_transitions(self) -> List[Dict]:
         """获取意图转换统计"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        rows = db.query('''
             SELECT from_intent, to_intent, transition_count, success_count,
                    CAST(success_count AS FLOAT) / transition_count as success_rate
             FROM intent_transitions
             WHERE transition_count >= 2
             ORDER BY transition_count DESC
         ''')
-        return [dict(row) for row in cursor.fetchall()]
+        return [dict(row) for row in rows]
     
     def get_statistics(self) -> Dict:
         """获取统计信息"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         
-        cursor = conn.execute("SELECT COUNT(*) as total FROM intent_patterns")
-        total_patterns = cursor.fetchone()['total']
+        row = db.query_one("SELECT COUNT(*) as total FROM intent_patterns")
+        total_patterns = row['total']
         
-        cursor = conn.execute('''
+        by_type = [dict(row) for row in db.query('''
             SELECT intent_type, 
                    AVG(success_rate) as avg_rate,
                    COUNT(*) as count
             FROM intent_patterns
             WHERE sample_count >= 3
             GROUP BY intent_type
-        ''')
-        by_type = [dict(row) for row in cursor.fetchall()]
+        ''')]
         
-        cursor = conn.execute('''
+        router_stats = [dict(row) for row in db.query('''
             SELECT strategy_type, 
                    SUM(success_count) as total_success,
                    SUM(failure_count) as total_failure,
                    AVG(avg_confidence) as avg_confidence
             FROM router_strategies
             GROUP BY strategy_type
-        ''')
-        router_stats = [dict(row) for row in cursor.fetchall()]
+        ''')]
         
-        cursor = conn.execute('''
+        by_status = [dict(row) for row in db.query('''
             SELECT status, COUNT(*) as count
             FROM intent_patterns
             GROUP BY status
-        ''')
-        by_status = [dict(row) for row in cursor.fetchall()]
+        ''')]
         
         return {
             "total_intent_patterns": total_patterns,

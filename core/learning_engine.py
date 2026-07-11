@@ -51,8 +51,8 @@ class LearningEngine:
     
     def _init_db(self):
         """初始化数据库"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS learning_tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_path TEXT UNIQUE,
@@ -65,10 +65,8 @@ class LearningEngine:
                 error_msg TEXT,
                 knowledge_count INTEGER DEFAULT 0,
                 retry_count INTEGER DEFAULT 0
-            )
-        ''')
-        
-        conn.execute('''
+            );
+
             CREATE TABLE IF NOT EXISTS learning_stats (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT,
@@ -78,8 +76,6 @@ class LearningEngine:
                 total_knowledge INTEGER
             )
         ''')
-        
-        conn.commit()
     
     def set_mode(self, mode: str) -> Dict:
         """设置学习模式"""
@@ -151,9 +147,9 @@ class LearningEngine:
         
         priority = self._calculate_priority(file_path)
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         try:
-            conn.execute('''
+            db.execute('''
                 INSERT INTO learning_tasks
                 (file_path, priority, status, event_type, created_at)
                 VALUES (?, ?, 'pending', ?, ?)
@@ -162,8 +158,7 @@ class LearningEngine:
                 priority,
                 event_type,
                 datetime.now().isoformat()
-            ))
-            conn.commit()
+            ), commit=True)
             
             self.task_queue.put((priority, file_path))
             
@@ -187,13 +182,12 @@ class LearningEngine:
     def process_task(self, file_path: str) -> Dict:
         """处理学习任务"""
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
             UPDATE learning_tasks
             SET status = 'processing', started_at = ?
             WHERE file_path = ?
-        ''', (datetime.now().isoformat(), file_path))
-        conn.commit()
+        ''', (datetime.now().isoformat(), file_path), commit=True)
         
         try:
             path = Path(file_path)
@@ -213,14 +207,13 @@ class LearningEngine:
                 content=content
             )
             
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get(self.db_path)
+            db.execute('''
                 UPDATE learning_tasks
                 SET status = 'completed', completed_at = ?, 
                     knowledge_count = ?
                 WHERE file_path = ?
-            ''', (datetime.now().isoformat(), knowledge_count, file_path))
-            conn.commit()
+            ''', (datetime.now().isoformat(), knowledge_count, file_path), commit=True)
             
             logger.info(f"学习完成: {file_path}, 提取{knowledge_count}条知识")
             
@@ -234,14 +227,13 @@ class LearningEngine:
             error_msg = str(e)
             logger.error(f"学习失败: {file_path}: {error_msg}")
             
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get(self.db_path)
+            db.execute('''
                 UPDATE learning_tasks
                 SET status = 'failed', error_msg = ?, 
                     retry_count = retry_count + 1
                 WHERE file_path = ?
-            ''', (error_msg, file_path))
-            conn.commit()
+            ''', (error_msg, file_path), commit=True)
             
             return {
                 "success": False,
@@ -286,9 +278,9 @@ class LearningEngine:
     
     def get_stats(self) -> Dict:
         """获取学习统计"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         
-        cursor = conn.execute('''
+        row = db.query_one('''
             SELECT 
                 COUNT(*) as total,
                 SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
@@ -298,8 +290,6 @@ class LearningEngine:
                 SUM(knowledge_count) as total_knowledge
             FROM learning_tasks
         ''')
-        
-        row = cursor.fetchone()
         
         return {
             "mode": self.mode.value,
@@ -314,21 +304,20 @@ class LearningEngine:
     
     def get_recent_tasks(self, limit: int = 10) -> List[Dict]:
         """获取最近的学习任务"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        rows = db.query('''
             SELECT file_path, status, knowledge_count, created_at, completed_at, error_msg
             FROM learning_tasks
             ORDER BY created_at DESC
             LIMIT ?
         ''', (limit,))
         
-        return [dict(row) for row in cursor.fetchall()]
+        return [dict(row) for row in rows]
     
     def clear_completed_tasks(self):
         """清理已完成的任务"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute("DELETE FROM learning_tasks WHERE status = 'completed'")
-        conn.commit()
+        db = DatabaseManager.get(self.db_path)
+        db.execute("DELETE FROM learning_tasks WHERE status = 'completed'", commit=True)
         
         logger.info("已清理完成的学习任务")
 

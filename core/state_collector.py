@@ -80,10 +80,9 @@ class StateCollector:
         """初始化数据库"""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.cursor()
+        db = DatabaseManager.get(self.db_path)
         
-        cursor.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS state_reports (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 layer_name TEXT,
@@ -93,10 +92,7 @@ class StateCollector:
                 issues TEXT,
                 confidence REAL,
                 report_json TEXT
-            )
-        ''')
-        
-        cursor.execute('''
+            );
             CREATE TABLE IF NOT EXISTS health_summaries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 level TEXT,
@@ -105,8 +101,6 @@ class StateCollector:
                 summary_json TEXT
             )
         ''')
-        
-        conn.commit()
     
     def collect(self, report: LayerStateReport) -> None:
         """
@@ -235,9 +229,8 @@ class StateCollector:
     def _save_report(self, report: LayerStateReport):
         """保存报告"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.cursor()
-            cursor.execute('''
+            db = DatabaseManager.get(self.db_path)
+            db.execute('''
                 INSERT INTO state_reports
                 (layer_name, status, timestamp, metrics, issues, confidence, report_json)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -249,17 +242,15 @@ class StateCollector:
                 json.dumps(report.issues),
                 report.confidence_score,
                 json.dumps(report.to_dict())
-            ))
-            conn.commit()
+            ), commit=True)
         except Exception as e:
             logger.warning(f"保存状态报告失败: {e}")
     
     def _save_summary(self, summary: SystemHealthSummary):
         """保存摘要"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.cursor()
-            cursor.execute('''
+            db = DatabaseManager.get(self.db_path)
+            db.execute('''
                 INSERT INTO health_summaries
                 (level, timestamp, overall_score, summary_json)
                 VALUES (?, ?, ?, ?)
@@ -274,8 +265,7 @@ class StateCollector:
                     'critical_issues': summary.critical_issues,
                     'recommendations': summary.recommendations
                 })
-            ))
-            conn.commit()
+            ), commit=True)
         except Exception as e:
             logger.warning(f"保存健康度摘要失败: {e}")
     
@@ -288,15 +278,13 @@ class StateCollector:
     def get_layer_history(self, layer_name: str, limit: int = 100) -> List[Dict]:
         """获取层的历史状态"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.execute('''
+            db = DatabaseManager.get(self.db_path)
+            return [dict(row) for row in db.query('''
                 SELECT * FROM state_reports
                 WHERE layer_name = ?
                 ORDER BY timestamp DESC
                 LIMIT ?
-            ''', (layer_name, limit))
-            
-            return [dict(row) for row in cursor.fetchall()]
+            ''', (layer_name, limit))]
         except Exception as e:
             logger.warning(f"获取层历史失败: {e}")
             return []

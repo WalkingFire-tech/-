@@ -147,10 +147,8 @@ class SystemAuditor:
         result = {"stats": {}, "gaps": []}
 
         try:
-            conn = DatabaseManager.get(os.path.join(self.root_dir, "data", "experience_pool.db"))._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT success, COUNT(*) FROM experiences GROUP BY success")
-            success_dist = {str(r[0]): r[1] for r in c.fetchall()}
+            rows = DatabaseManager.get(os.path.join(self.root_dir, "data", "experience_pool.db")).query("SELECT success, COUNT(*) FROM experiences GROUP BY success")
+            success_dist = {str(r[0]): r[1] for r in rows}
             total = sum(success_dist.values())
             success_1 = success_dist.get("1", 0)
             success_rate = success_1 / max(total, 1)
@@ -165,10 +163,8 @@ class SystemAuditor:
             pass
 
         try:
-            conn = DatabaseManager.get(os.path.join(self.root_dir, "data", "learning_rules.db"))._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT AVG(confidence) FROM learning_rules WHERE status='active'")
-            avg_conf = c.fetchone()[0] or 0.5
+            row = DatabaseManager.get(os.path.join(self.root_dir, "data", "learning_rules.db")).query_one("SELECT AVG(confidence) FROM learning_rules WHERE status='active'")
+            avg_conf = row[0] if row else 0.5
             result["stats"]["avg_rule_confidence"] = round(avg_conf, 3)
             if avg_conf <= 0.5:
                 result["gaps"].append({

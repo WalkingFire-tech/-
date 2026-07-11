@@ -194,9 +194,7 @@ class GoldExtractor:
             return interactions
         
         try:
-            conn = DatabaseManager.get(str(self.db_path))._get_conn()
-            
-            cursor = conn.execute("""
+            rows = DatabaseManager.get(str(self.db_path)).query("""
                 SELECT question, response, feedback, objective_score, timestamp 
                 FROM interactions 
                 WHERE feedback IS NOT NULL 
@@ -204,7 +202,7 @@ class GoldExtractor:
                 LIMIT ?
             """, (limit,))
             
-            interactions = [dict(row) for row in cursor.fetchall()]
+            interactions = [dict(row) for row in rows]
             
         except Exception as e:
             logger.error(f"读取数据库失败: {e}")

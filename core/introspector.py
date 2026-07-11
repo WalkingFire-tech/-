@@ -214,11 +214,9 @@ class SystemIntrospector:
     def _check_data_loops(self) -> List[Anomaly]:
         anomalies = []
         try:
-            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
-            cur = conn.execute("SELECT COUNT(*) FROM experiences WHERE success = 0")
-            fail_count = cur.fetchone()[0]
-            cur2 = conn.execute("SELECT COUNT(*) FROM experiences")
-            total = cur2.fetchone()[0]
+            db = DatabaseManager.get("data/experience_pool.db")
+            fail_count = db.query_one("SELECT COUNT(*) FROM experiences WHERE success = 0")[0]
+            total = db.query_one("SELECT COUNT(*) FROM experiences")[0]
             if total > 0 and fail_count / total > 0.5:
                 anomalies.append(Anomaly(
                     id=f"data_exp_{int(time.time())}",
@@ -236,11 +234,9 @@ class SystemIntrospector:
             pass
 
         try:
-            conn = DatabaseManager.get("data/rule_store.db")._get_conn()
-            cur = conn.execute("SELECT COUNT(*) FROM rules WHERE apply_count > 0")
-            active = cur.fetchone()[0]
-            cur2 = conn.execute("SELECT COUNT(*) FROM rules WHERE status = 'active'")
-            total_active = cur2.fetchone()[0]
+            db = DatabaseManager.get("data/rule_store.db")
+            active = db.query_one("SELECT COUNT(*) FROM rules WHERE apply_count > 0")[0]
+            total_active = db.query_one("SELECT COUNT(*) FROM rules WHERE status = 'active'")[0]
             if total_active > 0 and active / total_active < 0.1:
                 anomalies.append(Anomaly(
                     id=f"data_rule_{int(time.time())}",
@@ -304,11 +300,10 @@ class SystemIntrospector:
     def _check_performance(self) -> List[Anomaly]:
         anomalies = []
         try:
-            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
-            cur = conn.execute(
+            db = DatabaseManager.get("data/experience_pool.db")
+            avg_duration = db.query_one(
                 "SELECT AVG(duration) FROM experiences WHERE timestamp > datetime('now', '-1 hour')"
-            )
-            avg_duration = cur.fetchone()[0]
+            )[0]
             if avg_duration and avg_duration > 30:
                 anomalies.append(Anomaly(
                     id=f"perf_dur_{int(time.time())}",

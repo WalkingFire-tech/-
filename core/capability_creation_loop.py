@@ -263,12 +263,11 @@ try {{
             
             try:
                 from infrastructure.database_manager import DatabaseManager
-                conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
-                conn.execute(
+                DatabaseManager.get("data/experience_pool.db").execute(
                     "INSERT INTO experiences (timestamp, query, result, success) VALUES (?, ?, ?, 1)",
-                    (datetime.now().isoformat(), query[:200], result_data[:500])
+                    (datetime.now().isoformat(), query[:200], result_data[:500]),
+                    commit=True
                 )
-                conn.commit()
                 logger.info("✅ 能力创造回路: 经验已写入经验池")
             except Exception as e:
                 logger.debug(f"经验写入失败: {e}")

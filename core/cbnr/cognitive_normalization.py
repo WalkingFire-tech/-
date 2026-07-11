@@ -165,12 +165,11 @@ class CognitiveNormalization:
         
         try:
             from infrastructure.database_manager import DatabaseManager
-            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
-            cur = conn.execute(
+            rows = DatabaseManager.get("data/experience_pool.db").query(
                 "SELECT response, quality_score FROM experiences WHERE raw_input LIKE ? ORDER BY quality_score DESC LIMIT 2",
                 (f"%{user_input[:30]}%",)
             )
-            for row in cur.fetchall():
+            for row in rows:
                 predictions.append({
                     "source": "experience_pool",
                     "content": row[0][:100],

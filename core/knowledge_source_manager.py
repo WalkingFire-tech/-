@@ -99,8 +99,8 @@ class KnowledgeSourceManager:
         try:
             self._cache_db.parent.mkdir(parents=True, exist_ok=True)
             
-            conn = DatabaseManager.get(str(self._cache_db))._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get(str(self._cache_db))
+            db.executescript('''
                 CREATE TABLE IF NOT EXISTS knowledge_cache (
                     query_hash TEXT PRIMARY KEY,
                     query TEXT,
@@ -108,12 +108,9 @@ class KnowledgeSourceManager:
                     result TEXT,
                     created_at TEXT,
                     expires_at TEXT
-                )
+                );
+                CREATE INDEX IF NOT EXISTS idx_expires ON knowledge_cache(expires_at);
             ''')
-            conn.execute('''
-                CREATE INDEX IF NOT EXISTS idx_expires ON knowledge_cache(expires_at)
-            ''')
-            conn.commit()
         except Exception as e:
             logger.warning(f"缓存数据库初始化失败: {e}")
     
@@ -504,17 +501,15 @@ class KnowledgeSourceManager:
         try:
             db_path = config.get("db_path", "data/knowledge_store.db")
             
-            conn = DatabaseManager.get(db_path)._get_conn()
+            db = DatabaseManager.get(db_path)
             
-            cursor = conn.execute('''
+            row = db.query_one('''
                 SELECT question, answer, source, quality_score
                 FROM knowledge_items
                 WHERE question LIKE ?
                 ORDER BY quality_score DESC
                 LIMIT 1
             ''', (f'%{question[:30]}%',))
-            
-            row = cursor.fetchone()
             if row:
                 return {
                     "success": True,
@@ -561,13 +556,11 @@ class KnowledgeSourceManager:
             return None
         
         try:
-            conn = DatabaseManager.get(str(self._cache_db))._get_conn()
-            cursor = conn.execute('''
+            db = DatabaseManager.get(str(self._cache_db))
+            row = db.query_one('''
                 SELECT result, source FROM knowledge_cache
                 WHERE query_hash = ? AND expires_at > ?
             ''', (query_hash, datetime.now().isoformat()))
-            
-            row = cursor.fetchone()
             if row:
                 return {
                     "success": True,
@@ -586,8 +579,8 @@ class KnowledgeSourceManager:
             ttl_hours = self.config.get("cache_config", {}).get("ttl_hours", 24)
             expires_at = datetime.now() + timedelta(hours=ttl_hours)
             
-            conn = DatabaseManager.get(str(self._cache_db))._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get(str(self._cache_db))
+            db.execute('''
                 INSERT OR REPLACE INTO knowledge_cache
                 (query_hash, query, source, result, created_at, expires_at)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -598,8 +591,7 @@ class KnowledgeSourceManager:
                 json.dumps(result.get("data")),
                 datetime.now().isoformat(),
                 expires_at.isoformat()
-            ))
-            conn.commit()
+            ), commit=True)
         except Exception as e:
             logger.debug(f"缓存结果失败: {e}")
     

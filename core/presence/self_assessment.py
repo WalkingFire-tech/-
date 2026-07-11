@@ -144,8 +144,8 @@ class ContinuousSelfAssessment:
         try:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
             
-            conn = DatabaseManager.get(str(self._db_path))._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get(str(self._db_path))
+            db.executescript('''
                 CREATE TABLE IF NOT EXISTS assessments (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     conversation_id TEXT,
@@ -156,17 +156,12 @@ class ContinuousSelfAssessment:
                     improvements TEXT,
                     self_criticism TEXT,
                     learning_points TEXT
-                )
-            ''')
-            conn.execute('''
+                );
                 CREATE INDEX IF NOT EXISTS idx_conversation 
-                ON assessments(conversation_id)
-            ''')
-            conn.execute('''
+                ON assessments(conversation_id);
                 CREATE INDEX IF NOT EXISTS idx_timestamp 
                 ON assessments(timestamp)
             ''')
-            conn.commit()
             logger.debug("自我评估数据库初始化成功")
         except Exception as e:
             logger.warning(f"自我评估数据库初始化失败: {e}")
@@ -177,8 +172,8 @@ class ContinuousSelfAssessment:
             if not self._db_path.exists():
                 return
             
-            conn = DatabaseManager.get(str(self._db_path))._get_conn()
-            cursor = conn.execute('''
+            db = DatabaseManager.get(str(self._db_path))
+            rows = db.query('''
                 SELECT conversation_id, timestamp, overall_score, 
                        metrics, insights, improvements, 
                        self_criticism, learning_points
@@ -187,7 +182,7 @@ class ContinuousSelfAssessment:
                 LIMIT 50
             ''')
             
-            for row in cursor:
+            for row in rows:
                 result = AssessmentResult(
                     timestamp=datetime.fromisoformat(row[1]),
                     conversation_id=row[0],
@@ -207,8 +202,8 @@ class ContinuousSelfAssessment:
     def _save_assessment_to_db(self, result: AssessmentResult):
         """保存评估结果到数据库"""
         try:
-            conn = DatabaseManager.get(str(self._db_path))._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get(str(self._db_path))
+            db.execute('''
                 INSERT INTO assessments
                 (conversation_id, timestamp, overall_score, metrics, insights,
                  improvements, self_criticism, learning_points)
@@ -222,8 +217,7 @@ class ContinuousSelfAssessment:
                 json.dumps(result.improvements),
                 json.dumps(result.self_criticism),
                 json.dumps(result.learning_points)
-            ))
-            conn.commit()
+            ), commit=True)
             logger.debug(f"评估结果已保存: {result.conversation_id}")
         except Exception as e:
             logger.warning(f"保存评估结果失败: {e}")
@@ -691,8 +685,8 @@ class ContinuousSelfAssessment:
     def get_historical_assessments(self, limit: int = 20) -> List[Dict[str, Any]]:
         """获取历史评估"""
         try:
-            conn = DatabaseManager.get(str(self._db_path))._get_conn()
-            cursor = conn.execute('''
+            db = DatabaseManager.get(str(self._db_path))
+            rows = db.query('''
                 SELECT conversation_id, timestamp, overall_score, metrics
                 FROM assessments
                 ORDER BY timestamp DESC
@@ -700,7 +694,7 @@ class ContinuousSelfAssessment:
             ''', (limit,))
             
             results = []
-            for row in cursor:
+            for row in rows:
                 results.append({
                     "conversation_id": row[0],
                     "timestamp": row[1],

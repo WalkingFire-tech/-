@@ -124,9 +124,8 @@ class StereoMemorySystem:
         self._load_memories()
 
     def _init_database(self):
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.cursor()
-        cursor.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS stereo_memories (
                 memory_id TEXT PRIMARY KEY,
                 content TEXT,
@@ -150,19 +149,16 @@ class StereoMemorySystem:
                 context_trigger TEXT,
                 context_related_concepts TEXT,
                 metadata TEXT
-            )
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_type ON stereo_memories(memory_type);
+            CREATE INDEX IF NOT EXISTS idx_importance ON stereo_memories(importance);
+            CREATE INDEX IF NOT EXISTS idx_created_at ON stereo_memories(created_at)
         ''')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_memory_type ON stereo_memories(memory_type)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_importance ON stereo_memories(importance)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_created_at ON stereo_memories(created_at)')
-        conn.commit()
 
     def _load_memories(self):
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM stereo_memories")
-            for row in cursor.fetchall():
+            db = DatabaseManager.get(self.db_path)
+            for row in db.query("SELECT * FROM stereo_memories"):
                 memory = self._row_to_memory(row)
                 self.memories[memory.memory_id] = memory
                 self._update_index(memory)
@@ -291,10 +287,9 @@ class StereoMemorySystem:
             return memory_id
 
     def _save_memory(self, memory: StereoMemory):
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.cursor()
+        db = DatabaseManager.get(self.db_path)
         data = self._memory_to_dict(memory)
-        cursor.execute('''
+        db.execute('''
             INSERT OR REPLACE INTO stereo_memories (
                 memory_id, content, memory_type, importance,
                 related_memories, related_entities,
@@ -306,8 +301,7 @@ class StereoMemorySystem:
                 context_trigger, context_related_concepts,
                 metadata
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', tuple(data.values()))
-        conn.commit()
+        ''', tuple(data.values()), commit=True)
 
     def recall(self, memory_id: str, reinforce: bool = True) -> Optional[StereoMemory]:
         """回忆记忆"""
@@ -525,12 +519,9 @@ class StereoMemorySystem:
     def get_recent(self, limit: int = 20) -> List[StereoMemory]:
         """获取最近记忆（SQL排序，避免全量Python排序）"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.execute(
-                'SELECT * FROM stereo_memories ORDER BY last_accessed DESC LIMIT ?',
-                (limit,)
-            )
-            results = [self._row_to_memory(row) for row in cursor.fetchall()]
+            db = DatabaseManager.get(self.db_path)
+            rows = db.query('SELECT * FROM stereo_memories ORDER BY last_accessed DESC LIMIT ?', (limit,))
+            results = [self._row_to_memory(row) for row in rows]
             for m in results:
                 m.time_dimension.access_count += 1
                 m.time_dimension.last_accessed = datetime.now()

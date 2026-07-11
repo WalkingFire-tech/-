@@ -49,8 +49,8 @@ class SafeLearningLayer:
         """初始化数据库"""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         
-        conn = DatabaseManager.get(str(self.db_path))._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(str(self.db_path))
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS learning_journal (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT,
@@ -61,10 +61,7 @@ class SafeLearningLayer:
                 issues TEXT,
                 accepted INTEGER,
                 metadata TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS alerts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT,
@@ -73,29 +70,21 @@ class SafeLearningLayer:
                 severity TEXT,
                 issues TEXT,
                 resolved INTEGER DEFAULT 0
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS learning_stats (
                 key TEXT PRIMARY KEY,
                 value TEXT
-            )
+            );
+            CREATE INDEX IF NOT EXISTS idx_timestamp ON learning_journal(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_status ON learning_journal(alignment_status)
         ''')
-        
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON learning_journal(timestamp)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_status ON learning_journal(alignment_status)')
-        
-        conn.commit()
     
     def _load_stats(self):
         """加载统计信息"""
         try:
-            conn = DatabaseManager.get(str(self.db_path))._get_conn()
-            cursor = conn.execute(
-                "SELECT key, value FROM learning_stats"
-            )
-            self._stats = {row[0]: json.loads(row[1]) for row in cursor.fetchall()}
+            db = DatabaseManager.get(str(self.db_path))
+            rows = db.query("SELECT key, value FROM learning_stats")
+            self._stats = {row[0]: json.loads(row[1]) for row in rows}
         except:
             self._stats = {
                 "total_attempts": 0,
@@ -239,8 +228,8 @@ class SafeLearningLayer:
     def _save_journal_entry(self, entry: Dict):
         """保存学习记录"""
         try:
-            conn = DatabaseManager.get(str(self.db_path))._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get(str(self.db_path))
+            db.execute('''
                 INSERT INTO learning_journal
                 (timestamp, source, content_preview, alignment_status, 
                  alignment_score, issues, accepted, metadata)
@@ -254,8 +243,7 @@ class SafeLearningLayer:
                 json.dumps(entry["issues"], ensure_ascii=False),
                 1 if entry["accepted"] else 0,
                 json.dumps(entry.get("metadata", {}), ensure_ascii=False)
-            ))
-            conn.commit()
+            ), commit=True)
         except Exception as e:
             logger.error(f"保存学习记录失败: {e}")
     
@@ -265,8 +253,8 @@ class SafeLearningLayer:
         self.alerts.append(alert)
         
         try:
-            conn = DatabaseManager.get(str(self.db_path))._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get(str(self.db_path))
+            db.execute('''
                 INSERT INTO alerts
                 (timestamp, alert_type, source, severity, issues)
                 VALUES (?, ?, ?, ?, ?)
@@ -276,41 +264,36 @@ class SafeLearningLayer:
                 alert.get("source", ""),
                 alert.get("severity", "medium"),
                 json.dumps(alert.get("issues", []), ensure_ascii=False)
-            ))
-            conn.commit()
+            ), commit=True)
         except Exception as e:
             logger.error(f"保存告警失败: {e}")
     
     def get_learning_audit(self, limit: int = 100) -> Dict:
         """获取学习审计报告"""
         try:
-            conn = DatabaseManager.get(str(self.db_path))._get_conn()
+            db = DatabaseManager.get(str(self.db_path))
             
-            cursor = conn.execute('''
+            journal = [dict(row) for row in db.query('''
                 SELECT * FROM learning_journal
                 ORDER BY timestamp DESC
                 LIMIT ?
-            ''', (limit,))
+            ''', (limit,))]
             
-            journal = [dict(row) for row in cursor.fetchall()]
-            
-            cursor = conn.execute('''
+            alerts = [dict(row) for row in db.query('''
                 SELECT * FROM alerts
                 WHERE resolved = 0
                 ORDER BY timestamp DESC
                 LIMIT 20
-            ''')
+            ''')]
             
-            alerts = [dict(row) for row in cursor.fetchall()]
-            
-            cursor = conn.execute('''
+            stats_row = db.query_one('''
                 SELECT 
                     COUNT(*) as total,
                     SUM(CASE WHEN accepted = 1 THEN 1 ELSE 0 END) as accepted,
                     SUM(CASE WHEN accepted = 0 THEN 1 ELSE 0 END) as rejected
                 FROM learning_journal
             ''')
-            stats = dict(cursor.fetchone())
+            stats = dict(stats_row)
             
             return {
                 "stats": stats,
@@ -328,16 +311,16 @@ class SafeLearningLayer:
     def get_pending_reviews(self) -> List[Dict]:
         """获取待审查的学习条目"""
         try:
-            conn = DatabaseManager.get(str(self.db_path))._get_conn()
+            db = DatabaseManager.get(str(self.db_path))
             
-            cursor = conn.execute('''
+            rows = db.query('''
                 SELECT * FROM learning_journal
                 WHERE alignment_status IN ('partial', 'unknown')
                 AND accepted = 0
                 ORDER BY timestamp DESC
             ''')
             
-            return [dict(row) for row in cursor.fetchall()]
+            return [dict(row) for row in rows]
         except Exception as e:
             logger.error(f"获取待审查条目失败: {e}")
             return []
@@ -345,13 +328,12 @@ class SafeLearningLayer:
     def approve_learning(self, journal_id: int) -> bool:
         """批准待审查的学习条目"""
         try:
-            conn = DatabaseManager.get(str(self.db_path))._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get(str(self.db_path))
+            db.execute('''
                 UPDATE learning_journal
                 SET accepted = 1, alignment_status = 'approved'
                 WHERE id = ?
-            ''', (journal_id,))
-            conn.commit()
+            ''', (journal_id,), commit=True)
             
             logger.info(f"✅ 已批准学习条目: {journal_id}")
             return True
@@ -362,13 +344,12 @@ class SafeLearningLayer:
     def reject_learning(self, journal_id: int, reason: str = "") -> bool:
         """拒绝待审查的学习条目"""
         try:
-            conn = DatabaseManager.get(str(self.db_path))._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get(str(self.db_path))
+            db.execute('''
                 UPDATE learning_journal
                 SET accepted = 0, alignment_status = 'rejected'
                 WHERE id = ?
-            ''', (journal_id,))
-            conn.commit()
+            ''', (journal_id,), commit=True)
             
             logger.info(f"❌ 已拒绝学习条目: {journal_id}")
             return True

@@ -53,8 +53,8 @@ class BehaviorEvolutionEngine:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS response_profiles (
                 id TEXT PRIMARY KEY,
                 response_id TEXT,
@@ -67,40 +67,22 @@ class BehaviorEvolutionEngine:
                 user_feedback_score REAL,
                 context_fit_score REAL,
                 timestamp TEXT
-            )
-        ''')
-        
-        conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_response_id ON response_profiles(response_id)
-        ''')
-        
-        conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_structure_type ON response_profiles(structure_type)
-        ''')
-        
-        conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_tone_type ON response_profiles(tone_type)
-        ''')
-        
-        conn.execute('''
+            );
+            CREATE INDEX IF NOT EXISTS idx_response_id ON response_profiles(response_id);
+            CREATE INDEX IF NOT EXISTS idx_structure_type ON response_profiles(structure_type);
+            CREATE INDEX IF NOT EXISTS idx_tone_type ON response_profiles(tone_type);
             CREATE TABLE IF NOT EXISTS style_effectiveness (
                 style_key TEXT PRIMARY KEY,
                 avg_feedback_score REAL,
                 sample_count INTEGER,
                 last_updated TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS tone_effectiveness (
                 tone_key TEXT PRIMARY KEY,
                 avg_feedback_score REAL,
                 sample_count INTEGER,
                 last_updated TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS context_style_mapping (
                 context_type TEXT,
                 style_type TEXT,
@@ -108,10 +90,8 @@ class BehaviorEvolutionEngine:
                 sample_count INTEGER,
                 last_updated TEXT,
                 PRIMARY KEY (context_type, style_type)
-            )
+            );
         ''')
-        
-        conn.commit()
     
     def record_response(self, response_id: str, conversation_id: str,
                        content: str, confidence: float,
@@ -137,8 +117,8 @@ class BehaviorEvolutionEngine:
         structure_type = self._detect_structure(content)
         tone_type = self._detect_tone(content)
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
             INSERT INTO response_profiles
             (id, response_id, conversation_id, content, length,
              structure_type, tone_type, confidence,
@@ -158,13 +138,11 @@ class BehaviorEvolutionEngine:
             datetime.now().isoformat()
         ))
         
-        conn.execute('''
+        db.execute('''
             INSERT OR IGNORE INTO context_style_mapping
             (context_type, style_type, effectiveness_score, sample_count, last_updated)
             VALUES (?, ?, 0.5, 0, ?)
-        ''', (context_type, structure_type, datetime.now().isoformat()))
-        
-        conn.commit()
+        ''', (context_type, structure_type, datetime.now().isoformat()), commit=True)
         
         logger.debug(f"记录回答特征: {profile_id} (结构={structure_type}, 语气={tone_type})")
         return profile_id
@@ -181,12 +159,11 @@ class BehaviorEvolutionEngine:
             context_fit_score: 上下文匹配度 (可选)
             context_type: 上下文类型
         """
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute(
+        db = DatabaseManager.get(self.db_path)
+        row = db.query_one(
             "SELECT structure_type FROM response_profiles WHERE response_id = ?",
             (response_id,)
         )
-        row = cursor.fetchone()
         
         if not row:
             logger.warning(f"未找到回答记录: {response_id}")
@@ -195,26 +172,24 @@ class BehaviorEvolutionEngine:
         structure_type = row[0]
         
         if context_fit_score is not None:
-            conn.execute('''
+            db.execute('''
                 UPDATE response_profiles
                 SET user_feedback_score = ?,
                     context_fit_score = ?
                 WHERE response_id = ?
-            ''', (feedback_score, context_fit_score, response_id))
+            ''', (feedback_score, context_fit_score, response_id), commit=True)
         else:
-            conn.execute('''
+            db.execute('''
                 UPDATE response_profiles
                 SET user_feedback_score = ?
                 WHERE response_id = ?
-            ''', (feedback_score, response_id))
+            ''', (feedback_score, response_id), commit=True)
         
-        cursor = conn.execute('''
+        mapping_row = db.query_one('''
             SELECT effectiveness_score, sample_count
             FROM context_style_mapping
             WHERE context_type = ? AND style_type = ?
         ''', (context_type, structure_type))
-        
-        mapping_row = cursor.fetchone()
         
         if mapping_row:
             old_score = mapping_row[0]
@@ -222,13 +197,11 @@ class BehaviorEvolutionEngine:
             new_count = old_count + 1
             new_score = (old_score * old_count + feedback_score) / new_count
             
-            conn.execute('''
+            db.execute('''
                 UPDATE context_style_mapping
                 SET effectiveness_score = ?, sample_count = ?, last_updated = ?
                 WHERE context_type = ? AND style_type = ?
-            ''', (new_score, new_count, datetime.now().isoformat(), context_type, structure_type))
-        
-        conn.commit()
+            ''', (new_score, new_count, datetime.now().isoformat(), context_type, structure_type), commit=True)
         
         self._update_style_stats()
         self._update_tone_stats()
@@ -237,8 +210,8 @@ class BehaviorEvolutionEngine:
     
     def _update_style_stats(self):
         """更新风格有效性统计"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        rows = db.query('''
             SELECT structure_type, 
                    AVG(user_feedback_score) as avg_score,
                    COUNT(*) as count
@@ -247,22 +220,21 @@ class BehaviorEvolutionEngine:
             GROUP BY structure_type
         ''')
         
-        for row in cursor.fetchall():
+        for row in rows:
             style_key = row[0]
             avg_score = row[1] if row[1] is not None else 0.0
             count = row[2]
             
-            conn.execute('''
+            db.execute('''
                 INSERT OR REPLACE INTO style_effectiveness
                 (style_key, avg_feedback_score, sample_count, last_updated)
                 VALUES (?, ?, ?, ?)
-            ''', (style_key, avg_score, count, datetime.now().isoformat()))
-        conn.commit()
+            ''', (style_key, avg_score, count, datetime.now().isoformat()), commit=True)
     
     def _update_tone_stats(self):
         """更新语气有效性统计"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        rows = db.query('''
             SELECT tone_type, 
                    AVG(user_feedback_score) as avg_score,
                    COUNT(*) as count
@@ -271,17 +243,16 @@ class BehaviorEvolutionEngine:
             GROUP BY tone_type
         ''')
         
-        for row in cursor.fetchall():
+        for row in rows:
             tone_key = row[0]
             avg_score = row[1] if row[1] is not None else 0.0
             count = row[2]
             
-            conn.execute('''
+            db.execute('''
                 INSERT OR REPLACE INTO tone_effectiveness
                 (tone_key, avg_feedback_score, sample_count, last_updated)
                 VALUES (?, ?, ?, ?)
-            ''', (tone_key, avg_score, count, datetime.now().isoformat()))
-        conn.commit()
+            ''', (tone_key, avg_score, count, datetime.now().isoformat()), commit=True)
     
     def get_recommended_style(self, context_type: str = "general") -> Dict[str, str]:
         """
@@ -293,9 +264,9 @@ class BehaviorEvolutionEngine:
         Returns:
             推荐的风格和语气
         """
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         
-        cursor = conn.execute('''
+        context_style_row = db.query_one('''
             SELECT style_type, effectiveness_score
             FROM context_style_mapping
             WHERE context_type = ?
@@ -303,21 +274,17 @@ class BehaviorEvolutionEngine:
             LIMIT 1
         ''', (context_type,))
         
-        context_style_row = cursor.fetchone()
-        
-        cursor = conn.execute('''
+        style_row = db.query_one('''
             SELECT style_key FROM style_effectiveness
             ORDER BY avg_feedback_score DESC, sample_count DESC
             LIMIT 1
         ''')
-        style_row = cursor.fetchone()
         
-        cursor = conn.execute('''
+        tone_row = db.query_one('''
             SELECT tone_key FROM tone_effectiveness
             ORDER BY avg_feedback_score DESC, sample_count DESC
             LIMIT 1
         ''')
-        tone_row = cursor.fetchone()
         
         if context_type == "emotional":
             return {
@@ -403,9 +370,9 @@ class BehaviorEvolutionEngine:
     
     def analyze_style_effectiveness(self) -> Dict[str, Any]:
         """分析各风格的有效性"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT structure_type,
                    COUNT(*) as total,
                    AVG(user_feedback_score) as avg_feedback,
@@ -418,7 +385,7 @@ class BehaviorEvolutionEngine:
         ''')
         
         style_analysis = []
-        for row in cursor.fetchall():
+        for row in rows:
             style_analysis.append({
                 "structure_type": row["structure_type"],
                 "total_samples": row["total"],
@@ -434,9 +401,9 @@ class BehaviorEvolutionEngine:
     
     def analyze_tone_effectiveness(self) -> Dict[str, Any]:
         """分析各语气的有效性"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT tone_type,
                    COUNT(*) as total,
                    AVG(user_feedback_score) as avg_feedback,
@@ -448,7 +415,7 @@ class BehaviorEvolutionEngine:
         ''')
         
         tone_analysis = []
-        for row in cursor.fetchall():
+        for row in rows:
             tone_analysis.append({
                 "tone_type": row["tone_type"],
                 "total_samples": row["total"],
@@ -463,37 +430,34 @@ class BehaviorEvolutionEngine:
     
     def get_statistics(self) -> Dict:
         """获取统计信息"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         
-        cursor = conn.execute("SELECT COUNT(*) as total FROM response_profiles")
-        total = cursor.fetchone()['total']
+        total_row = db.query_one("SELECT COUNT(*) as total FROM response_profiles")
+        total = total_row['total']
         
-        cursor = conn.execute('''
+        feedback_row = db.query_one('''
             SELECT COUNT(*) as with_feedback
             FROM response_profiles
             WHERE user_feedback_score > 0
         ''')
-        with_feedback = cursor.fetchone()['with_feedback']
+        with_feedback = feedback_row['with_feedback']
         
-        cursor = conn.execute('''
+        styles = [dict(row) for row in db.query('''
             SELECT * FROM style_effectiveness
             ORDER BY avg_feedback_score DESC
-        ''')
-        styles = [dict(row) for row in cursor.fetchall()]
+        ''')]
         
-        cursor = conn.execute('''
+        tones = [dict(row) for row in db.query('''
             SELECT * FROM tone_effectiveness
             ORDER BY avg_feedback_score DESC
-        ''')
-        tones = [dict(row) for row in cursor.fetchall()]
+        ''')]
         
-        cursor = conn.execute('''
+        context_mappings = [dict(row) for row in db.query('''
             SELECT context_type, style_type, effectiveness_score, sample_count
             FROM context_style_mapping
             WHERE sample_count > 0
             ORDER BY context_type, effectiveness_score DESC
-        ''')
-        context_mappings = [dict(row) for row in cursor.fetchall()]
+        ''')]
         
         return {
             "total_profiles": total,

@@ -67,8 +67,7 @@ class KnowledgeGapDetector:
         Path(self.db_path).parent.mkdir(exist_ok=True)
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS domain_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 domain TEXT,
@@ -76,10 +75,7 @@ class KnowledgeGapDetector:
                 confidence_threshold REAL,
                 created_at TEXT,
                 source TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS error_patterns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 pattern_type TEXT,
@@ -87,10 +83,7 @@ class KnowledgeGapDetector:
                 correction TEXT,
                 confidence REAL,
                 created_at TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS validation_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query_hash TEXT,
@@ -98,7 +91,7 @@ class KnowledgeGapDetector:
                 reason TEXT,
                 confidence REAL,
                 validated_at TEXT
-            )
+            );
         ''')
     
     def detect_knowledge_gap(self, user_query: str, response: str,
@@ -195,11 +188,10 @@ class KnowledgeGapDetector:
         
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute(
+            rows = db.query(
                 "SELECT keywords FROM domain_rules WHERE confidence_threshold >= 0.8"
             )
-            for row in cursor:
+            for row in rows:
                 keywords = json.loads(row[0])
                 if any(kw in query for kw in keywords):
                     return True
@@ -248,12 +240,11 @@ class KnowledgeGapDetector:
         """检查已知错误模式"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute(
+            rows = db.query(
                 "SELECT pattern_type, pattern, correction FROM error_patterns WHERE confidence >= 0.7"
             )
-            for row in cursor:
-                pattern_type, pattern, correction = row
+            for row in rows:
+                pattern_type, pattern, correction = row[0], row[1], row[2]
                 if re.search(pattern, response):
                     return True, f"匹配错误模式({pattern_type})，应修正为: {correction}"
         except:
@@ -266,12 +257,11 @@ class KnowledgeGapDetector:
         """学习新的错误模式"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            conn.execute(
+            db.execute(
                 "INSERT INTO error_patterns (pattern_type, pattern, correction, confidence, created_at) VALUES (?, ?, ?, ?, ?)",
-                (pattern_type, pattern, correction, confidence, datetime.now().isoformat())
+                (pattern_type, pattern, correction, confidence, datetime.now().isoformat()),
+                commit=True
             )
-            conn.commit()
             logger.info(f"学习错误模式: {pattern_type}")
         except Exception as e:
             logger.warning(f"学习失败: {e}")
@@ -281,12 +271,11 @@ class KnowledgeGapDetector:
         """添加领域规则"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            conn.execute(
+            db.execute(
                 "INSERT INTO domain_rules (domain, keywords, confidence_threshold, created_at, source) VALUES (?, ?, ?, ?, ?)",
-                (domain, json.dumps(keywords, ensure_ascii=False), confidence_threshold, datetime.now().isoformat(), "user_added")
+                (domain, json.dumps(keywords, ensure_ascii=False), confidence_threshold, datetime.now().isoformat(), "user_added"),
+                commit=True
             )
-            conn.commit()
             logger.info(f"添加领域规则: {domain}")
         except Exception as e:
             logger.warning(f"添加规则失败: {e}")
@@ -316,12 +305,11 @@ class KnowledgeGapDetector:
         try:
             query_hash = str(hash(query))[:12]
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            conn.execute(
+            db.execute(
                 "INSERT INTO validation_history (query_hash, has_gap, reason, confidence, validated_at) VALUES (?, ?, ?, ?, ?)",
-                (query_hash, int(has_gap), reason, confidence, datetime.now().isoformat())
+                (query_hash, int(has_gap), reason, confidence, datetime.now().isoformat()),
+                commit=True
             )
-            conn.commit()
         except:
             pass
 

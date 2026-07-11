@@ -48,8 +48,8 @@ class PathWeightManager:
     def _init_db(self):
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS path_weights (
                 path_name TEXT PRIMARY KEY,
                 weight REAL,
@@ -57,9 +57,7 @@ class PathWeightManager:
                 total_uses INTEGER DEFAULT 0,
                 total_successes INTEGER DEFAULT 0,
                 last_updated TEXT
-            )
-        ''')
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS weight_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 path_name TEXT,
@@ -68,13 +66,12 @@ class PathWeightManager:
                 success BOOLEAN,
                 confidence REAL,
                 timestamp TEXT
-            )
+            );
         ''')
 
     def _load_weights(self):
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cur = conn.execute("SELECT path_name, weight, success_rate, total_uses, total_successes FROM path_weights")
-        rows = cur.fetchall()
+        db = DatabaseManager.get(self.db_path)
+        rows = db.query("SELECT path_name, weight, success_rate, total_uses, total_successes FROM path_weights")
         if rows:
             for name, weight, sr, uses, succ in rows:
                 self._paths[name] = {
@@ -96,14 +93,14 @@ class PathWeightManager:
             self._save_all_weights()
 
     def _save_all_weights(self):
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         for name, info in self._paths.items():
-            conn.execute('''
+            db.execute('''
                 INSERT OR REPLACE INTO path_weights (path_name, weight, success_rate, total_uses, total_successes, last_updated)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (name, info["weight"], info["success_rate"],
                   info["total_uses"], info["total_successes"],
-                  datetime.now().isoformat()))
+                  datetime.now().isoformat()), commit=True)
 
     def update_weight(self, path: str, success: bool, confidence: float = 0.5,
                       uncertainty: float = None, retrieval_entropy: float = None):
@@ -180,17 +177,17 @@ class PathWeightManager:
 
     def _save_path_weight(self, path: str):
         info = self._paths[path]
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
             INSERT OR REPLACE INTO path_weights (path_name, weight, success_rate, total_uses, total_successes, last_updated)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (path, info["weight"], info["success_rate"],
               info["total_uses"], info["total_successes"],
               datetime.now().isoformat()))
-        conn.execute('''
+        db.execute('''
             INSERT INTO weight_history (path_name, old_weight, new_weight, success, confidence, timestamp)
             VALUES (?, ?, ?, ?, ?, ?)
-        ''', (path, info["weight"], info["weight"], True, 0.5, datetime.now().isoformat()))
+        ''', (path, info["weight"], info["weight"], True, 0.5, datetime.now().isoformat()), commit=True)
 
     def apply_decay(self):
         for name, info in self._paths.items():
