@@ -1,13 +1,128 @@
 """
 工具自我构建 - 从需求中生成长久工具
 
-核心理念：工具不是预设的，而是从需求中自然生长
+核心理态：工具不是预设的，而是从需求中自然生长
+
+安全约束：
+- exec()执行LLM生成的代码时，使用受限全局命名空间
+- 禁止导入os/sys/subprocess/shutil等危险模块
+- 禁止文件写操作(open with 'w'/'a')、网络操作(socket)
+- 执行超时保护（独立线程+超时）
 """
+import re as _re
+import signal
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime
 from enum import Enum
 from loguru import logger
+
+
+_SANDBOX_BLOCKED_MODULES = frozenset({
+    "os", "sys", "subprocess", "shutil", "pathlib",
+    "socket", "http", "urllib", "requests",
+    "ctypes", "multiprocessing", "pickle", "shelve",
+    "importlib", "runpy", "code", "codeop",
+    "builtins",
+})
+
+_SANDBOX_BLOCKED_BUILTINS = frozenset({
+    "exec", "eval", "compile", "__import__", "open",
+    "globals", "locals", "vars", "dir",
+    "breakpoint", "exit", "quit",
+})
+
+_SANDBOX_SAFE_BUILTINS = {
+    "abs": abs, "all": all, "any": any, "bin": bin, "bool": bool,
+    "chr": chr, "dict": dict, "divmod": divmod, "enumerate": enumerate,
+    "filter": filter, "float": float, "format": format, "frozenset": frozenset,
+    "hash": hash, "hex": hex, "int": int, "isinstance": isinstance,
+    "issubclass": issubclass, "iter": iter, "len": len, "list": list,
+    "map": map, "max": max, "min": min, "next": next, "oct": oct,
+    "ord": ord, "pow": pow, "print": print, "range": range,
+    "repr": repr, "reversed": reversed, "round": round, "set": set,
+    "slice": slice, "sorted": sorted, "str": str, "sum": sum,
+    "tuple": tuple, "type": type, "zip": zip,
+    "True": True, "False": False, "None": None,
+    "ValueError": ValueError, "TypeError": TypeError, "KeyError": KeyError,
+    "IndexError": IndexError, "AttributeError": AttributeError,
+    "RuntimeError": RuntimeError, "Exception": Exception,
+    "StopIteration": StopIteration, "NotImplementedError": NotImplementedError,
+}
+
+
+def _validate_tool_code(code: str) -> List[str]:
+    """静态检查工具代码是否包含危险操作"""
+    violations = []
+    for mod in _SANDBOX_BLOCKED_MODULES:
+        if _re.search(rf'\bimport\s+{mod}\b', code) or _re.search(rf'\bfrom\s+{mod}\b', code):
+            violations.append(f"禁止导入模块: {mod}")
+    if _re.search(r'\bopen\s*\(', code):
+        if _re.search(r"open\s*\([^)]*['\"][wa]", code):
+            violations.append("禁止文件写操作")
+    if _re.search(r'\bsocket\b', code):
+        violations.append("禁止网络操作")
+    if _re.search(r'\b__import__\s*\(', code):
+        violations.append("禁止动态导入")
+    if _re.search(r'\bos\.system\b', code) or _re.search(r'\bos\.popen\b', code):
+        violations.append("禁止系统命令执行")
+    return violations
+
+
+def _sandbox_exec(code: str, timeout: float = 5.0) -> tuple:
+    """
+    在沙箱中执行代码，返回 (local_namespace, errors)
+    - 受限全局命名空间（无os/sys/subprocess等）
+    - 超时保护（独立线程）
+    """
+    violations = _validate_tool_code(code)
+    if violations:
+        return {}, [f"安全检查未通过: {'; '.join(violations)}"]
+
+    sandbox_globals = {"__builtins__": dict(_SANDBOX_SAFE_BUILTINS)}
+    sandbox_globals["re"] = _re
+    try:
+        import math
+        sandbox_globals["math"] = math
+    except ImportError:
+        pass
+    try:
+        import json
+        sandbox_globals["json"] = json
+    except ImportError:
+        pass
+    try:
+        import datetime as _dt
+        sandbox_globals["datetime"] = _dt
+    except ImportError:
+        pass
+
+    local_namespace = {}
+    errors = []
+
+    result_holder = {"done": False, "error": None}
+
+    def _run():
+        try:
+            exec(code, sandbox_globals, local_namespace)
+            result_holder["done"] = True
+        except Exception as e:
+            result_holder["error"] = str(e)
+            result_holder["done"] = True
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+
+    if not result_holder["done"]:
+        errors.append(f"代码执行超时({timeout}s)")
+        return {}, errors
+    if result_holder["error"]:
+        errors.append(f"代码执行错误: {result_holder['error']}")
+        return {}, errors
+
+    return local_namespace, errors
 
 
 class ToolStatus(Enum):
@@ -186,8 +301,8 @@ def {name}(items):
             code = self._generate_basic_tool(need.description)
         
         try:
-            local_namespace = {}
-            exec(code, {}, local_namespace)
+            local_namespace, exec_errors = _sandbox_exec(code, timeout=5.0)
+            errors.extend(exec_errors)
             
             func_name = self._extract_function_name(code)
             if func_name and func_name in local_namespace:
@@ -314,8 +429,24 @@ def {func_name}(params: dict) -> dict:
             return {"passed": False, "error": "无实现"}
         
         try:
-            result = tool.implementation(None)
-            return {"passed": True, "result": result}
+            result_holder = {"result": None, "error": None}
+            def _run_test():
+                try:
+                    result_holder["result"] = tool.implementation({"query": "test"})
+                except Exception as e:
+                    result_holder["error"] = str(e)
+            
+            t = threading.Thread(target=_run_test, daemon=True)
+            t.start()
+            t.join(timeout=3.0)
+            
+            if t.is_alive():
+                return {"passed": False, "error": "工具测试执行超时(3s)"}
+            
+            if result_holder["error"]:
+                return {"passed": False, "error": result_holder["error"]}
+            
+            return {"passed": True, "result": result_holder["result"]}
         except Exception as e:
             return {"passed": False, "error": str(e)}
     
