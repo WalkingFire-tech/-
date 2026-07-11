@@ -121,13 +121,10 @@ async def feedback(request: dict):
         from datetime import datetime
         db = DatabaseManager.get("data/experience_pool.db")
 
-        conn = db._get_conn()
-        cursor = conn.cursor()
-        cursor.execute(
+        db.execute(
             "UPDATE experiences SET user_feedback = ? WHERE id = (SELECT MAX(id) FROM experiences)",
-            (score,)
+            (score,), commit=True
         )
-        conn.commit()
 
     except Exception:
         pass

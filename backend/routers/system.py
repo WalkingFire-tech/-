@@ -19,22 +19,18 @@ async def get_stats():
     try:
         db = DatabaseManager.get("data/experience_pool.db")
 
-        conn = db._get_conn()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM experiences")
-        stats["experiences"] = cursor.fetchone()[0]
+        row = db.query_one("SELECT COUNT(*) FROM experiences")
+        stats["experiences"] = row[0] if row else 0
 
     except Exception:
         stats["experiences"] = 0
     try:
         db = DatabaseManager.get("data/learning_rules.db")
 
-        conn = db._get_conn()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
-        stats["active_rules"] = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
-        stats["pending_rules"] = cursor.fetchone()[0]
+        row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
+        stats["active_rules"] = row[0] if row else 0
+        row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
+        stats["pending_rules"] = row[0] if row else 0
         cursor.execute("SELECT COUNT(*) FROM learning_rules")
         stats["rules"] = cursor.fetchone()[0]
 

@@ -40,10 +40,7 @@ async def fetch_knowledge(query: str) -> dict:
         def _query_know():
             db = DatabaseManager.get("data/knowledge_store.db")
 
-            conn = db._get_conn()
-            cursor = conn.cursor()
-            cursor.execute("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{query[:30]}%",))
-            row = cursor.fetchone()
+            row = db.query_one("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{query[:30]}%",))
 
             return row
         row = await asyncio.wait_for(loop.run_in_executor(_fast_executor, _query_know), timeout=5)
