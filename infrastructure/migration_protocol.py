@@ -157,14 +157,12 @@ class MigrationProtocol:
         
         try:
             db = DatabaseManager.get('data/experience_pool.db')
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            experiences = db.query('''
                 SELECT intent_type, raw_input, model_name, quality_score, success
                 FROM experiences
                 ORDER BY timestamp DESC
                 LIMIT 100
             ''')
-            experiences = cursor.fetchall()
             
             state['components']['experiences'] = [
                 {
@@ -182,13 +180,11 @@ class MigrationProtocol:
         
         try:
             db2 = DatabaseManager.get('data/learning_rules.db')
-            conn2 = db2._get_conn()
-            cursor = conn2.execute('''
+            rules = db2.query('''
                 SELECT condition, action, confidence, status
                 FROM learning_rules
                 WHERE status = 'active'
             ''')
-            rules = cursor.fetchall()
             
             state['components']['rules'] = [
                 {
@@ -389,9 +385,8 @@ class MigrationProtocol:
             
             if 'experiences' in state.get('components', {}):
                 db = DatabaseManager.get('data/experience_pool.db')
-                conn = db._get_conn()
                 for exp in state['components']['experiences']:
-                    conn.execute('''
+                    db.execute('''
                         INSERT INTO experiences
                         (intent_type, raw_input, model_name, quality_score, success, timestamp)
                         VALUES (?, ?, ?, ?, ?, ?)
@@ -402,16 +397,14 @@ class MigrationProtocol:
                         exp['quality_score'],
                         exp['success'],
                         datetime.now().isoformat()
-                    ))
-                    conn.commit()
+                    ), commit=True)
                 
                 logger.info(f"  经验池已恢复: {len(state['components']['experiences'])}条")
             
             if 'rules' in state.get('components', {}):
                 db2 = DatabaseManager.get('data/learning_rules.db')
-                conn2 = db2._get_conn()
                 for rule in state['components']['rules']:
-                    conn2.execute('''
+                    db2.execute('''
                         INSERT OR REPLACE INTO learning_rules
                         (condition, action, confidence, status)
                         VALUES (?, ?, ?, ?)
@@ -420,8 +413,7 @@ class MigrationProtocol:
                         rule['action'],
                         rule['confidence'],
                         rule['status']
-                    ))
-                    conn2.commit()
+                    ), commit=True)
                 
                 logger.info(f"  学习规则已恢复: {len(state['components']['rules'])}条")
             

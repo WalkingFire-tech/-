@@ -70,9 +70,8 @@ class DreamIntegrator:
         cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         
-        cursor = conn.execute("""
+        experiences = db.query("""
             SELECT id, user_input, intent_type, model_name, response, quality_score
             FROM experiences
             WHERE timestamp >= ?
@@ -81,28 +80,16 @@ class DreamIntegrator:
             LIMIT ?
         """, (cutoff_date, MAX_EXPERIENCES))
         
-        experiences = []
-        for row in cursor.fetchall():
-            experiences.append({
-                "id": row[0],
-                "user_input": row[1],
-                "intent_type": row[2],
-                "model_name": row[3],
-                "response": row[4],
-                "quality_score": row[5]
-            })
-        
         isolated = []
         db_rules = DatabaseManager.get(self.rules_db_path)
-        conn_rules = db_rules._get_conn()
         
         for exp in experiences:
-            cursor_rules = conn_rules.execute("""
+            count_row = db_rules.query_one("""
                 SELECT COUNT(*) FROM learning_rules
                 WHERE condition LIKE ?
             """, (f"%{exp['id']}%",))
             
-            count = cursor_rules.fetchone()[0]
+            count = count_row[0]
             if count == 0:
                 isolated.append(exp)
         
@@ -170,7 +157,6 @@ class DreamIntegrator:
         new_rules = []
         
         db = DatabaseManager.get(self.rules_db_path)
-        conn = db._get_conn()
         
         for pattern in patterns:
             if pattern["type"] == "intent_transition":
@@ -197,7 +183,7 @@ class DreamIntegrator:
                         "target_intent": next_intent
                     }, ensure_ascii=False)
                     
-                    conn.execute("""
+                    db.execute("""
                         INSERT INTO learning_rules
                         (condition, action, confidence, source, description, status, created_at)
                         VALUES (?, ?, ?, ?, ?, 'pending', ?)
@@ -208,8 +194,7 @@ class DreamIntegrator:
                         "dream_integration",
                         f"用户在{intent_type}后常问{next_intent}",
                         datetime.now().isoformat()
-                    ))
-                    conn.commit()
+                    ), commit=True)
                     
                     new_rules.append({
                         "condition": condition_data,
@@ -237,7 +222,7 @@ class DreamIntegrator:
                         "model": model_name
                     }, ensure_ascii=False)
                     
-                    conn.execute("""
+                    db.execute("""
                         INSERT INTO learning_rules
                         (condition, action, confidence, source, description, status, created_at)
                         VALUES (?, ?, ?, ?, ?, 'pending', ?)
@@ -248,7 +233,7 @@ class DreamIntegrator:
                         "dream_integration",
                         f"{intent_type}意图偏好使用{model_name}",
                         datetime.now().isoformat()
-                    ))
+                    ), commit=True)
                     
                     new_rules.append({
                         "condition": condition_data,
@@ -256,8 +241,7 @@ class DreamIntegrator:
                         "confidence": pattern["confidence"]
                     })
         
-        conn.commit()
-        
+
         return new_rules
     
     def _cleanup_redundant_memories(self) -> int:
@@ -267,17 +251,15 @@ class DreamIntegrator:
         - 删除重复的失败案例
         """
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         
-        conn.execute("""
+        cursor1 = db.execute("""
             DELETE FROM experiences
             WHERE quality_score < 0.3
             AND timestamp < date('now', '-30 days')
-        """)
-        deleted_low_quality = conn.total_changes
-        conn.commit()
+        """, commit=True)
+        deleted_low_quality = cursor1.rowcount
         
-        conn.execute("""
+        cursor2 = db.execute("""
             DELETE FROM experiences
             WHERE rowid NOT IN (
                 SELECT MAX(rowid)
@@ -286,10 +268,8 @@ class DreamIntegrator:
                 GROUP BY user_input
             )
             AND quality_score < 0.5
-        """)
-        deleted_duplicates = conn.total_changes
-        
-        conn.commit()
+        """, commit=True)
+        deleted_duplicates = cursor2.rowcount
         
         total_cleaned = deleted_low_quality + deleted_duplicates
         if total_cleaned > 0:

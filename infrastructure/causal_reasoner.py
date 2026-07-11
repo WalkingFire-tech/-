@@ -207,16 +207,13 @@ class CausalReasoner:
                 return chain
             
             db = DatabaseManager.get(str(self.experience_db))
-            conn = db._get_conn()
-            cur = conn.execute('''
+            failures = db.query('''
                 SELECT raw_input, intent_type, success, quality_score
                 FROM experiences
                 WHERE success = 0
                 ORDER BY timestamp DESC
                 LIMIT 10
             ''')
-            
-            failures = cur.fetchall()
             
             for raw_input, intent_type, success, quality in failures:
                 # 简单相似度检查

@@ -39,8 +39,7 @@ class HealthDashboard:
     def _init_db(self):
         """初始化健康历史数据库"""
         db = DatabaseManager.get(str(self.db_path))
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS health_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT,
@@ -52,10 +51,9 @@ class HealthDashboard:
                 user_satisfaction REAL,
                 mode TEXT,
                 details TEXT
-            )
+            );
+            CREATE INDEX IF NOT EXISTS idx_timestamp ON health_history(timestamp);
         ''')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON health_history(timestamp)')
-        conn.commit()
     
     def calculate_aphi(self) -> Dict:
         """计算联盟拓荒者健康度指数"""
@@ -179,9 +177,8 @@ class HealthDashboard:
             experience_db = Path("experience_pool.db")
             if experience_db.exists():
                 db = DatabaseManager.get(str(experience_db))
-                conn = db._get_conn()
-                cur = conn.execute("SELECT COUNT(*) FROM experiences WHERE timestamp > datetime('now', '-7 days')")
-                recent_experiences = cur.fetchone()[0]
+                row = db.query_one("SELECT COUNT(*) FROM experiences WHERE timestamp > datetime('now', '-7 days')")
+                recent_experiences = row[0]
             else:
                 recent_experiences = 0
             
@@ -293,8 +290,7 @@ class HealthDashboard:
         """保存健康记录"""
         try:
             db = DatabaseManager.get(str(self.db_path))
-            conn = db._get_conn()
-            conn.execute('''
+            db.execute('''
                 INSERT INTO health_history 
                 (timestamp, aphi_score, capability_coverage, task_success_rate,
                  resource_availability, evolution_vitality, user_satisfaction, mode, details)
@@ -309,8 +305,7 @@ class HealthDashboard:
                 metrics["user_satisfaction"],
                 metrics["mode"],
                 ""
-            ))
-            conn.commit()
+            ), commit=True)
         except Exception as e:
             logger.warning(f"健康记录保存失败: {e}")
     
@@ -318,8 +313,7 @@ class HealthDashboard:
         """获取健康趋势"""
         try:
             db = DatabaseManager.get(str(self.db_path))
-            conn = db._get_conn()
-            cur = conn.execute('''
+            rows = db.query('''
                 SELECT timestamp, aphi_score, mode
                 FROM health_history
                 WHERE timestamp > datetime('now', ?)
@@ -329,7 +323,7 @@ class HealthDashboard:
             
             return [
                 {"timestamp": row[0], "aphi": row[1], "mode": row[2]}
-                for row in cur.fetchall()
+                for row in rows
             ]
         except Exception as e:
             logger.warning(f"健康趋势获取失败: {e}")

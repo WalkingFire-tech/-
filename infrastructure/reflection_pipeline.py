@@ -78,8 +78,7 @@ class ReflectionPipeline:
         Path(self.log_db_path).parent.mkdir(parents=True, exist_ok=True)
         
         db = DatabaseManager.get(self.log_db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS reflection_log (
                 id TEXT PRIMARY KEY,
                 timestamp TEXT,
@@ -95,10 +94,8 @@ class ReflectionPipeline:
                 extra_metadata TEXT
             )
         ''')
-        conn.commit()
         
-        cursor = conn.execute("PRAGMA table_info(reflection_log)")
-        columns = [row[1] for row in cursor.fetchall()]
+        columns = [row[1] for row in db.query("PRAGMA table_info(reflection_log)")]
         
         required_columns = {
             "consolidated": "INTEGER DEFAULT 0",
@@ -111,12 +108,12 @@ class ReflectionPipeline:
         for col, col_type in required_columns.items():
             if col not in columns:
                 try:
-                    conn.execute(f"ALTER TABLE reflection_log ADD COLUMN {col} {col_type}")
+                    db.execute(f"ALTER TABLE reflection_log ADD COLUMN {col} {col_type}", commit=True)
                     logger.info(f"  ✓ 添加字段: {col}")
                 except Exception as e:
                     logger.warning(f"  ⚠ 添加字段 {col} 失败: {e}")
         
-        conn.commit()
+        db.execute('SELECT 1', commit=True)
     
     async def process(self, execution_context: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -301,8 +298,7 @@ class ReflectionPipeline:
         
         try:
             db = DatabaseManager.get("data/spirit_lessons.db")
-            conn = db._get_conn()
-            conn.execute('''CREATE TABLE IF NOT EXISTS spirit_lessons (
+            db.executescript('''CREATE TABLE IF NOT EXISTS spirit_lessons (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 lesson_type TEXT,
                 lesson_text TEXT,
@@ -312,11 +308,11 @@ class ReflectionPipeline:
             )''')
             now = datetime.now().isoformat()
             for lesson in lessons:
-                conn.execute(
+                db.execute(
                     "INSERT INTO spirit_lessons (lesson_type, lesson_text, severity, context, created_at) VALUES (?,?,?,?,?)",
-                    (lesson["lesson_type"], lesson["lesson_text"], lesson["severity"], lesson["context"], now)
+                    (lesson["lesson_type"], lesson["lesson_text"], lesson["severity"], lesson["context"], now),
+                    commit=True
                 )
-                conn.commit()
         except Exception as e:
             logger.debug(f"教训写入失败: {e}")
     
@@ -350,9 +346,7 @@ class ReflectionPipeline:
         """写入营火日志（异步写入）"""
         def _write():
             db = DatabaseManager.get(self.log_db_path)
-            conn = db._get_conn()
-            cursor = conn.execute("PRAGMA table_info(reflection_log)")
-            columns = [row[1] for row in cursor.fetchall()]
+            columns = [row[1] for row in db.query("PRAGMA table_info(reflection_log)")]
             
             base_sql = """INSERT INTO reflection_log 
                (id, timestamp, query, plan, tool_calls, final_answer, 
@@ -371,7 +365,6 @@ class ReflectionPipeline:
                 context.get("duration_ms", 0),
                 json.dumps(context.get("extra", {}), ensure_ascii=False)
             ]
-            conn.commit()
             
             if "success" in columns:
                 base_sql += ", success"
@@ -379,8 +372,7 @@ class ReflectionPipeline:
             
             base_sql += ") VALUES (" + ",".join(["?"] * len(values)) + ")"
             
-            conn.execute(base_sql, tuple(values))
-            conn.commit()
+            db.execute(base_sql, tuple(values), commit=True)
         
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, _write)
@@ -479,10 +471,7 @@ class ReflectionPipeline:
         try:
             # 统计日志数量
             db = DatabaseManager.get(self.log_db_path)
-            conn = db._get_conn()
-            log_count = conn.execute(
-                "SELECT COUNT(*) FROM reflection_log"
-            ).fetchone()[0]
+            log_count = db.query_one("SELECT COUNT(*) FROM reflection_log")[0]
             
             # 统计JSONL样本数量
             jsonl_count = 0

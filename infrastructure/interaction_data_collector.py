@@ -52,47 +52,28 @@ class InteractionDataCollector:
     def _init_database(self):
         """初始化数据库"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        # 交互记录表
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS interactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL,
                 question TEXT NOT NULL,
                 response TEXT NOT NULL,
-                conn.commit()
-                
-                -- 反馈
                 feedback_type TEXT,
                 feedback_content TEXT,
-                
-                -- 评分
                 objective_score REAL,
                 subjective_score REAL,
                 total_score REAL,
-                
-                -- 决策链
                 decision_chain_summary TEXT,
-                
-                -- 知识来源
-                knowledge_sources TEXT,         -- JSON格式
-                
-                -- 元数据
+                knowledge_sources TEXT,
                 model_version TEXT,
                 system_version TEXT,
                 timestamp TEXT NOT NULL,
                 metadata TEXT
-            )
-        ''')
-        
-        # 索引
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_session ON interactions(session_id)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_feedback ON interactions(feedback_type)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_score ON interactions(total_score)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON interactions(timestamp)')
-        
-        # 数据质量评估表
-        conn.execute('''
+            );
+            CREATE INDEX IF NOT EXISTS idx_session ON interactions(session_id);
+            CREATE INDEX IF NOT EXISTS idx_feedback ON interactions(feedback_type);
+            CREATE INDEX IF NOT EXISTS idx_score ON interactions(total_score);
+            CREATE INDEX IF NOT EXISTS idx_timestamp ON interactions(timestamp);
             CREATE TABLE IF NOT EXISTS data_quality (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 interaction_id INTEGER NOT NULL,
@@ -102,8 +83,6 @@ class InteractionDataCollector:
                 assessed_at TEXT
             )
         ''')
-        
-        conn.commit()
         
         logger.info(f"📊 交互数据收集器已初始化: {self.db_path}")
     
@@ -147,8 +126,7 @@ class InteractionDataCollector:
         timestamp = datetime.now().isoformat()
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cur = conn.execute('''
+        cur = db.execute('''
             INSERT INTO interactions
             (session_id, question, response, feedback_type, feedback_content,
              objective_score, subjective_score, total_score, decision_chain_summary,
@@ -160,8 +138,7 @@ class InteractionDataCollector:
             json.dumps(knowledge_sources or [], ensure_ascii=False),
             model_version, system_version, timestamp,
             json.dumps(metadata or {}, ensure_ascii=False)
-        ))
-        conn.commit()
+        ), commit=True)
         
         interaction_id = cur.lastrowid
         
@@ -213,8 +190,7 @@ class InteractionDataCollector:
         is_high_quality = quality_score >= 0.7
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             INSERT INTO data_quality
             (interaction_id, quality_score, is_high_quality, quality_reasons, assessed_at)
             VALUES (?, ?, ?, ?, ?)
@@ -222,8 +198,7 @@ class InteractionDataCollector:
             interaction_id, quality_score, 1 if is_high_quality else 0,
             json.dumps(reasons, ensure_ascii=False),
             datetime.now().isoformat()
-        ))
-        conn.commit()
+        ), commit=True)
     
     def get_training_data(
         self,
@@ -243,7 +218,6 @@ class InteractionDataCollector:
             训练数据列表
         """
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         
         query = '''
             SELECT i.*, q.quality_score, q.is_high_quality
@@ -261,7 +235,7 @@ class InteractionDataCollector:
         query += " ORDER BY i.timestamp DESC LIMIT ?"
         params.append(limit)
         
-        rows = conn.execute(query, params).fetchall()
+        rows = db.query(query, params)
         
         return [dict(row) for row in rows]
     
@@ -344,25 +318,24 @@ class InteractionDataCollector:
     def get_statistics(self) -> Dict:
         """获取统计信息"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        total = conn.execute('SELECT COUNT(*) FROM interactions').fetchone()[0]
-        positive = conn.execute(
+        total = db.query_one('SELECT COUNT(*) FROM interactions')[0]
+        positive = db.query_one(
             "SELECT COUNT(*) FROM interactions WHERE feedback_type = 'positive'"
-        ).fetchone()[0]
-        negative = conn.execute(
+        )[0]
+        negative = db.query_one(
             "SELECT COUNT(*) FROM interactions WHERE feedback_type = 'negative'"
-        ).fetchone()[0]
-        correction = conn.execute(
+        )[0]
+        correction = db.query_one(
             "SELECT COUNT(*) FROM interactions WHERE feedback_type = 'correction'"
-        ).fetchone()[0]
+        )[0]
         
-        high_quality = conn.execute(
+        high_quality = db.query_one(
             'SELECT COUNT(*) FROM data_quality WHERE is_high_quality = 1'
-        ).fetchone()[0]
+        )[0]
         
-        avg_score = conn.execute(
+        avg_score = db.query_one(
             'SELECT AVG(total_score) FROM interactions WHERE total_score > 0'
-        ).fetchone()[0] or 0
+        )[0] or 0
         
         return {
             'total_interactions': total,

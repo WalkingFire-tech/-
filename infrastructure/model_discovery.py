@@ -35,8 +35,7 @@ class ModelDiscovery:
     def _init_db(self):
         """初始化数据库"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             CREATE TABLE IF NOT EXISTS discovered_models (
                 name TEXT PRIMARY KEY,
                 source TEXT,
@@ -47,8 +46,7 @@ class ModelDiscovery:
                 last_seen TEXT,
                 available BOOLEAN
             )
-        ''')
-        conn.commit()
+        ''', commit=True)
     
     async def discover_ollama_models(self, url: str = None) -> List[Dict]:
         """发现Ollama模型
@@ -160,10 +158,9 @@ class ModelDiscovery:
     def _save_discovered_models(self, models: List[Dict]):
         """保存发现的模型"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         for model in models:
             import json
-            conn.execute('''
+            db.execute('''
                 INSERT OR REPLACE INTO discovered_models
                 (name, source, model_type, size_gb, parameters, 
                  capabilities, last_seen, available)
@@ -177,16 +174,14 @@ class ModelDiscovery:
                 json.dumps(model.get('capabilities', {})),
                 model['last_seen'],
                 model['available']
-            ))
-        conn.commit()
+            ), commit=True)
         
         logger.info(f"已保存 {len(models)} 个发现的模型")
     
     def get_discovered_models(self) -> List[Dict]:
         """获取已发现的模型"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT name, source, model_type, size_gb, parameters, 
                    capabilities, last_seen, available
             FROM discovered_models
@@ -194,7 +189,7 @@ class ModelDiscovery:
         ''')
         
         models = []
-        for row in cursor.fetchall():
+        for row in rows:
             import json
             models.append({
                 'name': row[0],
@@ -212,15 +207,13 @@ class ModelDiscovery:
     def get_model_info(self, model_name: str) -> Optional[Dict]:
         """获取特定模型信息"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        row = db.query_one('''
             SELECT name, source, model_type, size_gb, parameters, 
                    capabilities, last_seen, available
             FROM discovered_models
             WHERE name = ?
         ''', (model_name,))
         
-        row = cursor.fetchone()
         if row:
             import json
             return {
@@ -285,13 +278,11 @@ class ModelDiscovery:
     def mark_unavailable(self, model_name: str):
         """标记模型不可用"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             UPDATE discovered_models
             SET available = 0, last_seen = ?
             WHERE name = ?
-        ''', (datetime.now().isoformat(), model_name))
-        conn.commit()
+        ''', (datetime.now().isoformat(), model_name), commit=True)
         
         logger.info(f"已标记模型不可用: {model_name}")
 

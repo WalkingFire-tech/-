@@ -270,9 +270,8 @@ class DialogueStreamLearner:
         try:
             with self._db_lock:
                 db = DatabaseManager.get('data/experience_pool.db')
-                conn = db._get_conn()
                 
-                conn.execute("""
+                db.execute("""
                     UPDATE experiences
                     SET quality_score = 20,
                         user_feedback = -1
@@ -281,10 +280,7 @@ class DialogueStreamLearner:
                         ORDER BY timestamp DESC
                         LIMIT 1
                     )
-                """)
-                conn.commit()
-                
-                conn.commit()
+                """, commit=True)
             
             logger.info("已标记最近交互为低质量（隐式否定）")
             
@@ -311,9 +307,8 @@ class DialogueStreamLearner:
             
             with self._db_lock:
                 db = DatabaseManager.get('data/learning_rules.db')
-                conn = db._get_conn()
                 
-                conn.execute("""
+                db.execute("""
                     INSERT INTO learning_rules
                     (condition, action, priority, confidence, status, source, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -325,10 +320,7 @@ class DialogueStreamLearner:
                     'active',
                     'correction',
                     time.time()
-                ))
-                conn.commit()
-                
-                conn.commit()
+                ), commit=True)
             
             logger.info(f"从用户修正生成规则: '{correct_content[:30]}'")
             

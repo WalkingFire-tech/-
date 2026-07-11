@@ -45,8 +45,7 @@ class RatchetGate:
         Path(self.db_path).parent.mkdir(exist_ok=True)
 
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS ratchet_baseline (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 domain TEXT,
@@ -54,9 +53,7 @@ class RatchetGate:
                 previous_level REAL,
                 promoted_at TEXT,
                 promotion_count INTEGER DEFAULT 0
-            )
-        ''')
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS ratchet_decisions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 domain TEXT,
@@ -66,9 +63,7 @@ class RatchetGate:
                 delta REAL,
                 reason TEXT,
                 timestamp TEXT
-            )
-        ''')
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS ratchet_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 domain TEXT,
@@ -76,26 +71,24 @@ class RatchetGate:
                 data TEXT,
                 fitness_score REAL,
                 created_at TEXT
-            )
+            );
         ''')
-        conn.commit()
 
     def get_ratchet_level(self, domain: str = "global") -> float:
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cur = conn.execute(
+        row = db.query_one(
             "SELECT ratchet_level FROM ratchet_baseline WHERE domain = ? ORDER BY promoted_at DESC LIMIT 1",
             (domain,)
         )
-        row = cur.fetchone()
         if row:
             return row[0]
 
         baseline = self._compute_baseline(domain)
         if baseline > 0:
-            conn.execute(
+            db.execute(
                 "INSERT INTO ratchet_baseline (domain, ratchet_level, previous_level, promoted_at, promotion_count) VALUES (?, ?, 0, ?, 1)",
-                (domain, baseline, datetime.now().isoformat())
+                (domain, baseline, datetime.now().isoformat()),
+                commit=True
             )
         return baseline
 
@@ -105,9 +98,7 @@ class RatchetGate:
             genome_db = Path("data/genome.db")
             if genome_db.exists():
                 db = DatabaseManager.get(str(genome_db))
-                conn = db._get_conn()
-                cur = conn.execute("SELECT AVG(fitness) FROM genomes WHERE fitness IS NOT NULL")
-                row = cur.fetchone()
+                row = db.query_one("SELECT AVG(fitness) FROM genomes WHERE fitness IS NOT NULL")
                 if row and row[0] is not None:
                     return row[0]
         except Exception:
@@ -118,9 +109,7 @@ class RatchetGate:
             exp_db = Path("experience_pool.db")
             if exp_db.exists():
                 db = DatabaseManager.get(str(exp_db))
-                conn = db._get_conn()
-                cur = conn.execute("SELECT AVG(quality_score) FROM experiences")
-                row = cur.fetchone()
+                row = db.query_one("SELECT AVG(quality_score) FROM experiences")
                 if row and row[0] is not None:
                     return min(1.0, row[0])
         except Exception:
@@ -154,12 +143,10 @@ class RatchetGate:
         )
 
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             INSERT INTO ratchet_decisions (domain, candidate_score, ratchet_level, approved, delta, reason, timestamp)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (domain, candidate_score, ratchet_level, approved, delta, reason, decision.timestamp))
-        conn.commit()
+        ''', (domain, candidate_score, ratchet_level, approved, delta, reason, decision.timestamp), commit=True)
 
         if approved:
             logger.info(f"棘轮门通过: {domain} score={candidate_score:.4f} ratchet={ratchet_level:.4f} ({reason})")
@@ -176,60 +163,52 @@ class RatchetGate:
             return False
 
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute(
+        db.execute(
             "UPDATE ratchet_baseline SET previous_level = ratchet_level WHERE domain = ?",
-            (domain,)
+            (domain,),
+            commit=True
         )
-        conn.execute('''
+        db.execute('''
             INSERT INTO ratchet_baseline (domain, ratchet_level, previous_level, promoted_at, promotion_count)
             VALUES (?, ?, ?, ?, 1)
-        ''', (domain, current_score, ratchet_level, datetime.now().isoformat()))
-        conn.commit()
+        ''', (domain, current_score, ratchet_level, datetime.now().isoformat()), commit=True)
 
         logger.info(f"棘轮门提升: {domain} {ratchet_level:.4f} -> {current_score:.4f}")
         return True
 
     def create_snapshot(self, domain: str, snapshot_type: str, data: Dict, fitness_score: float):
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             INSERT INTO ratchet_snapshots (domain, snapshot_type, data, fitness_score, created_at)
             VALUES (?, ?, ?, ?, ?)
-        ''', (domain, snapshot_type, json.dumps(data, ensure_ascii=False), fitness_score, datetime.now().isoformat()))
-        conn.commit()
+        ''', (domain, snapshot_type, json.dumps(data, ensure_ascii=False), fitness_score, datetime.now().isoformat()), commit=True)
 
     def get_latest_snapshot(self, domain: str, snapshot_type: str = None) -> Optional[Dict]:
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         if snapshot_type:
-            cur = conn.execute(
+            row = db.query_one(
                 "SELECT data, fitness_score, created_at FROM ratchet_snapshots WHERE domain = ? AND snapshot_type = ? ORDER BY created_at DESC LIMIT 1",
                 (domain, snapshot_type)
             )
         else:
-            cur = conn.execute(
+            row = db.query_one(
                 "SELECT data, fitness_score, created_at FROM ratchet_snapshots WHERE domain = ? ORDER BY created_at DESC LIMIT 1",
                 (domain,)
             )
-        row = cur.fetchone()
         if row:
             return {"data": json.loads(row[0]), "fitness_score": row[1], "created_at": row[2]}
         return None
 
     def get_stats(self) -> Dict:
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cur = conn.execute("SELECT domain, ratchet_level FROM ratchet_baseline ORDER BY promoted_at DESC")
+        rows = db.query("SELECT domain, ratchet_level FROM ratchet_baseline ORDER BY promoted_at DESC")
         baselines = {}
-        for row in cur.fetchall():
+        for row in rows:
             if row[0] not in baselines:
                 baselines[row[0]] = row[1]
 
-        cur = conn.execute("SELECT COUNT(*) FROM ratchet_decisions WHERE approved = 1")
-        approved = cur.fetchone()[0]
-        cur = conn.execute("SELECT COUNT(*) FROM ratchet_decisions WHERE approved = 0")
-        rejected = cur.fetchone()[0]
+        approved = db.query_one("SELECT COUNT(*) FROM ratchet_decisions WHERE approved = 1")[0]
+        rejected = db.query_one("SELECT COUNT(*) FROM ratchet_decisions WHERE approved = 0")[0]
 
         return {
             "baselines": baselines,

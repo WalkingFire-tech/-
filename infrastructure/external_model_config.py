@@ -57,8 +57,7 @@ class ExternalModelConfig:
     def _init_db(self):
         """初始化数据库"""
         db = DatabaseManager.get(self.db_file)
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS external_models (
                 name TEXT PRIMARY KEY,
                 api_url TEXT,
@@ -68,11 +67,7 @@ class ExternalModelConfig:
                 last_reset TEXT,
                 created_at TEXT,
                 updated_at TEXT
-            )
-        ''')
-        conn.commit()
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS api_usage_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 model_name TEXT,
@@ -113,13 +108,11 @@ class ExternalModelConfig:
             now = datetime.now().isoformat()
             
             db = DatabaseManager.get(self.db_file)
-            conn = db._get_conn()
-            conn.execute('''
+            db.execute('''
                 INSERT OR REPLACE INTO external_models
                 (name, api_url, api_key_encrypted, daily_limit, used_today, last_reset, created_at, updated_at)
                 VALUES (?, ?, ?, ?, 0, ?, ?, ?)
-            ''', (name, api_url, encrypted_key, daily_limit, now, now, now))
-            conn.commit()
+            ''', (name, api_url, encrypted_key, daily_limit, now, now, now), commit=True)
             
             logger.info(f"已添加外部模型: {name}")
             return True
@@ -131,14 +124,11 @@ class ExternalModelConfig:
     def get_model(self, name: str) -> Optional[Dict]:
         """获取模型配置（含解密后的API密钥）"""
         db = DatabaseManager.get(self.db_file)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        row = db.query_one('''
             SELECT name, api_url, api_key_encrypted, daily_limit, used_today, last_reset
             FROM external_models
             WHERE name = ?
         ''', (name,))
-        
-        row = cursor.fetchone()
         
         if not row:
             return None
@@ -155,14 +145,13 @@ class ExternalModelConfig:
     def list_models(self) -> List[Dict]:
         """列出所有模型（不含密钥）"""
         db = DatabaseManager.get(self.db_file)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT name, api_url, daily_limit, used_today, last_reset
             FROM external_models
         ''')
         
         models = []
-        for row in cursor.fetchall():
+        for row in rows:
             models.append({
                 'name': row[0],
                 'api_url': row[1],
@@ -177,9 +166,7 @@ class ExternalModelConfig:
         """删除模型"""
         try:
             db = DatabaseManager.get(self.db_file)
-            conn = db._get_conn()
-            conn.execute('DELETE FROM external_models WHERE name = ?', (name,))
-            conn.commit()
+            db.execute('DELETE FROM external_models WHERE name = ?', (name,), commit=True)
             
             logger.info(f"已删除外部模型: {name}")
             return True
@@ -195,18 +182,15 @@ class ExternalModelConfig:
         today = date.today().isoformat()
         
         db = DatabaseManager.get(self.db_file)
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             INSERT INTO api_usage_log
             (model_name, timestamp, tokens_used, success, error_message)
             VALUES (?, ?, ?, ?, ?)
-        ''', (name, now, tokens, success, error))
-        conn.commit()
+        ''', (name, now, tokens, success, error), commit=True)
         
-        cursor = conn.execute('''
+        row = db.query_one('''
             SELECT last_reset, used_today FROM external_models WHERE name = ?
         ''', (name,))
-        row = cursor.fetchone()
         
         if row:
             last_reset, used_today = row
@@ -214,25 +198,22 @@ class ExternalModelConfig:
             if last_reset != today:
                 used_today = 0
             
-            conn.execute('''
+            db.execute('''
                 UPDATE external_models
                 SET used_today = ?, last_reset = ?
                 WHERE name = ?
-            ''', (used_today + 1, today, name))
+            ''', (used_today + 1, today, name), commit=True)
     
     def check_quota(self, name: str) -> bool:
         """检查是否超出配额"""
         today = date.today().isoformat()
         
         db = DatabaseManager.get(self.db_file)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        row = db.query_one('''
             SELECT daily_limit, used_today, last_reset
             FROM external_models
             WHERE name = ?
         ''', (name,))
-        
-        row = cursor.fetchone()
         
         if not row:
             return False
@@ -247,15 +228,12 @@ class ExternalModelConfig:
     def get_usage_stats(self, name: str, days: int = 7) -> Dict:
         """获取使用统计"""
         db = DatabaseManager.get(self.db_file)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        row = db.query_one('''
             SELECT COUNT(*), SUM(tokens_used), SUM(CASE WHEN success THEN 1 ELSE 0 END)
             FROM api_usage_log
             WHERE model_name = ?
               AND timestamp >= datetime('now', ?)
         ''', (name, f'-{days} days'))
-        
-        row = cursor.fetchone()
         
         return {
             'total_calls': row[0] if row[0] else 0,

@@ -34,17 +34,14 @@ class RuleTrialManager:
             规则ID
         """
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        cursor = db.execute('''
             INSERT INTO learning_rules
             (condition, action, confidence, status, source, priority, 
              trial_count, trial_success, created_at)
             VALUES (?, ?, ?, 'trial', ?, 5, 0, 0, ?)
-        ''', (condition, action, confidence, source, datetime.now().isoformat()))
-        conn.commit()
+        ''', (condition, action, confidence, source, datetime.now().isoformat()), commit=True)
         
         rule_id = cursor.lastrowid
-        conn.commit()
         
         logger.info(f"创建试用期规则 #{rule_id}: {condition[:50]} → {action}")
         
@@ -58,66 +55,55 @@ class RuleTrialManager:
             success: 是否成功
         """
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        # 更新试用计数
-        conn.execute('''
+        db.execute('''
             UPDATE learning_rules
             SET trial_count = trial_count + 1,
                 trial_success = trial_success + ?
             WHERE id = ?
-        ''', (1 if success else 0, rule_id))
-        conn.commit()
+        ''', (1 if success else 0, rule_id), commit=True)
         
-        # 获取当前状态
-        cur = conn.execute('''
+        row = db.query_one('''
             SELECT trial_count, trial_success, condition, action
             FROM learning_rules
             WHERE id = ?
         ''', (rule_id,))
         
-        row = cur.fetchone()
         if not row:
             return
         
         trial_count, trial_success, condition, action = row
         
-        # 检查是否达到判定阈值
         if trial_count >= self.trial_threshold:
             success_ratio = trial_success / trial_count
             
             if success_ratio >= self.success_ratio:
-                # 激活规则
-                conn.execute('''
+                db.execute('''
                     UPDATE learning_rules
                     SET status = 'active'
                     WHERE id = ?
-                ''', (rule_id,))
+                ''', (rule_id,), commit=True)
                 
                 logger.info(f"✅ 试用期规则 #{rule_id} 激活 (成功率: {success_ratio:.1%})")
             else:
-                # 标记为过期
-                conn.execute('''
+                db.execute('''
                     UPDATE learning_rules
                     SET status = 'expired'
                     WHERE id = ?
-                ''', (rule_id,))
+                ''', (rule_id,), commit=True)
                 
                 logger.warning(f"❌ 试用期规则 #{rule_id} 失败 (成功率: {success_ratio:.1%})")
-        
-        conn.commit()
     
     def get_trial_rules(self) -> List[Dict]:
         """获取所有试用期规则"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cur = conn.execute('''
+        rows = db.query('''
             SELECT id, condition, action, confidence, trial_count, trial_success
             FROM learning_rules
             WHERE status = 'trial'
         ''')
         
         rules = []
-        for row in cur.fetchall():
+        for row in rows:
             rules.append({
                 "id": row[0],
                 "condition": row[1],
@@ -132,24 +118,17 @@ class RuleTrialManager:
     def get_trial_stats(self) -> Dict:
         """获取试用期统计"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        # 试用期规则数
-        cur = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='trial'")
-        trial_count = cur.fetchone()[0]
+        trial_count = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='trial'")[0]
         
-        # 已激活数
-        cur = conn.execute('''
+        activated_count = db.query_one('''
             SELECT COUNT(*) FROM learning_rules 
             WHERE status='active' AND trial_count > 0
-        ''')
-        activated_count = cur.fetchone()[0]
+        ''')[0]
         
-        # 已失败数
-        cur = conn.execute('''
+        expired_count = db.query_one('''
             SELECT COUNT(*) FROM learning_rules 
             WHERE status='expired' AND trial_count > 0
-        ''')
-        expired_count = cur.fetchone()[0]
+        ''')[0]
         
         return {
             "trial_count": trial_count,

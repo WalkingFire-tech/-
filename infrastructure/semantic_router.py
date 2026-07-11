@@ -355,8 +355,7 @@ class SemanticRouter:
         # 保存到数据库
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            conn.execute('''
+            db.executescript('''
                 CREATE TABLE IF NOT EXISTS routing_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     message TEXT,
@@ -366,9 +365,8 @@ class SemanticRouter:
                     timestamp TEXT
                 )
             ''')
-            conn.commit()
             
-            conn.execute('''
+            db.execute('''
                 INSERT INTO routing_history 
                 (message, skills, confidences, emotion, timestamp)
                 VALUES (?, ?, ?, ?, ?)
@@ -378,9 +376,7 @@ class SemanticRouter:
                 json.dumps(record["confidences"]),
                 record["emotion"],
                 record["timestamp"]
-            ))
-            
-            conn.commit()
+            ), commit=True)
         except Exception as e:
             logger.debug(f"记录路由历史失败: {e}")
     
@@ -388,15 +384,14 @@ class SemanticRouter:
         """加载路由历史"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            rows = db.query('''
                 SELECT message, skills, confidences, emotion, timestamp
                 FROM routing_history
                 ORDER BY timestamp DESC
                 LIMIT 1000
             ''')
             
-            for row in cursor.fetchall():
+            for row in rows:
                 self.routing_history.append({
                     "message": row[0],
                     "skills": json.loads(row[1]),
@@ -413,18 +408,16 @@ class SemanticRouter:
         """保存进化后的向量"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            conn.execute('''
+            db.executescript('''
                 CREATE TABLE IF NOT EXISTS skill_vectors (
                     skill_name TEXT PRIMARY KEY,
                     vector BLOB,
                     updated_at TEXT
                 )
             ''')
-            conn.commit()
             
             for skill_name, vector in self.skill_vectors.items():
-                conn.execute('''
+                db.execute('''
                     INSERT OR REPLACE INTO skill_vectors 
                     (skill_name, vector, updated_at)
                     VALUES (?, ?, ?)
@@ -432,9 +425,7 @@ class SemanticRouter:
                     skill_name,
                     vector.tobytes(),
                     datetime.now().isoformat()
-                ))
-            
-            conn.commit()
+                ), commit=True)
         except Exception as e:
             logger.warning(f"保存技能向量失败: {e}")
     

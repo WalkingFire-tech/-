@@ -121,8 +121,7 @@ class ReflexRule:
                     safe_context[key] = value
             
             db = DatabaseManager.get("reflex_logs.db")
-            conn = db._get_conn()
-            conn.execute('''
+            db.executescript('''
                 CREATE TABLE IF NOT EXISTS reflex_triggers (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     rule_name TEXT,
@@ -132,7 +131,7 @@ class ReflexRule:
                     timestamp TEXT
                 )
             ''')
-            conn.execute('''
+            db.execute('''
                 INSERT INTO reflex_triggers
                 (rule_name, priority, action, context, timestamp)
                 VALUES (?, ?, ?, ?, ?)
@@ -142,8 +141,7 @@ class ReflexRule:
                 self.action,
                 str(safe_context)[:200],
                 datetime.now().isoformat()
-            ))
-            conn.commit()
+            ), commit=True)
         except Exception as e:
             logger.error(f"反射日志记录失败: {e}")
 

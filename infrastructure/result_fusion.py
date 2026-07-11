@@ -30,8 +30,7 @@ class ResultFusion:
     def _init_db(self):
         """初始化数据库"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             CREATE TABLE IF NOT EXISTS fusions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_id TEXT,
@@ -42,8 +41,7 @@ class ResultFusion:
                 quality_score REAL,
                 timestamp TEXT
             )
-        ''')
-        conn.commit()
+        ''', commit=True)
     
     def fuse(self, subtasks: List[Dict], results: List[str],
             original_intent: str, strategy: str = 'auto',
@@ -280,8 +278,7 @@ class ResultFusion:
                     fused_result: str):
         """保存融合记录"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             INSERT INTO fusions
             (task_id, strategy, subtask_count, input_results, fused_result, quality_score, timestamp)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -293,18 +290,15 @@ class ResultFusion:
             fused_result[:2000],
             self._estimate_quality(fused_result),
             datetime.now().isoformat()
-        ))
-        conn.commit()
+        ), commit=True)
     
     def get_fusion_stats(self) -> Dict:
         """获取融合统计"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute('SELECT COUNT(*) FROM fusions')
-        total = cursor.fetchone()[0]
+        total = db.query_one('SELECT COUNT(*) FROM fusions')[0]
         
-        cursor = conn.execute('SELECT strategy, COUNT(*) FROM fusions GROUP BY strategy')
-        strategy_counts = dict(cursor.fetchall())
+        strategy_rows = db.query('SELECT strategy, COUNT(*) FROM fusions GROUP BY strategy')
+        strategy_counts = dict(strategy_rows)
         
         return {
             'total_fusions': total,

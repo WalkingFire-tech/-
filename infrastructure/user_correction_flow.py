@@ -182,14 +182,13 @@ class UserCorrectionFlow:
         question_hash = self.fact_store.hash_question(question)
         
         db = DatabaseManager.get(self.fact_store.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT * FROM correction_history
             WHERE question_hash = ?
             ORDER BY id DESC
         ''', (question_hash,))
         
-        return [dict(row) for row in cursor.fetchall()]
+        return [dict(row) for row in rows]
 
 
 user_correction_flow = UserCorrectionFlow()

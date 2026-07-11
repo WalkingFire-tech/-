@@ -38,8 +38,7 @@ class CounterfactualSimulator:
     def _init_db(self):
         """初始化反事实历史数据库"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS counterfactual_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT,
@@ -51,10 +50,9 @@ class CounterfactualSimulator:
                 gap REAL,
                 insight TEXT,
                 applied BOOLEAN
-            )
+            );
+            CREATE INDEX IF NOT EXISTS idx_task ON counterfactual_records(task_id)
         ''')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_task ON counterfactual_records(task_id)')
-        conn.commit()
     
     async def simulate_alternatives(
         self,
@@ -230,8 +228,7 @@ class CounterfactualSimulator:
         """保存反事实记录"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            conn.execute('''
+            db.execute('''
                 INSERT INTO counterfactual_records
                 (timestamp, task_id, actual_model, actual_score,
                  counterfactual_model, counterfactual_score, gap, insight, applied)
@@ -246,8 +243,7 @@ class CounterfactualSimulator:
                 result['gap'],
                 '',
                 False
-            ))
-            conn.commit()
+            ), commit=True)
         except Exception as e:
             logger.warning(f"反事实记录保存失败: {e}")
     
@@ -336,13 +332,11 @@ class CounterfactualSimulator:
             confidence = min(0.95, 0.6 + gap / 50)
             
             db = DatabaseManager.get("data/learning_rules.db")
-            conn = db._get_conn()
-            conn.execute('''
+            db.execute('''
                 INSERT INTO learning_rules
                 (condition, action, confidence, status, source, priority, created_at)
                 VALUES (?, ?, ?, 'active', 'counterfactual_auto', 8, ?)
-            ''', (condition, action, confidence, datetime.now().isoformat()))
-            conn.commit()
+            ''', (condition, action, confidence, datetime.now().isoformat()), commit=True)
             
             logger.info(f"自动生成规则: {condition} → {action} (置信度: {confidence:.2f})")
             
@@ -353,14 +347,12 @@ class CounterfactualSimulator:
         """激活高置信度规则"""
         try:
             db = DatabaseManager.get("data/learning_rules.db")
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            cursor = db.execute('''
                 UPDATE learning_rules
                 SET status = 'active'
                 WHERE status = 'pending' AND confidence >= 0.7
-            ''')
+            ''', commit=True)
             activated = cursor.rowcount
-            conn.commit()
             
             if activated > 0:
                 logger.info(f"自动激活 {activated} 条高置信度规则")
@@ -372,13 +364,11 @@ class CounterfactualSimulator:
         """标记洞察已应用"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            conn.execute('''
+            db.execute('''
                 UPDATE counterfactual_records
                 SET applied = TRUE
                 WHERE applied = FALSE AND gap > 10
-            ''')
-            conn.commit()
+            ''', commit=True)
         except Exception as e:
             logger.warning(f"标记失败: {e}")
     
@@ -386,15 +376,12 @@ class CounterfactualSimulator:
         """获取统计信息"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cur = conn.execute('SELECT COUNT(*) FROM counterfactual_records')
-            total_simulations = cur.fetchone()[0]
+            total_simulations = db.query_one('SELECT COUNT(*) FROM counterfactual_records')[0]
             
-            cur = conn.execute('SELECT COUNT(*) FROM counterfactual_records WHERE applied = TRUE')
-            applied_insights = cur.fetchone()[0]
+            applied_insights = db.query_one('SELECT COUNT(*) FROM counterfactual_records WHERE applied = TRUE')[0]
             
-            cur = conn.execute('SELECT AVG(gap) FROM counterfactual_records WHERE gap > 0')
-            avg_improvement = cur.fetchone()[0] or 0
+            avg_row = db.query_one('SELECT AVG(gap) FROM counterfactual_records WHERE gap > 0')
+            avg_improvement = avg_row[0] if avg_row else 0
             
             return {
                 "total_simulations": total_simulations,

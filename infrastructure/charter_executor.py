@@ -47,10 +47,8 @@ class CharterExecutor:
         
         try:
             db = DatabaseManager.get('data/experience_pool.db')
-            conn = db._get_conn()
             
-            # 查询最近7天的失败案例
-            cursor = conn.execute('''
+            rows = db.query('''
                 SELECT intent_type, raw_input, model_name, quality_score, timestamp
                 FROM experiences
                 WHERE success = 0
@@ -58,7 +56,7 @@ class CharterExecutor:
                 ORDER BY timestamp DESC
             ''')
             
-            failures = cursor.fetchall()
+            failures = rows
             
             # 按意图类型分组
             failure_groups = {}
@@ -113,10 +111,9 @@ class CharterExecutor:
         """保存学习任务"""
         try:
             db = DatabaseManager.get('data/learning_rules.db')
-            conn = db._get_conn()
             
             for task in tasks:
-                conn.execute('''
+                db.execute('''
                     INSERT INTO learning_rules
                     (condition, action, confidence, status, source)
                     VALUES (?, ?, ?, 'pending', 'auto_learning')
@@ -124,10 +121,7 @@ class CharterExecutor:
                     f"intent_type == '{task['intent_type']}'",
                     f"avoid_model: {task['samples'][0]['model_name']}",
                     0.5
-                ))
-                conn.commit()
-            
-            conn.commit()
+                ), commit=True)
             
             logger.info(f"已创建 {len(tasks)} 个学习任务")
             
@@ -147,25 +141,18 @@ class CharterExecutor:
         try:
             # 检查并行调度使用情况
             db = DatabaseManager.get('data/scheduler_stats.db')
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            parallel_calls = db.query_one('''
                 SELECT COUNT(*), MAX(start_time)
                 FROM parallel_calls
                 WHERE start_time >= datetime('now', '-7 days')
             ''')
             
-            parallel_calls = cursor.fetchone()
-            
-            # 检查任务分解使用情况
             db2 = DatabaseManager.get('data/task_decomposition.db')
-            conn2 = db2._get_conn()
-            cursor = conn2.execute('''
+            decompositions = db2.query_one('''
                 SELECT COUNT(*), MAX(timestamp)
                 FROM decompositions
                 WHERE timestamp >= datetime('now', '-7 days')
             ''')
-            
-            decompositions = cursor.fetchone()
             
             usage = {
                 'parallel_scheduling': {
@@ -365,17 +352,13 @@ class CharterExecutor:
         
         try:
             db = DatabaseManager.get('data/experience_pool.db')
-            conn = db._get_conn()
             
-            # 查询符合条件的经验
-            cursor = conn.execute('''
+            old_experiences = db.query('''
                 SELECT id, intent_type, raw_input, quality_score, timestamp
                 FROM experiences
                 WHERE timestamp < datetime('now', ?)
                   AND quality_score < ?
             ''', (f'-{days} days', min_importance * 100))
-            
-            old_experiences = cursor.fetchall()
             
             if not old_experiences:
                 logger.info("无需归档的经验")
@@ -401,13 +384,10 @@ class CharterExecutor:
             
             experience_ids = [e[0] for e in old_experiences]
             placeholders = ','.join('?' * len(experience_ids))
-            conn.execute(f'''
+            db.execute(f'''
                 DELETE FROM experiences
                 WHERE id IN ({placeholders})
-            ''', experience_ids)
-            conn.commit()
-            
-            conn.commit()
+            ''', experience_ids, commit=True)
             
             logger.info(f"已归档 {len(old_experiences)} 条经验至 {archive_file}")
             

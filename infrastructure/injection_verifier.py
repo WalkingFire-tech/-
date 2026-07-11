@@ -48,9 +48,7 @@ class InjectionVerifier:
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS injection_verifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 injection_id TEXT NOT NULL,
@@ -63,9 +61,6 @@ class InjectionVerifier:
                 details TEXT
             )
         ''')
-        conn.commit()
-        
-        conn.commit()
     
     def verify_injection(
         self,
@@ -141,9 +136,7 @@ class InjectionVerifier:
     def _save_result(self, result: VerificationResult):
         """保存验证结果到数据库"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        
-        conn.execute('''
+        db.execute('''
             INSERT INTO injection_verifications
             (injection_id, question, before_score, after_score, improvement, passed, verified_at, details)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -156,10 +149,7 @@ class InjectionVerifier:
             1 if result.passed else 0,
             result.verified_at,
             json.dumps(result.details)
-        ))
-        conn.commit()
-        
-        conn.commit()
+        ), commit=True)
     
     def get_verification_stats(self) -> Dict:
         """获取验证统计"""
