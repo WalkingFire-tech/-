@@ -26,6 +26,11 @@ from backend.services.path_handlers._shared import (
     _check_vector_available, _run_sync, _run_slow,
     _save_to_experience_pool,
 )
+
+try:
+    from core.resource_awareness.health_monitor import get_health_monitor
+except ImportError:
+    get_health_monitor = None
 from backend.services.path_handlers.experience_path import (
     fetch_experience as _fetch_experience,
     get_experience_context as _get_experience_context,
@@ -59,6 +64,22 @@ from backend.services.intent_service import (
     understand_response_content as _understand_response_content,
     discover_methodology as _discover_methodology,
 )
+from backend.services.code_verifier import verify_code_response as _verify_code_response
+from backend.services.reflection_service import (
+    reflect_and_learn as _reflect_and_learn,
+    try_solidify_to_gene_pool as _try_solidify_to_gene_pool,
+)
+from backend.services.orchestrator_helpers import (
+    get_cognitive_planner_safe as _get_cognitive_planner,
+    get_self_model_safe as _get_self_model,
+    emit as _emit,
+    build_uncertainty_note as _build_uncertainty_note,
+    build_conversation_context as _build_conversation_context,
+    get_stereo_memory_context as _get_stereo_memory_context,
+    self_reason as _self_reason,
+    background_collect as _background_collect,
+    alchemize_error as _alchemize_error,
+)
 from backend.services.response_aggregator import (
     score_response as _score_response,
     compare_and_select as _compare_and_select,
@@ -66,292 +87,6 @@ from backend.services.response_aggregator import (
     cross_source_merge as _cross_source_merge,
     list_divergences as _list_divergences,
 )
-
-try:
-    from core.services.cognitive_planner import get_cognitive_planner, CognitivePlanner
-    _COGNITIVE_PLANNER_AVAILABLE = True
-except ImportError:
-    _COGNITIVE_PLANNER_AVAILABLE = False
-
-try:
-    from core.self.model import get_self_model
-    _SELF_MODEL_AVAILABLE = True
-except ImportError:
-    _SELF_MODEL_AVAILABLE = False
-
-def _get_cognitive_planner():
-    if not _COGNITIVE_PLANNER_AVAILABLE:
-        return None
-    try:
-        return get_cognitive_planner()
-    except Exception:
-        return None
-
-def _get_self_model():
-    if not _SELF_MODEL_AVAILABLE:
-        return None
-    try:
-        return get_self_model()
-    except Exception:
-        return None
-
-class _SafeEncoder(json.JSONEncoder):
-    def default(self, obj):
-        try:
-            return str(obj)
-        except Exception:
-            return f"<{type(obj).__name__}>"
-
-def _emit(event_type: str, data: dict) -> str:
-    if event_type == "result" and _RESOURCE_AWARE:
-        try:
-            get_health_monitor().unregister_query()
-        except Exception:
-            pass
-    return f"data: {json.dumps({'type': event_type, **data}, ensure_ascii=False, cls=_SafeEncoder)}\n\n"
-
-
-def _build_uncertainty_note(query: str, response: str, attempts: list, prob_field, action: dict) -> str:
-    """
-    构建基于实际推理过程的不确定性结语
-
-    不是泛泛的"建议你也看看"，而是回答：
-    1. 我具体做了哪些验证
-    2. 哪些方面我比较有信心，哪些方面存疑
-    3. 针对性的、可操作的建议
-    """
-    entropy = prob_field._entropy if prob_field._candidates else 0
-    candidates = prob_field._candidates if prob_field._candidates else {}
-
-    verified_sources = []
-    unverified_areas = []
-
-    for name, result in attempts:
-        if isinstance(result, bool) and result:
-            if name in ("自我验证", "本质推理", "多源交叉验证", "代码验证", "科学免责"):
-                verified_sources.append(name)
-        if isinstance(result, bool) and not result:
-            if name in ("自我验证", "本质推理", "多源交叉验证"):
-                unverified_areas.append(name)
-
-    source_names = []
-    for cid, cinfo in candidates.items():
-        src = cinfo.get("source", "")
-        if src and src not in source_names:
-            source_names.append(src)
-
-    top_prob = 0.0
-    if candidates:
-        top_prob = max((c.get("probability", 0) for c in candidates.values()), default=0)
-
-    lines = []
-    lines.append("\n\n---")
-
-    if top_prob >= 0.5 and verified_sources:
-        confidence_desc = "主要结论经过了验证" if len(verified_sources) >= 2 else "核心观点有一定依据"
-        lines.append(f"💡 {confidence_desc}——")
-        for v in verified_sources[:3]:
-            v_label = {"自我验证": "逻辑自洽检查", "本质推理": "第一性原理推演",
-                       "多源交叉验证": "多来源比对", "代码验证": "代码语法验证",
-                       "科学免责": "科学事实标注"}.get(v, v)
-            lines.append(f"  ✓ {v_label}")
-    else:
-        lines.append("💡 这个回答我斟酌了一下——")
-
-    if unverified_areas:
-        lines.append("但以下方面我还没完全确认：")
-        for u in unverified_areas[:2]:
-            u_label = {"自我验证": "逻辑链条的完整性", "本质推理": "底层假设的可靠性",
-                       "多源交叉验证": "不同来源的一致性"}.get(u, u)
-            lines.append(f"  ✗ {u_label}")
-
-    if source_names:
-        sources_str = "、".join(source_names[:4])
-        lines.append(f"参考来源：{sources_str}")
-
-    if entropy > 0.85:
-        lines.append("如果你有相关领域的经验，欢迎指正——我对这个话题的了解确实有限。")
-    elif entropy > 0.7:
-        specific_hint = ""
-        q_lower = query.lower()
-        if any(kw in q_lower for kw in ["代码", "编程", "函数", "api", "实现"]):
-            specific_hint = "建议在实际环境中跑一遍确认。"
-        elif any(kw in q_lower for kw in ["为什么", "原理", "机制", "本质"]):
-            specific_hint = "如果需要更深入的推导，可以继续追问。"
-        elif any(kw in q_lower for kw in ["多少", "什么时候", "哪个", "谁"]):
-            specific_hint = "具体数据建议核对最新资料。"
-        else:
-            specific_hint = "关键细节建议再确认一下。"
-        lines.append(specific_hint)
-
-    lines.append("---")
-    return "\n".join(lines)
-
-
-
-
-
-
-
-
-
-
-def _build_conversation_context(history: list) -> str:
-    """从对话历史构建上下文文本"""
-    if not history:
-        return ""
-    parts = []
-    for msg in history[-10:]:
-        role = msg.get("role", "")
-        content = msg.get("content", "")
-        if not content:
-            continue
-        if "---\n⚠️" in content:
-            content = content.split("---\n⚠️")[0].strip()
-        if role == "user":
-            parts.append(f"用户：{content[:300]}")
-        elif role == "assistant":
-            parts.append(f"助手：{content[:300]}")
-    if not parts:
-        return ""
-    return "\n".join(parts)
-
-
-def _get_stereo_memory_context(query: str) -> str:
-    """从立体记忆系统检索相关记忆作为上下文"""
-    try:
-        from core.memory.stereo_memory import get_stereo_memory, MemoryType
-        sm = get_stereo_memory()
-        results = sm.search(query=query, limit=3)
-        if not results:
-            return ""
-        parts = []
-        for mem in results:
-            content_str = str(mem.content)[:200] if mem.content else ""
-            if content_str and len(content_str) > 20:
-                emotion = mem.self_dimension.emotional_state
-                confidence = mem.self_dimension.confidence
-                parts.append(f"[记忆:{emotion} 置信度{confidence:.0%}] {content_str}")
-        return "\n".join(parts) if parts else ""
-    except Exception as e:
-        logger.debug(f"立体记忆检索跳过: {e}")
-        return ""
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-async def _self_reason(query: str, conversation_context: str = "", truth_insights: str = "") -> Optional[dict]:
-    """路径H：自我推理——用已有知识自己推，不依赖外部模型"""
-    try:
-        knowledge_parts = []
-        
-        # 从经验池提取相关经验（异步）
-        try:
-            if _check_vector_available():
-                from infrastructure.vector_retriever import vector_retriever
-                if vector_retriever.is_available():
-                    loop = asyncio.get_running_loop()
-                    similar = await asyncio.wait_for(
-                        loop.run_in_executor(_fast_executor, lambda: vector_retriever.search(query, top_k=3, threshold=0.5)),
-                        timeout=5
-                    )
-                    for s in similar:
-                        knowledge_parts.append(f"[经验] {s.get('text', '')[:200]}")
-        except Exception:
-            pass
-        
-        # 从学习规则提取相关规则（异步）
-        try:
-            loop = asyncio.get_running_loop()
-            def _query_rules():
-                db = DatabaseManager.get("data/learning_rules.db")
-                rows = db.query("SELECT rule_text, confidence FROM learning_rules WHERE status='active' AND rule_text LIKE ? ORDER BY confidence DESC LIMIT 3", (f"%{query[:10]}%",))
-                return [(r[0], r[1]) for r in rows]
-            rows = await asyncio.wait_for(loop.run_in_executor(_fast_executor, _query_rules), timeout=3)
-            for row in rows:
-                knowledge_parts.append(f"[规则 conf={row[1]:.2f}] {row[0][:200]}")
-        except Exception:
-            pass
-        
-        # 从真谛库提取（异步）
-        try:
-            loop = asyncio.get_running_loop()
-            def _query_truths():
-                db = DatabaseManager.get("data/truths.db")
-                rows = db.query("SELECT content FROM truths WHERE content LIKE ? LIMIT 2", (f"%{query[:8]}%",))
-                return [r[0] for r in rows]
-            rows = await asyncio.wait_for(loop.run_in_executor(_fast_executor, _query_truths), timeout=3)
-            for row in rows:
-                knowledge_parts.append(f"[真谛] {row[:200]}")
-        except Exception:
-            pass
-        
-        if knowledge_parts:
-            reasoning = f"关于「{query}」，基于已有知识的推理：\n\n" + "\n".join(knowledge_parts)
-            return {"source": "自我推理", "response": reasoning, "quality": 55}
-    except Exception as e:
-        logger.debug(f"自我推理异常: {e}")
-    return None
-
-
-
-
-async def _background_collect(task, query: str, task_name: str):
-    """后台收集仍在推理的模型结果，不阻塞主流程"""
-    try:
-        result = await task
-        if isinstance(result, list):
-            for item in result:
-                if isinstance(item, dict) and item.get("response"):
-                    _save_to_experience_pool(query, item["response"], success=True, intent_type="background_collect", model_name="ollama")
-                    logger.info(f"🔄 后台收集: {task_name}推理完成，已存入经验池")
-        elif isinstance(result, dict) and result.get("response"):
-            _save_to_experience_pool(query, result["response"], success=True, intent_type="background_collect", model_name="external")
-            logger.info(f"🔄 后台收集: {task_name}推理完成，已存入经验池")
-    except Exception as e:
-        logger.debug(f"后台收集异常: {e}")
 
 
 async def chat_stream(user_input: str, context: dict):
@@ -421,7 +156,7 @@ async def chat_stream(user_input: str, context: dict):
             logger.info(f"CBNR L1: 高预测误差({cbnr_context['l1_prediction_error']:.2f}), 增强深度推理权重")
     except Exception as e:
         logger.debug(f"CBNR L1跳过: {e}")
-
+        _alchemize_error(e, context={"user_input": user_input[:50]}, phase="CBNR_L1")
     MAX_INPUT_LENGTH = 4000
     if len(user_input) > MAX_INPUT_LENGTH:
         if _INPUT_PROCESSOR_AVAILABLE:
@@ -462,17 +197,26 @@ async def chat_stream(user_input: str, context: dict):
         try:
             monitor = get_health_monitor()
             snap = monitor.check()
-            if snap.memory_usage > 0.85:
-                logger.warning(f"内存紧张({snap.memory_usage:.1%})，跳过重路径，走轻量响应")
-                yield _emit("step", {"phase": "资源保护", "status": "warning", "detail": f"内存{snap.memory_usage:.1%}，使用轻量响应"})
+            _sm_health = 1.0
+            _sm_obj = _get_self_model()
+            if _sm_obj:
+                try:
+                    _sm_snap = _sm_obj.snapshot()
+                    _sm_health = _sm_snap.get("health", {}).get("score", 1.0)
+                except Exception:
+                    pass
+            if snap.memory_usage > 0.85 or _sm_health < 0.3:
+                reason = f"内存{snap.memory_usage:.1%}" if snap.memory_usage > 0.85 else f"系统健康度低({_sm_health:.1%})"
+                logger.warning(f"资源保护触发: {reason}，走轻量响应")
+                yield _emit("step", {"phase": "资源保护", "status": "warning", "detail": f"{reason}，使用轻量响应"})
                 try:
                     ollama_result = await _run_sync(_fetch_ollama_all, user_input, timeout=30)
                     if ollama_result and ollama_result.get("response"):
                         yield _emit("result", {"response": ollama_result["response"], "attempts": [{"source": "Ollama(轻量)", "success": True}], "intent": "simple", "confidence": 0.5, "route": "fast"})
                     else:
-                        yield _emit("result", {"response": f"暂时资源紧张，简单回复：{user_input[:50]}...这个问题我需要更多资源才能深入回答，稍后再试？", "attempts": [], "intent": "simple", "confidence": 0.3, "route": "fast"})
+                        yield _emit("result", {"response": _never_give_up_response(user_input, attempts), "attempts": attempts, "intent": "simple", "confidence": 0.3, "route": "fast"})
                 except Exception:
-                    yield _emit("result", {"response": "系统资源紧张，暂时无法处理。请稍后再试。", "attempts": [], "intent": "simple", "confidence": 0.2, "route": "fast"})
+                    yield _emit("result", {"response": _never_give_up_response(user_input, attempts), "attempts": attempts, "intent": "simple", "confidence": 0.2, "route": "fast"})
                 return
         except Exception:
             pass
@@ -498,6 +242,7 @@ async def chat_stream(user_input: str, context: dict):
         logger.debug(f"CBNR L2: 压缩={_l2_result.compression_ratio:.1%}, 冲突={_l2_result.conflict_delta:.2f}, 模式={_l2_result.conflict_mode.value}")
     except Exception as e:
         logger.debug(f"CBNR L2跳过: {e}")
+        _alchemize_error(e, context={"user_input": user_input[:50]}, phase="CBNR_L2")
 
     # 通知存在层：用户正在交互
     try:
@@ -605,10 +350,51 @@ async def chat_stream(user_input: str, context: dict):
                 "urgency": float(urgency),
                 "confusion": float(confusion),
             })
+
+            if urgency > 0.8:
+                route = "fast"
+                logger.info(f"⚡ 紧迫度高({urgency:.1f})，切换到快速路由")
+            if confusion > 0.7:
+                methodology.setdefault("need_essence_reasoning", True)
+                logger.info(f"🤔 困惑度高({confusion:.1f})，启用本质推理")
         except Exception as e:
             logger.debug(f"L1认知感知跳过: {e}")
 
     # ========== 阶段1.5：规则匹配与执行 ==========
+
+    # 【墙上的画→引擎】反射级安全检查：reflex_engine处理安全关键场景
+    # 之前：reflex_engine仅被旧orchestrator(planner.py)调用，chat_orchestrator完全绕过
+    # 现在：在输入处理阶段执行安全检查（危险命令拦截、资源保护等）
+    _reflex_action = None
+    try:
+        from infrastructure.reflex_engine import reflex_engine
+        _reflex_ctx = {
+            "user_input": user_input,
+            "intent_type": intent_type,
+            "recent_failures": sum(1 for _h in history[-5:] if _h.get("role") == "assistant" and ("抱歉" in _h.get("content", "") or "无法" in _h.get("content", ""))),
+        }
+        _reflex_action = reflex_engine.check(_reflex_ctx)
+        if _reflex_action:
+            yield _emit("step", {"phase": "反射安全检查", "status": "done",
+                "detail": f"反射规则触发: {_reflex_action}"})
+            logger.info(f"反射安全检查触发: action={_reflex_action}")
+    except Exception as e:
+        logger.debug(f"反射安全检查跳过: {e}")
+
+    if _reflex_action:
+        if _reflex_action in ("block", "reject") or _reflex_action.startswith("block:"):
+            _block_msg = _reflex_action.split(":", 1)[1] if ":" in _reflex_action else "此操作已被安全策略拦截。"
+            final_response = _block_msg
+            yield _emit("step", {"phase": "安全拦截", "status": "done", "detail": "反射规则拦截了潜在危险操作"})
+            yield _emit("result", {"response": final_response, "attempts": attempts, "intent": intent_type})
+            return
+        elif _reflex_action.startswith("warn:"):
+            _rule_actions = _rule_actions if '_rule_actions' in dir() else []
+            _rule_actions.append(_reflex_action)
+        else:
+            _rule_actions = _rule_actions if '_rule_actions' in dir() else []
+            _rule_actions.append(_reflex_action)
+
     from backend.services.rule_evaluation import evaluate_rules_async
     _rule_actions = await evaluate_rules_async(user_input, intent_type, model_name=model if 'model' in dir() else "unknown")
     if _rule_actions:
@@ -753,6 +539,35 @@ async def chat_stream(user_input: str, context: dict):
             except Exception:
                 pass
 
+    # ========== 阶段2：能力评估与获取 ==========
+    # 在行动之前，先想清楚：我能不能做这件事？如果不能，怎么获得能力？
+    _capability_assessment = None
+    try:
+        from core.learning.capability_gap_learner import capability_gap_learner
+        _capability_assessment = capability_gap_learner.assess_capability(user_input, intent_type, methodology)
+        if _capability_assessment and _capability_assessment.get("gap_detected"):
+            gap_type = _capability_assessment["gap_type"]
+            yield _emit("thinking", {
+                "phase": f"我发现这个问题需要「{_capability_assessment['needed_capability']}」的能力，我正在想办法获得它",
+                "gap_type": gap_type,
+                "resolution_plan": _capability_assessment.get("resolution_plan", ""),
+            })
+            yield _emit("step", {"phase": "能力评估", "status": "running",
+                "detail": f"检测到能力缺失: {gap_type}，正在获取能力..."})
+
+            _acquired = await capability_gap_learner.acquire_capability(_capability_assessment)
+            if _acquired:
+                yield _emit("step", {"phase": "能力评估", "status": "done",
+                    "detail": f"已获得能力: {_acquired}"})
+                methodology = capability_gap_learner.update_methodology(methodology, _capability_assessment)
+            else:
+                yield _emit("step", {"phase": "能力评估", "status": "done",
+                    "detail": f"能力获取进行中: {_capability_assessment.get('resolution_plan', '探索中')}"})
+        else:
+            yield _emit("step", {"phase": "能力评估", "status": "done", "detail": "能力充足，开始执行"})
+    except Exception as _ce:
+        logger.debug(f"能力评估跳过: {_ce}")
+
     # ========== 阶段3：多策略并行尝试 ==========
     yield _emit("thinking", {
         "phase": f"我正在用多种策略同时思考你的问题",
@@ -772,6 +587,8 @@ async def chat_stream(user_input: str, context: dict):
     # ========== 阶段4：对比择优 ==========
 
     logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] 进入阶段4: 对比择优, {len(candidates)}个候选")
+    for i, c in enumerate(candidates):
+        logger.info(f"[ORCH_DIAG] 候选{i}: source={c.get('source')}, quality={c.get('quality')}, resp_len={len(c.get('response',''))}, resp_preview={c.get('response','')[:80]}")
     yield _emit("step", {"phase": "对比择优", "status": "running", "detail": f"对{len(candidates)}个结果评分对比..."})
 
     best, comparison = _compare_and_select(candidates, user_input, cbnr_ctx=cbnr_context)
@@ -783,6 +600,16 @@ async def chat_stream(user_input: str, context: dict):
             sc = c["score"]
             attempts.append((src, sc >= 60, f"评分{sc:.0f}"))
         yield _emit("step", {"phase": "对比择优", "status": "done", "detail": f"最优来源: {best['source']} (评分{comparison[0]['score']:.0f})，共{len(comparison)}个候选"})
+
+        # S-1: 成功路径→ToolBuilder观察学习
+        try:
+            from core.learning.tool_builder import ToolSelfBuilder
+            tb = ToolSelfBuilder()
+            for c in comparison:
+                if c.get("score", 0) >= 60:
+                    tb.record_success(c["source"], user_input, c.get("response", "")[:200])
+        except Exception as e:
+            logger.debug(f"ToolBuilder观察跳过: {e}")
 
         # 贡献度归因（SHAP风格）+ 路径权重更新（AdaBoost风格，不确定性感知）
         try:
@@ -869,6 +696,7 @@ async def chat_stream(user_input: str, context: dict):
             logger.debug(f"L2认知学习: gained={knowledge_gained}, sources={_cognitive_learning.get('sources', [])}")
         except Exception as e:
             logger.debug(f"L2认知学习跳过: {e}")
+            _alchemize_error(e, context={"user_input": user_input[:50]}, phase="L2_cognitive_learning")
         try:
             _cognitive_integration = cp._integrate(_cognitive_learning)
             if _cognitive_integration.get("success"):
@@ -888,6 +716,24 @@ async def chat_stream(user_input: str, context: dict):
             "confidence": float(_cognitive_learning.get("confidence", 0.5)),
             "sources": _cognitive_learning.get("sources", []),
         })
+
+    # 【墙上的画→引擎】L2学到的知识注入推理上下文
+    # 之前：knowledge_gained仅用于SSE展示和SelfModel记录，不参与实际推理
+    # 现在：将L2/L3产出的知识注入truth_insights和conversation_context，让后续本质推理、
+    #       自我验证、修正推理都能利用这些新获得的知识
+    _l2_knowledge_context = ""
+    if _cognitive_learning and _cognitive_learning.get("knowledge_gained", 0) > 0:
+        _l2_sources = _cognitive_learning.get("sources", [])
+        _l2_conf = _cognitive_learning.get("confidence", 0.5)
+        _l2_knowledge_context = f"\n【L2认知学习-新获得知识】(置信度{_l2_conf:.0%}, 来源:{','.join(str(s) for s in _l2_sources[:3])})"
+        if _cognitive_integration and _cognitive_integration.get("core_knowledge"):
+            for _ck in _cognitive_integration["core_knowledge"][:3]:
+                _ck_content = _ck.get("content", "")
+                if _ck_content:
+                    _l2_knowledge_context += f"\n- {_ck_content[:200]}"
+        if _l2_knowledge_context.strip():
+            truth_insights = (truth_insights + _l2_knowledge_context) if truth_insights else _l2_knowledge_context
+            logger.info(f"L2知识已注入推理上下文: {_cognitive_learning.get('knowledge_gained', 0)}项, 置信度{_l2_conf:.0%}")
 
     # ========== 阶段4.5：本质推理与自洽验证 ==========
     essence_passed = True
@@ -1003,10 +849,44 @@ async def chat_stream(user_input: str, context: dict):
             yield _emit("step", {"phase": "本质推理", "status": "timeout", "detail": "本质推理超时，跳过验证继续"})
         except Exception as e:
             logger.debug(f"本质推理异常: {e}")
+            _alchemize_error(e, context={"user_input": user_input[:50]}, phase="essence_reasoning")
             yield _emit("step", {"phase": "本质推理", "status": "done", "detail": "本质推理异常，继续后续验证"})
 
     # ========== 阶段5：自我验证 ==========
     if not final_response:
+        try:
+            from core.learning.capability_gap_learner import capability_gap_learner
+            gap = capability_gap_learner.detect_gap(user_input, attempts, "")
+            if gap:
+                logger.info(f"🔍 检测到能力缺失: {gap['gap_type']} — {user_input[:50]}")
+                gap_resolution = await capability_gap_learner.try_resolve_gap(gap)
+                if gap_resolution:
+                    logger.info(f"🧠 能力缺失学习结果: {gap_resolution[:100]}")
+                    yield _emit("learning", {"type": "capability_gap", "gap_type": gap["gap_type"], "resolution": gap_resolution[:200]})
+
+                # 【墙上的画→引擎】工具构建器：当能力缺失为工具类时，调用ToolSelfBuilder
+                # 审计报告要求：observe_need()记录需求，需求频率达阈值后build_tool()自动构建
+                if gap.get("gap_type") in ("tool", "missing_tool", "hardware", "system_command"):
+                    try:
+                        from core.learning.tool_builder import ToolSelfBuilder
+                        _tb = ToolSelfBuilder()
+                        _need_key = _tb.observe_need(
+                            description=f"{gap.get('gap_type')}: {user_input[:100]}",
+                            context={"gap": gap, "intent_type": intent_type},
+                        )
+                        _opportunities = _tb.identify_tool_opportunities()
+                        if _opportunities:
+                            _build_result = _tb.build_tool(_opportunities[0])
+                            if _build_result.success:
+                                logger.info(f"🔧 工具构建器: 自动构建工具'{_build_result.tool_id}'成功")
+                                yield _emit("learning", {"type": "tool_built", "tool_id": _build_result.tool_id})
+                            else:
+                                logger.debug(f"工具构建器: 构建失败 - {_build_result.error}")
+                    except Exception as _tbe:
+                        logger.debug(f"工具构建器跳过: {_tbe}")
+        except Exception as _ge:
+            logger.debug(f"能力缺失学习异常: {_ge}")
+
         fallback = _generate_meaningful_fallback(user_input, attempts)
         if fallback == "__NEED_DYNAMIC_FALLBACK__":
             try:
@@ -1015,12 +895,39 @@ async def chat_stream(user_input: str, context: dict):
                     final_response = ollama_result["response"]
                     attempts.append(("动态推理", True, "模型实时生成"))
                 else:
-                    final_response = f"这个问题我暂时还没想清楚——「{user_input}」涉及的方向我需要更多背景才能给出靠谱的回答。你能补充一下具体场景或你关注的重点吗？"
                     attempts.append(("动态推理", False, "模型无有效回复"))
             except Exception as _e:
                 logger.warning(f"动态推理异常: {_e}")
-                final_response = f"这个问题我暂时还没想清楚——「{user_input}」涉及的方向我需要更多背景才能给出靠谱的回答。你能补充一下具体场景或你关注的重点吗？"
                 attempts.append(("动态推理", False, f"模型异常: {str(_e)[:60]}"))
+
+            if not final_response:
+                try:
+                    from backend.services.persistent_solver import persistent_solve, review_solution
+                    _ps_events = []
+                    async def _ps_emit(event_type, data):
+                        _ps_events.append((event_type, data))
+
+                    yield _emit("step", {"phase": "持续求解", "status": "running", "detail": "常规方法未解决，启动持续求解引擎..."})
+                    ps_response, ps_new_attempts, ps_solved = await persistent_solve(
+                        user_input, attempts,
+                        conversation_context=conversation_context,
+                        truth_insights=truth_insights,
+                        emit_fn=_ps_emit,
+                    )
+                    for _et, _ed in _ps_events:
+                        yield _emit(_et, _ed)
+                    attempts.extend(ps_new_attempts)
+                    if ps_solved and ps_response:
+                        final_response = ps_response
+                        attempts.append(("持续求解", True, f"第{len(ps_new_attempts)}轮成功"))
+                        await review_solution(user_input, ps_response, attempts, True)
+                    else:
+                        final_response = ps_response or _never_give_up_response(user_input, attempts)
+                        attempts.append(("持续求解", False, f"{len(ps_new_attempts)}轮后未解决"))
+                except Exception as _pse:
+                    logger.warning(f"持续求解异常: {_pse}")
+                    final_response = _never_give_up_response(user_input, attempts)
+                    attempts.append(("持续求解", False, f"异常: {str(_pse)[:60]}"))
         else:
             final_response = fallback
             attempts.append(("降级保护", True, "基础回复"))
@@ -1287,6 +1194,64 @@ async def chat_stream(user_input: str, context: dict):
     # ========== 阶段6：精神内核验证 ==========
     yield _emit("step", {"phase": "精神验证", "status": "running", "detail": "验证回复是否符合核心原则..."})
 
+    # 【墙上的画→引擎】元宪法R1/R3：沙盒验证 + 人类批准
+    # 审计报告要求：
+    #   R1: "若回复引用了未经验证的真谛，应触发警告或降级"（不只是代码块）
+    #   R3: "当进化操作影响范围超过阈值，应通过SSE推送人类审批请求"（不只是追加文本）
+    _meta_constitution_violation = None
+    _r1_unverified_truths = []
+    _r3_needs_approval = False
+    try:
+        # R1检查①：代码/命令沙盒验证
+        if final_response and any(kw in final_response for kw in ["```", "import ", "def ", "pip install", "rm ", "exec("]):
+            _code_blocks = [line for line in final_response.split("\n") if line.strip().startswith(("import ", "def ", "pip ", "rm ", "exec("))]
+            if _code_blocks:
+                from backend.services.code_verifier import verify_code_response
+                _code_check = verify_code_response(user_input, final_response)
+                if not _code_check.get("passed", True):
+                    _meta_constitution_violation = f"R1(沙盒验证-代码): {_code_check.get('detail', '代码未通过验证')}"
+                    logger.warning(f"元宪法R1违反: {_meta_constitution_violation}")
+
+        # R1检查②：回复引用了未经验证的真谛（level<=L2且evidence<3）
+        if final_response and not _meta_constitution_violation:
+            try:
+                from core.truth_accumulator import truth_accumulator as _r1_ta
+                _all_truths = _r1_ta.get_all_truths()
+                for _t in _all_truths:
+                    _t_name = _t.get("name", "")
+                    _t_level = _t.get("level", "L1")
+                    _t_evidence = _t.get("evidence", 0)
+                    if _t_name and _t_name in final_response:
+                        if _t_level in ("L1", "L2") and _t_evidence < 3:
+                            _r1_unverified_truths.append(f"{_t_name}(L={_t_level},证据={_t_evidence})")
+                if _r1_unverified_truths:
+                    _meta_constitution_violation = f"R1(沙盒验证-真谛): 回复引用了未验证真谛: {', '.join(_r1_unverified_truths[:3])}"
+                    if "⚠️" not in final_response:
+                        final_response += f"\n\n⚠️ 以上引用的洞察（{', '.join(_r1_unverified_truths[:2])}）尚未经过充分验证，请谨慎参考。"
+                    logger.warning(f"元宪法R1违反: {_meta_constitution_violation}")
+            except Exception:
+                pass
+
+        # R3检查：涉及系统级变更的回复需要人类确认
+        if final_response and any(kw in final_response for kw in ["我将修改", "我会删除", "我将关闭", "我将重启", "我将重置"]):
+            if "确认" not in final_response and "请确认" not in final_response:
+                _r3_needs_approval = True
+                _meta_constitution_violation = f"R3(人类批准): 回复暗示系统级操作，需人类确认"
+                yield _emit("approval_request", {
+                    "type": "system_operation",
+                    "message": "回复涉及系统级操作，需要您的确认才会执行",
+                    "options": ["确认执行", "取消操作"],
+                })
+                logger.warning(f"元宪法R3: 系统级操作需人类确认，已推送SSE审批请求")
+
+        if _meta_constitution_violation:
+            attempts.append(("元宪法检查", not _r3_needs_approval, _meta_constitution_violation[:80]))
+            yield _emit("step", {"phase": "元宪法", "status": "done", "detail": f"⚠️ {_meta_constitution_violation[:60]}"})
+        else:
+            yield _emit("step", {"phase": "元宪法", "status": "done", "detail": "R1/R3检查通过 ✅"})
+    except Exception as e:
+        logger.debug(f"元宪法检查跳过: {e}")
+
     if SPIRIT_CORE_AVAILABLE:
         original_response = final_response
         try:
@@ -1309,6 +1274,8 @@ async def chat_stream(user_input: str, context: dict):
 
     # L4认知校验层：通过CognitivePlanner校验整合结果并生成认知级响应
     _cognitive_validation = {}
+    _l4_doubts = []
+    _l4_should_correct = False
     if cp and _cognitive_integration and final_response:
         try:
             _cognitive_validation, _cognitive_response = cp._validate_and_respond(
@@ -1317,13 +1284,68 @@ async def chat_stream(user_input: str, context: dict):
             val_status = _cognitive_validation.get("status", "unknown")
             val_conf = _cognitive_validation.get("confidence", 0)
             doubts = _cognitive_validation.get("doubts", [])
+            _l4_doubts = doubts if isinstance(doubts, list) else []
             if val_status == "pass" and val_conf >= 0.7:
                 attempts.append(("L4认知校验", True, f"校验通过(置信度{val_conf:.0%})"))
             elif doubts:
                 attempts.append(("L4认知校验", True, f"存疑{len(doubts)}项(置信度{val_conf:.0%})"))
             logger.debug(f"L4认知校验: status={val_status}, confidence={val_conf:.2f}, doubts={len(doubts)}")
+
+            # 【墙上的画→引擎】L4 doubts触发回复修正
+            # 之前：doubts仅记录到attempts，不影响任何决策
+            # 现在：严重doubts(置信度<0.5或存在critical质疑)触发修正推理
+            _l4_critical_doubts = [d for d in _l4_doubts if isinstance(d, dict) and d.get("severity") == "critical"]
+            _l4_major_doubts = [d for d in _l4_doubts if isinstance(d, dict) and d.get("severity") == "major"]
+            if val_conf < 0.5 or len(_l4_critical_doubts) > 0:
+                _l4_should_correct = True
+                _doubt_descs = []
+                for _d in (_l4_critical_doubts + _l4_major_doubts)[:3]:
+                    if isinstance(_d, dict):
+                        _doubt_descs.append(_d.get("description", str(_d))[:80])
+                    else:
+                        _doubt_descs.append(str(_d)[:80])
+                yield _emit("step", {"phase": "L4认知校验", "status": "done",
+                    "detail": f"⚠️ L4发现{len(_l4_critical_doubts)}个严重质疑，触发修正: {'; '.join(_doubt_descs)}"})
+                logger.info(f"L4质疑触发修正: {len(_l4_critical_doubts)} critical, {len(_l4_major_doubts)} major, conf={val_conf:.2f}")
+
+                # 将L4质疑注入到essence_issues，让自我验证阶段知道
+                for _d in (_l4_critical_doubts + _l4_major_doubts)[:3]:
+                    if isinstance(_d, dict):
+                        _desc = _d.get("description", "")
+                        if _desc and _desc not in essence_issues:
+                            essence_issues.append(f"[L4质疑] {_desc}")
+                essence_passed = False
+                if val_conf < essence_confidence:
+                    essence_confidence = val_conf
+
+                # L4质疑触发修正推理：用Ollama重新生成
+                if not essence_cross_validated:
+                    _l4_model = await _get_available_ollama_model_async()
+                    if _l4_model:
+                        yield _emit("step", {"phase": "L4修正推理", "status": "running",
+                            "detail": f"L4质疑触发修正，调用 {_l4_model} 重新推理..."})
+                        _l4_correction_prompt = user_input
+                        if truth_insights:
+                            _l4_correction_prompt = f"{user_input}\n\n参考信息:\n{truth_insights[:500]}"
+                        _l4_retry = await _fetch_ollama(_l4_correction_prompt, _l4_model, timeout=20, conversation_context=conversation_context)
+                        if _l4_retry and _l4_retry.get("response") and len(_l4_retry["response"]) > len(final_response) * 0.5:
+                            _l4_retry_score = _score_response(_l4_retry, user_input)
+                            _l4_current_score = _score_response(best, user_input) if best else 0
+                            if _l4_retry_score > _l4_current_score * 0.8:
+                                final_response = _l4_retry["response"]
+                                _save_to_experience_pool(user_input, final_response, success=True, intent_type="l4_correction", model_name=_l4_model)
+                                attempts.append(("L4修正推理", True, f"修正成功(评分{_l4_retry_score:.0f})"))
+                                yield _emit("step", {"phase": "L4修正推理", "status": "done", "detail": f"L4修正成功 ✅"})
+                            else:
+                                attempts.append(("L4修正推理", False, f"修正评分{_l4_retry_score:.0f}未显著优于原{_l4_current_score:.0f}"))
+                                yield _emit("step", {"phase": "L4修正推理", "status": "done", "detail": "L4修正未显著改善"})
+                        else:
+                            yield _emit("step", {"phase": "L4修正推理", "status": "done", "detail": "L4修正未返回有效结果"})
+                    else:
+                        yield _emit("step", {"phase": "L4修正推理", "status": "done", "detail": "无可用模型"})
         except Exception as e:
             logger.debug(f"L4认知校验跳过: {e}")
+            _alchemize_error(e, context={"user_input": user_input[:50]}, phase="L4_validation")
     _sm = _get_self_model()
     if _sm and _cognitive_validation:
         _sm.record_cognitive_cycle(validation=_cognitive_validation)
@@ -1343,6 +1365,52 @@ async def chat_stream(user_input: str, context: dict):
             logger.debug("L5进化层已异步触发")
         except Exception as e:
             logger.debug(f"L5进化层触发跳过: {e}")
+
+        # 【墙上的画→引擎】进化岛结果反馈到技能库和基因池
+        # 之前：L5进化结果仅停留在L5内部（_sync_to_layers只向state_collector报告）
+        # 现在：将L5的基因值和技能写回到实际的gene_pool和skill_emergence
+        try:
+            if hasattr(cp, 'l5') and cp.l5:
+                _l5_status = cp.l5.get_evolution_status()
+                _l5_genes = _l5_status.get("genes", {})
+                _l5_skills_count = _l5_status.get("skills_count", 0)
+
+                if _l5_genes:
+                    from core.task_queue import task_queue, gene_pool
+                    _synced_genes = 0
+                    for _gid, _ginfo in _l5_genes.items():
+                        if isinstance(_ginfo, dict) and "value" in _ginfo:
+                            try:
+                                _old_val = gene_pool.get(_gid)
+                                _new_val = _ginfo["value"]
+                                _delta = _new_val - _old_val
+                                if abs(_delta) > 0.001:
+                                    gene_pool.mutate(_gid, _delta, trigger="l5_evolution_sync")
+                                    _synced_genes += 1
+                            except Exception:
+                                pass
+                    if _synced_genes > 0:
+                        logger.info(f"L5→基因池同步: {_synced_genes}个基因已通过mutate()写入gene_pool")
+
+                if _l5_skills_count > 0 and hasattr(cp.l5, 'skills'):
+                    from core.skill_emergence import skill_emergence
+                    _synced_skills = 0
+                    for _skill in cp.l5.skills:
+                        if isinstance(_skill, dict) and _skill.get("name"):
+                            try:
+                                skill_emergence._create_skill(
+                                    skill_name=_skill["name"],
+                                    skill_type=_skill.get("type", "evolved"),
+                                    trigger=_skill.get("pattern", _skill.get("trigger", "")),
+                                    solution_path=_skill.get("solution", str(_skill.get("name", "")))
+                                )
+                                _synced_skills += 1
+                            except Exception:
+                                pass
+                    if _synced_skills > 0:
+                        logger.info(f"L5→技能库同步: {_synced_skills}个技能已写入skill_emergence")
+        except Exception as e:
+            logger.debug(f"进化岛结果反馈跳过: {e}")
         try:
             _cognitive_introspection = cp._get_introspection()
             if _cognitive_introspection:
@@ -1381,6 +1449,7 @@ async def chat_stream(user_input: str, context: dict):
         yield _emit("step", {"phase": "反思学习", "status": "timeout", "detail": "反思学习超时，跳过"})
     except Exception as e:
         logger.debug(f"反思学习异常: {e}")
+        _alchemize_error(e, context={"user_input": user_input[:50]}, phase="reflection_learning")
         reflection = "反思学习异常，跳过"
 
     # 基因微调：从交互中学习（反脆弱性：失败也触发学习）
@@ -1402,6 +1471,78 @@ async def chat_stream(user_input: str, context: dict):
             reflection += "; 🧬 基因已微调"
     except Exception as e:
         logger.debug(f"基因微调异常: {e}")
+
+    # 【墙上的画→引擎】错误炼金：从失败步骤中提炼学习信号
+    # 之前：ErrorAlchemy从未被chat_orchestrator调用，错误信息仅记录到日志
+    # 现在：将失败步骤交给ErrorAlchemy处理，提取avoid_pattern和retry_strategy
+    _error_alchemy_signals = []
+    try:
+        from core.learning.error_alchemy import ErrorAlchemy
+        _alchemy = ErrorAlchemy()
+        _failed_steps = [a for a in attempts if not a[1]]
+        for _step_name, _step_success, _step_detail in _failed_steps[:5]:
+            _fake_err = Exception(f"Step '{_step_name}' failed: {_step_detail}")
+            _err_id = _alchemy.record_error(_fake_err, context={
+                "user_input": user_input[:100],
+                "step": _step_name,
+                "detail": _step_detail[:200],
+                "intent_type": intent_type,
+            })
+            _result = _alchemy.alchemize(_err_id)
+            if _result.gold_extracted:
+                _error_alchemy_signals.extend(_result.patterns_found)
+                logger.info(f"错误炼金: 从'{_step_name}'中提炼出{len(_result.patterns_found)}个学习信号")
+        if _error_alchemy_signals:
+            reflection += f"; 🔮 错误炼金提取{len(_error_alchemy_signals)}个信号({','.join(_error_alchemy_signals[:3])})"
+    except Exception as e:
+        logger.debug(f"错误炼金跳过: {e}")
+
+    # 【墙上的画→引擎】元学习：优化学习策略本身
+    # 审计报告要求：推荐策略应指导learn_from_interaction逻辑，而非仅记录推荐
+    _meta_learning_strategy = None
+    try:
+        from core.learning.meta_learning import MetaLearner, EvaluationMetric
+        _meta = MetaLearner()
+        _meta_context = {
+            "task_type": intent_type,
+            "recent_accuracy": sum(1 for a in attempts if a[1]) / max(len(attempts), 1),
+            "complexity": len(user_input) / 100,
+        }
+        _recommendations = _meta.recommend_strategy(_meta_context)
+        if _recommendations:
+            _top_rec = _recommendations[0]
+            _meta_learning_strategy = _top_rec.strategy
+            logger.info(f"元学习推荐: {_top_rec.strategy.name} (置信度{_top_rec.confidence:.2f}, 原因:{_top_rec.reason})")
+            for _rec in _recommendations[:2]:
+                _perf_score = 0.7 if overall_success else 0.3
+                _meta.evaluate_strategy(
+                    _rec.strategy.strategy_id,
+                    EvaluationMetric.ACCURACY,
+                    _perf_score,
+                    context=_meta_context
+                )
+            reflection += f"; 📚 元学习推荐:{_recommendations[0].strategy.name}"
+    except Exception as e:
+        logger.debug(f"元学习跳过: {e}")
+
+    # 元学习策略指导基因微调：不同策略→不同学习率
+    if _meta_learning_strategy:
+        try:
+            from core.task_queue import gene_pool
+            _s_type = _meta_learning_strategy.type.value if hasattr(_meta_learning_strategy.type, 'value') else str(_meta_learning_strategy.type)
+            _s_params = _meta_learning_strategy.parameters if hasattr(_meta_learning_strategy, 'parameters') else {}
+            if _s_type == "memorization":
+                gene_pool.mutate("learning_rate", 0.02, trigger="meta_memorization")
+            elif _s_type == "understanding":
+                gene_pool.mutate("depth_preference", 0.02, trigger="meta_understanding")
+                gene_pool.mutate("learning_rate", -0.01, trigger="meta_understanding")
+            elif _s_type == "application":
+                gene_pool.mutate("retry_aggression", 0.02, trigger="meta_application")
+            elif _s_type == "evaluation":
+                gene_pool.mutate("self_doubt_frequency", 0.02, trigger="meta_evaluation")
+            logger.debug(f"元学习策略指导基因微调: {_s_type}")
+        except Exception as e:
+            logger.debug(f"元学习策略微调跳过: {e}")
 
     # Agent协作触发：复杂查询且质量不达标时，启动多Agent闭环
     if intent_type in ("complex_query", "code") and isinstance(fitness_score, (int, float)) and fitness_score < 50:
@@ -1511,12 +1652,39 @@ async def chat_stream(user_input: str, context: dict):
                 final_response = ollama_result["response"]
                 attempts.append(("终极保护-动态", True, "模型实时生成"))
             else:
-                final_response = f"这个问题我暂时还没想清楚——「{user_input}」涉及的方向我需要更多背景才能给出靠谱的回答。你能补充一下具体场景或你关注的重点吗？"
-                attempts.append(("终极保护", True, "确保有回复"))
+                attempts.append(("终极保护-动态", False, "模型无有效回复"))
         except Exception as _e:
             logger.warning(f"终极保护-动态推理异常: {_e}")
-            final_response = f"这个问题我暂时还没想清楚——「{user_input}」涉及的方向我需要更多背景才能给出靠谱的回答。你能补充一下具体场景或你关注的重点吗？"
-            attempts.append(("终极保护", True, f"确保有回复(异常: {str(_e)[:40]})"))
+            attempts.append(("终极保护-动态", False, f"模型异常: {str(_e)[:40]}"))
+
+        if not final_response:
+            try:
+                from backend.services.persistent_solver import persistent_solve, review_solution
+                _ps_events2 = []
+                async def _ps_emit2(event_type, data):
+                    _ps_events2.append((event_type, data))
+
+                yield _emit("step", {"phase": "终极持续求解", "status": "running", "detail": "终极保护启动持续求解引擎..."})
+                ps_resp2, ps_attempts2, ps_solved2 = await persistent_solve(
+                    user_input, attempts,
+                    conversation_context=conversation_context,
+                    truth_insights="",
+                    emit_fn=_ps_emit2,
+                )
+                for _et2, _ed2 in _ps_events2:
+                    yield _emit(_et2, _ed2)
+                attempts.extend(ps_attempts2)
+                if ps_solved2 and ps_resp2:
+                    final_response = ps_resp2
+                    attempts.append(("终极持续求解", True, f"成功"))
+                    await review_solution(user_input, ps_resp2, attempts, True)
+                else:
+                    final_response = ps_resp2 or _never_give_up_response(user_input, attempts)
+                    attempts.append(("终极持续求解", False, "未解决"))
+            except Exception as _pse2:
+                logger.warning(f"终极持续求解异常: {_pse2}")
+                final_response = _never_give_up_response(user_input, attempts)
+                attempts.append(("终极持续求解", False, f"异常: {str(_pse2)[:40]}"))
 
     _save_to_experience_pool(
         user_input, final_response,
@@ -1624,6 +1792,39 @@ async def chat_stream(user_input: str, context: dict):
             }
     except Exception:
         pass
+
+    # ========== 目标达成检查：半成品不输出，继续求解 ==========
+    if final_response and not _is_goal_achieved(user_input, final_response, intent_type, attempts):
+        logger.info(f"🔄 目标未达成检测: 回复是半成品，启动持续求解...")
+        yield _emit("step", {"phase": "目标达成检查", "status": "running", "detail": "检测到回复未真正解决问题，启动持续求解..."})
+        try:
+            from backend.services.persistent_solver import persistent_solve, review_solution
+            _ps_events3 = []
+            async def _ps_emit3(event_type, data):
+                _ps_events3.append((event_type, data))
+
+            ps_resp3, ps_attempts3, ps_solved3 = await persistent_solve(
+                user_input, attempts,
+                conversation_context=conversation_context,
+                truth_insights=truth_insights if 'truth_insights' in dir() else "",
+                emit_fn=_ps_emit3,
+            )
+            for _et3, _ed3 in _ps_events3:
+                yield _emit(_et3, _ed3)
+            attempts.extend(ps_attempts3)
+            if ps_solved3 and ps_resp3:
+                final_response = ps_resp3
+                attempts.append(("目标达成求解", True, "持续求解成功"))
+                await review_solution(user_input, ps_resp3, attempts, True)
+                yield _emit("step", {"phase": "目标达成检查", "status": "done", "detail": "✅ 持续求解成功，目标达成"})
+            else:
+                ps_fallback = ps_resp3 or final_response
+                final_response = ps_fallback
+                attempts.append(("目标达成求解", False, "持续求解未完全解决"))
+                yield _emit("step", {"phase": "目标达成检查", "status": "done", "detail": "⚠️ 持续求解后仍需人工介入"})
+        except Exception as _pse3:
+            logger.warning(f"目标达成求解异常: {_pse3}")
+            attempts.append(("目标达成求解", False, f"异常: {str(_pse3)[:40]}"))
 
     yield _emit("result", {
         "response": final_response,
@@ -1894,89 +2095,6 @@ async def chat_stream(user_input: str, context: dict):
     elapsed_bg = time.time() - start_time
     logger.info(f"✅ 完整闭环(后台): {user_input[:30]} → {[(a[0], a[1]) for a in attempts]} (总耗时{elapsed_bg:.1f}秒，响应已提前发送)")
 
-def _reflect_and_learn(query: str, response: str, attempts: list, start_time: float, comparison: list) -> str:
-    elapsed = time.time() - start_time
-    successful = [a for a in attempts if a[1]]
-    failed = [a for a in attempts if not a[1]]
-    lessons = []
-
-    if successful:
-        lessons.append(f"成功: {', '.join([a[0] for a in successful])}")
-    if failed:
-        lessons.append(f"失败: {', '.join([a[0] for a in failed])}")
-    if elapsed > 30:
-        lessons.append("响应较慢，需优化路径")
-    if len(successful) == 1 and successful[0][0] == "规则推理":
-        lessons.append("仅靠规则匹配，知识储备不足")
-    if comparison and len(comparison) > 1:
-        best_src = comparison[0]["source"]
-        best_score = comparison[0]["score"]
-        lessons.append(f"最优来源={best_src}(评分{best_score:.0f})，共{len(comparison)}路对比")
-
-    try:
-        from datetime import datetime
-        db = DatabaseManager.get("data/spirit_lessons.db")
-        db.executescript("""
-            CREATE TABLE IF NOT EXISTS reflections (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                query TEXT, response TEXT, attempts TEXT,
-                lessons TEXT, elapsed REAL, timestamp TEXT
-            )
-        """)
-        db.execute(
-            "INSERT INTO reflections (query, response, attempts, lessons, elapsed, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-            (query[:200], response[:200], str([(a[0], a[1]) for a in attempts]), "; ".join(lessons), elapsed, datetime.now().isoformat()),
-            commit=True
-        )
-    except Exception:
-        pass
-
-    # 解决模式积累：将成功的解决路径存入经验池，供后续类似问题复用
-    # 技能涌现：从反复成功的模式中自动提炼技能
-    if successful:
-        try:
-            from datetime import datetime as dt
-            success_path = [a[0] for a in successful]
-            pattern_type = "unknown"
-            if any("代码" in a[0].lower() or "编程" in a[0].lower() for a in successful):
-                pattern_type = "code_generation"
-            elif any("本质" in a[0] for a in successful):
-                pattern_type = "essence_reasoning"
-            elif any("多源" in a[0] for a in successful):
-                pattern_type = "multi_source_verify"
-            elif any("规则" in a[0] for a in successful):
-                pattern_type = "rule_based"
-
-            if pattern_type != "unknown":
-                db = DatabaseManager.get("data/experience_pool.db")
-                db.execute(
-                    "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score, success, duration) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (f"[模式]{pattern_type}:{query[:50]}", f"解决路径:{'→'.join(success_path)}", dt.now().isoformat(), f"pattern_{pattern_type}", 85, 1, 0.0),
-                    commit=True
-                )
-        except Exception:
-            pass
-
-        # 技能涌现
-        try:
-            from core.skill_emergence import skill_emergence
-            skill_name = skill_emergence.analyze_and_learn(query, attempts, response, elapsed)
-            if skill_name:
-                reflection += f"; ✨ 技能涌现: {skill_name}"
-        except Exception:
-            pass
-
-        # 真谛沉淀：从交互中提炼大道级原则
-        try:
-            from core.truth_accumulator import truth_accumulator
-            truth_name = truth_accumulator.accumulate(query, attempts, response)
-            if truth_name:
-                reflection += f"; 💎 真谛沉淀: {truth_name}"
-        except Exception:
-            pass
-
-    return "; ".join(lessons) if lessons else "交互正常"
-
 
 async def _background_deep_thinking(query: str, context: dict, intent_type: str):
     try:
@@ -1990,7 +2108,6 @@ async def _background_deep_thinking(query: str, context: dict, intent_type: str)
             logger.info(f"✅ 后台思考完成: {len(result)}字")
     except Exception as e:
         logger.error(f"❌ 后台思考失败: {e}")
-
 
 
 async def _solve_history_query(query: str) -> str:
@@ -2007,119 +2124,109 @@ async def _solve_history_query(query: str) -> str:
 
 
 def _generate_smart_reply(query: str, intent_type: str) -> str:
-    """动态智能回复——不使用写死模板，而是返回标记让调用方走模型推理"""
     return "__NEED_DYNAMIC_REPLY__"
 
 
 def _generate_meaningful_fallback(query: str, attempts: list) -> str:
-    """动态fallback——不使用写死模板，而是返回标记让调用方走模型推理"""
     return "__NEED_DYNAMIC_FALLBACK__"
 
 
-def _try_solidify_to_gene_pool(query: str, response: str, attempts: list, comparison: list) -> str:
-    """
-    基因库固化：高质量回复自动升级为知识
-
-    条件：
-    1. 回复来自Ollama（模型推理，质量较高）
-    2. 对比评分 >= 80
-    3. 回复长度 > 100字（有实质内容）
-    4. 自我验证通过
-    5. 经验池中同类问题出现 >= 2次（说明是常见问题）
-    
-    固化后：
-    - 写入知识库（永久知识）
-    - 更新经验池quality_score为90+
-    - 记录到基因库日志
-    """
-    if not response or len(response) < 100:
-        return ""
-
-    # 检查是否来自Ollama
-    ollama_sources = [a for a in attempts if a[0].startswith("Ollama") and a[1]]
-    if not ollama_sources:
-        return ""
-
-    # 检查评分
-    best_score = 0
-    if comparison:
-        best_score = comparison[0].get("score", 0)
-    if best_score < 80:
-        return ""
-
-    # 检查经验池中是否已有高质量记录
+def _never_give_up_response(user_input: str, attempts: list) -> str:
     try:
-        db = DatabaseManager.get("data/experience_pool.db")
-        row = db.query_one("SELECT COUNT(*) FROM experiences WHERE raw_input LIKE ? AND quality_score >= 80", (f"%{query[:20]}%",))
-        count = row[0] if row else 0
+        from core.spirit_core import spirit_core
+        attempt_dicts = []
+        for a in attempts:
+            if isinstance(a, tuple) and len(a) >= 2:
+                attempt_dicts.append({"method": a[0], "success": a[1], "error": a[2] if len(a) > 2 else ""})
+            elif isinstance(a, dict):
+                attempt_dicts.append(a)
+        return spirit_core.ensure_meaningful_response(user_input, attempt_dicts)
     except Exception:
-        count = 0
+        failed_names = [a[0] for a in attempts if isinstance(a, tuple) and len(a) >= 2 and not a[1]]
+        if failed_names:
+            return f"我尝试了{len(attempts)}种方法（{', '.join(failed_names[:4])}均未成功），但我不打算放弃。此问题已记入学习清单，我会持续思考。你可以换个方式提问或提供更多背景，我们一起解决。"
+        return f"关于「{user_input[:30]}」，我暂时还没找到最佳答案，但我在持续思考。换个角度试试？"
 
-    # 固化条件：高质量 + 常见问题（出现2次+）或首次但评分极高
-    should_solidify = (count >= 1) or (best_score >= 100)
 
-    if not should_solidify:
-        return ""
+def _is_goal_achieved(user_input: str, response: str, intent_type: str, attempts: list) -> bool:
+    """
+    目标达成检查：回复是否真正解决了用户的问题？
+    
+    核心逻辑：
+    - 操作类问题（串口/硬件/命令/文件）→ 必须有实际执行结果，不能只是"你可以这样做..."
+    - 知识类问题 → 回复必须有实质内容，不能是"我不确定"
+    - 任何"无法/不能/没有能力"的回复 → 未达成
+    - 只有文本指导没有执行结果的操作类 → 未达成
+    """
+    if not response or len(response) < 15:
+        return False
 
-    # 执行固化
-    solidified = []
+    resp_lower = response.lower()
+    user_lower = user_input.lower()
 
-    # 1. 写入知识库
-    try:
-        from datetime import datetime
-        db = DatabaseManager.get("data/knowledge_store.db")
-        db.execute(
-            "INSERT INTO knowledge (content, source, type, quality, created_at) VALUES (?, ?, ?, ?, ?)",
-            (response, "gene_pool_solidification", "solidified", int(best_score), datetime.now().isoformat()),
-            commit=True
-        )
-        solidified.append("知识库")
-    except Exception as e:
-        logger.debug(f"基因库固化-知识库写入失败: {e}")
+    is_operational = any(kw in user_lower for kw in [
+        "读取", "获取", "执行", "运行", "访问", "打开", "写入", "发送",
+        "串口", "com", "serial", "硬件", "设备", "端口", "命令", "cmd",
+        "bash", "shell", "powershell", "安装", "部署", "启动", "停止",
+        "gps", "nmea", "传感器", "扫描", "检测",
+    ])
 
-    # 2. 更新经验池质量分
-    try:
-        db = DatabaseManager.get("data/experience_pool.db")
-        db.execute(
-            "UPDATE experiences SET quality_score = ? WHERE raw_input LIKE ? AND quality_score < ?",
-            (95, f"%{query[:20]}%", 95),
-            commit=True
-        )
-        solidified.append("经验池升级")
-    except Exception as e:
-        logger.debug(f"基因库固化-经验池升级失败: {e}")
+    if is_operational:
+        code_block_count = resp_lower.count("```")
+        has_real_data = any(kw in resp_lower for kw in [
+            "$gpgga", "$gprmc", "$gpgsv", "nmea",
+            "com8", "serial", "波特率", "baud",
+            "成功打开", "读取到", "执行结果", "返回值",
+            "pid", "进程", "exit code",
+        ])
+        is_just_instructions = (
+            "你可以" in response or "你可以使用" in response or "你可以尝试" in response
+            or "以下是" in response or "步骤如下" in response
+            or "具体步骤" in response or "需要安装" in response
+        ) and not has_real_data
 
-    # 3. 增量知识更新（ResNet风格残差学习）
-    try:
-        from core.delta_knowledge_updater import delta_knowledge_updater
-        new_knowledge = {"response": response[:2000], "score": best_score, "source": "gene_pool_solidification"}
-        delta_result = delta_knowledge_updater.update(new_knowledge, topic=query[:100])
-        if delta_result.get("updated"):
-            solidified.append(f"增量知识(v{delta_result['version']}, 压缩{delta_result['compression_ratio']:.2f})")
-    except Exception as e:
-        logger.debug(f"增量知识更新跳过: {e}")
+        if is_just_instructions and code_block_count > 0 and not has_real_data:
+            logger.info(f"🔄 目标未达成: 操作类问题只给了指导文本，没有实际执行结果")
+            return False
 
-    # 4. 记录到基因库日志
-    try:
-        from datetime import datetime
-        db = DatabaseManager.get("data/spirit_lessons.db")
-        db.executescript("""
-            CREATE TABLE IF NOT EXISTS gene_pool (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                query TEXT, response TEXT, score REAL,
-                source TEXT, solidified_to TEXT, timestamp TEXT
-            )
-        """)
-        db.execute(
-            "INSERT INTO gene_pool (query, response, score, source, solidified_to, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-            (query[:200], response[:500], best_score, "auto", ", ".join(solidified), datetime.now().isoformat()),
-            commit=True
-        )
-    except Exception as e:
-        logger.debug(f"基因库固化-日志写入失败: {e}")
+    evasion_patterns = [
+        "我无法访问", "我无法直接", "我不能访问", "我没有能力",
+        "我无法连接", "我无法执行", "我无法获取", "我无法读取",
+        "无法直接访问", "无法直接操作", "无法直接执行",
+        "作为ai", "作为一个ai", "作为语言模型",
+        "我建议你", "你可以自己", "你需要手动",
+    ]
+    for pattern in evasion_patterns:
+        if pattern in resp_lower:
+            logger.info(f"🔄 目标未达成: 回复包含敷衍模式'{pattern}'")
+            return False
 
-    if solidified:
-        logger.info(f"🧬 基因库固化: {query[:30]} → {', '.join(solidified)} (评分{best_score:.0f})")
-        return f"🧬 基因库固化: {', '.join(solidified)} (评分{best_score:.0f})"
+    if is_operational:
+        has_execution = any(a[1] for a in attempts if isinstance(a, tuple) and len(a) >= 2
+                          and any(kw in str(a[0]).lower() for kw in ["工具", "串口", "bash", "serial", "执行"]))
+        if not has_execution and code_block_count == 0:
+            tool_attempted = any("工具" in str(a[0]) for a in attempts if isinstance(a, tuple) and len(a) >= 1)
+            if not tool_attempted:
+                logger.info(f"🔄 目标未达成: 操作类问题没有尝试工具执行")
+                return False
 
-    return ""
+        best_source = ""
+        for a in attempts:
+            if isinstance(a, tuple) and len(a) >= 2 and a[1]:
+                best_source = str(a[0])
+                break
+        if best_source == "自我推理":
+            logger.info(f"🔄 目标未达成: 操作类问题最优来源是自我推理而非工具执行")
+            return False
+
+        has_real_data = any(kw in resp_lower for kw in [
+            "$gpgga", "$gprmc", "$gpgsv", "nmea",
+            "com8", "serial", "波特率", "baud",
+            "成功打开", "读取到", "执行结果", "返回值",
+            "pid", "进程", "exit code", "stdout", "stderr", "output",
+        ])
+        if not has_real_data and not code_block_count:
+            logger.info(f"🔄 目标未达成: 操作类问题回复不含任何实际执行数据")
+            return False
+
+    return True

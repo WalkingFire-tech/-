@@ -93,8 +93,139 @@ async def execute_parallel_paths(
     if rule_result and rule_result.get("response"):
         candidates.append(rule_result)
 
+    # 【去API依赖】本地先行路由：先启动本地路径，3秒内有高质量结果则直接返回
+    # 本地路径：经验池、知识库、事实锚点、工具调用、自我推理
+    # API路径：Ollama、外部模型、外部学习 — 延迟3秒启动
+    LOCAL_FIRST_WINDOW = 3.0
+    LOCAL_QUALITY_THRESHOLD = 55
+
     exp_task = asyncio.create_task(fetch_experience(user_input))
     know_task = asyncio.create_task(fetch_knowledge(user_input))
+    fact_task = asyncio.create_task(fetch_fact_assertions(user_input))
+    _tool_intent = (methodology.get("strategy") == "tool_first" if methodology else False) or intent_type == "code" or query_needs_tools(user_input)
+    tool_task = None
+    if _tool_intent or max_paths >= 7:
+        tool_task = asyncio.create_task(fetch_tool_results(user_input, intent_type, methodology=methodology, tool_intent=_tool_intent))
+    self_reason_task = None
+    if max_paths >= 6:
+        from backend.services.path_handlers._shared import _check_vector_available, _fast_executor
+        self_reason_task = asyncio.create_task(_self_reason_impl(user_input, conversation_context, truth_insights))
+
+    local_tasks = [t for t in [exp_task, know_task, fact_task, tool_task, self_reason_task] if t is not None]
+    local_names = []
+    if exp_task: local_names.append("经验池")
+    if know_task: local_names.append("知识库")
+    if fact_task: local_names.append("事实锚点")
+    if tool_task: local_names.append("工具调用")
+    if self_reason_task: local_names.append("自我推理")
+
+    logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] 本地先行：等待{local_names}（{LOCAL_FIRST_WINDOW}秒窗口）...")
+    yield _emit("step", {"phase": "本地先行", "status": "running", "detail": f"先用本地能力({'+'.join(local_names)})尝试..."})
+
+    local_done, local_pending = await asyncio.wait(local_tasks, timeout=LOCAL_FIRST_WINDOW, return_when=asyncio.ALL_COMPLETED)
+    local_count = 0
+    local_best_quality = 0
+    for d in local_done:
+        task_name_local = local_names[local_tasks.index(d)] if d in local_tasks else "未知"
+        try:
+            result = d.result()
+            logger.info(f"[ROUTER_DIAG] 本地先行完成: {task_name_local}, type={type(result).__name__}, is_list={isinstance(result, list)}")
+            if isinstance(result, list):
+                for item in result:
+                    if isinstance(item, dict) and item.get("response"):
+                        candidates.append(item)
+                        local_count += 1
+                        q = item.get("quality", 0)
+                        if q > local_best_quality:
+                            local_best_quality = q
+                        logger.info(f"[ROUTER_DIAG] 候选: source={item.get('source')}, quality={q}, resp_len={len(item.get('response',''))}")
+            elif isinstance(result, dict) and result.get("response"):
+                candidates.append(result)
+                local_count += 1
+                q = result.get("quality", 0)
+                if q > local_best_quality:
+                    local_best_quality = q
+                logger.info(f"[ROUTER_DIAG] 候选: source={result.get('source')}, quality={q}, resp_len={len(result.get('response',''))}")
+            elif result is None:
+                logger.info(f"[ROUTER_DIAG] {task_name_local}返回None")
+            else:
+                logger.info(f"[ROUTER_DIAG] {task_name_local}返回非预期类型: {type(result)}")
+        except Exception as e:
+            logger.warning(f"[ROUTER_DIAG] {task_name_local}异常: {e}")
+
+    for p in local_pending:
+        task_name_local = local_names[local_tasks.index(p)] if p in local_tasks else "未知"
+        logger.info(f"[ROUTER_DIAG] 本地先行未完成: {task_name_local}, done={p.done()}, cancelled={p.cancelled()}")
+
+    logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] 本地先行完成: {local_count}个结果, 最高质量={local_best_quality}, _tool_intent={_tool_intent}, tool_task_done={tool_task.done() if tool_task else 'N/A'}")
+
+    if local_best_quality >= LOCAL_QUALITY_THRESHOLD and local_count >= 1:
+        if _tool_intent and tool_task and not tool_task.done():
+            logger.info(f"[ROUTER_DIAG] 本地先行命中(质量{local_best_quality})，工具意图=True，tool_task未完成，等待工具...")
+            yield _emit("step", {"phase": "本地先行", "status": "running", "detail": f"本地能力已有结果，但等待工具执行完成..."})
+            try:
+                tool_result = await asyncio.wait_for(tool_task, timeout=25.0)
+                logger.info(f"[ROUTER_DIAG] 工具等待返回: type={type(tool_result).__name__}, is_list={isinstance(tool_result, list)}, is_dict={isinstance(tool_result, dict)}")
+                if isinstance(tool_result, list):
+                    for item in tool_result:
+                        if isinstance(item, dict) and item.get("response"):
+                            candidates.append(item)
+                            q = item.get("quality", 0)
+                            if q > local_best_quality:
+                                local_best_quality = q
+                            logger.info(f"[ROUTER_DIAG] 工具候选: source={item.get('source')}, quality={q}, resp_len={len(item.get('response',''))}")
+                    logger.info(f"[ROUTER_DIAG] 工具列表结果: {len(tool_result)}项, 有效候选已添加")
+                elif isinstance(tool_result, dict) and tool_result.get("response"):
+                    candidates.append(tool_result)
+                    q = tool_result.get("quality", 0)
+                    if q > local_best_quality:
+                        local_best_quality = q
+                    logger.info(f"[ROUTER_DIAG] 工具单结果: source={tool_result.get('source')}, quality={q}")
+                elif tool_result is None:
+                    logger.warning(f"[ROUTER_DIAG] 工具等待返回None! 工具执行可能失败")
+                else:
+                    logger.warning(f"[ROUTER_DIAG] 工具等待返回非预期类型: {type(tool_result)}")
+            except asyncio.TimeoutError:
+                logger.warning("[ROUTER_DIAG] 工具执行超时(25秒)，用已有本地结果继续")
+            except Exception as e:
+                logger.warning(f"[ROUTER_DIAG] 工具等待异常: {e}", exc_info=True)
+            logger.info(f"[ROUTER_DIAG] 工具等待完成，candidates={len(candidates)}个, 最高质量={local_best_quality}，直接返回，API后台补充")
+            yield _emit("step", {"phase": "本地先行", "status": "done", "detail": f"✅ 工具已执行完成(质量{local_best_quality})，无需等待API"})
+            logger.info(f"[ROUTER_DIAG] yield candidates: {[{'source':c.get('source'),'quality':c.get('quality')} for c in candidates]}")
+            yield candidates
+            return
+        else:
+            logger.info(f"✅ 本地先行命中: 质量{local_best_quality}>={LOCAL_QUALITY_THRESHOLD}，可直接返回")
+            yield _emit("step", {"phase": "本地先行", "status": "done", "detail": f"✅ 本地能力已解决(质量{local_best_quality})，API仅作补充"})
+
+    if local_best_quality >= 60 and local_count >= 1 and _tool_intent:
+        if tool_task and not tool_task.done():
+            logger.info(f"[ROUTER_DIAG] 工具意图+本地高质量({local_best_quality})，tool_task未完成，等待工具...")
+            yield _emit("step", {"phase": "本地先行", "status": "running", "detail": f"本地能力已有结果，但等待工具执行完成..."})
+            try:
+                tool_result = await asyncio.wait_for(tool_task, timeout=25.0)
+                logger.info(f"[ROUTER_DIAG] 工具等待返回(分支2): type={type(tool_result).__name__}")
+                if isinstance(tool_result, list):
+                    for item in tool_result:
+                        if isinstance(item, dict) and item.get("response"):
+                            candidates.append(item)
+                            logger.info(f"[ROUTER_DIAG] 工具候选(分支2): source={item.get('source')}, quality={item.get('quality')}")
+                elif isinstance(tool_result, dict) and tool_result.get("response"):
+                    candidates.append(tool_result)
+                    logger.info(f"[ROUTER_DIAG] 工具单结果(分支2): source={tool_result.get('source')}, quality={tool_result.get('quality')}")
+                elif tool_result is None:
+                    logger.warning(f"[ROUTER_DIAG] 工具等待返回None(分支2)! 工具执行可能失败")
+            except asyncio.TimeoutError:
+                logger.warning("[ROUTER_DIAG] 工具执行超时(25秒)(分支2)，用已有本地结果继续")
+            except Exception as e:
+                logger.warning(f"[ROUTER_DIAG] 工具等待异常(分支2): {e}", exc_info=True)
+        logger.info(f"[ROUTER_DIAG] 工具意图+结果就绪({local_best_quality})，candidates={len(candidates)}个，直接返回")
+        yield _emit("step", {"phase": "本地先行", "status": "done", "detail": f"✅ 工具已解决(质量{local_best_quality})，无需等待API"})
+        logger.info(f"[ROUTER_DIAG] yield candidates(分支2): {[{'source':c.get('source'),'quality':c.get('quality')} for c in candidates]}")
+        yield candidates
+        return
+
+    # API路径：延迟启动（本地先行窗口结束后才启动）
     ollama_task = None
     if max_paths >= 3:
         try:
@@ -102,7 +233,7 @@ async def execute_parallel_paths(
             throttle = get_gpu_throttle()
             if throttle["level"] in ("warm", "hot", "critical"):
                 logger.info(f"Ollama节流: {throttle['message']}")
-                yield _emit("step", {"phase": "GPU节流", "status": "info", "detail": f"{throttle['message']}，先走外部API，Ollama延迟{throttle['delay_seconds']}秒补位"})
+                yield _emit("step", {"phase": "GPU节流", "status": "info", "detail": f"{throttle['message']}"})
                 async def _delayed_ollama():
                     await asyncio.sleep(throttle["delay_seconds"])
                     return await fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights)
@@ -117,26 +248,6 @@ async def execute_parallel_paths(
     ext_learn_task = None
     if max_paths >= 5:
         ext_learn_task = asyncio.create_task(fetch_external_learning(user_input, conversation_context))
-    fact_task = asyncio.create_task(fetch_fact_assertions(user_input))
-    self_reason_task = None
-    if max_paths >= 6:
-        from backend.services.path_handlers._shared import _check_vector_available, _fast_executor
-        self_reason_task = asyncio.create_task(_self_reason_impl(user_input, conversation_context, truth_insights))
-    tool_task = None
-    _tool_intent = intent_type == "code" or query_needs_tools(user_input)
-    if _tool_intent or max_paths >= 7:
-        tool_task = asyncio.create_task(fetch_tool_results(user_input, intent_type, tool_intent=_tool_intent))
-
-    logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] 开始gather快速路径...")
-    fast_results = await asyncio.gather(exp_task, know_task, fact_task, return_exceptions=True)
-    logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] gather快速路径完成")
-    fast_count = 0
-    for r in fast_results:
-        if isinstance(r, dict) and r.get("response"):
-            candidates.append(r)
-            fast_count += 1
-
-    yield _emit("step", {"phase": "多策略并行", "status": "progress", "detail": f"快速路径已返回{fast_count+1}个结果，模型+外部+自推理并行中..."})
 
     ollama_got = False
     ext_got = False
@@ -208,6 +319,7 @@ async def execute_parallel_paths(
         high_q = sum(1 for c in candidates if c.get("quality", 0) >= 60 and len(c.get("response", "")) > 50)
         has_model_result = any(c.get("source", "") in ["Ollama", "DeepSeek", "OpenAI", "外部模型"] or "模型" in c.get("source", "") for c in candidates)
         has_search_result = any("搜索" in c.get("source", "") or "学习" in c.get("source", "") or "外部" in c.get("source", "") for c in candidates if c.get("quality", 0) >= 60)
+        has_strong_self_reason = any("自我推理" in c.get("source", "") and c.get("quality", 0) >= 70 for c in candidates)
 
         if high_q >= 2 and heartbeat_sec >= 5:
             if _tool_intent and tool_task and not tool_task.done():
@@ -216,6 +328,18 @@ async def execute_parallel_paths(
                 waiting_names = '+'.join(still_waiting)
                 yield _emit("step", {"phase": "智能调度", "status": "done",
                     "detail": f"已有{high_q}条高质量候选，先综合输出，慢路径({waiting_names})后台补充"})
+                for t in list(pending_set):
+                    asyncio.ensure_future(_background_collect(t, user_input, pending_tasks.get(t, "未知路径")))
+                    pending_set.discard(t)
+                break
+
+        if has_strong_self_reason and heartbeat_sec >= 5:
+            if _tool_intent and tool_task and not tool_task.done():
+                pass
+            else:
+                waiting_names = '+'.join(still_waiting)
+                yield _emit("step", {"phase": "智能调度", "status": "done",
+                    "detail": f"自我推理质量>=70，无需等待API，慢路径({waiting_names})后台补充"})
                 for t in list(pending_set):
                     asyncio.ensure_future(_background_collect(t, user_input, pending_tasks.get(t, "未知路径")))
                     pending_set.discard(t)
@@ -381,48 +505,5 @@ async def execute_parallel_paths(
 
 
 async def _self_reason_impl(query: str, conversation_context: str = "", truth_insights: str = "") -> Optional[dict]:
-
-    from backend.services.path_handlers._shared import _check_vector_available, _fast_executor
-    try:
-        knowledge_parts = []
-        try:
-            if _check_vector_available():
-                from infrastructure.vector_retriever import vector_retriever
-                if vector_retriever.is_available():
-                    loop = asyncio.get_running_loop()
-                    similar = await asyncio.wait_for(
-                        loop.run_in_executor(_fast_executor, lambda: vector_retriever.search(query, top_k=3, threshold=0.5)),
-                        timeout=5
-                    )
-                    for s in similar:
-                        knowledge_parts.append(f"[经验] {s.get('text', '')[:200]}")
-        except Exception:
-            pass
-        try:
-            loop = asyncio.get_running_loop()
-            def _query_rules():
-                db = DatabaseManager.get("data/learning_rules.db")
-                rows = db.query("SELECT rule_text, confidence FROM learning_rules WHERE status='active' AND rule_text LIKE ? ORDER BY confidence DESC LIMIT 3", (f"%{query[:10]}%",))
-                return rows
-            rows = await asyncio.wait_for(loop.run_in_executor(_fast_executor, _query_rules), timeout=3)
-            for row in rows:
-                knowledge_parts.append(f"[规则 conf={row[1]:.2f}] {row[0][:200]}")
-        except Exception:
-            pass
-        try:
-            loop = asyncio.get_running_loop()
-            def _query_truths():
-                db = DatabaseManager.get("data/truths.db")
-                rows = db.query("SELECT content FROM truths WHERE content LIKE ? LIMIT 2", (f"%{query[:8]}%",))
-                return rows
-            rows = await asyncio.wait_for(loop.run_in_executor(_fast_executor, _query_truths), timeout=3)
-            for row in rows:
-                knowledge_parts.append(f"[真谛] {row[0][:200]}")
-        except Exception:
-            pass
-        if knowledge_parts:
-            reasoning = f"关于「{query}」，基于已有知识的推理：\n\n" + "\n".join(knowledge_parts)
-            return {"source": "自我推理", "response": reasoning, "quality": 55}
-    except Exception as e:
-        logger.debug(f"自我推理异常: {e}")
-    return None
+    from backend.services.orchestrator_helpers import self_reason
+    return await self_reason(query, conversation_context, truth_insights)

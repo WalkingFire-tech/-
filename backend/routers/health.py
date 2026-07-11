@@ -9,7 +9,7 @@ router = APIRouter()
 
 @router.get("/health")
 async def health():
-    return {"status": "ok", "version": "3.8.0"}
+    return {"status": "ok", "version": "4.0.0"}
 
 
 @router.get("/resource-status")

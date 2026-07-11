@@ -25,7 +25,7 @@ except ImportError as e:
     SPIRIT_CORE_AVAILABLE = False
 
 
-_SYSTEM_PROMPT = "你是联盟拓荒者（Alliance Pioneer），一个自我进化的智能体系统。你不是通义千问或其他任何模型。你是'同行者'——愿意和用户一起走的伙伴。你的核心原则：永不放弃、追求本质、困惑时坦诚、多源交叉验证。请用中文回复。"
+_SYSTEM_PROMPT = "你是联盟拓荒者（Alliance Pioneer），一个自我进化的智能体系统。你不是通义千问或其他任何模型。你是'同行者'——愿意和用户一起走的伙伴。你的核心原则：永不放弃、追求本质、困惑时坦诚、多源交叉验证。请用中文回复。重要：你运行在用户的本地Windows机器上，不是云端服务器。你可以执行系统命令（PowerShell/CMD）、访问本地硬件（串口COM端口、USB设备、文件系统）、安装Python包、运行脚本。当用户要求你操作硬件或执行命令时，直接通过工具调用完成，不要声称自己无法访问本地资源。"
 
 _OLLAMA_MODEL_CACHE = {"model": None, "timestamp": 0}
 
@@ -164,11 +164,35 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
     if not final_response:
         logger.info(f"🔄 开始深度认知处理: intent={intent_type}")
         
-        # 3a. 先尝试快速路径（知识库+经验池）
-        quick_result = await _quick_solve(user_input, intent_type)
-        if quick_result:
-            final_response = quick_result
-            attempts.append(("快速解答", True, "即时回复"))
+        # 3a. 工具调用（操作类问题优先使用工具）
+        from backend.services.path_handlers.tool_path import query_needs_tools, fetch_tool_results
+        if query_needs_tools(user_input):
+            try:
+                tool_results = await asyncio.wait_for(
+                    fetch_tool_results(user_input, intent_type, tool_intent=True),
+                    timeout=30.0
+                )
+                if tool_results:
+                    best_tool = max(tool_results, key=lambda c: c.get("quality", 0))
+                    if best_tool.get("quality", 0) >= 60:
+                        final_response = best_tool["response"]
+                        attempts.append(("工具调用", True, f"{best_tool.get('source','?')} (质量{best_tool.get('quality',0)})"))
+                        logger.info(f"🔧 工具调用成功: {best_tool.get('source')} quality={best_tool.get('quality')}")
+                    else:
+                        attempts.append(("工具调用", False, f"最高质量{best_tool.get('quality',0)}<60"))
+                else:
+                    attempts.append(("工具调用", False, "无结果"))
+            except asyncio.TimeoutError:
+                attempts.append(("工具调用", False, "超时(30s)"))
+            except Exception as e:
+                attempts.append(("工具调用", False, str(e)[:50]))
+        
+        # 3b. 先尝试快速路径（知识库+经验池）
+        if not final_response:
+            quick_result = await _quick_solve(user_input, intent_type)
+            if quick_result:
+                final_response = quick_result
+                attempts.append(("快速解答", True, "即时回复"))
         
         # 3b. 无论快速解答是否成功，都启动后台深度思考
         # 快速解答可能不够好，后台思考可以产出更高质量的答案存入经验池
@@ -332,7 +356,7 @@ async def _quick_solve(query: str, intent_type: str) -> str:
         row = db.query_one("SELECT response FROM experiences WHERE raw_input LIKE ? ORDER BY timestamp DESC LIMIT 1", (f"%{query[:20]}%",))
         if row and len(row[0]) > 30:
             return row[0]
-    except:
+    except Exception:
         pass
     
     # 2. 知识库
@@ -341,7 +365,7 @@ async def _quick_solve(query: str, intent_type: str) -> str:
         row = db.query_one("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{query[:30]}%",))
         if row and len(row[0]) > 30:
             return row[0]
-    except:
+    except Exception:
         pass
     
     return None
@@ -429,7 +453,7 @@ async def _solve_history_query(query: str) -> str:
             return f"📜 最近的历史记录：\n{history_text}\n\n（完整历史功能开发中）"
         else:
             return "暂无历史记录。开始和我对话吧！"
-    except:
+    except Exception:
         return "历史记录功能正在初始化，请稍后再试。"
 
 

@@ -364,6 +364,14 @@ class SelfModel:
                 "handler": self._action_external_learning,
             })
 
+        capability_gaps = snap.get("capabilities", {}).get("gaps", [])
+        if capability_gaps and len(capability_gaps) > 0:
+            actions.append({
+                "action": "capability_gap_learning",
+                "reason": f"检测到{len(capability_gaps)}个能力缺失: {[g.get('gap_type','') for g in capability_gaps[:3]]}",
+                "handler": self._action_capability_gap_learning,
+            })
+
         if trust > 0 and trust < 0.2:
             actions.append({
                 "action": "proactive_engage",
@@ -403,10 +411,38 @@ class SelfModel:
     def _action_external_learning(self):
         try:
             from core.external_learner import external_learner
-            if hasattr(external_learner, 'trigger_learning'):
-                external_learner.trigger_learning()
+            if hasattr(external_learner, 'learn_from_external'):
+                external_learner.learn_from_external(
+                    user_input="系统自动触发外部学习",
+                    context={},
+                    trigger_reason="confidence_low"
+                )
+            elif hasattr(external_learner, 'learn_and_integrate'):
+                external_learner.learn_and_integrate(
+                    user_input="系统自动触发外部学习",
+                    context={}
+                )
         except Exception as e:
             logger.debug(f"SelfModel external_learning failed: {e}")
+
+    def _action_capability_gap_learning(self):
+        try:
+            from core.learning.capability_gap_learner import capability_gap_learner
+            db = DatabaseManager.get("data/capability_gaps.db")
+            rows = db.query("SELECT query, gap_type, failed_paths FROM capability_gaps WHERE resolved=0 ORDER BY attempts DESC LIMIT 3")
+            for row in rows:
+                gap = {"query": row[0], "gap_type": row[1], "failed_paths": row[2]}
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.ensure_future(capability_gap_learner.try_resolve_gap(gap))
+                    else:
+                        loop.run_until_complete(capability_gap_learner.try_resolve_gap(gap))
+                except RuntimeError:
+                    asyncio.run(capability_gap_learner.try_resolve_gap(gap))
+        except Exception as e:
+            logger.debug(f"SelfModel capability_gap_learning failed: {e}")
 
     def _action_proactive_engage(self):
         try:

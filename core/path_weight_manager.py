@@ -24,19 +24,20 @@ from loguru import logger
 class PathWeightManager:
     DEFAULT_PATHS = {
         "rule_reasoning": {"weight": 0.15, "success_rate": 0.7},
-        "experience_pool": {"weight": 0.15, "success_rate": 0.65},
+        "experience_pool": {"weight": 0.16, "success_rate": 0.65},
         "knowledge_base": {"weight": 0.12, "success_rate": 0.6},
-        "ollama": {"weight": 0.18, "success_rate": 0.7},
-        "external_model": {"weight": 0.15, "success_rate": 0.75},
-        "external_learner": {"weight": 0.08, "success_rate": 0.6},
-        "fact_anchor": {"weight": 0.10, "success_rate": 0.8},
-        "self_reasoning": {"weight": 0.05, "success_rate": 0.55},
-        "tool_framework": {"weight": 0.02, "success_rate": 0.5},
+        "ollama": {"weight": 0.10, "success_rate": 0.7},
+        "external_model": {"weight": 0.08, "success_rate": 0.75},
+        "external_learner": {"weight": 0.05, "success_rate": 0.6},
+        "fact_anchor": {"weight": 0.15, "success_rate": 0.8},
+        "self_reasoning": {"weight": 0.12, "success_rate": 0.55},
+        "tool_framework": {"weight": 0.15, "success_rate": 0.5},
     }
 
     def __init__(self, db_path: str = "data/path_weights.db"):
         self.db_path = db_path
         self._alpha = 0.1
+        self._gradual_queue = {}
         self._decay_rate = 0.005
         self._min_weight = 0.02
         self._max_history = 50
@@ -135,7 +136,19 @@ class PathWeightManager:
                 uncertainty_penalty = self._alpha * 0.3
             delta = -self._alpha * confidence * 0.5 - uncertainty_penalty
 
-        self._paths[path]["weight"] *= (1 + delta)
+        # R2渐进注入门控：|delta|超过0.15时，先注入20%，下次交互再全量生效
+        actual_delta = delta
+        if abs(delta) > 0.15:
+            _gi_key = f"pwm_{path}"
+            if _gi_key not in self._gradual_queue:
+                self._gradual_queue[_gi_key] = {"remaining": delta, "step": 0}
+                actual_delta = delta * 0.2
+                logger.debug(f"R2渐进注入: 路径{path} Δ{delta:+.3f} 超阈值，先注入20%(Δ{actual_delta:+.4f})")
+            else:
+                actual_delta = self._gradual_queue[_gi_key]["remaining"]
+                del self._gradual_queue[_gi_key]
+
+        self._paths[path]["weight"] *= (1 + actual_delta)
         self._paths[path]["weight"] = max(self._min_weight, self._paths[path]["weight"])
         self._paths[path]["total_uses"] += 1
         if success:

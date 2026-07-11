@@ -66,12 +66,16 @@ class SkillEmergence:
         2. 如果该模式已存在，更新成功计数
         3. 如果是新模式，创建新技能
         4. 技能达到3次以上成功→标记为"成熟技能"
+        5. 从失败中检测能力缺失，触发学习需求
         """
         successful = [a for a in attempts if a[1]]
         failed = [a for a in attempts if not a[1]]
 
         if not successful:
             self._record_failure(query, failed)
+            gap_skill = self._emerge_from_failure(query, failed)
+            if gap_skill:
+                return gap_skill
             return None
 
         # 提取成功路径
@@ -196,6 +200,7 @@ class SkillEmergence:
 
             if new_success >= 3 and new_rate >= 0.7:
                 logger.info(f"🎯 技能成熟: {skill['skill_name']} (成功率{new_rate:.0%}, {new_success}次成功)")
+                self._register_mature_skill(skill)
         except:
             pass
 
@@ -309,6 +314,97 @@ class SkillEmergence:
             }
         except:
             return {"total_skills": 0, "mature_skills": 0, "top_skills": []}
+
+    def _emerge_from_failure(self, query: str, failed: list) -> str:
+        """从失败中涌现学习需求——不是创建已成功的技能，而是创建'需要学习'的技能"""
+        try:
+            gap_type = "unknown"
+            q = query.lower()
+
+            hardware_kw = ["串口", "com", "serial", "波特率", "gps", "nmea", "硬件",
+                            "设备", "usb", "传感器", "arduino", "stm32", "esp32", "单片机"]
+            system_kw = ["运行", "执行", "命令", "cmd", "powershell", "bash", "shell",
+                          "安装", "启动", "停止", "进程", "服务"]
+            code_kw = ["代码", "编程", "函数", "程序", "算法", "实现", "写一段"]
+
+            if any(kw in q for kw in hardware_kw):
+                gap_type = "hardware_access"
+            elif any(kw in q for kw in system_kw):
+                gap_type = "system_command"
+            elif any(kw in q for kw in code_kw):
+                gap_type = "code_generation"
+
+            if gap_type == "unknown":
+                return None
+
+            skill_name = f"need_learn_{gap_type}"
+            existing = self._find_matching_skill(query[:30], gap_type)
+            if existing:
+                db = DatabaseManager.get("data/skill_emergence.db")
+                db.execute(
+                    "UPDATE skills SET fail_count=fail_count+1 WHERE skill_name=?",
+                    (skill_name,),
+                    commit=True
+                )
+                return None
+
+            db = DatabaseManager.get("data/skill_emergence.db")
+            db.execute(
+                "INSERT OR REPLACE INTO skills (skill_name, skill_type, trigger_pattern, solution_path, success_count, fail_count, success_rate, is_active, created_at) VALUES (?,?,?,?,?,?,?,?,datetime('now'))",
+                (skill_name, gap_type, query[:50], "待学习", 0, 1, 0.0, 1),
+                commit=True
+            )
+            logger.info(f"🔍 从失败中涌现学习需求: {skill_name} (类型: {gap_type})")
+            return skill_name
+        except Exception as e:
+            logger.debug(f"从失败中涌现技能异常: {e}")
+            return None
+
+    def _register_mature_skill(self, skill: dict):
+        """将成熟技能注册为可调用工具"""
+        try:
+            from core.tool_registry import tool_registry, ToolInterface, ToolResult as RegistryToolResult
+            skill_name = skill["skill_name"]
+            tool_name = f"skill_{skill_name}"
+
+            if tool_registry.get(tool_name):
+                return
+
+            _skill = skill
+
+            class SkillToolWrapper(ToolInterface):
+                @property
+                def name(self) -> str:
+                    return tool_name
+
+                @property
+                def description(self) -> str:
+                    return f"成熟技能: {_skill.get('skill_name', '')} ({_skill.get('skill_type', '')})"
+
+                @property
+                def parameters(self) -> Dict:
+                    return {"query": {"type": "string", "description": "输入查询"}}
+
+                @property
+                def category(self) -> str:
+                    return "skill"
+
+                @property
+                def priority(self) -> int:
+                    return 20
+
+                async def execute(self, **kwargs) -> RegistryToolResult:
+                    return RegistryToolResult(
+                        success=True,
+                        data=f"技能 {_skill.get('skill_name', '')} 已激活，解决路径: {_skill.get('solution_path', '')}",
+                        source=tool_name,
+                        quality=30,
+                    )
+
+            tool_registry.register(SkillToolWrapper())
+            logger.info(f"✅ 成熟技能已注册为工具: {tool_name}")
+        except Exception as e:
+            logger.debug(f"成熟技能注册失败: {e}")
 
 
 skill_emergence = SkillEmergence()

@@ -178,7 +178,7 @@ class ToolRegistry:
         return sorted(tools, key=lambda t: t["priority"], reverse=True)
 
     def plan_tools(self, query: str, intent_type: str = "",
-                   source_priority: List[str] = None) -> List[str]:
+                   source_priority: List[str] = None, methodology: dict = None) -> List[str]:
         scored: List[Tuple[str, int]] = []
         for name, tool in self._tools.items():
             if not tool.can_handle(query, intent_type):
@@ -191,10 +191,33 @@ class ToolRegistry:
                         break
             if intent_type and intent_type in tool.category:
                 score += 20
+            if methodology:
+                domain = methodology.get("domain", "")
+                strategy = methodology.get("strategy", "")
+                if domain == "硬件" and tool.category in ("hardware", "system"):
+                    score += 25
+                if strategy == "tool_first" and tool.category not in ("reasoning",):
+                    score += 15
             scored.append((name, score))
 
         scored.sort(key=lambda x: x[1], reverse=True)
-        return [name for name, _ in scored]
+        result = [name for name, _ in scored]
+
+        # S-2: 已注册工具无法处理时，回退查询技能表
+        if not result:
+            try:
+                from core.skill_emergence import skill_emergence
+                skills = skill_emergence.get_applicable_skills(query)
+                if skills:
+                    logger.info(f"plan_tools回退到技能表: {[s.get('skill_name','') for s in skills[:3]]}")
+                    for s in skills[:3]:
+                        skill_name = s.get("skill_name", "")
+                        if skill_name and skill_name not in result:
+                            result.append(f"skill:{skill_name}")
+            except Exception as e:
+                logger.debug(f"技能表回退跳过: {e}")
+
+        return result
 
     def get_categories(self) -> Dict[str, List[str]]:
         return dict(self._categories)
@@ -342,11 +365,13 @@ def register_builtin_tools():
     from core.tools.code_indexer_tool import CodeIndexerTool
     from core.tools.dependency_analyzer_tool import DependencyAnalyzerTool
     from core.tools.file_reader_tool import FileReaderTool
+    from core.tools.bash_tool import BashTool
+    from core.tools.serial_port_tool import SerialPortTool
 
     for tool_cls in [WebSearchTool, CalculatorTool, CodeExecutorTool,
                      KnowledgeLookupTool, FactCheckTool,
                      ProjectScannerTool, CodeIndexerTool, DependencyAnalyzerTool,
-                     FileReaderTool]:
+                     FileReaderTool, BashTool, SerialPortTool]:
         try:
             tool = tool_cls()
             tool_registry.register(tool)

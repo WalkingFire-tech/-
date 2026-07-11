@@ -216,6 +216,9 @@ class CapabilityIntrospection:
             "自我反思": ["自我反思", "自我评估", "知识缺失检测"],
             "进化提升": ["元学习", "行为进化", "知识进化"],
             "调用工具": ["工具:calculator", "工具:code_executor"],
+            "执行系统命令": ["工具:bash", "系统命令执行"],
+            "读取串口数据": ["工具:serial_port", "硬件访问"],
+            "访问硬件": ["工具:serial_port", "工具:bash", "硬件访问"],
         }
         
         required = task_capability_map.get(task_type, [])

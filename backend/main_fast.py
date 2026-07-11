@@ -52,7 +52,7 @@ from infrastructure.database_manager import DatabaseManager
 app = FastAPI(
     title="联盟拓荒者 API",
     description="生产级自我进化智能体系统 API",
-    version="3.8.0",
+    version="4.0.0",
     lifespan=lifespan
 )
 

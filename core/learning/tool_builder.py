@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime
 from enum import Enum
+from loguru import logger
 
 
 class ToolStatus(Enum):
@@ -72,6 +73,19 @@ class ToolSelfBuilder:
         self.tool_templates: Dict[str, str] = {}
         self.test_cases: Dict[str, Callable] = {}
         self._setup_default_templates()
+    
+    def record_success(self, source: str, query: str, response_snippet: str = ""):
+        need_id = self._hash_description(f"{source}:{query[:50]}")
+        if need_id in self.needs:
+            self.needs[need_id].frequency += 1
+        else:
+            self.needs[need_id] = ToolNeed(
+                need_id=need_id,
+                description=f"成功路径:{source} → {query[:60]}",
+                priority=NeedPriority.MEDIUM,
+                frequency=1,
+                context={"source": source, "query": query[:100], "response_hint": response_snippet[:100]}
+            )
     
     def _setup_default_templates(self):
         self.tool_templates = {
@@ -204,6 +218,14 @@ def {name}(items):
                 errors.append("工具测试未通过")
         
         self.tools[tool_id] = tool
+
+        if tool.status == ToolStatus.ACTIVE:
+            try:
+                from core.tool_registry import tool_registry
+                tool_registry.register(self._wrap_tool_for_registry(tool))
+                logger.info(f"ToolBuilder: 工具 {tool.name} 已自动注册到tool_registry")
+            except Exception as e:
+                logger.debug(f"ToolBuilder自动注册失败: {e}")
         
         return BuildResult(
             success=len(errors) == 0 and tool.status == ToolStatus.ACTIVE,
@@ -334,6 +356,46 @@ def {name}(input_data):
     
     def add_template(self, name: str, template: str) -> None:
         self.tool_templates[name] = template
+
+    def _wrap_tool_for_registry(self, tool: 'Tool') -> 'ToolInterface':
+        from core.tool_registry import ToolInterface, ToolResult as RegistryToolResult
+        _tool = tool
+
+        class AutoToolWrapper(ToolInterface):
+            @property
+            def name(self) -> str:
+                return f"auto_{_tool.tool_id}"
+
+            @property
+            def description(self) -> str:
+                return _tool.description
+
+            @property
+            def parameters(self) -> Dict:
+                return {"input": {"type": "string", "description": "输入数据"}}
+
+            @property
+            def category(self) -> str:
+                return "auto_generated"
+
+            @property
+            def priority(self) -> int:
+                return 25
+
+            async def execute(self, **kwargs) -> RegistryToolResult:
+                if _tool.implementation is None:
+                    return RegistryToolResult(success=False, error="工具无实现", source=self.name)
+                try:
+                    inp = kwargs.get("input", kwargs.get("query", ""))
+                    result = _tool.implementation(inp)
+                    return RegistryToolResult(
+                        success=True, data=str(result) if result is not None else "",
+                        source=self.name, quality=35,
+                    )
+                except Exception as e:
+                    return RegistryToolResult(success=False, error=str(e), source=self.name)
+
+        return AutoToolWrapper()
     
     def export_tools(self) -> Dict[str, str]:
         return {

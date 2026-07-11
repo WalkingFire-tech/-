@@ -150,6 +150,8 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         "good_habits": "有好的习惯",
         "method_creation": "有好的方法或创造方法的方法",
         "tool_mastery": "有熟练的技能去调用工具",
+        "system_command": "能执行系统命令、访问本地硬件（串口、USB、文件系统）",
+        "hardware_access": "能直接访问本地物理硬件——串口(COM)、USB设备、传感器",
         "self_reflection": "能够自我反思",
         "self_learning": "能够自我学习",
         "self_evolution": "能够自我进化",
