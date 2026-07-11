@@ -63,6 +63,7 @@ class InjectionVerifier:
                 details TEXT
             )
         ''')
+        conn.commit()
         
         conn.commit()
     
@@ -156,6 +157,7 @@ class InjectionVerifier:
             result.verified_at,
             json.dumps(result.details)
         ))
+        conn.commit()
         
         conn.commit()
     

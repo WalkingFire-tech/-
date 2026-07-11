@@ -107,6 +107,7 @@ class ActiveLearner:
         conn.execute('CREATE INDEX IF NOT EXISTS idx_trigger ON learning_activities(trigger)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_status ON learning_activities(status)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_created ON learning_activities(created_at)')
+        conn.commit()
         
         db = DatabaseManager.get(str(self._knowledge_db))
         conn = db._get_conn()
@@ -126,6 +127,7 @@ class ActiveLearner:
         ''')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_topic ON knowledge_base(topic)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_active ON knowledge_base(is_active)')
+        conn.commit()
     
     def record_event(self, event_type: str, details: Dict = None):
         """记录事件（用于触发学习）"""
@@ -295,6 +297,7 @@ class ActiveLearner:
             activity.user_approved,
             json.dumps(activity.metadata, ensure_ascii=False)
         ))
+        conn.commit()
         return cur.lastrowid
     
     def _update_activity(self, activity: LearningActivity):
@@ -317,6 +320,7 @@ class ActiveLearner:
             json.dumps(activity.metadata, ensure_ascii=False),
             activity.id
         ))
+        conn.commit()
     
     def _save_knowledge(self, topic: str, content: str, activity_id: int):
         """保存知识到知识库"""
@@ -333,6 +337,7 @@ class ActiveLearner:
             activity_id,
             datetime.now().isoformat()
         ))
+        conn.commit()
     
     def get_activities(self, limit: int = 20, status: LearningStatus = None) -> List[Dict]:
         """获取学习活动"""
@@ -387,6 +392,7 @@ class ActiveLearner:
             SET status=?
             WHERE id=?
         ''', (LearningStatus.ROLLED_BACK.value, activity_id))
+        conn.commit()
         
         db2 = DatabaseManager.get(str(self._knowledge_db))
         conn2 = db2._get_conn()
@@ -395,6 +401,7 @@ class ActiveLearner:
             SET is_active=0
             WHERE learning_activity_id=?
         ''', (activity_id,))
+        conn2.commit()
         
         logger.info(f"已回滚学习活动: {activity_id}")
         return True
@@ -408,6 +415,7 @@ class ActiveLearner:
             SET is_active=0
             WHERE id=?
         ''', (knowledge_id,))
+        conn.commit()
         
         logger.info(f"已删除知识: {knowledge_id}")
         return True

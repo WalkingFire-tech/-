@@ -36,6 +36,7 @@ class EnhancedModelStats:
                 cost REAL DEFAULT 0.0
             )
         ''')
+        conn.commit()
         
         # 添加缺失的列
         for column, definition in [
@@ -76,6 +77,7 @@ class EnhancedModelStats:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (model_name, task_type, duration, success, user_feedback, quality_score,
               datetime.now().isoformat(), input_tokens, output_tokens, cost))
+        conn.commit()
         
         logger.debug(f"记录调用: {model_name}, {task_type}, 耗时{duration:.2f}s, 质量{quality_score}, 成本${cost:.4f}")
     
@@ -289,6 +291,7 @@ class EnhancedModelStats:
                 ORDER BY timestamp DESC LIMIT 1
             )
         ''', (feedback, model_name, task_type))
+        conn.commit()
         
         logger.debug(f"更新反馈: {model_name}, {task_type}, 反馈{feedback}")
     

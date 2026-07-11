@@ -8,14 +8,9 @@ def get_last_response(query: str) -> str:
     """获取最近一次交互的回复（用于质疑检测）"""
     try:
         db = DatabaseManager.get("data/experience_pool.db")
-
-        conn = db._get_conn()
-        cursor = conn.cursor()
-        cursor.execute("SELECT response FROM experiences ORDER BY timestamp DESC LIMIT 1")
-        row = cursor.fetchone()
-
-        if row and row[0] and len(row[0]) > 20:
-            return row[0]
+        rows = db.query("SELECT response FROM experiences ORDER BY timestamp DESC LIMIT 1")
+        if rows and rows[0][0] and len(rows[0][0]) > 20:
+            return rows[0][0]
     except Exception as e:
         logger.debug(f"获取上一轮回复失败: {e}")
     return ""
@@ -56,12 +51,7 @@ async def fetch_experience(query: str) -> dict:
         loop = asyncio.get_running_loop()
         def _query_exp():
             db = DatabaseManager.get("data/experience_pool.db")
-
-            conn = db._get_conn()
-            cursor = conn.cursor()
-            cursor.execute("SELECT response, quality_score FROM experiences WHERE raw_input LIKE ? ORDER BY timestamp DESC LIMIT 3", (f"%{query[:20]}%",))
-            rows = cursor.fetchall()
-
+            rows = db.query("SELECT response, quality_score FROM experiences WHERE raw_input LIKE ? ORDER BY timestamp DESC LIMIT 3", (f"%{query[:20]}%",))
             return rows
         rows = await asyncio.wait_for(loop.run_in_executor(_fast_executor, _query_exp), timeout=5)
         if rows:
@@ -90,15 +80,10 @@ def get_experience_context(query: str) -> str:
     """从经验池检索相似问题的历史回复，作为Ollama的上下文注入"""
     try:
         db = DatabaseManager.get("data/experience_pool.db")
-
-        conn = db._get_conn()
-        cursor = conn.cursor()
-        cursor.execute(
+        rows = db.query(
             "SELECT raw_input, response, quality_score FROM experiences WHERE raw_input LIKE ? ORDER BY quality_score DESC, timestamp DESC LIMIT 2",
             (f"%{query[:20]}%",)
         )
-        rows = cursor.fetchall()
-
         if rows:
             context_parts = []
             for row in rows:

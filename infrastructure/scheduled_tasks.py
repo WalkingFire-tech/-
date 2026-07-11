@@ -461,6 +461,7 @@ class ScheduledTaskManager:
                 "DELETE FROM experiences WHERE quality_score < 30 AND timestamp < datetime('now', '-30 days')"
             )
             forgotten = cur.rowcount
+            conn.commit()
 
             cur = conn.execute(
                 "UPDATE experiences SET quality_score = MIN(quality_score + 5, 100) WHERE quality_score >= 70 AND timestamp > datetime('now', '-7 days')"

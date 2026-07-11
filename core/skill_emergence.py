@@ -28,9 +28,7 @@ class SkillEmergence:
     def _init_db(self):
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute('''CREATE TABLE IF NOT EXISTS skills (
+            db.execute('''CREATE TABLE IF NOT EXISTS skills (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 skill_name TEXT UNIQUE NOT NULL,
                 skill_type TEXT NOT NULL,
@@ -42,20 +40,100 @@ class SkillEmergence:
                 last_used TEXT,
                 created_at TEXT,
                 evolved_from TEXT,
-                is_active INTEGER DEFAULT 1
-            )''')
-            c.execute('''CREATE TABLE IF NOT EXISTS skill_applications (
+                is_active INTEGER DEFAULT 1,
+                automation_level TEXT DEFAULT 'manual',
+                skeleton TEXT DEFAULT '',
+                confidence REAL DEFAULT 0.5
+            )''', commit=True)
+            db.execute('''CREATE TABLE IF NOT EXISTS skill_applications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 skill_name TEXT,
                 query TEXT,
                 was_successful INTEGER,
                 elapsed REAL,
                 timestamp TEXT
-            )''')
-            conn.commit()
+            )''', commit=True)
+            try:
+                db.execute("ALTER TABLE skills ADD COLUMN automation_level TEXT DEFAULT 'manual'", commit=True)
+            except Exception:
+                pass
+            try:
+                db.execute("ALTER TABLE skills ADD COLUMN skeleton TEXT DEFAULT ''", commit=True)
+            except Exception:
+                pass
+            try:
+                db.execute("ALTER TABLE skills ADD COLUMN confidence REAL DEFAULT 0.5", commit=True)
+            except Exception:
+                pass
 
         except Exception as e:
             logger.debug(f"技能库初始化失败: {e}")
+
+    def reflex_query(self, query: str) -> Optional[Dict]:
+        """
+        本能查询：检查是否有匹配的本能级技能可直接触发。
+        返回None表示无匹配，需要走推理链。
+        返回dict表示匹配到本能，包含solution_path和skeleton。
+        """
+        try:
+            db = DatabaseManager.get(self.db_path)
+            rows = db.query(
+                "SELECT skill_name, skill_type, trigger_patterns, solution_path, skeleton, confidence, automation_level, success_count FROM skills WHERE is_active=1 AND automation_level IN ('learned', 'reflex') ORDER BY confidence DESC"
+            )
+            if not rows:
+                return None
+            
+            query_lower = query.lower()
+            for row in rows:
+                triggers = row[2].split("|") if row[2] else []
+                matched = sum(1 for t in triggers if t in query_lower)
+                if matched == 0:
+                    continue
+                
+                overlap_ratio = matched / max(len(triggers), 1)
+                effective_confidence = row[5] * (0.5 + 0.5 * overlap_ratio)
+                
+                if effective_confidence >= 0.7:
+                    logger.info(f"⚡ 本能触发: {row[0]} (置信度{effective_confidence:.2f}, 级别{row[6]})")
+                    return {
+                        "skill_name": row[0],
+                        "solution_path": row[3],
+                        "skeleton": row[4],
+                        "confidence": effective_confidence,
+                        "automation_level": row[6],
+                        "is_reflex": row[6] == "reflex"
+                    }
+        except Exception as e:
+            logger.debug(f"本能查询失败: {e}")
+        return None
+
+    def _extract_skeleton(self, query: str, success_path: list) -> str:
+        """
+        从成功路径中提取抽象骨架（问题结构，非具体实现）
+        例如: "串口读取→NMEA解析→地图标记" → "sensors→parse→visualize"
+        """
+        stage_map = {
+            "扫描": "acquire", "读取": "acquire", "获取": "acquire", "检测": "acquire",
+            "解析": "parse", "分析": "parse", "理解": "parse", "识别": "parse", "翻译": "parse",
+            "标记": "visualize", "显示": "visualize", "渲染": "visualize", "绘制": "visualize", "呈现": "visualize",
+            "验证": "verify", "确认": "verify", "检查": "verify",
+            "推理": "reason", "思考": "reason", "推断": "reason",
+        }
+        
+        query_stages = []
+        for kw, stage in stage_map.items():
+            if kw in query and stage not in query_stages:
+                query_stages.append(stage)
+        
+        path_stages = []
+        for step in success_path:
+            step_str = str(step)
+            for kw, stage in stage_map.items():
+                if kw in step_str and stage not in path_stages:
+                    path_stages.append(stage)
+        
+        skeleton = "→".join(query_stages or path_stages or ["acquire", "parse", "output"])
+        return skeleton
 
     def analyze_and_learn(self, query: str, attempts: list, final_response: str, elapsed: float):
         """
@@ -101,7 +179,8 @@ class SkillEmergence:
         else:
             # 创建新技能
             skill_name = self._generate_skill_name(skill_type, trigger)
-            self._create_skill(skill_name, skill_type, trigger, path_signature)
+            skeleton = self._extract_skeleton(query, success_path)
+            self._create_skill(skill_name, skill_type, trigger, path_signature, skeleton)
             return skill_name
 
     def _classify_skill_type(self, query: str, success_path: list) -> str:
@@ -178,47 +257,60 @@ class SkillEmergence:
                         "fail_count": row[5],
                         "success_rate": row[6],
                     }
-        except:
+        except Exception:
             pass
         return None
 
     def _update_skill(self, skill: dict, was_successful: bool, elapsed: float):
-        """更新技能统计"""
+        """更新技能统计 + 本能升级"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
             new_success = skill["success_count"] + (1 if was_successful else 0)
             new_fail = skill["fail_count"] + (0 if was_successful else 1)
             new_rate = new_success / max(new_success + new_fail, 1)
-            c.execute(
-                "UPDATE skills SET success_count=?, fail_count=?, success_rate=?, last_used=? WHERE skill_name=?",
-                (new_success, new_fail, round(new_rate, 3), datetime.now().isoformat(), skill["skill_name"])
+            
+            old_confidence = skill.get("confidence", 0.5)
+            if was_successful:
+                new_confidence = min(1.0, old_confidence + (1.0 - old_confidence) * 0.1 * (1 + 1 / max(new_success, 1)))
+            else:
+                new_confidence = max(0.3, old_confidence - old_confidence * 0.15)
+            
+            new_level = "manual"
+            if new_success >= 5 and new_confidence >= 0.9 and new_rate >= 0.8:
+                new_level = "reflex"
+            elif new_success >= 3 and new_confidence >= 0.7 and new_rate >= 0.7:
+                new_level = "learned"
+            else:
+                new_level = skill.get("automation_level", "manual")
+            
+            db.execute(
+                "UPDATE skills SET success_count=?, fail_count=?, success_rate=?, last_used=?, confidence=?, automation_level=? WHERE skill_name=?",
+                (new_success, new_fail, round(new_rate, 3), datetime.now().isoformat(), round(new_confidence, 3), new_level, skill["skill_name"]),
+                commit=True
             )
-            conn.commit()
-
 
             if new_success >= 3 and new_rate >= 0.7:
-                logger.info(f"🎯 技能成熟: {skill['skill_name']} (成功率{new_rate:.0%}, {new_success}次成功)")
+                logger.info(f"🎯 技能成熟: {skill['skill_name']} (成功率{new_rate:.0%}, {new_success}次成功, 级别{new_level})")
                 self._register_mature_skill(skill)
-        except:
-            pass
+            
+            if new_level == "reflex" and skill.get("automation_level") != "reflex":
+                logger.info(f"⚡ 本能固化: {skill['skill_name']} 已升级为REFLEX (置信度{new_confidence:.2f})")
+        except Exception as e:
+            logger.debug(f"技能更新失败: {e}")
 
-    def _create_skill(self, skill_name: str, skill_type: str, trigger: str, solution_path: str):
+    def _create_skill(self, skill_name: str, skill_type: str, trigger: str, solution_path: str, skeleton: str = ""):
         """创建新技能"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute(
-                "INSERT OR IGNORE INTO skills (skill_name, skill_type, trigger_patterns, solution_path, success_count, fail_count, success_rate, last_used, created_at) VALUES (?, ?, ?, ?, 1, 0, 1.0, ?, ?)",
-                (skill_name, skill_type, trigger, solution_path, datetime.now().isoformat(), datetime.now().isoformat())
+            db.execute(
+                "INSERT OR IGNORE INTO skills (skill_name, skill_type, trigger_patterns, solution_path, success_count, fail_count, success_rate, last_used, created_at, skeleton, confidence, automation_level) VALUES (?, ?, ?, ?, 1, 0, 1.0, ?, ?, ?, 0.5, 'manual')",
+                (skill_name, skill_type, trigger, solution_path, datetime.now().isoformat(), datetime.now().isoformat(), skeleton),
+                commit=True
             )
-            conn.commit()
 
-            logger.info(f"✨ 新技能涌现: {skill_name} (类型={skill_type}, 触发={trigger})")
-        except:
-            pass
+            logger.info(f"✨ 新技能涌现: {skill_name} (类型={skill_type}, 触发={trigger}, 骨架={skeleton})")
+        except Exception as e:
+            logger.debug(f"技能创建失败: {e}")
 
     def _generate_skill_name(self, skill_type: str, trigger: str) -> str:
         names = {
@@ -291,7 +383,7 @@ class SkillEmergence:
                         "success_rate": row[5],
                     })
             return applicable
-        except:
+        except Exception:
             return []
 
     def get_skill_stats(self) -> dict:
@@ -312,7 +404,7 @@ class SkillEmergence:
                 "mature_skills": mature,
                 "top_skills": [{"name": r[0], "successes": r[1], "rate": r[2]} for r in top]
             }
-        except:
+        except Exception:
             return {"total_skills": 0, "mature_skills": 0, "top_skills": []}
 
     def _emerge_from_failure(self, query: str, failed: list) -> str:

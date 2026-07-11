@@ -78,6 +78,7 @@ class RatchetGate:
                 created_at TEXT
             )
         ''')
+        conn.commit()
 
     def get_ratchet_level(self, domain: str = "global") -> float:
         db = DatabaseManager.get(self.db_path)
@@ -158,6 +159,7 @@ class RatchetGate:
             INSERT INTO ratchet_decisions (domain, candidate_score, ratchet_level, approved, delta, reason, timestamp)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (domain, candidate_score, ratchet_level, approved, delta, reason, decision.timestamp))
+        conn.commit()
 
         if approved:
             logger.info(f"棘轮门通过: {domain} score={candidate_score:.4f} ratchet={ratchet_level:.4f} ({reason})")
@@ -183,6 +185,7 @@ class RatchetGate:
             INSERT INTO ratchet_baseline (domain, ratchet_level, previous_level, promoted_at, promotion_count)
             VALUES (?, ?, ?, ?, 1)
         ''', (domain, current_score, ratchet_level, datetime.now().isoformat()))
+        conn.commit()
 
         logger.info(f"棘轮门提升: {domain} {ratchet_level:.4f} -> {current_score:.4f}")
         return True
@@ -194,6 +197,7 @@ class RatchetGate:
             INSERT INTO ratchet_snapshots (domain, snapshot_type, data, fitness_score, created_at)
             VALUES (?, ?, ?, ?, ?)
         ''', (domain, snapshot_type, json.dumps(data, ensure_ascii=False), fitness_score, datetime.now().isoformat()))
+        conn.commit()
 
     def get_latest_snapshot(self, domain: str, snapshot_type: str = None) -> Optional[Dict]:
         db = DatabaseManager.get(self.db_path)

@@ -189,35 +189,29 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
             raise AttributeError(f"精神内核常量不可删除: {name}")
         object.__delattr__(self, name)
     
-    def _db_connect(self):
-        return DatabaseManager.get("data/spirit_lessons.db", timeout=10.0)._get_conn()
+    def _db(self):
+        return DatabaseManager.get("data/spirit_lessons.db", timeout=10.0)
     
     def _init_lesson_db(self):
         """初始化教训持久化数据库"""
         try:
-            conn = self._db_connect()
-            cursor = conn.cursor()
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS lessons (
+            db = self._db()
+            db.execute('''CREATE TABLE IF NOT EXISTS lessons (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     question TEXT,
                     attempts TEXT,
                     failed_methods TEXT,
                     timestamp TEXT
-                )
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS violations (
+                )''', commit=True)
+            db.execute('''CREATE TABLE IF NOT EXISTS violations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     response TEXT,
                     issues TEXT,
                     source TEXT,
                     timestamp TEXT
-                )
-            ''')
-            conn.commit()
+                )''', commit=True)
         except Exception as e:
-            logger.debug(f"精神内核数据库初始化失败: {e}")
+            logger.error(f"精神内核数据库初始化失败: {e}")
         
     def validate_response(self, response: str, context: Dict = None) -> Dict[str, Any]:
         """
@@ -391,21 +385,14 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         )
         
         try:
-            conn = self._db_connect()
-            cursor = conn.cursor()
-            cursor.execute(
-                """INSERT INTO violations (response, issues, source, timestamp)
-                   VALUES (?, ?, ?, ?)""",
-                (
-                    response[:500],
-                    json.dumps(issues, ensure_ascii=False),
-                    source,
-                    datetime.now().isoformat()
-                )
+            db = self._db()
+            db.execute(
+                "INSERT INTO violations (response, issues, source, timestamp) VALUES (?, ?, ?, ?)",
+                (response[:500], json.dumps(issues, ensure_ascii=False), source, datetime.now().isoformat()),
+                commit=True
             )
-            conn.commit()
         except Exception as e:
-            logger.debug(f"精神异常记录失败: {e}")
+            logger.error(f"精神异常记录失败: {e}")
         
         return {
             "violation_id": violation_id,
@@ -548,21 +535,14 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         
         # 持久化到数据库
         try:
-            conn = self._db_connect()
-            cursor = conn.cursor()
-            cursor.execute(
-                """INSERT INTO lessons (question, attempts, failed_methods, timestamp)
-                   VALUES (?, ?, ?, ?)""",
-                (
-                    question,
-                    json.dumps(attempts, ensure_ascii=False)[:2000],
-                    json.dumps(lesson["failed_methods"], ensure_ascii=False),
-                    datetime.now().isoformat()
-                )
+            db = self._db()
+            db.execute(
+                "INSERT INTO lessons (question, attempts, failed_methods, timestamp) VALUES (?, ?, ?, ?)",
+                (question, json.dumps(attempts, ensure_ascii=False)[:2000], json.dumps(lesson["failed_methods"], ensure_ascii=False), datetime.now().isoformat()),
+                commit=True
             )
-            conn.commit()
         except Exception as e:
-            logger.debug(f"教训持久化失败: {e}")
+            logger.error(f"教训持久化失败: {e}")
         
         logger.info(f"📖 记录失败教训: {question[:30]}...")
     
@@ -607,13 +587,11 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         这是SpiritCore与SelfReflection的联动接口
         """
         try:
-            conn = self._db_connect()
-            cursor = conn.cursor()
-            cursor.execute(
+            db = self._db()
+            rows = db.query(
                 "SELECT question, attempts, failed_methods, timestamp FROM lessons ORDER BY id DESC LIMIT ?",
                 (limit,)
             )
-            rows = cursor.fetchall()
             
             lessons = []
             for row in rows:
@@ -633,19 +611,17 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
                 })
             return lessons
         except Exception as e:
-            logger.debug(f"获取反思素材失败: {e}")
+            logger.error(f"获取反思素材失败: {e}")
             return self.lesson_book[-limit:]
     
     def get_violations_for_analysis(self, limit: int = 10) -> List[Dict]:
         """获取精神异常记录，供系统分析"""
         try:
-            conn = self._db_connect()
-            cursor = conn.cursor()
-            cursor.execute(
+            db = self._db()
+            rows = db.query(
                 "SELECT response, issues, source, timestamp FROM violations ORDER BY id DESC LIMIT ?",
                 (limit,)
             )
-            rows = cursor.fetchall()
             
             violations = []
             for row in rows:
@@ -657,7 +633,7 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
                 })
             return violations
         except Exception as e:
-            logger.debug(f"获取异常记录失败: {e}")
+            logger.error(f"获取异常记录失败: {e}")
             return []
     
     def enforce_on_output(self, response: str, source: str = "unknown", query: str = "") -> str:

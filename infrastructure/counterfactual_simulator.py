@@ -54,6 +54,7 @@ class CounterfactualSimulator:
             )
         ''')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_task ON counterfactual_records(task_id)')
+        conn.commit()
     
     async def simulate_alternatives(
         self,
@@ -246,6 +247,7 @@ class CounterfactualSimulator:
                 '',
                 False
             ))
+            conn.commit()
         except Exception as e:
             logger.warning(f"反事实记录保存失败: {e}")
     
@@ -376,6 +378,7 @@ class CounterfactualSimulator:
                 SET applied = TRUE
                 WHERE applied = FALSE AND gap > 10
             ''')
+            conn.commit()
         except Exception as e:
             logger.warning(f"标记失败: {e}")
     

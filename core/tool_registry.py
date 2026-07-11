@@ -87,6 +87,7 @@ class ToolResult:
         }
 
 
+
 class ToolInterface(ABC):
     @property
     @abstractmethod
@@ -120,6 +121,71 @@ class ToolInterface(ABC):
         ...
 
     def can_handle(self, query: str, intent_type: str = "") -> bool:
+        return True
+
+
+class LegacyToolAdapter(ToolInterface):
+    """适配器：将旧版 tools/base.Tool 包装为 ToolInterface，实现双注册表统一。"""
+
+    def __init__(self, legacy_tool):
+        self._legacy = legacy_tool
+        meta = legacy_tool.get_metadata() if hasattr(legacy_tool, 'get_metadata') else None
+        self._name = meta.name if meta else getattr(legacy_tool, 'name', 'unknown')
+        self._desc = meta.description if meta else getattr(legacy_tool, 'description', '')
+        self._cat = meta.category.value if meta and hasattr(meta.category, 'value') else str(getattr(legacy_tool, 'category', 'general'))
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return self._desc
+
+    @property
+    def parameters(self) -> Dict:
+        meta = self._legacy.get_metadata() if hasattr(self._legacy, 'get_metadata') else None
+        if meta and hasattr(meta, 'parameters'):
+            return {
+                p.name: {"type": p.type, "description": p.description, "required": p.required}
+                for p in meta.parameters
+            }
+        return {}
+
+    @property
+    def category(self) -> str:
+        return self._cat
+
+    @property
+    def timeout(self) -> float:
+        return 15.0
+
+    @property
+    def priority(self) -> int:
+        return 50
+
+    async def execute(self, **kwargs) -> ToolResult:
+        try:
+            result = await run_tool_async(self._legacy.safe_execute, **kwargs, timeout=self.timeout)
+            if result is None:
+                return ToolResult(success=False, error="旧版工具执行超时", source=self._name)
+            if isinstance(result, ToolResult):
+                return ToolResult(
+                    success=result.success,
+                    data=result.output if hasattr(result, 'output') else result.data,
+                    error=result.error or "",
+                    source=self._name,
+                    quality=50,
+                    duration_ms=getattr(result, 'execution_time', 0) * 1000,
+                    metadata=getattr(result, 'metadata', {}),
+                )
+            return ToolResult(success=True, data=str(result), source=self._name, quality=50)
+        except Exception as e:
+            return ToolResult(success=False, error=str(e), source=self._name)
+
+    def can_handle(self, query: str, intent_type: str = "") -> bool:
+        if hasattr(self._legacy, 'can_handle'):
+            return self._legacy.can_handle(query, intent_type)
         return True
 
 

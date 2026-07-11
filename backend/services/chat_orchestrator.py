@@ -226,6 +226,24 @@ async def chat_stream(user_input: str, context: dict):
     conversation_context = _build_conversation_context(history)
     logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] 对话上下文构建完成")
 
+    # ========== 对话连续性感知 ==========
+    # 检测话题跳跃、上下文衰减、指代消解需求
+    # 从PheromoneField方案提取核心价值，不需要整个粒子引擎
+    _continuity_signal = {}
+    try:
+        _continuity_signal = _perceive_continuity(user_input, history)
+        if _continuity_signal.get("topic_drift"):
+            yield _emit("step", {"phase": "连续性感知", "status": "done",
+                "detail": f"🔄 话题漂移: {_continuity_signal['drift_direction']} (距离={_continuity_signal['drift_distance']:.2f})"})
+        if _continuity_signal.get("reference_needs_resolution"):
+            yield _emit("step", {"phase": "连续性感知", "status": "done",
+                "detail": f"🔗 检测到指代: {_continuity_signal['reference_text']}"})
+        if _continuity_signal.get("context_decay"):
+            yield _emit("step", {"phase": "连续性感知", "status": "done",
+                "detail": f"📉 上下文衰减: 最近{len(history)}轮对话, 活跃度={_continuity_signal['activity_level']:.2f}"})
+    except Exception as e:
+        logger.debug(f"对话连续性感知跳过: {e}")
+
     # CBNR L2: 认知瓶颈 — 压缩核心+双模型推理（接收L1的normalized_input）
     try:
         from core.cbnr.hub import get_cbnr_hub
@@ -439,12 +457,11 @@ async def chat_stream(user_input: str, context: dict):
                 final_response = f"🔍 你提出了质疑，我重新审视了上一轮的回答：\n\n{rule_challenge}"
                 attempts.append(("质疑重验证", True, "规则重验证"))
                 yield _emit("step", {"phase": "质疑检测", "status": "done", "detail": "使用规则重验证完成"})
+            yield _emit("result", {"response": final_response, "attempts": attempts, "intent": intent_type})
+            return
         else:
-            final_response = "你提出了质疑，但我没有找到上一轮的回答记录。请告诉我你质疑的具体内容，我会重新认真分析。"
-            attempts.append(("质疑检测", True, "无历史记录，请求补充"))
-            yield _emit("step", {"phase": "质疑检测", "status": "done", "detail": "未找到上一轮回答记录"})
-        yield _emit("result", {"response": final_response, "attempts": attempts, "intent": intent_type})
-        return
+            yield _emit("step", {"phase": "质疑检测", "status": "done", "detail": "未找到上一轮回答记录，降级为正常处理"})
+            intent_type = "complex_query"
 
     # ========== 阶段2.5：本质闸门 + 方法论发现 + 真谛类推 ==========
     # 先问"这个问题的本质是什么"，再问"我该用什么方式解决"，再用已有真谛类推
@@ -466,6 +483,16 @@ async def chat_stream(user_input: str, context: dict):
         if essence_gate_result["is_paradox"]:
             methodology["need_essence_reasoning"] = True
 
+    # 注入对话连续性信号到methodology
+    if _continuity_signal:
+        if _continuity_signal.get("topic_drift"):
+            methodology["topic_drift"] = True
+            methodology["drift_direction"] = _continuity_signal.get("drift_direction", "")
+        if _continuity_signal.get("reference_needs_resolution"):
+            methodology["reference_resolution"] = _continuity_signal.get("reference_text", "")
+        if _continuity_signal.get("continuity_hint"):
+            methodology["continuity_hint"] = _continuity_signal["continuity_hint"]
+
     # 真谛类推：用已有真谛洞察类推当前问题
     truth_insights = ""
     try:
@@ -479,6 +506,63 @@ async def chat_stream(user_input: str, context: dict):
             attempts.append(("真谛类推", True, f"{len(applicable)}条洞察"))
     except Exception:
         pass
+
+    # ========== 阶段2.6：能力评估 + 本能查询 ==========
+    # 先查本能：有没有匹配的本能级技能可直接触发？
+    instinct_hit = None
+    skeleton_analogy = None
+    try:
+        from core.skill_emergence import SkillEmergence
+        se = SkillEmergence()
+        instinct_hit = se.reflex_query(user_input)
+        if instinct_hit:
+            yield _emit("step", {"phase": "本能查询", "status": "done",
+                "detail": f"⚡ 本能触发: {instinct_hit['skill_name']} (置信度{instinct_hit['confidence']:.2f})"})
+            methodology["instinct_path"] = instinct_hit["solution_path"]
+            methodology["instinct_skeleton"] = instinct_hit.get("skeleton", "")
+    except Exception:
+        pass
+
+    # 没有本能→查骨架联想：有没有结构相似的历史经验可迁移？
+    if not instinct_hit:
+        try:
+            from core.cognition.experience_abstractor import ExperienceAbstractor
+            skeleton_analogy = ExperienceAbstractor.find_analogous(user_input)
+            if skeleton_analogy:
+                yield _emit("step", {"phase": "骨架联想", "status": "done",
+                    "detail": f"🧠 类比迁移: {skeleton_analogy['skill_name']} (相似度{skeleton_analogy['similarity']:.2f})"})
+                methodology["analogous_skeleton"] = skeleton_analogy["skeleton"]
+                methodology["analogous_path"] = skeleton_analogy["solution_path"]
+        except Exception:
+            pass
+
+    # 能力缺口检测：我有没有合适的工具？
+    capability_gap = None
+    try:
+        from core.tool_registry import tool_registry
+        applicable_tools = tool_registry.plan_tools(user_input, intent_type, methodology=methodology)
+        if not applicable_tools and intent_type not in ("greeting", "confirmation", "simple_query"):
+            capability_gap = f"解决'{user_input[:40]}'所需的工具"
+            yield _emit("step", {"phase": "能力评估", "status": "done",
+                "detail": f"⚠️ 检测到能力缺口: 无适用工具"})
+            methodology["capability_gap"] = capability_gap
+    except Exception:
+        pass
+
+    # ========== 阶段2.7：三思后行 — R4七维自检 ==========
+    # 在关键决策点（能力评估后、执行前）强制执行元宪法检查
+    _r4_result = _r4_self_check(user_input, intent_type, methodology, capability_gap)
+    if _r4_result.get("warnings"):
+        for _w in _r4_result["warnings"]:
+            yield _emit("step", {"phase": "三思后行", "status": "warning", "detail": _w})
+    if _r4_result.get("blocked"):
+        final_response = _r4_result["block_reason"]
+        yield _emit("step", {"phase": "三思后行", "status": "done", "detail": f"🛑 行动被阻断: {_r4_result['block_reason']}"})
+        yield _emit("result", {"response": final_response, "attempts": attempts, "intent": intent_type})
+        return
+    if _r4_result.get("adjustments"):
+        for _adj_key, _adj_val in _r4_result["adjustments"].items():
+            methodology[_adj_key] = _adj_val
 
     # 事实锚点查询：从事实库获取相关客观事实，注入推理上下文
     fact_context = ""
@@ -1478,6 +1562,23 @@ async def chat_stream(user_input: str, context: dict):
         _alchemize_error(e, context={"user_input": user_input[:50]}, phase="reflection_learning")
         reflection = "反思学习异常，跳过"
 
+    # 经验抽象：从具体经历中提炼可迁移模式（补全7步闭环"抽象"层）
+    try:
+        from core.cognition.experience_abstractor import ExperienceAbstractor
+        _abstraction_steps = [{"action": a[0], "result_preview": str(a[2])[:100] if len(a) > 2 else "", "success": a[1]} for a in attempts]
+        _abstraction_result = ExperienceAbstractor.abstract(
+            user_query=user_input,
+            intent_type=intent_type,
+            steps=_abstraction_steps,
+            final_success=any(a[1] for a in attempts),
+            failure_reason=str(failed_steps[0][2])[:200] if failed_steps and len(failed_steps[0]) > 2 else "",
+        )
+        ExperienceAbstractor.settle_to_skill_db(_abstraction_result, user_input, intent_type)
+        if _abstraction_result.get("key_insights"):
+            reflection += f"; 🧬 抽象:{_abstraction_result['key_insights'][0][:60]}"
+    except Exception as e:
+        logger.debug(f"经验抽象跳过: {e}")
+
     # 基因微调：从交互中学习（反脆弱性：失败也触发学习）
     try:
         from core.task_queue import task_queue, gene_pool
@@ -2228,6 +2329,18 @@ def _is_goal_achieved(user_input: str, response: str, intent_type: str, attempts
             return False
 
     if is_operational:
+        fabricated_patterns = [
+            "sensor data:", "sensor id:", "[device:main]",
+            "temperature:", "humidity:", "pressure:",
+        ]
+        real_data_markers = ["$gpgga", "$gprmc", "$gngga", "$gnrmc", "nmea", "com8", "波特率", "serial_port"]
+        has_fabricated = any(p in resp_lower for p in fabricated_patterns)
+        has_real = any(p in resp_lower for p in real_data_markers)
+        if has_fabricated and not has_real:
+            logger.info(f"🔄 目标未达成: 检测到LLM伪造的硬件数据，非真实读取结果")
+            return False
+
+    if is_operational:
         has_execution = any(a[1] for a in attempts if isinstance(a, tuple) and len(a) >= 2
                           and any(kw in str(a[0]).lower() for kw in ["工具", "串口", "bash", "serial", "执行"]))
         if not has_execution and code_block_count == 0:
@@ -2256,3 +2369,129 @@ def _is_goal_achieved(user_input: str, response: str, intent_type: str, attempts
             return False
 
     return True
+
+
+def _perceive_continuity(user_input: str, history: list) -> dict:
+    """
+    对话连续性感知——从PheromoneField方案提取的核心价值。
+    检测：1)话题漂移 2)上下文衰减 3)指代消解需求
+    返回信号字典，注入methodology影响后续推理策略。
+    """
+    signal = {
+        "topic_drift": False,
+        "drift_distance": 0.0,
+        "drift_direction": "",
+        "reference_needs_resolution": False,
+        "reference_text": "",
+        "context_decay": False,
+        "activity_level": 1.0,
+        "previous_topics": [],
+        "continuity_hint": "",
+    }
+
+    if not history or len(history) < 2:
+        return signal
+
+    recent_user_msgs = []
+    for msg in history[-10:]:
+        if msg.get("role") == "user" and msg.get("content"):
+            recent_user_msgs.append(msg["content"])
+
+    if not recent_user_msgs:
+        return signal
+
+    last_user_msg = recent_user_msgs[-1]
+
+    domain_keywords = {
+        "hardware": ["串口", "com", "端口", "传感器", "gps", "nmea", "串口", "波特率", "arduino", "esp32", "电压", "电流", "引脚"],
+        "code": ["代码", "函数", "编程", "算法", "python", "实现", "调试", "编译", "运行"],
+        "science": ["为什么", "原理", "物理", "化学", "天文", "生物", "数学", "机制", "本质"],
+        "philosophy": ["意义", "命运", "哲学", "悖论", "存在", "意识"],
+        "daily": ["你好", "谢谢", "再见", "怎么样", "今天"],
+    }
+
+    def _detect_domain(text: str) -> str:
+        text_lower = text.lower()
+        best_domain = "unknown"
+        best_count = 0
+        for domain, keywords in domain_keywords.items():
+            count = sum(1 for kw in keywords if kw in text_lower)
+            if count > best_count:
+                best_count = count
+                best_domain = domain
+        return best_domain if best_count > 0 else "unknown"
+
+    current_domain = _detect_domain(user_input)
+    previous_domains = [_detect_domain(msg) for msg in recent_user_msgs[-5:]]
+    signal["previous_topics"] = previous_domains
+
+    if previous_domains and current_domain != "unknown":
+        last_domain = previous_domains[-1] if previous_domains else "unknown"
+        if last_domain != "unknown" and current_domain != last_domain:
+            signal["topic_drift"] = True
+            signal["drift_direction"] = f"{last_domain}→{current_domain}"
+            domain_distance = 1.0 if {last_domain, current_domain} in [
+                {"hardware", "code"}, {"science", "philosophy"}
+            ] else 0.5
+            signal["drift_distance"] = domain_distance
+            signal["continuity_hint"] = f"话题从{last_domain}跳转到{current_domain}"
+
+    reference_patterns = ["它", "这个", "那个", "上面说的", "刚才的", "之前的", "他", "她"]
+    for ref in reference_patterns:
+        if ref in user_input and len(user_input) < 30:
+            signal["reference_needs_resolution"] = True
+            signal["reference_text"] = ref
+            signal["continuity_hint"] = f"检测到指代词'{ref}'，需要消解上下文"
+            break
+
+    if len(history) > 20:
+        recent_active = sum(1 for msg in history[-5:] if msg.get("role") == "user")
+        signal["activity_level"] = recent_active / 5.0
+        if recent_active < 2:
+            signal["context_decay"] = True
+            signal["continuity_hint"] = "长对话中近期交互稀疏，上下文可能衰减"
+
+    return signal
+
+
+def _r4_self_check(user_input: str, intent_type: str, methodology: dict, capability_gap) -> dict:
+    """
+    R4七维自检 — 元宪法「三思后行」的代码事实。
+    在关键决策点（能力评估后、执行前）强制执行。
+    7维: ①方向一致 ②看板衔接 ③最小侵入 ④无过度设计 ⑤治标+治本 ⑥可验证 ⑦精神内核对齐
+    """
+    result = {"warnings": [], "adjustments": {}, "blocked": False, "block_reason": ""}
+
+    # ① 方向一致：意图与方法论策略是否一致
+    strategy = methodology.get("strategy", "")
+    if intent_type == "hardware" and strategy not in ("tool_first", "slow"):
+        result["warnings"].append(f"方向不一致: hardware意图但策略={strategy}，建议tool_first")
+        result["adjustments"]["strategy"] = "tool_first"
+
+    # ② 最小侵入：是否需要造新工具
+    if capability_gap and methodology.get("strategy") == "tool_first":
+        result["warnings"].append(f"能力缺口: {capability_gap}，将尝试工具构建")
+
+    # ③ 无过度设计：操作类问题不应走纯推理路径
+    if intent_type in ("hardware", "code") and methodology.get("strategy") == "reasoning_only":
+        result["warnings"].append(f"过度设计: {intent_type}意图不应走纯推理，切换为tool_first")
+        result["adjustments"]["strategy"] = "tool_first"
+
+    # ④ 治标+治本：质疑类必须有历史记录
+    if intent_type == "challenge" and not methodology.get("challenge_history"):
+        result["warnings"].append("质疑类无历史记录，已降级为complex_query")
+
+    # ⑤ 可验证：操作类问题必须走工具执行路径
+    if intent_type == "hardware" and not methodology.get("source_priority"):
+        result["adjustments"]["source_priority"] = ["工具执行", "经验池", "知识库", "Ollama"]
+
+    # ⑥ 精神内核对齐：伪造数据检测
+    if methodology.get("fabricated_data_detected"):
+        result["blocked"] = True
+        result["block_reason"] = "检测到伪造数据倾向，阻断执行以保护真实性"
+
+    # ⑦ 看板衔接：连续性信号检查
+    if methodology.get("topic_drift"):
+        result["warnings"].append(f"话题漂移: {methodology.get('drift_direction', '')}，注意上下文衔接")
+
+    return result

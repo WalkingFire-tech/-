@@ -182,6 +182,15 @@ SEED_TRUTHS = [
         "evidence_count": 99,
         "applicable_to": ["规划", "排优先级", "任务排序", "决策"],
     },
+    {
+        "name": "认知行动者七步闭环",
+        "level": "L4",
+        "domain": "元认知/认知架构",
+        "statement": "每个问题必须走完七步闭环才算真正解决：感知(提取意图与深层内容)→分解(拆解为可验证子目标)→执行(针对子目标调用工具或推理)→自察(我得到了什么？距离真相近了吗？)→抽象(从经历中提炼可迁移模式)→沉淀(模式写入长期记忆/技能库)→进化(更新基因参数优化未来决策)。跳过任何一步都是表演思考而非真正思考",
+        "source": "人类注入",
+        "evidence_count": 99,
+        "applicable_to": ["解决问题", "任何行动", "学习", "进化", "技能获取"],
+    },
 ]
 
 
@@ -348,7 +357,7 @@ class TruthAccumulator:
                 name, applicable_json, count = row
                 try:
                     applicable = json.loads(applicable_json) if applicable_json else []
-                except:
+                except Exception:
                     applicable = []
                 # 简单匹配：如果成功方法与真谛适用领域相关
                 for method in [a[0] for a in successful]:
@@ -357,7 +366,7 @@ class TruthAccumulator:
                         break
             conn.commit()
 
-        except:
+        except Exception:
             pass
 
     def _save_truth(self, name: str, level: str, domain: str, statement: str, source: str):
@@ -382,7 +391,7 @@ class TruthAccumulator:
             conn.commit()
 
             logger.info(f"💎 真谛沉淀: {name} ({level}) — {statement[:50]}")
-        except:
+        except Exception:
             pass
 
         try:
@@ -412,7 +421,7 @@ class TruthAccumulator:
                 name, level, truth_domain, statement, applicable_json, evidence = row
                 try:
                     applicable = json.loads(applicable_json) if applicable_json else []
-                except:
+                except Exception:
                     applicable = []
 
                 # 类推匹配：问题的领域是否与真谛适用领域有交集
@@ -444,7 +453,7 @@ class TruthAccumulator:
                     })
 
             results.sort(key=lambda x: x["relevance"], reverse=True)
-        except:
+        except Exception:
             pass
 
         return results[:5]
@@ -502,7 +511,7 @@ class TruthAccumulator:
             rows = c.fetchall()
 
             return [{"name": r[0], "level": r[1], "domain": r[2], "statement": r[3], "evidence": r[4], "source": r[5]} for r in rows]
-        except:
+        except Exception:
             return []
 
     def get_stats(self) -> dict:
@@ -523,7 +532,7 @@ class TruthAccumulator:
                 "by_level": by_level,
                 "top_truths": [{"name": r[0], "evidence": r[1]} for r in top]
             }
-        except:
+        except Exception:
             return {"total_truths": 0, "by_level": {}, "top_truths": []}
 
     # ========== 真谛升级四道筛子 ==========
@@ -559,7 +568,7 @@ class TruthAccumulator:
             level, domain, statement, evidence, applicable_json = row
             try:
                 applicable = json.loads(applicable_json) if applicable_json else []
-            except:
+            except Exception:
                 applicable = []
 
             # 筛子1：跨域普适性 — 适用领域>=2且证据>=3
@@ -641,7 +650,7 @@ class TruthAccumulator:
                         "evidence": evidence,
                         "score": eval_result["score"]
                     })
-        except:
+        except Exception:
             pass
 
         return candidates
@@ -711,7 +720,7 @@ class TruthAccumulator:
             )
             conn.commit()
 
-        except:
+        except Exception:
             pass
 
         logger.warning(f"📋 认知重组提案已生成: {proposal['proposal_id']} ({len(candidates)}条候选真谛)")
@@ -842,7 +851,7 @@ class TruthAccumulator:
                     "evidence_count": row[2], "is_active": row[3]
                 })
 
-        except:
+        except Exception:
             pass
         return snapshot
 
@@ -879,7 +888,7 @@ class TruthAccumulator:
                 c.execute("UPDATE truths SET level=? WHERE name=?", (new_level, name))
             conn.commit()
 
-        except:
+        except Exception:
             pass
 
     # ========== 认知熵值监测器 ==========
@@ -940,7 +949,7 @@ class TruthAccumulator:
 
                 entropy["gene_safety_violations"] = gene_pool.get_safety_violations().get("total", 0)
                 entropy["recent_safety_violations"] = recent_violations
-            except:
+            except Exception:
                 entropy["gene_safety_violations"] = 0
                 entropy["recent_safety_violations"] = 0
 

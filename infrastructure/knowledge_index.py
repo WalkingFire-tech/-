@@ -45,6 +45,7 @@ class KnowledgeIndex:
                 updated_at TEXT
             )
         ''')
+        conn.commit()
         
         conn.execute('''
             CREATE TABLE IF NOT EXISTS topic_index (
@@ -100,6 +101,7 @@ class KnowledgeIndex:
                     COALESCE((SELECT registered_at FROM knowledge_sources WHERE name = ?), ?),
                     ?)
             ''', (name, source_type, path, description, name, name, now, now))
+            conn.commit()
             
             logger.info(f"注册知识源: {name} ({source_type})")
     
@@ -112,6 +114,7 @@ class KnowledgeIndex:
                 SET count = ?, updated_at = ?
                 WHERE name = ?
             ''', (count, datetime.now().isoformat(), source_name))
+            conn.commit()
     
     def add_topic_entry(self, topic: str, entry: Dict):
         with self._lock:
@@ -129,6 +132,7 @@ class KnowledgeIndex:
                 json.dumps(entry, ensure_ascii=False),
                 now
             ))
+            conn.commit()
             
             cursor = conn.execute('SELECT COUNT(*) FROM topic_index WHERE topic = ?', (topic,))
             count = cursor.fetchone()[0]
@@ -196,6 +200,7 @@ class KnowledgeIndex:
                 INSERT INTO recent_access (source, action, timestamp)
                 VALUES (?, ?, ?)
             ''', (source, action, now))
+            conn.commit()
             
             cursor = conn.execute('SELECT COUNT(*) FROM recent_access')
             count = cursor.fetchone()[0]

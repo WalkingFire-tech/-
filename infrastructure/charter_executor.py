@@ -125,6 +125,7 @@ class CharterExecutor:
                     f"avoid_model: {task['samples'][0]['model_name']}",
                     0.5
                 ))
+                conn.commit()
             
             conn.commit()
             
@@ -404,6 +405,7 @@ class CharterExecutor:
                 DELETE FROM experiences
                 WHERE id IN ({placeholders})
             ''', experience_ids)
+            conn.commit()
             
             conn.commit()
             

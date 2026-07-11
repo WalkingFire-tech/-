@@ -28,6 +28,7 @@ class ModelStats:
         # 添加 quality_score 列（如果表已存在但缺少该列）
         try:
             conn.execute('ALTER TABLE model_performance ADD COLUMN quality_score INTEGER')
+            conn.commit()
         except sqlite3.OperationalError:
             pass
         conn.execute('CREATE INDEX IF NOT EXISTS idx_model_task ON model_performance(model_name, task_type)')
@@ -43,6 +44,7 @@ class ModelStats:
         ''', (model_name, task_type, duration, success, user_feedback, quality_score,
               datetime.now().isoformat(), input_tokens, output_tokens))
         logger.debug(f"记录调用: {model_name}, {task_type}, 耗时 {duration:.2f}s, 质量 {quality_score}")
+        conn.commit()
 
     def get_model_score(self, model_name: str, task_type: str) -> dict:
         db = DatabaseManager.get(self.db_path)
@@ -123,6 +125,7 @@ class ModelStats:
             )
         ''', (feedback, model_name, task_type))
         logger.debug(f"更新最近反馈: {model_name}, {task_type}, 反馈 {feedback}")
+        conn.commit()
     
     def get_all_model_stats(self) -> dict:
         """获取所有模型的统计信息"""

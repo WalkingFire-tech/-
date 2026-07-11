@@ -64,7 +64,7 @@ class LoopContext:
     execution_results: List[Dict] = field(default_factory=list)
     fitness_score: Any = None
     iteration_history: List[Dict] = field(default_factory=list)
-    clarifying_questions: List[str] = field(default_factory=list)
+
 
 
 class ClosedLoopOrchestrator:
@@ -174,7 +174,7 @@ class ClosedLoopOrchestrator:
             ctx.complexity = result.get("complexity", 0.5)
             ctx.confidence = result.get("confidence", 0.5)
             ctx.route = result.get("route", "fast")
-            ctx.clarifying_questions = result.get("clarifying_questions", [])
+
 
             if emit_func:
                 emit_func("step", {"phase": "元认知启动", "status": "done",
@@ -184,7 +184,6 @@ class ClosedLoopOrchestrator:
             if emit_func:
                 emit_func("step", {"phase": "元认知启动", "status": "done", "detail": f"降级: {str(e)[:50]}"})
 
-        ctx.state = LoopState.METACOGNITION
 
     async def _phase_decomposition(self, ctx: LoopContext, emit_func):
         """模块2：问题拆解与任务调度"""
@@ -212,7 +211,6 @@ class ClosedLoopOrchestrator:
             emit_func("step", {"phase": "问题拆解", "status": "done",
                 "detail": f"{len(ctx.tasks)}个任务: {' → '.join(t['id'] for t in ctx.tasks)}"})
 
-        ctx.state = LoopState.DECOMPOSITION
 
     async def _phase_execution(self, ctx: LoopContext, emit_func):
         """模块3：工具调用与执行引擎"""
@@ -241,7 +239,6 @@ class ClosedLoopOrchestrator:
             emit_func("step", {"phase": "闭环执行", "status": "done",
                 "detail": f"获取{len(ctx.candidates)}个候选结果"})
 
-        ctx.state = LoopState.EXECUTION
 
     async def _execute_task(self, ctx: LoopContext, task: Dict, emit_func) -> Optional[Dict]:
         """执行单个任务"""
@@ -271,7 +268,7 @@ class ClosedLoopOrchestrator:
                     "response": result["response"],
                     "quality": 70,
                 }
-        except:
+        except Exception:
             pass
 
         return await self._execute_reasoning(ctx, emit_func)
@@ -285,7 +282,7 @@ class ClosedLoopOrchestrator:
             exp = await _fetch_experience(ctx.query)
             if exp and exp.get("response"):
                 responses.append({"source": "经验池", "response": exp["response"], "quality": 65})
-        except:
+        except Exception:
             pass
 
         try:
@@ -293,7 +290,7 @@ class ClosedLoopOrchestrator:
             know = await _fetch_knowledge(ctx.query)
             if know and know.get("response"):
                 responses.append({"source": "知识库", "response": know["response"], "quality": 70})
-        except:
+        except Exception:
             pass
 
         try:
@@ -302,7 +299,7 @@ class ClosedLoopOrchestrator:
             if facts:
                 fact_text = "\n".join(f"- {f['subject']} {f['predicate']} {f['object']}" for f in facts)
                 responses.append({"source": "事实锚点", "response": fact_text, "quality": 75})
-        except:
+        except Exception:
             pass
 
         if responses:
@@ -330,7 +327,7 @@ class ClosedLoopOrchestrator:
                     "response": result["response"],
                     "quality": 75,
                 }
-        except:
+        except Exception:
             pass
         return None
 
@@ -359,7 +356,7 @@ class ClosedLoopOrchestrator:
                     ctx.evaluation_passed = True
                 else:
                     ctx.evaluation_issues.append(f"适应度分数{ctx.fitness_score.final_score:.0f}低于阈值{self.quality_threshold}")
-            except:
+            except Exception:
                 if ctx.confidence >= self.confidence_threshold:
                     ctx.evaluation_passed = True
                 else:
@@ -382,7 +379,6 @@ class ClosedLoopOrchestrator:
                 emit_func("step", {"phase": "闭环评估", "status": "done",
                     "detail": f"⚠️ 评估未通过: {'; '.join(ctx.evaluation_issues[:2])}"})
 
-        ctx.state = LoopState.EVALUATION
 
     async def _phase_reiterate(self, ctx: LoopContext, emit_func):
         """评估未通过→回退迭代"""
@@ -434,7 +430,7 @@ class ClosedLoopOrchestrator:
             from infrastructure.fact_store import fact_store
             if ctx.evaluation_passed and ctx.final_response and len(ctx.final_response) > 50:
                 fact_store.extract_and_store(ctx.query, ctx.final_response, source="closed_loop")
-        except:
+        except Exception:
             pass
 
         if emit_func:
@@ -465,7 +461,7 @@ class ClosedLoopOrchestrator:
             )
             if result and result.get("response") and len(result["response"]) > 20:
                 return result["response"]
-        except:
+        except Exception:
             pass
 
         try:
@@ -473,7 +469,7 @@ class ClosedLoopOrchestrator:
             exp = await _fetch_experience(ctx.query)
             if exp and exp.get("response"):
                 return exp["response"]
-        except:
+        except Exception:
             pass
 
         try:
@@ -481,7 +477,7 @@ class ClosedLoopOrchestrator:
             know = await _fetch_knowledge(ctx.query)
             if know and know.get("response"):
                 return know["response"]
-        except:
+        except Exception:
             pass
 
         return f"关于「{ctx.query}」，我暂时无法给出满意的回答。请尝试换个方式描述你的问题，或者提供更多背景信息。"

@@ -65,6 +65,7 @@ class CampfireLogger:
         ''')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON memory_entries(timestamp)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_role ON memory_entries(role)')
+        conn.commit()
     
     def log_user(self, message: str):
         """记录用户消息"""
@@ -78,6 +79,7 @@ class CampfireLogger:
                 INSERT INTO memory_entries (timestamp, role, content)
                 VALUES (?, '用户', ?)
             ''', (timestamp, content))
+            conn.commit()
             
             self._cleanup_if_needed(conn)
     
@@ -93,6 +95,7 @@ class CampfireLogger:
                 INSERT INTO memory_entries (timestamp, role, content)
                 VALUES (?, '拓荒者', ?)
             ''', (timestamp, content))
+            conn.commit()
             
             self._cleanup_if_needed(conn)
     
@@ -258,6 +261,7 @@ class CampfireLogger:
                     LIMIT ?
                 )
             ''', (total - keep_rounds * 2,))
+            conn.commit()
             
             logger.info(f"已清理旧记忆,保留最近{keep_rounds}轮对话")
     

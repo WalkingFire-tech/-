@@ -250,12 +250,50 @@ def {name}(items):
     
     def _generate_basic_tool(self, description: str) -> str:
         name = self._generate_tool_name(description)
+        llm_code = self._synthesize_tool_code(name, description)
+        if llm_code:
+            return llm_code
         return f'''
 def {name}(input_data):
     """Auto-generated tool: {description}"""
     # TODO: Implement based on actual requirements
     return input_data
 '''
+    
+    def _synthesize_tool_code(self, func_name: str, description: str) -> Optional[str]:
+        try:
+            from adapters.llm.ollama_adapter import ollama_chat_request
+            prompt = f"""你需要生成一个Python函数来解决以下问题。只输出函数代码，不要解释。
+
+要求：
+- 函数名: {func_name}
+- 功能: {description}
+- 必须是纯Python，可用标准库
+- 函数接收一个dict参数，包含用户输入的query等信息
+- 函数返回一个dict，包含success(bool)、data(str)、source(str)字段
+- 如果需要访问硬件/系统，使用subprocess或标准库
+- 代码必须安全，不执行危险操作（不删文件、不格式化等）
+
+示例格式：
+def {func_name}(params: dict) -> dict:
+    query = params.get("query", "")
+    # ... 实现逻辑 ...
+    return {{"success": True, "data": result_text, "source": "{func_name}"}}
+
+问题: {description}
+"""
+            result = ollama_chat_request(prompt, model_name="qwen2.5-coder:7b", timeout=30)
+            if result and result.get("response"):
+                code = result["response"]
+                code = re.sub(r'^```python\s*', '', code)
+                code = re.sub(r'^```\s*', '', code)
+                code = re.sub(r'\s*```$', '', code)
+                if f"def {func_name}" in code or "def " in code:
+                    logger.info(f"ToolBuilder: LLM合成了工具代码 ({len(code)}字符)")
+                    return code
+        except Exception as e:
+            logger.debug(f"LLM工具合成失败，降级为模板: {e}")
+        return None
     
     def _generate_tool_name(self, description: str) -> str:
         words = description.lower().split()[:3]

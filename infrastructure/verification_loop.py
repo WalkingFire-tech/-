@@ -43,6 +43,7 @@ class KnowledgeVerificationLoop:
                 loop_id TEXT UNIQUE NOT NULL,
                 question TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
+                conn.commit()
                 
                 -- 注入前
                 before_score REAL,
