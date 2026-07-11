@@ -26,6 +26,8 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
+from infrastructure.database_manager import DatabaseManager
+
 
 class NodeType(Enum):
     HYPOTHESIS = "hypothesis"

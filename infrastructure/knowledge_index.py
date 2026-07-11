@@ -203,7 +203,7 @@ class KnowledgeIndex:
         
         with self._lock:
             try:
-                db = DatabaseManager.get("experience_pool.db")
+                db = DatabaseManager.get("data/experience_pool.db")
                 row = db.query_one("SELECT COUNT(*) FROM experiences")
                 exp_count = row[0] if row else 0
                 self.update_count("experiences", exp_count)
@@ -219,7 +219,7 @@ class KnowledgeIndex:
                 logger.warning(f"统计规则库失败: {e}")
             
             try:
-                db = DatabaseManager.get("tool_cache.db")
+                db = DatabaseManager.get("data/tool_cache.db")
                 row = db.query_one("SELECT COUNT(*) FROM tool_cache")
                 cache_count = row[0] if row else 0
                 self.update_count("tool_cache", cache_count)
@@ -227,7 +227,7 @@ class KnowledgeIndex:
                 logger.warning(f"统计工具缓存失败: {e}")
             
             try:
-                db = DatabaseManager.get("experience_pool.db")
+                db = DatabaseManager.get("data/experience_pool.db")
                 rows = db.query("""
                     SELECT intent_type, COUNT(*) 
                     FROM experiences 
