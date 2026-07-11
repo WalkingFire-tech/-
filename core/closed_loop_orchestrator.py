@@ -166,13 +166,11 @@ class ClosedLoopOrchestrator:
             emit_func("step", {"phase": "元认知启动", "status": "running", "detail": "判断问题类型、复杂度、自身认知状态..."})
 
         try:
-            from core.cognitive_dispatcher import CognitiveDispatcher
-            if not hasattr(CognitiveDispatcher, '_shared_instance'):
-                CognitiveDispatcher._shared_instance = CognitiveDispatcher()
-            dispatcher = CognitiveDispatcher._shared_instance
+            from core.cognitive_dispatcher import get_cognitive_dispatcher
+            dispatcher = get_cognitive_dispatcher()
             result = dispatcher.dispatch(ctx.query, ctx.conversation_context)
 
-            ctx.intent_type = result.get("intent", "chat")
+            ctx.intent_type = result.get("intent_type", "chat")
             ctx.complexity = result.get("complexity", 0.5)
             ctx.confidence = result.get("confidence", 0.5)
             ctx.route = result.get("route", "fast")

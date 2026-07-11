@@ -305,10 +305,8 @@ async def chat_stream(user_input: str, context: dict):
     yield _emit("step", {"phase": "意图识别", "status": "running", "detail": "分析问题类型和复杂度..."})
 
     try:
-        from core.cognitive_dispatcher import CognitiveDispatcher
-        if not hasattr(CognitiveDispatcher, '_shared_instance'):
-            CognitiveDispatcher._shared_instance = CognitiveDispatcher()
-        dispatcher = CognitiveDispatcher._shared_instance
+        from core.cognitive_dispatcher import get_cognitive_dispatcher
+        dispatcher = get_cognitive_dispatcher()
         
         # 直接在当前线程同步调用，避免线程问题
         dispatch_result = dispatcher.dispatch(user_query=user_input, context=context)
