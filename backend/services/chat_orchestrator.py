@@ -949,6 +949,15 @@ async def chat_stream(user_input: str, context: dict):
                 logger.warning(f"[意图-产出对照] {_mismatch_reason}, 降低置信度")
                 verification = {"verified": False, "confidence": 0.3, "issues": [_mismatch_reason]}
                 yield _emit("step", {"phase": "意图-产出对照", "status": "warning", "detail": f"⚠️ {_mismatch_reason}"})
+                try:
+                    from core.cognition.failure_classifier import FailureClassifier
+                    from core.cognition.audit_logger import AuditLogger
+                    reflection = {"status": "mismatch", "reason": _mismatch_reason}
+                    category = FailureClassifier.classify(reflection)
+                    FailureClassifier.record_failure(category, user_input, {"intent_type": intent_type})
+                    AuditLogger.log(user_input, {"intent_type": intent_type}, final_response[:200], reflection)
+                except Exception:
+                    pass
             else:
                 verification = await _self_verify(user_input, final_response)
         else:
