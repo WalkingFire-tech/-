@@ -1,0 +1,21 @@
+max_rules_per_run: 10
+meta:
+  adjustment_factor: 0.1
+  optimization_interval_days: 7
+  success_rate_threshold: 0.6
+min_confidence: 0.8999999999999999
+min_support: 2
+quality_threshold: 50
+rule_types:
+  ask_user:
+    enabled: false
+    priority: 2
+  avoid_model:
+    enabled: true
+    priority: 4
+  prefer_model:
+    enabled: true
+    priority: 3
+  reroute:
+    enabled: true
+    priority: 6

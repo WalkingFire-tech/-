@@ -128,25 +128,14 @@ async function sendMessage() {
     
     const startTime = Date.now();
     
-    // 创建思考过程容器
-    const thinkingDiv = document.createElement('div');
-    thinkingDiv.className = 'message system';
-    thinkingDiv.innerHTML = `
-        <div class="message-content">
-            <div style="background: #e3f2fd; padding: 10px; border-radius: 8px;">
-                <div style="font-weight: bold; margin-bottom: 8px;">🧠 思考过程 <span id="thinking-timer" style="color: #666; font-size: 12px;">0.0秒</span></div>
-                <div id="thinking-steps" style="font-size: 13px; line-height: 1.8;"></div>
-            </div>
-        </div>
-    `;
-    document.getElementById('messages').appendChild(thinkingDiv);
-    
-    const stepsContainer = document.getElementById('thinking-steps');
+    // 清空右侧思考栏
+    const stepsContainer = document.getElementById('thinking-steps-main');
+    const timerEl = document.getElementById('thinking-timer-main');
+    stepsContainer.innerHTML = '';
     let currentStepEl = null;
     
     // 计时器
     const timerInterval = setInterval(() => {
-        const timerEl = document.getElementById('thinking-timer');
         if (timerEl) timerEl.textContent = ((Date.now() - startTime) / 1000).toFixed(1) + '秒';
     }, 100);
 
@@ -220,49 +209,57 @@ async function sendMessage() {
                             if (currentStepEl) {
                                 const icon = currentStepEl.querySelector('.step-icon');
                                 if (icon) icon.textContent = '✅';
+                                currentStepEl.classList.remove('running');
+                                currentStepEl.classList.add('done');
                             }
                             currentStepEl = document.createElement('div');
-                            currentStepEl.style.marginTop = '4px';
+                            currentStepEl.className = 'thinking-step running';
                             currentStepEl.innerHTML = `<span class="step-icon">⏳</span> <strong>${phase}</strong> - ${detail}`;
                             stepsContainer.appendChild(currentStepEl);
+                            stepsContainer.scrollTop = stepsContainer.scrollHeight;
                         } else if (status === 'timeout') {
                             if (currentStepEl) {
+                                currentStepEl.className = 'thinking-step timeout';
                                 currentStepEl.innerHTML = `<span class="step-icon">⏱️</span> <strong>${phase}</strong> - ${detail}`;
-                                currentStepEl.style.opacity = '0.7';
                             }
                             currentStepEl = null;
                         } else if (status === 'done') {
                             if (currentStepEl) {
-                                const icon = currentStepEl.querySelector('.step-icon');
-                                if (icon) icon.textContent = '✅';
+                                currentStepEl.className = 'thinking-step done';
                                 currentStepEl.innerHTML = `<span class="step-icon">✅</span> <strong>${phase}</strong> - ${detail}`;
                             }
                             currentStepEl = null;
+                        } else if (status === 'running' || status === 'progress' || status === 'info' || status === 'warning') {
+                            const statusEl = document.createElement('div');
+                            statusEl.className = 'thinking-step running';
+                            const statusIcon = status === 'warning' ? '⚠️' : status === 'info' ? 'ℹ️' : '⏳';
+                            statusEl.innerHTML = `<span class="step-icon">${statusIcon}</span> <strong>${phase}</strong> - ${detail}`;
+                            stepsContainer.appendChild(statusEl);
+                            stepsContainer.scrollTop = stepsContainer.scrollHeight;
                         }
                     } else if (event.type === 'thinking') {
                         const phase = event.phase || '';
                         const confidence = event.confidence || 0;
                         const emotion = event.emotion || '';
-                        const sources = event.sources || [];
+                        const thinkEl = document.createElement('div');
+                        thinkEl.className = 'thinking-step thinking';
                         let thinkHtml = `<span class="step-icon">🧠</span> <strong>思考中</strong> - ${phase}`;
                         if (confidence > 0) thinkHtml += ` (置信度${(confidence*100).toFixed(0)}%)`;
                         if (emotion && emotion !== 'neutral') thinkHtml += ` [${emotion}]`;
-                        const thinkEl = document.createElement('div');
-                        thinkEl.style.marginTop = '4px';
-                        thinkEl.style.color = '#7c4dff';
                         thinkEl.innerHTML = thinkHtml;
                         stepsContainer.appendChild(thinkEl);
+                        stepsContainer.scrollTop = stepsContainer.scrollHeight;
                     } else if (event.type === 'learning') {
                         const summary = event.summary || '';
                         const learnConf = event.confidence || 0;
-                        const learnSources = event.sources || [];
                         if (summary) {
                             const learnEl = document.createElement('div');
-                            learnEl.style.marginTop = '4px';
-                            learnEl.style.color = '#2e7d32';
+                            learnEl.className = 'thinking-step learning';
                             learnEl.innerHTML = `<span class="step-icon">📚</span> <strong>学习发现</strong> - ${summary} (置信度${(learnConf*100).toFixed(0)}%)`;
                             stepsContainer.appendChild(learnEl);
+                            stepsContainer.scrollTop = stepsContainer.scrollHeight;
                         }
+
                     } else if (event.type === 'result') {
                         finalResult = event;
                         if (event.session_id && !currentSessionId) {
@@ -279,35 +276,30 @@ async function sendMessage() {
         clearTimeout(streamTimeout);
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         
-        // 折叠思考过程
-        setTimeout(() => {
+        // 在右侧思考栏添加完成总结
+        if (finalResult) {
             let metaHtml = '';
-            if (finalResult) {
-                if (finalResult.path_contributions && Object.keys(finalResult.path_contributions).length > 0) {
-                    const bars = Object.entries(finalResult.path_contributions).map(([k, v]) => {
-                        const color = k.includes('Ollama') || k.includes('本地') ? '#4CAF50' : 
-                                      k.includes('DeepSeek') || k.includes('OpenAI') ? '#2196F3' : 
-                                      k.includes('经验') ? '#FF9800' : '#9C27B0';
-                        return `<span style="display:inline-block;margin-right:8px;font-size:12px;"><span style="display:inline-block;width:8px;height:8px;background:${color};border-radius:50%;margin-right:3px;"></span>${k} ${v}%</span>`;
-                    }).join('');
-                    metaHtml += `<div style="margin-top:6px;font-size:12px;color:#555;">📊 路径贡献: ${bars}</div>`;
-                }
-                if (finalResult.token_usage && Object.keys(finalResult.token_usage).length > 0) {
-                    const tokens = Object.entries(finalResult.token_usage).map(([k, v]) => 
-                        `<span style="font-size:12px;margin-right:8px;">💰 ${k}: ${v.total_tokens||0} tokens (输入${v.prompt_tokens||0}+输出${v.completion_tokens||0})</span>`
-                    ).join('');
-                    metaHtml += `<div style="margin-top:4px;font-size:12px;color:#555;">${tokens}</div>`;
-                }
+            if (finalResult.path_contributions && Object.keys(finalResult.path_contributions).length > 0) {
+                const bars = Object.entries(finalResult.path_contributions).map(([k, v]) => {
+                    const color = k.includes('Ollama') || k.includes('本地') ? '#4CAF50' : 
+                                  k.includes('DeepSeek') || k.includes('OpenAI') ? '#2196F3' : 
+                                  k.includes('经验') ? '#FF9800' : '#9C27B0';
+                    return `<span style="display:inline-block;margin-right:8px;font-size:12px;"><span style="display:inline-block;width:8px;height:8px;background:${color};border-radius:50%;margin-right:3px;"></span>${k} ${v}%</span>`;
+                }).join('');
+                metaHtml += `<div style="margin-top:6px;font-size:12px;color:#555;">📊 路径贡献: ${bars}</div>`;
             }
-            thinkingDiv.innerHTML = `
-                <div class="message-content">
-                    <details style="background: #f5f5f5; padding: 8px; border-radius: 5px;">
-                        <summary style="cursor: pointer; font-weight: bold;">💭 思考过程 (${elapsed}秒)</summary>
-                        <div style="font-size: 13px; margin-top: 8px; line-height: 1.8;">${stepsContainer.innerHTML}${metaHtml}</div>
-                    </details>
-                </div>
-            `;
-        }, 2000);
+            if (finalResult.token_usage && Object.keys(finalResult.token_usage).length > 0) {
+                const tokens = Object.entries(finalResult.token_usage).map(([k, v]) => 
+                    `<span style="font-size:12px;margin-right:8px;">💰 ${k}: ${v.total_tokens||0} tokens (输入${v.prompt_tokens||0}+输出${v.completion_tokens||0})</span>`
+                ).join('');
+                metaHtml += `<div style="margin-top:4px;font-size:12px;color:#555;">${tokens}</div>`;
+            }
+            const summaryEl = document.createElement('div');
+            summaryEl.className = 'thinking-step done';
+            summaryEl.innerHTML = `<span class="step-icon">🏁</span> <strong>完成</strong> (${elapsed}秒)${metaHtml}`;
+            stepsContainer.appendChild(summaryEl);
+            stepsContainer.scrollTop = stepsContainer.scrollHeight;
+        }
 
         // 显示最终回复
         if (finalResult && finalResult.response) {
@@ -3076,3 +3068,79 @@ async function testCBNR() {
         resultDiv.innerHTML = '<span style="color:#F44336;">失败: ' + e.message + '</span>';
     }
 }
+
+// ========== 可拖动分隔线 ==========
+(function initDivider() {
+    const divider = document.getElementById('chat-divider');
+    const chatArea = document.querySelector('.chat-area');
+    const conversation = document.querySelector('.chat-conversation');
+    const thinking = document.querySelector('.chat-thinking');
+    if (!divider || !chatArea || !conversation || !thinking) return;
+
+    let isDragging = false;
+
+    divider.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        isDragging = true;
+        divider.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        document.body.style.webkitUserSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', function(e) {
+        if (!isDragging) return;
+        const rect = chatArea.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const totalW = rect.width;
+        const minConv = 280;
+        const minThink = 280;
+        const convW = Math.max(minConv, Math.min(totalW - minThink, x));
+        const thinkW = totalW - convW;
+        if (thinkW < minThink) return;
+        conversation.style.flex = '0 0 ' + convW + 'px';
+        thinking.style.flex = '0 0 ' + thinkW + 'px';
+    });
+
+    document.addEventListener('mouseup', function() {
+        if (!isDragging) return;
+        isDragging = false;
+        divider.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.body.style.webkitUserSelect = '';
+    });
+
+    // 触摸支持
+    divider.addEventListener('touchstart', function(e) {
+        isDragging = true;
+        divider.classList.add('dragging');
+    }, { passive: true });
+
+    document.addEventListener('touchmove', function(e) {
+        if (!isDragging) return;
+        const touch = e.touches[0];
+        const rect = chatArea.getBoundingClientRect();
+        const x = touch.clientX - rect.left;
+        const totalW = rect.width;
+        const minConv = 280;
+        const minThink = 280;
+        const convW = Math.max(minConv, Math.min(totalW - minThink, x));
+        const thinkW = totalW - convW;
+        if (thinkW < minThink) return;
+        conversation.style.flex = '0 0 ' + convW + 'px';
+        thinking.style.flex = '0 0 ' + thinkW + 'px';
+    }, { passive: true });
+
+    document.addEventListener('touchend', function() {
+        if (!isDragging) return;
+        isDragging = false;
+        divider.classList.remove('dragging');
+    });
+
+    // 双击重置
+    divider.addEventListener('dblclick', function() {
+        conversation.style.flex = '';
+        thinking.style.flex = '';
+    });
+})();

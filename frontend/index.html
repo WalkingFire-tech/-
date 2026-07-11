@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>联盟拓荒者 - 智能体系统</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>">
-    <link rel="stylesheet" href="/frontend/styles.css">
+    <link rel="stylesheet" href="/frontend/styles.css?v=4.0.0">
 </head>
 <body>
     <div id="app">
@@ -185,31 +185,61 @@
 
             <!-- 聊天区域 -->
             <section class="chat-area">
-                <div id="messages" class="messages">
-                    <div class="message system">
-                        <div class="message-content">
-                            <p>嘿，我在。有什么想聊的，或者遇到了什么问题？我们一起看看。</p>
+                <!-- 左栏：对话 -->
+                <div class="chat-conversation">
+                    <div class="conversation-header">
+                        <span class="conv-icon">💬</span> 对话
+                    </div>
+                    <div id="messages" class="messages">
+                        <div class="message system">
+                            <div class="message-content">
+                                <p>嘿，我在。有什么想聊的，或者遇到了什么问题？我们一起看看。</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="input-area">
+                        <textarea 
+                            id="user-input" 
+                            placeholder="输入你的问题或任务..."
+                            rows="3"
+                            onkeydown="handleKeyDown(event)"
+                        ></textarea>
+                        <div class="input-actions">
+                            <button onclick="sendMessage()" class="btn btn-primary" id="send-btn">
+                                发送
+                            </button>
+                            <button onclick="openFileBrowser()" class="btn btn-secondary">
+                                📁 浏览文件
+                            </button>
+                            <button onclick="clearMessages()" class="btn btn-secondary">
+                                清空
+                            </button>
                         </div>
                     </div>
                 </div>
 
-                <div class="input-area">
-                    <textarea 
-                        id="user-input" 
-                        placeholder="输入你的问题或任务..."
-                        rows="3"
-                        onkeydown="handleKeyDown(event)"
-                    ></textarea>
-                    <div class="input-actions">
-                        <button onclick="sendMessage()" class="btn btn-primary" id="send-btn">
-                            发送
-                        </button>
-                        <button onclick="openFileBrowser()" class="btn btn-secondary">
-                            📁 浏览文件
-                        </button>
-                        <button onclick="clearMessages()" class="btn btn-secondary">
-                            清空
-                        </button>
+                <!-- 分隔线 -->
+                <div class="chat-divider" id="chat-divider">
+                    <div class="divider-line"></div>
+                    <div class="divider-handle"></div>
+                </div>
+
+                <!-- 右栏：思考与执行 -->
+                <div class="chat-thinking">
+                    <div class="thinking-header">
+                        <div class="thinking-header-left">
+                            <span class="thinking-icon-pulse">🧠</span>
+                            <span>思考与执行</span>
+                        </div>
+                        <span id="thinking-timer-main" class="thinking-timer"></span>
+                    </div>
+                    <div id="thinking-steps-main" class="thinking-steps">
+                        <div class="thinking-empty">
+                            <div class="thinking-empty-icon">⚡</div>
+                            <div>等待思考...</div>
+                            <div class="thinking-empty-hint">发送消息后，思考过程将在此实时展示</div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -451,6 +481,6 @@
         </footer>
     </div>
 
-    <script src="/frontend/app.js?v=3.8.4"></script>
+    <script src="/frontend/app.js?v=4.0.0"></script>
 </body>
 </html>
