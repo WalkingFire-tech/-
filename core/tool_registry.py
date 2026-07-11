@@ -299,6 +299,7 @@ class ToolExecutor:
         self.enable_cache = enable_cache
         self._cache = None
         self._stats: Dict[str, Dict] = {}
+        self._stats_db = None
         if enable_cache:
             try:
                 from infrastructure.tool_cache import ToolResultCache
@@ -307,6 +308,7 @@ class ToolExecutor:
             except Exception as e:
                 logger.warning(f"工具缓存初始化失败，禁用缓存: {e}")
                 self._cache = None
+        self._init_stats_db()
 
     async def execute(self, tool_name: str, params: Dict = None,
                        timeout_override: float = None) -> ToolResult:
@@ -333,7 +335,7 @@ class ToolExecutor:
         try:
             result = await asyncio.wait_for(tool.execute(**params), timeout=timeout)
             result.duration_ms = (time.time() - start) * 1000
-            self._record_stat(tool_name, True, result.duration_ms)
+            self._record_stat(tool_name, True, result.duration_ms, params=params, output=str(result.data)[:200] if result.data else "")
 
             if self._cache and result.success and result.data:
                 try:
@@ -350,13 +352,13 @@ class ToolExecutor:
 
         except asyncio.TimeoutError:
             duration = (time.time() - start) * 1000
-            self._record_stat(tool_name, False, duration)
+            self._record_stat(tool_name, False, duration, error=f"执行超时({timeout}s)", params=params)
             logger.warning(f"工具执行超时: {tool_name} ({timeout}s)")
             return ToolResult(success=False, error=f"执行超时({timeout}s)",
                               source=tool_name, duration_ms=duration)
         except Exception as e:
             duration = (time.time() - start) * 1000
-            self._record_stat(tool_name, False, duration)
+            self._record_stat(tool_name, False, duration, error=str(e), params=params)
             logger.error(f"工具执行异常: {tool_name} - {e}")
             return ToolResult(success=False, error=str(e),
                               source=tool_name, duration_ms=duration)
@@ -385,7 +387,7 @@ class ToolExecutor:
                 output.append(ToolResult(success=False, error="未知结果类型"))
         return output
 
-    def _record_stat(self, tool_name: str, success: bool, duration_ms: float):
+    def _record_stat(self, tool_name: str, success: bool, duration_ms: float, error: str = "", params: Dict = None, output: str = ""):
         if tool_name not in self._stats:
             self._stats[tool_name] = {"calls": 0, "successes": 0, "total_ms": 0.0}
         s = self._stats[tool_name]
@@ -393,6 +395,9 @@ class ToolExecutor:
         if success:
             s["successes"] += 1
         s["total_ms"] += duration_ms
+        tool = self.registry.get(tool_name)
+        category = tool.category if tool else "unknown"
+        self._persist_stat(tool_name, category, success, duration_ms, error, params, output)
 
     def _publish_event(self, tool_name: str, params: Dict, result: ToolResult):
         try:
@@ -415,6 +420,88 @@ class ToolExecutor:
                 "avg_ms": s["total_ms"] / max(1, s["calls"]),
             }
         return stats
+
+    def _init_stats_db(self):
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            self._stats_db = DatabaseManager.get("data/tool_stats.db")
+            self._stats_db.execute('''CREATE TABLE IF NOT EXISTS tool_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tool_name TEXT,
+                category TEXT,
+                success INTEGER,
+                execution_time REAL,
+                error TEXT,
+                timestamp TEXT,
+                user_feedback INTEGER,
+                input_params TEXT,
+                output_summary TEXT
+            )''', commit=True)
+            self._stats_db.execute('CREATE INDEX IF NOT EXISTS idx_tool ON tool_stats(tool_name)', commit=True)
+            self._stats_db.execute('CREATE INDEX IF NOT EXISTS idx_category ON tool_stats(category)', commit=True)
+        except Exception as e:
+            logger.debug(f"工具统计DB初始化跳过: {e}")
+            self._stats_db = None
+
+    def _persist_stat(self, tool_name: str, category: str, success: bool,
+                      duration_ms: float, error: str = "", params: Dict = None, output: str = ""):
+        if not self._stats_db:
+            return
+        try:
+            import json as _json
+            from datetime import datetime as _dt
+            self._stats_db.execute(
+                '''INSERT INTO tool_stats (tool_name, category, success, execution_time, error, timestamp, input_params, output_summary)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                (tool_name, category, 1 if success else 0, duration_ms / 1000.0, error,
+                 _dt.now().isoformat(),
+                 _json.dumps(params or {}, ensure_ascii=False)[:500],
+                 output[:200]),
+                commit=True,
+            )
+        except Exception:
+            pass
+
+    def update_feedback(self, tool_name: str, feedback: int, record_id: int = None):
+        if not self._stats_db:
+            return
+        try:
+            if record_id:
+                self._stats_db.execute('UPDATE tool_stats SET user_feedback = ? WHERE id = ?', (feedback, record_id), commit=True)
+            else:
+                self._stats_db.execute(
+                    '''UPDATE tool_stats SET user_feedback = ? WHERE id = (
+                        SELECT id FROM tool_stats WHERE tool_name = ? ORDER BY timestamp DESC LIMIT 1
+                    )''', (feedback, tool_name), commit=True)
+        except Exception:
+            pass
+
+    def get_feedback_history(self, tool_name: str, limit: int = 10) -> List[Dict]:
+        if not self._stats_db:
+            return []
+        try:
+            rows = self._stats_db.query(
+                '''SELECT id, user_feedback, timestamp, success FROM tool_stats
+                   WHERE tool_name = ? AND user_feedback IS NOT NULL ORDER BY timestamp DESC LIMIT ?''',
+                (tool_name, limit),
+            )
+            return [{"id": r[0], "feedback": r[1], "timestamp": r[2], "success": r[3]} for r in rows]
+        except Exception:
+            return []
+
+    def get_tool_stats(self, tool_name: str) -> Dict:
+        if not self._stats_db:
+            return {"total_calls": 0, "success_count": 0, "success_rate": 0.0, "avg_execution_time": 0.0}
+        try:
+            row = self._stats_db.query_one(
+                '''SELECT COUNT(*), SUM(CASE WHEN success THEN 1 ELSE 0 END), AVG(execution_time)
+                   FROM tool_stats WHERE tool_name = ?''', (tool_name,)
+            )
+            if row and row[0] > 0:
+                return {"total_calls": row[0], "success_count": row[1], "success_rate": row[1] / row[0], "avg_execution_time": row[2] or 0.0}
+        except Exception:
+            pass
+        return {"total_calls": 0, "success_count": 0, "success_rate": 0.0, "avg_execution_time": 0.0}
 
 
 tool_registry = ToolRegistry()
