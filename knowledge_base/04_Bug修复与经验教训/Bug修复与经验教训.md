@@ -121,3 +121,37 @@
 - **根因**：`_generate_skill_name`用`trigger[:8]`作为后缀，trigger可能包含查询内容
 - **修复**：改为用触发模式类型（如"essence_reasoning"）而非查询内容
 - **教训**：用户输入不应直接出现在系统内部标识符中
+
+---
+
+## 六、v4.0.0 工具执行链修复（2026年7月）
+
+### 19. 工具意图截断导致serial_port被排除（P0致命）
+- **现象**：用户说"读取COM8串口数据"，系统只返回文本指导而非真实NMEA数据
+- **根因**：`tool_path.py`中`tool_intent=True`时，`other_tools[:3]`只取前3个非代码工具。serial_port(priority=60)排在web_search(70)、fact_check(65)、knowledge_lookup(60)之后被截断。更致命的是`params.get("_tool_hint")`在`params = extract_tool_params(...)`之前被引用，导致变量未定义异常被catch吞掉
+- **修复**：1) 将`extract_tool_params`调用移到`tool_intent`判断之前；2) 当`_tool_hint`指定的工具不在`other_tools[:3]`中时，将其移到首位
+- **教训**：工具选择逻辑必须保证hint指定的工具不被截断；变量引用顺序错误在try/except中会静默失败
+
+### 20. 非流式API完全缺少工具调用（P0致命）
+- **现象**：`/api/chat`路由的请求走Ollama文本推理，从不调用工具
+- **根因**：`chat_handler.py`的处理流程只有：意图识别→Ollama→外部API→知识库，完全没有工具调用逻辑。工具调用只在`chat_orchestrator.py`的parallel_router中，而parallel_router只被`/api/chat/stream`流式接口使用
+- **修复**：在`chat_handler.py`策略3（深度认知处理）中，Ollama之前加入工具调用逻辑，当`query_needs_tools`返回True时优先执行工具
+- **教训**：每条API路径都必须有完整的处理能力，不能假设所有请求都走同一条路径
+
+### 21. Windows空闲睡眠导致服务器中断（P1严重）
+- **现象**：服务器运行一段时间后电脑自动关机/睡眠
+- **根因**：Windows电源管理在系统空闲60分钟后自动睡眠（Event ID 42, "System Idle"），导致服务器进程被杀
+- **修复**：`powercfg /change standby-timeout-ac 0`禁用睡眠；在`start.bat`中加入自动禁用睡眠步骤
+- **教训**：服务器部署在桌面Windows上时，必须禁用空闲睡眠；Windows事件日志是排查"莫名关机"的首选工具
+
+### 22. 前端版本号与后端不同步
+- **现象**：修改了前端文件但页面仍显示旧版本号
+- **根因**：前端显示的版本号来自后端`/api/health`接口（`main_fast.py`和`health.py`），不是HTML/JS文件中的版本号参数。修改CSS/JS的cache-busting参数不影响health接口返回的版本
+- **修复**：同步更新`main_fast.py`和`health.py`中的version字段
+- **教训**：版本号有多个来源时必须全部同步更新；浏览器缓存问题要区分"文件缓存"和"API返回值"
+
+### 23. 学习回路断裂——909行代码各自为政
+- **现象**：6个学习机制（经验池、技能涌现、基因微调、认知学习、反思记录、ToolBuilder）全部在"记录"但不在"成长"，系统学习能力是精心设计的假象
+- **根因**：三座孤岛（tool_builder.py 330行、skill_emergence.py 314行、capability_creation_loop.py 265行）互不知道对方存在，4个关键接线点断裂：①ToolBuilder构建后不注册 ②成熟技能不注册为工具 ③plan_tools()空时不查技能表 ④能力创造回路成功后不通知ToolBuilder
+- **修复**：约50行接线代码——①build_tool()成功后自动注册AutoToolWrapper到tool_registry ②_update_skill()成熟时调用_register_mature_skill() ③plan_tools()空时回退查询技能表 ④_register_tool()中调用builder.record_success()
+- **教训**：模块间"接线"比模块本身更重要；记录≠学习，只有闭环反馈才是真正的学习；架构巡检必须检查模块间连接而非仅检查模块功能
