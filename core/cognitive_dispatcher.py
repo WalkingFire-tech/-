@@ -129,6 +129,14 @@ class CognitiveDispatcher:
             "history_query": [
                 "历史", "记录", "历史记录", "查看历史", "显示历史", "聊天记录"
             ],
+            "hardware": [
+                "串口", "com口", "serial", "波特率", "baudrate",
+                "gps数据", "nmea", "gnss", "gpgga", "gprmc",
+                "硬件", "设备", "端口", "com8", "com3", "com5",
+                "读取数据", "获取数据", "传感器", "usb设备",
+                "ch340", "cp210", "ft232", "arduino", "stm32", "esp32", "单片机",
+                "运行命令", "执行命令", "cmd", "powershell", "bash", "shell"
+            ],
             "simple_query": [
                 "是什么", "什么是", "怎么读", "多少", "什么时候",
                 "能做", "做什么", "有哪些", "能什么", "干什么", "会什么", "有什么用", "能帮我",
@@ -292,7 +300,7 @@ class CognitiveDispatcher:
         
         # 匹配优先级：challenge > complex > simple > 其他
         # 避免短模式误判长问题
-        match_order = ["challenge", "complex_query", "learning_trigger", "simple_query", "history_query", "greeting", "confirmation"]
+        match_order = ["challenge", "hardware", "complex_query", "learning_trigger", "simple_query", "history_query", "greeting", "confirmation"]
         short_match_intents = {"greeting", "confirmation", "challenge"}
         
         for intent_type in match_order:
@@ -405,7 +413,8 @@ class CognitiveDispatcher:
             "challenge": 0.8,
             "simple_query": 0.3,
             "complex_query": 0.7,
-            "learning_trigger": 0.5
+            "learning_trigger": 0.5,
+            "hardware": 0.6
         }
         complexity = base_complexity.get(intent_type, 0.5)
         
@@ -438,6 +447,9 @@ class CognitiveDispatcher:
         if intent_type in ["greeting", "confirmation", "simple_query", "history_query"]:
             return "fast"
         
+        if intent_type == "hardware":
+            return "slow"
+        
         # 质疑检测走slow路径，需要重新验证
         if intent_type == "challenge":
             return "slow"
@@ -458,6 +470,13 @@ class CognitiveDispatcher:
                 return self.capability_cache
         
         tools = []
+        if self.enable_capability_scan.get("tools", True):
+            try:
+                from core.tool_registry import tool_registry
+                for t in tool_registry.list_tools():
+                    tools.append({"name": t["name"], "description": t["description"], "category": t["category"]})
+            except Exception as e:
+                logger.debug(f"工具扫描失败: {e}")
         models = []
         # 跳过Ollama扫描，避免卡住
         knowledge_bases = []
