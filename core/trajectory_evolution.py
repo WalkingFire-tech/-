@@ -37,8 +37,8 @@ class TrajectoryStore:
     def _init_database(self):
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS trajectories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query_hash TEXT NOT NULL,
@@ -54,10 +54,7 @@ class TrajectoryStore:
                 parent_ids TEXT DEFAULT '',
                 source TEXT DEFAULT 'live',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS trajectory_fragments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 trajectory_id INTEGER NOT NULL,
@@ -68,10 +65,7 @@ class TrajectoryStore:
                 source_path TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (trajectory_id) REFERENCES trajectories(id)
-            )
-        ''')
-
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS recombination_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 parent_a_id INTEGER NOT NULL,
@@ -80,16 +74,13 @@ class TrajectoryStore:
                 strategy TEXT DEFAULT 'cross',
                 improvement REAL DEFAULT 0.0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
+            );
+            CREATE INDEX IF NOT EXISTS idx_traj_query_hash ON trajectories(query_hash);
+            CREATE INDEX IF NOT EXISTS idx_traj_fitness ON trajectories(fitness_score DESC);
+            CREATE INDEX IF NOT EXISTS idx_traj_intent ON trajectories(intent_type);
+            CREATE INDEX IF NOT EXISTS idx_frag_traj ON trajectory_fragments(trajectory_id);
+            CREATE INDEX IF NOT EXISTS idx_frag_phase ON trajectory_fragments(phase)
         ''')
-
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_traj_query_hash ON trajectories(query_hash)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_traj_fitness ON trajectories(fitness_score DESC)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_traj_intent ON trajectories(intent_type)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_frag_traj ON trajectory_fragments(trajectory_id)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_frag_phase ON trajectory_fragments(phase)')
-
-        conn.commit()
 
     @staticmethod
     def hash_query(query: str) -> str:
@@ -114,27 +105,25 @@ class TrajectoryStore:
         decisions_json = json.dumps(decisions, ensure_ascii=False)
         outcome_json = json.dumps(outcome, ensure_ascii=False)
 
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        cur = db.execute('''
             INSERT INTO trajectories
             (query_hash, query, intent_type, route, steps_json, decisions_json,
              outcome_json, fitness_score, duration, generation, parent_ids, source)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (query_hash, query, intent_type, route, steps_json, decisions_json,
-              outcome_json, fitness_score, duration, generation, parent_ids, source))
+              outcome_json, fitness_score, duration, generation, parent_ids, source), commit=True)
 
-        traj_id = cursor.lastrowid
+        traj_id = cur.lastrowid
 
         for step in steps:
-            conn.execute('''
+            db.execute('''
                 INSERT INTO trajectory_fragments
                 (trajectory_id, phase, success, detail, duration_ms, source_path)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (traj_id, step.get("phase", ""), step.get("success", False),
                   step.get("detail", ""), step.get("duration_ms", 0),
-                  step.get("source_path", "")))
-
-        conn.commit()
+                  step.get("source_path", "")), commit=True)
 
         logger.info(f"🧬 轨迹#{traj_id}已存储: {query[:30]} | fitness={fitness_score:.0f} | {len(steps)}步 | gen={generation}")
         
@@ -166,13 +155,13 @@ class TrajectoryStore:
                         logger.info(f"🧬 自动修订: 轨迹#{traj_id} (fitness {fitness_score:.0f}→{new_fitness:.0f})")
 
             if fitness_score >= 70:
-                conn = DatabaseManager.get(self.db_path)._get_conn()
-                siblings = conn.execute(
+                db = DatabaseManager.get(self.db_path)
+                siblings = db.query(
                     "SELECT id, fitness_score FROM trajectories "
                     "WHERE intent_type = ? AND id != ? AND fitness_score >= 60 "
                     "ORDER BY fitness_score DESC LIMIT 1",
                     (intent_type, traj_id)
-                ).fetchall()
+                )
                 if siblings:
                     sibling_id = siblings[0]['id']
                     self.recombine(traj_id, sibling_id, query, strategy="best_of")
@@ -181,9 +170,8 @@ class TrajectoryStore:
             logger.debug(f"自动进化跳过: {e}")
 
     def get_trajectory(self, traj_id: int) -> Optional[Dict]:
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute('SELECT * FROM trajectories WHERE id = ?', (traj_id,))
-        row = cursor.fetchone()
+        db = DatabaseManager.get(self.db_path)
+        row = db.query_one('SELECT * FROM trajectories WHERE id = ?', (traj_id,))
         if row:
             d = dict(row)
             d['steps'] = json.loads(d['steps_json'])
@@ -201,15 +189,13 @@ class TrajectoryStore:
     ) -> List[Dict]:
         query_hash = self.hash_query(query)
 
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
 
-        cursor = conn.execute('''
+        exact_matches = [dict(row) for row in db.query('''
             SELECT * FROM trajectories
             WHERE query_hash = ? AND fitness_score >= ?
             ORDER BY fitness_score DESC LIMIT ?
-        ''', (query_hash, min_fitness, limit))
-
-        exact_matches = [dict(row) for row in cursor.fetchall()]
+        ''', (query_hash, min_fitness, limit))]
 
         if exact_matches:
             for m in exact_matches:
@@ -217,13 +203,11 @@ class TrajectoryStore:
             return exact_matches
 
         if intent_type:
-            cursor = conn.execute('''
+            similar = [dict(row) for row in db.query('''
                 SELECT * FROM trajectories
                 WHERE intent_type = ? AND fitness_score >= ?
                 ORDER BY fitness_score DESC LIMIT ?
-            ''', (intent_type, min_fitness, limit))
-
-            similar = [dict(row) for row in cursor.fetchall()]
+            ''', (intent_type, min_fitness, limit))]
             for s in similar:
                 s['steps'] = json.loads(s['steps_json'])
             return similar
@@ -236,28 +220,26 @@ class TrajectoryStore:
         intent_type: str = None,
         limit: int = 3
     ) -> List[Dict]:
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
 
         if intent_type:
-            cursor = conn.execute('''
+            return [dict(row) for row in db.query('''
                 SELECT f.*, t.intent_type, t.fitness_score as traj_fitness
                 FROM trajectory_fragments f
                 JOIN trajectories t ON f.trajectory_id = t.id
                 WHERE f.phase = ? AND f.success = 1 AND t.intent_type = ?
                 ORDER BY t.fitness_score DESC
                 LIMIT ?
-            ''', (phase, intent_type, limit))
+            ''', (phase, intent_type, limit))]
         else:
-            cursor = conn.execute('''
+            return [dict(row) for row in db.query('''
                 SELECT f.*, t.intent_type, t.fitness_score as traj_fitness
                 FROM trajectory_fragments f
                 JOIN trajectories t ON f.trajectory_id = t.id
                 WHERE f.phase = ? AND f.success = 1
                 ORDER BY t.fitness_score DESC
                 LIMIT ?
-            ''', (phase, limit))
-
-        return [dict(row) for row in cursor.fetchall()]
+            ''', (phase, limit))]
 
     def evaluate_trajectory(self, steps: List[Dict], outcome: Dict) -> float:
         if not steps:
@@ -332,13 +314,12 @@ class TrajectoryStore:
             source=f"recombine_{strategy}"
         )
 
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
             INSERT INTO recombination_log
             (parent_a_id, parent_b_id, child_id, strategy, improvement)
             VALUES (?, ?, ?, ?, ?)
-        ''', (parent_a_id, parent_b_id, child_id, strategy, 0.0))
-        conn.commit()
+        ''', (parent_a_id, parent_b_id, child_id, strategy, 0.0), commit=True)
 
         logger.info(f"🧬 轨迹重组: #{parent_a_id}+#{parent_b_id} → #{child_id} (策略={strategy}, gen={max(parent_a.get('generation', 0), parent_b.get('generation', 0)) + 1})")
         return child_id
@@ -366,17 +347,16 @@ class TrajectoryStore:
         return new_id
 
     def get_evolution_stats(self) -> Dict:
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        total = conn.execute('SELECT COUNT(*) FROM trajectories').fetchone()[0]
-        avg_fitness = conn.execute('SELECT AVG(fitness_score) FROM trajectories').fetchone()[0] or 0
-        max_gen = conn.execute('SELECT MAX(generation) FROM trajectories').fetchone()[0] or 0
-        recombinations = conn.execute('SELECT COUNT(*) FROM recombination_log').fetchone()[0]
-        revisions = conn.execute("SELECT COUNT(*) FROM trajectories WHERE source LIKE 'revision%'").fetchone()[0]
-        live = conn.execute("SELECT COUNT(*) FROM trajectories WHERE source = 'live'").fetchone()[0]
+        db = DatabaseManager.get(self.db_path)
+        total = db.query_one('SELECT COUNT(*) FROM trajectories')[0]
+        avg_fitness = db.query_one('SELECT AVG(fitness_score) FROM trajectories')[0] or 0
+        max_gen = db.query_one('SELECT MAX(generation) FROM trajectories')[0] or 0
+        recombinations = db.query_one('SELECT COUNT(*) FROM recombination_log')[0]
+        revisions = db.query_one("SELECT COUNT(*) FROM trajectories WHERE source LIKE 'revision%'")[0]
+        live = db.query_one("SELECT COUNT(*) FROM trajectories WHERE source = 'live'")[0]
 
         by_intent = {}
-        cursor = conn.execute('SELECT intent_type, COUNT(*), AVG(fitness_score) FROM trajectories GROUP BY intent_type')
-        for row in cursor.fetchall():
+        for row in db.query('SELECT intent_type, COUNT(*), AVG(fitness_score) FROM trajectories GROUP BY intent_type'):
             by_intent[row[0]] = {"count": row[1], "avg_fitness": round(row[2], 1)}
 
         return {

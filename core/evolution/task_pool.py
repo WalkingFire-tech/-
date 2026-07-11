@@ -34,10 +34,7 @@ def build_task_pool(main_db_path: str,
     tasks = []
     
     try:
-        conn = DatabaseManager.get(main_db_path)._get_conn()
-        
-        # 查询高质量问答
-        cur = conn.execute('''
+        rows = DatabaseManager.get(main_db_path).query('''
             SELECT question, answer, salience, access_count, quality_score
             FROM knowledge_items
             WHERE knowledge_type = 'qa' 
@@ -47,8 +44,6 @@ def build_task_pool(main_db_path: str,
             ORDER BY salience DESC, access_count DESC
             LIMIT ?
         ''', (min_confidence, max_tasks * 2))
-        
-        rows = cur.fetchall()
         
         for row in rows:
             question = row['question']
@@ -108,9 +103,7 @@ def load_existing_skills(main_db_path: str) -> List[Dict]:
     skills = []
     
     try:
-        conn = DatabaseManager.get(main_db_path)._get_conn()
-        
-        cur = conn.execute('''
+        rows = DatabaseManager.get(main_db_path).query('''
             SELECT name, code, description, triggers, usage_count
             FROM tools
             WHERE code IS NOT NULL
@@ -118,7 +111,7 @@ def load_existing_skills(main_db_path: str) -> List[Dict]:
             LIMIT 20
         ''')
         
-        for row in cur.fetchall():
+        for row in rows:
             triggers_raw = row['triggers'] if row['triggers'] else '[]'
             try:
                 triggers = json.loads(triggers_raw) if isinstance(triggers_raw, str) else triggers_raw

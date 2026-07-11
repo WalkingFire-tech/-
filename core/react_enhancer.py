@@ -30,8 +30,7 @@ class ReactEnhancer:
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
         from infrastructure.database_manager import DatabaseManager
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        DatabaseManager.get(self.db_path).execute('''
             CREATE TABLE IF NOT EXISTS gap_analysis (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query TEXT,
@@ -113,12 +112,11 @@ class ReactEnhancer:
     def _save_gap(self, gap: Dict, query: str, iteration: int):
         try:
             from infrastructure.database_manager import DatabaseManager
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            conn.execute('''
+            DatabaseManager.get(self.db_path).execute('''
                 INSERT INTO gap_analysis (query, gap_type, focus, severity, iteration, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (query[:200], gap.get("gap_type", ""), gap.get("focus", ""),
-                  gap.get("severity", 0), iteration, datetime.now().isoformat()))
+                  gap.get("severity", 0), iteration, datetime.now().isoformat()), commit=True)
         except Exception as e:
             logger.debug(f"短板分析保存失败: {e}")
 

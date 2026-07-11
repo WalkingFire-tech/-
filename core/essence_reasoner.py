@@ -45,9 +45,8 @@ class EssenceReasoner:
 
     def _init_db(self):
         try:
-            conn = DatabaseManager.get("data/essence_reasoning.db")._get_conn()
-            cursor = conn.cursor()
-            cursor.execute('''
+            db = DatabaseManager.get("data/essence_reasoning.db")
+            db.executescript('''
                 CREATE TABLE IF NOT EXISTS reasoning_chains (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     query TEXT,
@@ -58,9 +57,7 @@ class EssenceReasoner:
                     final_verdict TEXT,
                     confidence REAL,
                     timestamp TEXT
-                )
-            ''')
-            cursor.execute('''
+                );
                 CREATE TABLE IF NOT EXISTS fact_verifications (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     fact_claim TEXT,
@@ -71,7 +68,6 @@ class EssenceReasoner:
                     timestamp TEXT
                 )
             ''')
-            conn.commit()
         except Exception as e:
             logger.debug(f"本质推理器数据库初始化失败: {e}")
 
@@ -325,10 +321,8 @@ class EssenceReasoner:
         truths = base_truths.get(domain, [])
 
         try:
-            conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
-            cursor = conn.cursor()
-            cursor.execute("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 5", (f"%{domain}%",))
-            rows = cursor.fetchall()
+            db = DatabaseManager.get("data/knowledge_store.db")
+            rows = db.query("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 5", (f"%{domain}%",))
             for row in rows:
                 if row[0] and len(row[0]) > 20:
                     truths.append({"keywords": row[0][:10].split(), "reasoning": row[0][:200], "verified": True})
@@ -688,9 +682,8 @@ class EssenceReasoner:
     def _save_reasoning(self, query: str, response: str, result: Dict):
         """持久化推理结果"""
         try:
-            conn = DatabaseManager.get("data/essence_reasoning.db")._get_conn()
-            cursor = conn.cursor()
-            cursor.execute(
+            db = DatabaseManager.get("data/essence_reasoning.db")
+            db.execute(
                 """INSERT INTO reasoning_chains 
                    (query, original_response, facts_extracted, reasoning_chain, consistency_check, final_verdict, confidence, timestamp)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -703,9 +696,9 @@ class EssenceReasoner:
                     result.get("verdict", ""),
                     result.get("confidence", 0.0),
                     datetime.now().isoformat()
-                )
+                ),
+                commit=True
             )
-            conn.commit()
         except Exception as e:
             logger.debug(f"推理结果持久化失败: {e}")
 

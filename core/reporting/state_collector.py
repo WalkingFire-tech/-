@@ -95,10 +95,9 @@ class StateCollector:
         """初始化数据库"""
         self._db_path.parent.mkdir(exist_ok=True)
         
-        conn = DatabaseManager.get(str(self._db_path))._get_conn()
-        cursor = conn.cursor()
+        db = DatabaseManager.get(str(self._db_path))
         
-        cursor.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS state_reports (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 layer TEXT,
@@ -112,10 +111,7 @@ class StateCollector:
                 active_tasks TEXT,
                 confidence REAL,
                 layer_version TEXT
-            )
-        ''')
-        
-        cursor.execute('''
+            );
             CREATE TABLE IF NOT EXISTS health_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT,
@@ -125,8 +121,6 @@ class StateCollector:
                 snapshot TEXT
             )
         ''')
-        
-        conn.commit()
     
     def collect(self, report: LayerStateReport) -> None:
         """
@@ -158,9 +152,8 @@ class StateCollector:
     def _save_report(self, report: LayerStateReport):
         """保存报告到数据库"""
         try:
-            conn = DatabaseManager.get(str(self._db_path))._get_conn()
-            cursor = conn.cursor()
-            cursor.execute('''
+            db = DatabaseManager.get(str(self._db_path))
+            db.execute('''
                 INSERT INTO state_reports 
                 (layer, timestamp, status, health, metrics, issues, warnings,
                  last_operation, active_tasks, confidence, layer_version)
@@ -177,8 +170,7 @@ class StateCollector:
                 json.dumps(report.active_tasks),
                 report.confidence_score,
                 report.layer_version
-            ))
-            conn.commit()
+            ), commit=True)
         except Exception as e:
             logger.error(f"保存状态报告失败: {e}")
     
@@ -297,8 +289,8 @@ class StateCollector:
         try:
             cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
             
-            conn = DatabaseManager.get(str(self._db_path))._get_conn()
-            cursor = conn.execute('''
+            db = DatabaseManager.get(str(self._db_path))
+            rows = db.query('''
                 SELECT timestamp, health, confidence
                 FROM state_reports
                 WHERE layer = ? AND timestamp > ?

@@ -35,18 +35,15 @@ class RecommendationValidator:
         """初始化知识库数据库"""
         Path(self.db_path).parent.mkdir(exist_ok=True)
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS product_categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category_name TEXT UNIQUE,
                 description TEXT,
                 keywords TEXT,
                 created_at TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS products (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 product_id TEXT UNIQUE,
@@ -56,10 +53,7 @@ class RecommendationValidator:
                 keywords TEXT,
                 created_at TEXT,
                 updated_at TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS validation_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 rule_name TEXT,
@@ -67,10 +61,7 @@ class RecommendationValidator:
                 valid_categories TEXT,
                 priority INTEGER,
                 created_at TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS validation_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query_hash TEXT,
@@ -83,9 +74,9 @@ class RecommendationValidator:
     
     def _load_initial_knowledge(self):
         """加载初始知识（仅首次）"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute("SELECT COUNT(*) FROM product_categories")
-        if cursor.fetchone()[0] > 0:
+        db = DatabaseManager.get(self.db_path)
+        row = db.query_one("SELECT COUNT(*) FROM product_categories")
+        if row[0] > 0:
             return
         
         categories = [
@@ -96,9 +87,10 @@ class RecommendationValidator:
         ]
         
         for name, desc, keywords in categories:
-            conn.execute(
+            db.execute(
                 "INSERT INTO product_categories (category_name, description, keywords, created_at) VALUES (?, ?, ?, ?)",
-                (name, desc, json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat())
+                (name, desc, json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat()),
+                commit=True
             )
         
         products = [
@@ -110,12 +102,12 @@ class RecommendationValidator:
         ]
         
         for pid, name, category, features, keywords in products:
-            conn.execute(
+            db.execute(
                 "INSERT INTO products (product_id, product_name, category, features, keywords, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (pid, name, category, json.dumps(features, ensure_ascii=False), json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat(), datetime.now().isoformat())
+                (pid, name, category, json.dumps(features, ensure_ascii=False), json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat(), datetime.now().isoformat()),
+                commit=True
             )
         
-        conn.commit()
         logger.info("✓ 初始知识库已加载")
     
     def validate_recommendation(self, user_query: str, recommendation: str,
@@ -185,9 +177,9 @@ class RecommendationValidator:
         """识别需求类别"""
         categories = []
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute("SELECT category_name, keywords FROM product_categories")
-        for row in cursor:
+        db = DatabaseManager.get(self.db_path)
+        rows = db.query("SELECT category_name, keywords FROM product_categories")
+        for row in rows:
             category_name, keywords_json = row
             keywords = json.loads(keywords_json)
             if any(kw in query for kw in keywords):
@@ -199,9 +191,9 @@ class RecommendationValidator:
         """从文本中提取产品"""
         products = []
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute("SELECT product_id, product_name, category, keywords FROM products")
-        for row in cursor:
+        db = DatabaseManager.get(self.db_path)
+        rows = db.query("SELECT product_id, product_name, category, keywords FROM products")
+        for row in rows:
             pid, name, category, keywords_json = row
             keywords = json.loads(keywords_json)
             
@@ -280,12 +272,12 @@ class RecommendationValidator:
         """记录验证历史"""
         try:
             query_hash = str(hash(query))[:12]
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            conn.execute(
+            db = DatabaseManager.get(self.db_path)
+            db.execute(
                 "INSERT INTO validation_history (query_hash, recommendation, is_valid, issues, validated_at) VALUES (?, ?, ?, ?, ?)",
-                (query_hash, recommendation[:200], int(is_valid) if is_valid is not None else -1, json.dumps(issues, ensure_ascii=False), datetime.now().isoformat())
+                (query_hash, recommendation[:200], int(is_valid) if is_valid is not None else -1, json.dumps(issues, ensure_ascii=False), datetime.now().isoformat()),
+                commit=True
             )
-            conn.commit()
         except:
             pass
     
@@ -293,12 +285,12 @@ class RecommendationValidator:
                    features: List[str], keywords: List[str]):
         """添加产品到知识库"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            conn.execute(
+            db = DatabaseManager.get(self.db_path)
+            db.execute(
                 "INSERT OR REPLACE INTO products (product_id, product_name, category, features, keywords, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (product_id, name, category, json.dumps(features, ensure_ascii=False), json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat(), datetime.now().isoformat())
+                (product_id, name, category, json.dumps(features, ensure_ascii=False), json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat(), datetime.now().isoformat()),
+                commit=True
             )
-            conn.commit()
             logger.info(f"✓ 添加产品: {name}")
         except Exception as e:
             logger.warning(f"添加产品失败: {e}")
@@ -306,12 +298,12 @@ class RecommendationValidator:
     def add_category(self, name: str, description: str, keywords: List[str]):
         """添加产品类别"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            conn.execute(
+            db = DatabaseManager.get(self.db_path)
+            db.execute(
                 "INSERT OR REPLACE INTO product_categories (category_name, description, keywords, created_at) VALUES (?, ?, ?, ?)",
-                (name, description, json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat())
+                (name, description, json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat()),
+                commit=True
             )
-            conn.commit()
             logger.info(f"✓ 添加类别: {name}")
         except Exception as e:
             logger.warning(f"添加类别失败: {e}")
@@ -327,13 +319,13 @@ class RecommendationValidator:
         
         recommendations = []
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         for category in required_categories:
-            cursor = conn.execute(
+            rows = db.query(
                 "SELECT product_id, product_name, features FROM products WHERE category = ?",
                 (category,)
             )
-            for row in cursor:
+            for row in rows:
                 pid, name, features_json = row
                 features = json.loads(features_json)
                 recommendations.append(f"- {name}: {', '.join(features)}")

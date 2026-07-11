@@ -71,8 +71,8 @@ class MetaLearner:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS learning_observations (
                 id TEXT PRIMARY KEY,
                 layer_name TEXT,
@@ -83,18 +83,9 @@ class MetaLearner:
                 strategy_used TEXT,
                 effectiveness REAL,
                 timestamp TEXT
-            )
-        ''')
-        
-        conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_layer_metric ON learning_observations(layer_name, metric_name)
-        ''')
-        
-        conn.execute('''
-            CREATE INDEX IF NOT EXISTS idx_observation_time ON learning_observations(timestamp)
-        ''')
-        
-        conn.execute('''
+            );
+            CREATE INDEX IF NOT EXISTS idx_layer_metric ON learning_observations(layer_name, metric_name);
+            CREATE INDEX IF NOT EXISTS idx_observation_time ON learning_observations(timestamp);
             CREATE TABLE IF NOT EXISTS learning_patterns (
                 id TEXT PRIMARY KEY,
                 pattern_type TEXT,
@@ -104,10 +95,7 @@ class MetaLearner:
                 recommendation TEXT,
                 detected_at TEXT,
                 status TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS learning_adjustments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 adjustment_type TEXT,
@@ -118,10 +106,7 @@ class MetaLearner:
                 reason TEXT,
                 effectiveness REAL,
                 applied_at TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS layer_metrics (
                 layer_name TEXT,
                 metric_name TEXT,
@@ -129,10 +114,7 @@ class MetaLearner:
                 trend TEXT,
                 last_updated TEXT,
                 PRIMARY KEY (layer_name, metric_name)
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS learning_sessions (
                 session_id TEXT PRIMARY KEY,
                 start_time TEXT,
@@ -143,8 +125,6 @@ class MetaLearner:
                 status TEXT
             )
         ''')
-        
-        conn.commit()
     
     def observe(self, layer_name: str, metric_name: str, 
                 old_value: float, new_value: float, 
@@ -169,8 +149,8 @@ class MetaLearner:
             f"{layer_name}{metric_name}{datetime.now().isoformat()}".encode()
         ).hexdigest()[:12]
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
             INSERT INTO learning_observations
             (id, layer_name, metric_name, old_value, new_value,
              delta, strategy_used, effectiveness, timestamp)
@@ -185,17 +165,15 @@ class MetaLearner:
             strategy_used,
             effectiveness,
             datetime.now().isoformat()
-        ))
+        ), commit=True)
         
-        trend = self._calculate_trend(conn, layer_name, metric_name, delta)
+        trend = self._calculate_trend(db, layer_name, metric_name, delta)
         
-        conn.execute('''
+        db.execute('''
             INSERT OR REPLACE INTO layer_metrics
             (layer_name, metric_name, current_value, trend, last_updated)
             VALUES (?, ?, ?, ?, ?)
-        ''', (layer_name, metric_name, new_value, trend, datetime.now().isoformat()))
-        
-        conn.commit()
+        ''', (layer_name, metric_name, new_value, trend, datetime.now().isoformat()), commit=True)
         
         logger.debug(f"学习观察: {layer_name}.{metric_name} = {new_value:.2f} (Δ={delta:+.2f})")
         return observation_id
@@ -214,16 +192,16 @@ class MetaLearner:
         
         return min(1.0, max(0.0, 0.5 + delta))
     
-    def _calculate_trend(self, conn, layer_name: str, metric_name: str, current_delta: float) -> str:
+    def _calculate_trend(self, db, layer_name: str, metric_name: str, current_delta: float) -> str:
         """计算趋势"""
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT delta FROM learning_observations
             WHERE layer_name = ? AND metric_name = ?
             ORDER BY timestamp DESC
             LIMIT 5
         ''', (layer_name, metric_name))
         
-        recent_deltas = [row[0] for row in cursor.fetchall() if row[0] is not None]
+        recent_deltas = [row[0] for row in rows if row[0] is not None]
         recent_deltas.append(current_delta)
         
         if len(recent_deltas) < 3:
@@ -250,9 +228,9 @@ class MetaLearner:
         """
         patterns = []
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT metric_name, 
                    AVG(delta) as avg_delta,
                    COUNT(*) as sample_count,
@@ -264,20 +242,20 @@ class MetaLearner:
             HAVING sample_count >= 3
         ''')
         
-        for row in cursor.fetchall():
+        for row in rows:
             metric_name = row['metric_name']
             avg_delta = row['avg_delta'] if row['avg_delta'] is not None else 0.0
             sample_count = row['sample_count']
             max_delta = row['max_delta'] if row['max_delta'] is not None else 0.0
             min_delta = row['min_delta'] if row['min_delta'] is not None else 0.0
             
-            cursor2 = conn.execute('''
+            recent_rows = db.query('''
                 SELECT delta FROM learning_observations
                 WHERE metric_name = ?
                 ORDER BY timestamp DESC
                 LIMIT 10
             ''', (metric_name,))
-            recent_deltas = [r2[0] for r2 in cursor2.fetchall() if r2[0] is not None]
+            recent_deltas = [r2[0] for r2 in recent_rows if r2[0] is not None]
             
             std_dev = 0.0
             if len(recent_deltas) > 1:
@@ -341,7 +319,7 @@ class MetaLearner:
             patterns.append(pattern)
         
         for pattern in patterns:
-            conn.execute('''
+            db.execute('''
                 INSERT OR REPLACE INTO learning_patterns
                 (id, pattern_type, description, confidence,
                  affected_metrics, recommendation, detected_at, status)
@@ -355,8 +333,7 @@ class MetaLearner:
                 pattern.recommendation,
                 pattern.detected_at,
                 pattern.status
-            ))
-        conn.commit()
+            ), commit=True)
         
         self._last_pattern_detection = datetime.now()
         logger.debug(f"检测到 {len(patterns)} 个学习模式")
@@ -364,15 +341,15 @@ class MetaLearner:
     
     def get_active_patterns(self) -> List[LearningPattern]:
         """获取活跃的学习模式"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        rows = db.query('''
             SELECT * FROM learning_patterns
             WHERE status = 'active'
             ORDER BY confidence DESC
         ''')
         
         patterns = []
-        for row in cursor.fetchall():
+        for row in rows:
             patterns.append(LearningPattern(
                 pattern_id=row['id'],
                 pattern_type=row['pattern_type'],
@@ -394,8 +371,8 @@ class MetaLearner:
         Returns:
             adjustment_id
         """
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        cur = db.execute('''
             INSERT INTO learning_adjustments
             (adjustment_type, target_layer, parameter_name,
              old_value, new_value, reason, effectiveness, applied_at)
@@ -409,66 +386,60 @@ class MetaLearner:
             reason,
             0.0,
             datetime.now().isoformat()
-        ))
-        conn.commit()
+        ), commit=True)
         
         logger.info(f"策略调整: {target_layer}.{parameter_name} {old_value:.2f} -> {new_value:.2f} ({reason})")
-        return cursor.lastrowid
+        return cur.lastrowid
     
     def evaluate_adjustment(self, adjustment_id: int, effectiveness: float):
         """评估调整效果"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
             UPDATE learning_adjustments
             SET effectiveness = ?
             WHERE id = ?
-        ''', (effectiveness, adjustment_id))
-        conn.commit()
+        ''', (effectiveness, adjustment_id), commit=True)
     
     def get_layer_metrics(self) -> List[Dict]:
         """获取各层指标"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        rows = db.query('''
             SELECT * FROM layer_metrics
             ORDER BY layer_name, metric_name
         ''')
-        return [dict(row) for row in cursor.fetchall()]
+        return [dict(row) for row in rows]
     
     def get_learning_report(self) -> Dict:
         """获取学习报告"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         
-        cursor = conn.execute("SELECT COUNT(*) as total FROM learning_observations")
-        total_observations = cursor.fetchone()['total']
+        total_observations = db.query_one("SELECT COUNT(*) as total FROM learning_observations")['total']
         
         active_patterns = self.get_active_patterns()
         
-        cursor = conn.execute('''
+        recent_adjustments = [dict(row) for row in db.query('''
             SELECT * FROM learning_adjustments
             ORDER BY applied_at DESC
             LIMIT 10
-        ''')
-        recent_adjustments = [dict(row) for row in cursor.fetchall()]
+        ''')]
         
-        cursor = conn.execute('''
+        layer_summary = [dict(row) for row in db.query('''
             SELECT layer_name, 
                    AVG(effectiveness) as avg_effectiveness,
                    COUNT(*) as count
             FROM learning_observations
             WHERE timestamp > datetime('now', '-7 days')
             GROUP BY layer_name
-        ''')
-        layer_summary = [dict(row) for row in cursor.fetchall()]
+        ''')]
         
-        cursor = conn.execute('''
+        adjustment_effectiveness = [dict(row) for row in db.query('''
             SELECT adjustment_type,
                    AVG(effectiveness) as avg_effectiveness,
                    COUNT(*) as count
             FROM learning_adjustments
             WHERE effectiveness > 0
             GROUP BY adjustment_type
-        ''')
-        adjustment_effectiveness = [dict(row) for row in cursor.fetchall()]
+        ''')]
         
         return {
             "total_observations": total_observations,
@@ -564,48 +535,42 @@ class MetaLearner:
     def _cleanup_old_data(self):
         """清理旧数据"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
+            db = DatabaseManager.get(self.db_path)
             cutoff_date = (datetime.now() - timedelta(days=30)).isoformat()
             
-            conn.execute('''
+            db.execute('''
                 DELETE FROM learning_observations
                 WHERE timestamp < ?
-            ''', (cutoff_date,))
+            ''', (cutoff_date,), commit=True)
             
-            conn.execute('''
+            db.execute('''
                 UPDATE learning_patterns
                 SET status = 'archived'
                 WHERE detected_at < ? AND status = 'active'
-            ''', (cutoff_date,))
-            
-            conn.commit()
+            ''', (cutoff_date,), commit=True)
         except Exception as e:
             logger.debug(f"清理旧数据失败: {e}")
     
     def get_statistics(self) -> Dict:
         """获取统计信息"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         
-        cursor = conn.execute("SELECT COUNT(*) as total FROM learning_observations")
-        total_observations = cursor.fetchone()['total']
+        total_observations = db.query_one("SELECT COUNT(*) as total FROM learning_observations")['total']
         
-        cursor = conn.execute("SELECT COUNT(*) as total FROM learning_adjustments")
-        total_adjustments = cursor.fetchone()['total']
+        total_adjustments = db.query_one("SELECT COUNT(*) as total FROM learning_adjustments")['total']
         
-        cursor = conn.execute('''
+        patterns_by_type = [dict(row) for row in db.query('''
             SELECT pattern_type, COUNT(*) as count
             FROM learning_patterns
             WHERE status = 'active'
             GROUP BY pattern_type
-        ''')
-        patterns_by_type = [dict(row) for row in cursor.fetchall()]
+        ''')]
         
-        cursor = conn.execute('''
+        observations_by_layer = [dict(row) for row in db.query('''
             SELECT layer_name, COUNT(*) as count
             FROM learning_observations
             GROUP BY layer_name
-        ''')
-        observations_by_layer = [dict(row) for row in cursor.fetchall()]
+        ''')]
         
         return {
             "total_observations": total_observations,

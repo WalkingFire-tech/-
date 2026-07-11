@@ -105,8 +105,7 @@ class LongTermMemory:
     def _init_database(self):
         """初始化数据库"""
         db = DatabaseManager.get(str(self.db_path))
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS memories (
                 id TEXT PRIMARY KEY,
                 type TEXT NOT NULL,
@@ -121,10 +120,7 @@ class LongTermMemory:
                 associations TEXT,
                 source TEXT DEFAULT 'unknown',
                 confidence REAL DEFAULT 0.8
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS conversations (
                 conversation_id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,
@@ -135,10 +131,7 @@ class LongTermMemory:
                 emotions TEXT,
                 satisfaction REAL,
                 key_memories TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
                 first_seen TEXT NOT NULL,
@@ -149,14 +142,11 @@ class LongTermMemory:
                 relationship_depth REAL DEFAULT 0.0,
                 preferences TEXT,
                 important_topics TEXT
-            )
+            );
+            CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
+            CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance);
+            CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id)
         ''')
-        
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id)')
-        
-        conn.commit()
     
     def store_memory(
         self,
@@ -187,8 +177,7 @@ class LongTermMemory:
             self.memory_cache[memory_id] = memory
             
             db = DatabaseManager.get(str(self.db_path))
-            conn = db._get_conn()
-            conn.execute('''
+            db.execute('''
                 INSERT INTO memories 
                 (id, type, content, importance, created_at, last_accessed,
                  access_count, decay_rate, emotional_valence, context, 
@@ -208,8 +197,7 @@ class LongTermMemory:
                 json.dumps(memory.associations),
                 memory.source,
                 memory.confidence,
-            ))
-            conn.commit()
+            ), commit=True)
         
         logger.debug(f"存储记忆: {memory_id} ({memory_type.value})")
         return memory_id
@@ -223,12 +211,10 @@ class LongTermMemory:
             return memory
         
         db = DatabaseManager.get(str(self.db_path))
-        conn = db._get_conn()
-        cursor = conn.execute(
+        row = db.query_one(
             'SELECT * FROM memories WHERE id = ?',
             (memory_id,)
         )
-        row = cursor.fetchone()
         
         if row:
             memory = MemoryItem(
@@ -247,12 +233,11 @@ class LongTermMemory:
                 confidence=row[12],
             )
             
-            conn.execute('''
+            db.execute('''
                 UPDATE memories 
                 SET last_accessed = ?, access_count = ?
                 WHERE id = ?
-            ''', (datetime.now().isoformat(), memory.access_count + 1, memory_id))
-            conn.commit()
+            ''', (datetime.now().isoformat(), memory.access_count + 1, memory_id), commit=True)
             
             memory.last_accessed = datetime.now()
             memory.access_count += 1
@@ -273,7 +258,6 @@ class LongTermMemory:
         memories = []
         
         db = DatabaseManager.get(str(self.db_path))
-        conn = db._get_conn()
         sql = 'SELECT * FROM memories WHERE content LIKE ?'
         params = [f'%{query}%']
         
@@ -288,9 +272,9 @@ class LongTermMemory:
         sql += ' ORDER BY importance DESC, last_accessed DESC LIMIT ?'
         params.append(limit)
         
-        cursor = conn.execute(sql, params)
+        rows = db.query(sql, params)
         
-        for row in cursor.fetchall():
+        for row in rows:
             memory = MemoryItem(
                 id=row[0],
                 type=MemoryType(row[1]),
@@ -321,7 +305,6 @@ class LongTermMemory:
         memories = []
         
         db = DatabaseManager.get(str(self.db_path))
-        conn = db._get_conn()
         sql = 'SELECT * FROM memories WHERE created_at >= ?'
         params = [cutoff.isoformat()]
         
@@ -332,9 +315,9 @@ class LongTermMemory:
         sql += ' ORDER BY created_at DESC LIMIT ?'
         params.append(limit)
         
-        cursor = conn.execute(sql, params)
+        rows = db.query(sql, params)
         
-        for row in cursor.fetchall():
+        for row in rows:
             memory = MemoryItem(
                 id=row[0],
                 type=MemoryType(row[1]),
@@ -368,32 +351,29 @@ class LongTermMemory:
         self.conversation_cache[conversation_id] = conversation
         
         db = DatabaseManager.get(str(self.db_path))
-        conn = db._get_conn()
-        cursor = conn.execute(
+        row = db.query_one(
             'SELECT * FROM users WHERE user_id = ?',
             (user_id,)
         )
         
-        if cursor.fetchone():
-            conn.execute('''
+        if row:
+            db.execute('''
                 UPDATE users 
                 SET last_seen = ?, total_conversations = total_conversations + 1
                 WHERE user_id = ?
             ''', (datetime.now().isoformat(), user_id))
         else:
-            conn.execute('''
+            db.execute('''
                 INSERT INTO users 
                 (user_id, first_seen, last_seen, total_conversations)
                 VALUES (?, ?, ?, 1)
             ''', (user_id, datetime.now().isoformat(), datetime.now().isoformat()))
         
-        conn.execute('''
+        db.execute('''
             INSERT INTO conversations 
             (conversation_id, user_id, started_at, messages, topics, emotions, key_memories)
             VALUES (?, ?, ?, '[]', '[]', '[]', '[]')
-        ''', (conversation_id, user_id, conversation.started_at.isoformat()))
-        
-        conn.commit()
+        ''', (conversation_id, user_id, conversation.started_at.isoformat()), commit=True)
         
         logger.info(f"开始对话: {conversation_id} (用户: {user_id})")
         return conversation_id
@@ -424,12 +404,10 @@ class LongTermMemory:
             conversation.emotions.append(emotion)
         
         db = DatabaseManager.get(str(self.db_path))
-        conn = db._get_conn()
-        cursor = conn.execute(
+        row = db.query_one(
             'SELECT messages, emotions FROM conversations WHERE conversation_id = ?',
             (conversation_id,)
         )
-        row = cursor.fetchone()
         
         if row:
             messages = json.loads(row[0])
@@ -439,21 +417,19 @@ class LongTermMemory:
             if emotion is not None:
                 emotions.append(emotion)
             
-            conn.execute('''
+            db.execute('''
                 UPDATE conversations 
                 SET messages = ?, emotions = ?
                 WHERE conversation_id = ?
             ''', (json.dumps(messages, ensure_ascii=False), json.dumps(emotions), conversation_id))
             
-            conn.execute('''
+            db.execute('''
                 UPDATE users 
                 SET total_messages = total_messages + 1
                 WHERE user_id = (
                     SELECT user_id FROM conversations WHERE conversation_id = ?
                 )
-            ''', (conversation_id,))
-            
-            conn.commit()
+            ''', (conversation_id,), commit=True)
     
     def end_conversation(
         self,
@@ -472,8 +448,7 @@ class LongTermMemory:
             conversation.key_memories = key_memories
         
         db = DatabaseManager.get(str(self.db_path))
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             UPDATE conversations 
             SET ended_at = ?, satisfaction = ?, key_memories = ?
             WHERE conversation_id = ?
@@ -482,20 +457,17 @@ class LongTermMemory:
             satisfaction,
             json.dumps(key_memories or []),
             conversation_id,
-        ))
-        conn.commit()
+        ), commit=True)
         
         logger.info(f"结束对话: {conversation_id} (满意度: {satisfaction})")
     
     def get_user_profile(self, user_id: str) -> Dict[str, Any]:
         """获取用户档案"""
         db = DatabaseManager.get(str(self.db_path))
-        conn = db._get_conn()
-        cursor = conn.execute(
+        row = db.query_one(
             'SELECT * FROM users WHERE user_id = ?',
             (user_id,)
         )
-        row = cursor.fetchone()
         
         if row:
             return {
@@ -525,66 +497,60 @@ class LongTermMemory:
     def update_user_trust(self, user_id: str, delta: float):
         """更新用户信任度"""
         db = DatabaseManager.get(str(self.db_path))
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             UPDATE users 
             SET trust_score = MAX(0.0, MIN(1.0, trust_score + ?))
             WHERE user_id = ?
-        ''', (delta, user_id))
-        conn.commit()
+        ''', (delta, user_id), commit=True)
     
     def consolidate_memories(self):
         """整合记忆（睡眠整合）"""
         logger.info("开始记忆整合...")
         
         db = DatabaseManager.get(str(self.db_path))
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT id, access_count, importance 
             FROM memories 
             WHERE access_count >= ?
         ''', (self.consolidation_threshold,))
         
         consolidated = 0
-        for row in cursor.fetchall():
+        for row in rows:
             memory_id, access_count, importance = row
             
             if importance < MemoryImportance.HIGH.value:
                 new_importance = min(importance + 1, MemoryImportance.CRITICAL.value)
-                conn.execute('''
+                db.execute('''
                     UPDATE memories SET importance = ? WHERE id = ?
-                ''', (new_importance, memory_id))
+                ''', (new_importance, memory_id), commit=True)
                 consolidated += 1
         
         cutoff = datetime.now() - timedelta(days=30)
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT id FROM memories 
             WHERE importance = ? AND last_accessed < ?
         ''', (MemoryImportance.TRIVIAL.value, cutoff.isoformat()))
         
         forgotten = 0
-        for row in cursor.fetchall():
-            conn.execute('DELETE FROM memories WHERE id = ?', (row[0],))
+        for row in rows:
+            db.execute('DELETE FROM memories WHERE id = ?', (row[0],), commit=True)
             forgotten += 1
-        
-        conn.commit()
         
         logger.info(f"记忆整合完成: 强化 {consolidated} 条, 遗忘 {forgotten} 条")
     
     def get_memory_stats(self) -> Dict[str, Any]:
         """获取记忆统计"""
         db = DatabaseManager.get(str(self.db_path))
-        conn = db._get_conn()
-        total_memories = conn.execute('SELECT COUNT(*) FROM memories').fetchone()[0]
-        total_conversations = conn.execute('SELECT COUNT(*) FROM conversations').fetchone()[0]
-        total_users = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+        total_memories = db.query_one('SELECT COUNT(*) FROM memories')[0]
+        total_conversations = db.query_one('SELECT COUNT(*) FROM conversations')[0]
+        total_users = db.query_one('SELECT COUNT(*) FROM users')[0]
         
         type_counts = {}
         for mem_type in MemoryType:
-            count = conn.execute(
+            count = db.query_one(
                 'SELECT COUNT(*) FROM memories WHERE type = ?',
                 (mem_type.value,)
-            ).fetchone()[0]
+            )[0]
             type_counts[mem_type.value] = count
         
         return {

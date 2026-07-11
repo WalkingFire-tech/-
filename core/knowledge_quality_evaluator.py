@@ -245,28 +245,25 @@ class KnowledgeQualityEvaluator:
             if not db_path.exists():
                 return 0.95
             
-            conn = DatabaseManager.get(str(db_path))._get_conn()
-            cursor = conn.cursor()
+            db = DatabaseManager.get(str(db_path))
             
-            cursor.execute("""
+            table_row = db.query_one("""
                 SELECT name FROM sqlite_master 
                 WHERE type='table' AND name='knowledge_items'
             """)
             
-            if not cursor.fetchone():
+            if not table_row:
                 return 0.95
             
             new_concepts = self._extract_concepts(f"{question} {answer}")
             new_relations = self._extract_relations(answer)
             new_numbers = self._extract_numbers(answer)
             
-            cursor.execute("""
+            similar_entries = db.query("""
                 SELECT question, answer FROM knowledge_items
                 WHERE question LIKE ? OR question LIKE ? OR question LIKE ?
                 LIMIT 10
             """, (f"%{question[:20]}%", f"%{question[10:30]}%", f"%{question[-20:]}%"))
-            
-            similar_entries = cursor.fetchall()
             
             if not similar_entries:
                 return 0.95

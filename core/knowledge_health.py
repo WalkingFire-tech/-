@@ -57,29 +57,25 @@ class KnowledgeHealthChecker:
     def _check_knowledge(self) -> Dict:
         """检查知识总量"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         
-        # 总数
-        cur = conn.execute("SELECT COUNT(*) FROM knowledge_items")
-        total = cur.fetchone()[0]
+        row = db.query_one("SELECT COUNT(*) FROM knowledge_items")
+        total = row[0]
         
-        # 按类型统计
-        cur = conn.execute('''
+        rows = db.query('''
             SELECT knowledge_type, COUNT(*) as cnt
             FROM knowledge_items
             GROUP BY knowledge_type
         ''')
-        by_type = {row['knowledge_type']: row['cnt'] for row in cur.fetchall()}
+        by_type = {row['knowledge_type']: row['cnt'] for row in rows}
         
-        # 按来源统计
-        cur = conn.execute('''
+        rows = db.query('''
             SELECT source, COUNT(*) as cnt
             FROM knowledge_items
             GROUP BY source
             ORDER BY cnt DESC
             LIMIT 5
         ''')
-        top_sources = [{"source": row['source'], "count": row['cnt']} for row in cur.fetchall()]
+        top_sources = [{"source": row['source'], "count": row['cnt']} for row in rows}
         
         return {
             "total": total,
@@ -91,16 +87,15 @@ class KnowledgeHealthChecker:
     def _check_memory_layers(self) -> Dict:
         """检查记忆层级"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         
-        cur = conn.execute('''
+        rows = db.query('''
             SELECT memory_layer, COUNT(*) as cnt
             FROM knowledge_items
             WHERE memory_layer IS NOT NULL
             GROUP BY memory_layer
         ''')
         
-        layers = {row['memory_layer']: row['cnt'] for row in cur.fetchall()}
+        layers = {row['memory_layer']: row['cnt'] for row in rows}
         
         total = sum(layers.values()) if layers else 0
         
@@ -117,21 +112,20 @@ class KnowledgeHealthChecker:
     def _check_skills(self) -> Dict:
         """检查技能库"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         
-        cur = conn.execute("SELECT COUNT(*) FROM tools")
-        total = cur.fetchone()[0]
+        row = db.query_one("SELECT COUNT(*) FROM tools")
+        total = row[0]
         
-        cur = conn.execute("""
+        rows = db.query("""
             SELECT name, usage_count, created_at
             FROM tools
             ORDER BY usage_count DESC
             LIMIT 5
         """)
-        top_tools = [dict(row) for row in cur.fetchall()]
+        top_tools = [dict(r) for r in rows]
         
-        cur = conn.execute("SELECT AVG(usage_count) FROM tools")
-        avg_usage = cur.fetchone()[0] or 0
+        row = db.query_one("SELECT AVG(usage_count) as avg_val FROM tools")
+        avg_usage = row[0] or 0
         
         return {
             "total": total,
@@ -143,23 +137,22 @@ class KnowledgeHealthChecker:
     def _check_rules(self) -> Dict:
         """检查规则库"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         
-        cur = conn.execute("SELECT COUNT(*) FROM learning_rules")
-        total = cur.fetchone()[0]
+        row = db.query_one("SELECT COUNT(*) FROM learning_rules")
+        total = row[0]
         
-        cur = conn.execute("""
+        rows = db.query("""
             SELECT status, COUNT(*) as cnt
             FROM learning_rules
             GROUP BY status
         """)
-        by_status = {row['status']: row['cnt'] for row in cur.fetchall()}
+        by_status = {row['status']: row['cnt'] for row in rows}
         
-        cur = conn.execute("""
+        row = db.query_one("""
             SELECT AVG(confidence) as avg_confidence
             FROM learning_rules
         """)
-        avg_confidence = cur.fetchone()['avg_confidence'] or 0
+        avg_confidence = row['avg_confidence'] or 0
         
         return {
             "total": total,
@@ -171,30 +164,28 @@ class KnowledgeHealthChecker:
     def _check_quality(self) -> Dict:
         """检查知识质量"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         
-        cur = conn.execute("""
+        row = db.query_one("""
             SELECT 
                 AVG(quality_score) as avg_quality,
                 AVG(salience) as avg_salience,
                 AVG(access_count) as avg_access
             FROM knowledge_items
         """)
-        row = cur.fetchone()
         
-        cur = conn.execute("""
+        r = db.query_one("""
             SELECT COUNT(*) as cnt
             FROM knowledge_items
             WHERE quality_score >= 80
         """)
-        high_quality = cur.fetchone()['cnt']
+        high_quality = r['cnt']
         
-        cur = conn.execute("""
+        r = db.query_one("""
             SELECT COUNT(*) as cnt
             FROM knowledge_items
             WHERE quality_score < 30
         """)
-        low_quality = cur.fetchone()['cnt']
+        low_quality = r['cnt']
         
         total = self._check_knowledge()['total']
         
@@ -211,15 +202,14 @@ class KnowledgeHealthChecker:
     def _check_topics(self) -> Dict:
         """检查知识覆盖领域"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         
-        cur = conn.execute("""
+        rows = db.query("""
             SELECT question FROM knowledge_items
             WHERE question IS NOT NULL
             LIMIT 100
         """)
         
-        questions = [row['question'] for row in cur.fetchall()]
+        questions = [row['question'] for row in rows]
         
         # 简单关键词提取
         import re
@@ -239,33 +229,29 @@ class KnowledgeHealthChecker:
     def _check_trend(self) -> Dict:
         """检查学习趋势"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         
-        # 最近7天的知识增长
         week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-        cur = conn.execute("""
+        row = db.query_one("""
             SELECT COUNT(*) as cnt
             FROM knowledge_items
             WHERE created_at >= ?
         """, (week_ago,))
-        week_growth = cur.fetchone()['cnt']
+        week_growth = row['cnt']
         
-        # 最近30天的知识增长
         month_ago = (datetime.now() - timedelta(days=30)).isoformat()
-        cur = conn.execute("""
+        row = db.query_one("""
             SELECT COUNT(*) as cnt
             FROM knowledge_items
             WHERE created_at >= ?
         """, (month_ago,))
-        month_growth = cur.fetchone()['cnt']
+        month_growth = row['cnt']
         
-        # 总遗忘数
-        cur = conn.execute("""
+        row = db.query_one("""
             SELECT COUNT(*) as cnt
             FROM knowledge_items
             WHERE salience < 0.2 AND memory_layer = 3
         """)
-        fading = cur.fetchone()['cnt']
+        fading = row['cnt']
         
         return {
             "week_growth": week_growth,

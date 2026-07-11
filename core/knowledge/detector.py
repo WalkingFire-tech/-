@@ -66,18 +66,16 @@ class SemanticGapDetector:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(exist_ok=True)
 
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS domain_knowledge (
                 domain TEXT PRIMARY KEY,
                 keywords TEXT,
                 description TEXT,
                 embedding TEXT,
                 created_at TEXT
-            )
-        ''')
+            );
 
-        conn.execute('''
             CREATE TABLE IF NOT EXISTS knowledge_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 domain TEXT,
@@ -86,10 +84,8 @@ class SemanticGapDetector:
                 embedding TEXT,
                 quality_score REAL DEFAULT 0.5,
                 created_at TEXT
-            )
-        ''')
+            );
 
-        conn.execute('''
             CREATE TABLE IF NOT EXISTS uncertainty_words (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 word TEXT,
@@ -97,10 +93,8 @@ class SemanticGapDetector:
                 confidence REAL DEFAULT 0.8,
                 created_at TEXT,
                 UNIQUE(word)
-            )
-        ''')
+            );
 
-        conn.execute('''
             CREATE TABLE IF NOT EXISTS validation_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query_hash TEXT,
@@ -108,7 +102,7 @@ class SemanticGapDetector:
                 reason TEXT,
                 confidence REAL,
                 validated_at TEXT
-            )
+            );
         ''')
 
     def _init_embedding(self):
@@ -126,9 +120,9 @@ class SemanticGapDetector:
     def _init_uncertainty_words(self):
         """从数据库加载不确定性词汇"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.execute("SELECT COUNT(*) FROM uncertainty_words")
-            if cursor.fetchone()[0] == 0:
+            db = DatabaseManager.get(self.db_path)
+            row = db.query_one("SELECT COUNT(*) FROM uncertainty_words")
+            if row[0] == 0:
                 self._load_default_uncertainty_words()
         except Exception as e:
             logger.warning(f"加载不确定性词汇失败: {e}")
@@ -154,20 +148,20 @@ class SemanticGapDetector:
                 json.dump(default_words, f, ensure_ascii=False, indent=2)
             words = default_words
 
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         for word in words:
-            conn.execute(
+            db.execute(
                 "INSERT OR IGNORE INTO uncertainty_words (word, created_at) VALUES (?, ?)",
-                (word, datetime.now().isoformat())
+                (word, datetime.now().isoformat()),
+                commit=True
             )
-            conn.commit()
 
     def _get_uncertainty_words(self) -> List[str]:
         """从数据库获取不确定性词汇"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.execute("SELECT word FROM uncertainty_words")
-            return [row[0] for row in cursor.fetchall()]
+            db = DatabaseManager.get(self.db_path)
+            rows = db.query("SELECT word FROM uncertainty_words")
+            return [row[0] for row in rows]
         except:
             return []
 
@@ -185,12 +179,12 @@ class SemanticGapDetector:
 
     def learn_uncertainty_word(self, word: str):
         """学习新的不确定性词汇"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute(
+        db = DatabaseManager.get(self.db_path)
+        db.execute(
             "INSERT OR IGNORE INTO uncertainty_words (word, created_at) VALUES (?, ?)",
-            (word, datetime.now().isoformat())
+            (word, datetime.now().isoformat()),
+            commit=True
         )
-        conn.commit()
         logger.info(f"📚 学习不确定性词汇: {word}")
 
     def detect_knowledge_gap(
@@ -258,9 +252,9 @@ class SemanticGapDetector:
     def _identify_domain_keyword(self, query: str) -> Tuple[Optional[str], float]:
         """关键词降级识别"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.execute("SELECT domain, keywords FROM domain_knowledge")
-            for domain, keywords_json in cursor.fetchall():
+            db = DatabaseManager.get(self.db_path)
+            rows = db.query("SELECT domain, keywords FROM domain_knowledge")
+            for domain, keywords_json in rows:
                 if not keywords_json:
                     continue
                 keywords = json.loads(keywords_json)
@@ -277,11 +271,11 @@ class SemanticGapDetector:
             return self._domain_embeddings
 
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.execute(
+            db = DatabaseManager.get(self.db_path)
+            rows = db.query(
                 "SELECT domain, embedding FROM domain_knowledge WHERE embedding IS NOT NULL"
             )
-            for domain, embedding_json in cursor.fetchall():
+            for domain, embedding_json in rows:
                 if embedding_json:
                     self._domain_embeddings[domain] = np.array(
                         json.loads(embedding_json)
@@ -313,12 +307,12 @@ class SemanticGapDetector:
     def _get_domain_coverage_count(self, domain: str) -> float:
         """基于数量的覆盖度计算"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.execute(
+            db = DatabaseManager.get(self.db_path)
+            row = db.query_one(
                 "SELECT COUNT(*) FROM knowledge_items WHERE domain = ?",
                 (domain,)
             )
-            count = cursor.fetchone()[0]
+            count = row[0]
             return min(1.0, count / 5)
         except:
             return 0.0
@@ -326,12 +320,12 @@ class SemanticGapDetector:
     def _get_domain_knowledge_vectors(self, domain: str) -> List[np.ndarray]:
         """获取领域内知识的向量"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.execute(
+            db = DatabaseManager.get(self.db_path)
+            rows = db.query(
                 "SELECT embedding FROM knowledge_items WHERE domain = ? AND embedding IS NOT NULL",
                 (domain,)
             )
-            return [np.array(json.loads(row[0])) for row in cursor.fetchall()]
+            return [np.array(json.loads(row[0])) for row in rows]
         except:
             return []
 
@@ -349,12 +343,12 @@ class SemanticGapDetector:
             except:
                 pass
 
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute(
+        db = DatabaseManager.get(self.db_path)
+        db.execute(
             "INSERT OR REPLACE INTO domain_knowledge (domain, keywords, description, embedding, created_at) VALUES (?, ?, ?, ?, ?)",
-            (domain, json.dumps(keywords, ensure_ascii=False), description, embedding_json, datetime.now().isoformat())
+            (domain, json.dumps(keywords, ensure_ascii=False), description, embedding_json, datetime.now().isoformat()),
+            commit=True
         )
-        conn.commit()
 
         if embedding_json:
             self._domain_embeddings[domain] = np.array(json.loads(embedding_json))
@@ -371,12 +365,12 @@ class SemanticGapDetector:
             except:
                 pass
 
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute(
+        db = DatabaseManager.get(self.db_path)
+        db.execute(
             "INSERT INTO knowledge_items (domain, question, answer, embedding, quality_score, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (domain, question, answer, embedding_json, quality, datetime.now().isoformat())
+            (domain, question, answer, embedding_json, quality, datetime.now().isoformat()),
+            commit=True
         )
-        conn.commit()
 
     def should_learn_externally(self, user_query: str, response: str,
                                confidence: float = 1.0) -> Tuple[bool, str]:

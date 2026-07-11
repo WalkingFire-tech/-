@@ -93,19 +93,18 @@ class ExternalLearner:
         try:
             for db_name, label in [("data/knowledge_base.db", "知识库"), ("data/experience_pool.db", "经验池")]:
                 try:
-                    conn = DatabaseManager.get(db_name)._get_conn()
-                    c = conn.cursor()
-                    tables = [row[0] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+                    db = DatabaseManager.get(db_name)
+                    tables = [row[0] for row in db.query("SELECT name FROM sqlite_master WHERE type='table'")]
                     
                     if "knowledge_entries" in tables:
-                        c.execute("SELECT content, source FROM knowledge_entries WHERE content LIKE ? LIMIT 3", (f"%{query[:20]}%",))
-                        for row in c.fetchall():
+                        rows = db.query("SELECT content, source FROM knowledge_entries WHERE content LIKE ? LIMIT 3", (f"%{query[:20]}%",))
+                        for row in rows:
                             if row[0] and len(row[0]) > 20:
                                 results.append(f"[{label}] {row[0][:300]}")
                     
                     elif "experiences" in tables:
-                        c.execute("SELECT raw_input, response FROM experiences WHERE raw_input LIKE ? AND success=1 ORDER BY timestamp DESC LIMIT 3", (f"%{query[:20]}%",))
-                        for row in c.fetchall():
+                        rows = db.query("SELECT raw_input, response FROM experiences WHERE raw_input LIKE ? AND success=1 ORDER BY timestamp DESC LIMIT 3", (f"%{query[:20]}%",))
+                        for row in rows:
                             if row[1] and len(row[1]) > 20:
                                 results.append(f"[{label}] {row[1][:300]}")
                 except Exception:
@@ -382,12 +381,12 @@ class ExternalLearner:
         """保存外部学习结果到知识库"""
         
         saved_count = 0
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         for item in items:
             try:
                 question_hash = hashlib.md5(item["question"].lower().encode()).hexdigest()
                 
-                conn.execute('''
+                db.execute('''
                     INSERT OR REPLACE INTO knowledge_items 
                     (question_hash, question, answer, source, knowledge_type, metadata, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -399,13 +398,12 @@ class ExternalLearner:
                     item.get("knowledge_type", "external"),
                     item.get("metadata", "{}"),
                     datetime.now().isoformat()
-                ))
+                ), commit=True)
                 saved_count += 1
             except Exception as e:
                 logger.error(f"保存知识失败: {e}")
         
-        conn.commit()
-        
+
         if saved_count > 0:
             logger.info(f"保存 {saved_count} 条外部学习知识")
         

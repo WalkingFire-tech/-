@@ -121,27 +121,25 @@ class ModelFreeEvolution:
                     results = list(ddgs.text(f"{target_name} {keyword}", max_results=3))
                 
                 if results:
-                    conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
+                    db = DatabaseManager.get("data/knowledge_store.db")
                     for result in results:
                         question = f"{target_name}: {keyword}"
                         answer = f"{result.get('title', '')}\n\n{result.get('body', '')}"
                         source = result.get('href', 'external_search')
                         
-                        cursor = conn.execute(
+                        existing = db.query_one(
                             "SELECT id FROM knowledge_items WHERE question = ?",
                             (question,)
                         )
                         
-                        if not cursor.fetchone():
-                            conn.execute('''
+                        if not existing:
+                            db.execute('''
                                 INSERT INTO knowledge_items 
                                 (question, answer, source, knowledge_type, quality_score, created_at)
                                 VALUES (?, ?, ?, 'external', 50.0, ?)
-                            ''', (question, answer, source, datetime.now().isoformat()))
+                            ''', (question, answer, source, datetime.now().isoformat()), commit=True)
                             
                             knowledge_gained += 1
-                    
-                    conn.commit()
                 
                 logger.info(f"    - {keyword}: 获得{len(results)}条知识")
                 
@@ -180,32 +178,28 @@ class ModelFreeEvolution:
     def _collect_fitness_stats(self) -> dict:
         """收集适应度统计（纯数据分析）"""
         try:
-            conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
+            db = DatabaseManager.get("data/knowledge_store.db")
             
-            cur = conn.execute('''
+            row = db.query_one('''
                 SELECT 
                     COUNT(CASE WHEN quality_score >= 60 THEN 1 END) as hits,
                     COUNT(*) as total
                 FROM knowledge_items
             ''')
-            row = cur.fetchone()
             hit_rate = (row['hits'] / row['total']) if row['total'] > 0 else 0.5
             
-            cur = conn.execute("SELECT AVG(quality_score) as avg FROM knowledge_items")
-            avg_quality = cur.fetchone()['avg'] or 50.0
+            avg_quality = db.query_one("SELECT AVG(quality_score) as avg FROM knowledge_items")['avg'] or 50.0
             
-            cur = conn.execute('''
+            avg_access = db.query_one('''
                 SELECT AVG(access_count) as avg_access 
                 FROM knowledge_items 
                 WHERE access_count > 0
-            ''')
-            avg_access = cur.fetchone()['avg_access'] or 1.0
+            ''')['avg_access'] or 1.0
             
-            cur = conn.execute('''
+            diversity = db.query_one('''
                 SELECT COUNT(DISTINCT knowledge_type) as types
                 FROM knowledge_items
-            ''')
-            diversity = cur.fetchone()['types'] / 10.0
+            ''')['types'] / 10.0
             
             return {
                 'like_rate': min(avg_access / 5.0, 1.0),
@@ -267,21 +261,20 @@ class ModelFreeEvolution:
         from datetime import timedelta
         
         try:
-            conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get("data/knowledge_store.db")
+            db.execute('''
                 UPDATE knowledge_items
                 SET quality_score = quality_score * 0.95
                 WHERE last_accessed < ?
-            ''', ((datetime.now() - timedelta(days=30)).isoformat(),))
+            ''', ((datetime.now() - timedelta(days=30)).isoformat(),), commit=True)
             
-            cursor = conn.execute('''
+            cur = db.execute('''
                 DELETE FROM knowledge_items
                 WHERE quality_score < 10.0
                 AND knowledge_type != 'important'
             ''')
             
-            deleted = cursor.rowcount
-            conn.commit()
+            deleted = cur.rowcount
             
             logger.info(f"  ✅ 清理{deleted}条低质量知识")
                 

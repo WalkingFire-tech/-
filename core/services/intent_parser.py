@@ -357,8 +357,8 @@ class IntentParser:
         """
         try:
             from infrastructure.database_manager import DatabaseManager
-            conn = DatabaseManager.get("data/learning_rules.db")._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get("data/learning_rules.db")
+            db.execute('''
                 CREATE TABLE IF NOT EXISTS learning_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     condition TEXT,
@@ -369,17 +369,15 @@ class IntentParser:
                     created_at TEXT
                 )
             ''')
-            # ✅ 修复SQL注入：对text进行转义
             escaped_text = text.replace("'", "''")
             condition = f"raw_input LIKE '%{escaped_text}%'"
             action = f"set_intent:{correct_intent}"
             
-            conn.execute('''
+            db.execute('''
                 INSERT INTO learning_rules 
                 (condition, action, confidence, status, source, created_at)
                 VALUES (?, ?, 0.8, 'pending', 'user_correction', datetime('now'))
-            ''', (condition, action))
-            conn.commit()
+            ''', (condition, action), commit=True)
 
             
             logger.info(f"从纠正中学习: '{text[:30]}...' -> {correct_intent}")

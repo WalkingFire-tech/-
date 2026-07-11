@@ -55,14 +55,13 @@ class CanaryEvaluator:
     
     def is_canary(self, rule_id: int) -> bool:
         """判断某个规则是否处于金丝雀模式"""
-        conn = DatabaseManager.get(self.rules_db)._get_conn()
+        db = DatabaseManager.get(self.rules_db)
         
         try:
-            cursor = conn.execute(
+            row = db.query_one(
                 'SELECT status FROM learning_rules WHERE id = ?',
                 (rule_id,)
             )
-            row = cursor.fetchone()
             return row and row[0] == "canary"
         finally:
             pass
@@ -91,14 +90,12 @@ class CanaryEvaluator:
             }
         """
         try:
-            conn = DatabaseManager.get(self.rules_db)._get_conn()
+            db = DatabaseManager.get(self.rules_db)
             
-            # 0. 检查观察期
-            cursor = conn.execute(
+            rule_row = db.query_one(
                 'SELECT created_at FROM learning_rules WHERE id = ?',
                 (rule_id,)
             )
-            rule_row = cursor.fetchone()
             
             if rule_row and rule_row["created_at"]:
                 created_at = datetime.fromisoformat(rule_row["created_at"])
@@ -111,13 +108,11 @@ class CanaryEvaluator:
                         "delta": 0.0
                     }
             
-            # 1. 获取使用该规则的金丝雀样本
-            conn = DatabaseManager.get(self.reflection_db)._get_conn()
+            db2 = DatabaseManager.get(self.reflection_db)
             
-            # 使用时间窗口限制（最近observation_days天）
             time_threshold = (datetime.utcnow() - timedelta(days=self.observation_days)).isoformat()
             
-            cursor = conn.execute('''
+            canary_rows = db2.query('''
                 SELECT confidence, query, final_answer, timestamp
                 FROM reflection_log
                 WHERE rule_used = ? AND is_canary_sample = 1
@@ -125,10 +120,9 @@ class CanaryEvaluator:
                 ORDER BY timestamp DESC
                 LIMIT ?
             ''', (rule_id, time_threshold, self.min_samples * 2))
-            canary_samples = [dict(row) for row in cursor.fetchall()]
+            canary_samples = [dict(row) for row in canary_rows]
             
-            # 2. 获取对照组（同期未使用该规则的样本）
-            cursor = conn.execute('''
+            control_rows = db2.query('''
                 SELECT confidence, query, final_answer, timestamp
                 FROM reflection_log
                 WHERE (rule_used IS NULL OR rule_used != ?)
@@ -137,7 +131,7 @@ class CanaryEvaluator:
                 ORDER BY timestamp DESC
                 LIMIT ?
             ''', (rule_id, time_threshold, self.min_samples * 2))
-            control_samples = [dict(row) for row in cursor.fetchall()]
+            control_samples = [dict(row) for row in control_rows]
             
             # 3. 计算平均置信度
             if not canary_samples:
@@ -189,16 +183,15 @@ class CanaryEvaluator:
     
     def _promote_rule(self, rule_id: int):
         """将规则晋升为全量"""
-        conn = DatabaseManager.get(self.rules_db)._get_conn()
+        db = DatabaseManager.get(self.rules_db)
         
         try:
-            conn.execute('''
+            db.execute('''
                 UPDATE learning_rules
                 SET status = 'active', promoted_at = ?, promotion_reason = 'canary_success'
                 WHERE id = ?
-            ''', (datetime.utcnow().isoformat(), rule_id))
+            ''', (datetime.utcnow().isoformat(), rule_id), commit=True)
             
-            conn.commit()
             logger.info(f"✅ 规则 {rule_id} 晋升为全量")
             
         finally:
@@ -206,16 +199,15 @@ class CanaryEvaluator:
     
     def _reject_rule(self, rule_id: int, delta: float):
         """拒绝规则"""
-        conn = DatabaseManager.get(self.rules_db)._get_conn()
+        db = DatabaseManager.get(self.rules_db)
         
         try:
-            conn.execute('''
+            db.execute('''
                 UPDATE learning_rules
                 SET status = 'rejected', rejected_at = ?, rejection_reason = ?
                 WHERE id = ?
-            ''', (datetime.utcnow().isoformat(), f"置信度下降 {delta:.2%}", rule_id))
+            ''', (datetime.utcnow().isoformat(), f"置信度下降 {delta:.2%}", rule_id), commit=True)
             
-            conn.commit()
             logger.info(f"❌ 规则 {rule_id} 被拒绝")
             
         finally:
@@ -242,17 +234,14 @@ class CanaryEvaluator:
             "details": []
         }
         
-        conn = DatabaseManager.get(self.rules_db)._get_conn()
+        db = DatabaseManager.get(self.rules_db)
         
         try:
-            # 获取所有金丝雀规则
-            cursor = conn.execute('''
+            canary_rules = db.query('''
                 SELECT id, condition, action, confidence, created_at
                 FROM learning_rules
                 WHERE status = 'canary'
             ''')
-            
-            canary_rules = cursor.fetchall()
             
             for rule in canary_rules:
                 rule_id = rule[0]
@@ -296,17 +285,16 @@ class CanaryEvaluator:
         
         新规则默认进入canary状态，等待验证
         """
-        conn = DatabaseManager.get(self.rules_db)._get_conn()
+        db = DatabaseManager.get(self.rules_db)
         
         try:
-            cursor = conn.execute('''
+            cur = db.execute('''
                 INSERT INTO learning_rules
                 (condition, action, confidence, source, status, created_at)
                 VALUES (?, ?, ?, ?, 'canary', ?)
-            ''', (condition, action, confidence, source, datetime.utcnow().isoformat()))
+            ''', (condition, action, confidence, source, datetime.utcnow().isoformat()), commit=True)
             
-            rule_id = cursor.lastrowid
-            conn.commit()
+            rule_id = cur.lastrowid
             
             logger.info(f"🦜 新规则 {rule_id} 进入金丝雀模式")
             return rule_id
@@ -316,19 +304,19 @@ class CanaryEvaluator:
     
     def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""
-        conn = DatabaseManager.get(self.rules_db)._get_conn()
+        db = DatabaseManager.get(self.rules_db)
         
         try:
-            total = conn.execute('SELECT COUNT(*) FROM learning_rules').fetchone()[0]
-            canary = conn.execute(
+            total = db.query_one('SELECT COUNT(*) FROM learning_rules')[0]
+            canary = db.query_one(
                 "SELECT COUNT(*) FROM learning_rules WHERE status='canary'"
-            ).fetchone()[0]
-            active = conn.execute(
+            )[0]
+            active = db.query_one(
                 "SELECT COUNT(*) FROM learning_rules WHERE status='active'"
-            ).fetchone()[0]
-            rejected = conn.execute(
+            )[0]
+            rejected = db.query_one(
                 "SELECT COUNT(*) FROM learning_rules WHERE status='rejected'"
-            ).fetchone()[0]
+            )[0]
             
             return {
                 "total_rules": total,

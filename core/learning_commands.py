@@ -132,15 +132,12 @@ class LearningCommands:
         """列出知识库条目"""
         from infrastructure.database_manager import DatabaseManager
         
-        conn = DatabaseManager.get('data/knowledge_store.db')._get_conn()
-        cursor = conn.execute('''
+        rows = DatabaseManager.get('data/knowledge_store.db').query('''
             SELECT question, source, knowledge_type, created_at
             FROM knowledge_items
             ORDER BY created_at DESC
             LIMIT ?
         ''', (limit,))
-        
-        rows = cursor.fetchall()
         
         if not rows:
             return "知识库为空"
@@ -161,14 +158,11 @@ class LearningCommands:
         """列出自动生成的工具"""
         from infrastructure.database_manager import DatabaseManager
         
-        conn = DatabaseManager.get('data/knowledge_store.db')._get_conn()
-        cursor = conn.execute('''
+        rows = DatabaseManager.get('data/knowledge_store.db').query('''
             SELECT name, description, usage_count, created_at
             FROM tools
             ORDER BY usage_count DESC
         ''')
-        
-        rows = cursor.fetchall()
         
         if not rows:
             return "暂无自动生成的工具"

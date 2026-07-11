@@ -109,8 +109,7 @@ class RelationshipManager:
     def _init_database(self):
         """初始化数据库"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS relationships (
                 user_id TEXT PRIMARY KEY,
                 stage TEXT NOT NULL,
@@ -126,10 +125,8 @@ class RelationshipManager:
                 preferences TEXT,
                 topics_of_interest TEXT,
                 communication_style TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
+
             CREATE TABLE IF NOT EXISTS interactions (
                 interaction_id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,
@@ -139,13 +136,11 @@ class RelationshipManager:
                 sentiment REAL,
                 impact REAL,
                 context TEXT
-            )
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_interactions_user ON interactions(user_id);
+            CREATE INDEX IF NOT EXISTS idx_interactions_time ON interactions(timestamp)
         ''')
-        
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_interactions_user ON interactions(user_id)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_interactions_time ON interactions(timestamp)')
-        
-        conn.commit()
     
     def record_interaction(
         self,
@@ -174,8 +169,7 @@ class RelationshipManager:
         
         with self._lock:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            conn.execute('''
+            db.execute('''
                 INSERT INTO interactions
                 (interaction_id, user_id, type, timestamp, content, sentiment, impact, context)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -188,8 +182,7 @@ class RelationshipManager:
                 sentiment,
                 impact,
                 json.dumps(context or {}, ensure_ascii=False),
-            ))
-            conn.commit()
+            ), commit=True)
             
             self._update_relationship(user_id, interaction)
         
@@ -269,12 +262,10 @@ class RelationshipManager:
             return self.relationships[user_id]
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute(
+        row = db.query_one(
             'SELECT * FROM relationships WHERE user_id = ?',
             (user_id,)
         )
-        row = cursor.fetchone()
         
         if row:
             profile = RelationshipProfile(
@@ -309,8 +300,7 @@ class RelationshipManager:
     def _save_relationship(self, profile: RelationshipProfile):
         """保存关系档案"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             INSERT OR REPLACE INTO relationships
             (user_id, stage, trust_score, depth, understanding,
              satisfaction_history, interaction_count, positive_interactions,
@@ -332,8 +322,7 @@ class RelationshipManager:
             json.dumps(profile.preferences, ensure_ascii=False),
             json.dumps(profile.topics_of_interest, ensure_ascii=False),
             json.dumps(profile.communication_style),
-        ))
-        conn.commit()
+        ), commit=True)
     
     def update_preferences(
         self,
@@ -417,15 +406,14 @@ class RelationshipManager:
     def get_all_relationships(self) -> List[Dict[str, Any]]:
         """获取所有关系"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT user_id, stage, trust_score, depth, interaction_count, last_interaction
             FROM relationships
             ORDER BY trust_score DESC
         ''')
         
         relationships = []
-        for row in cursor.fetchall():
+        for row in rows:
             relationships.append({
                 "user_id": row[0],
                 "stage": row[1],
@@ -441,19 +429,17 @@ class RelationshipManager:
         """信任度衰减（时间因素）"""
         with self._lock:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute('SELECT user_id, trust_score FROM relationships')
+            rows = db.query('SELECT user_id, trust_score FROM relationships')
             
-            for row in cursor.fetchall():
+            for row in rows:
                 user_id, trust = row
                 new_trust = max(0.5, trust - self.trust_decay_rate)
                 
-                conn.execute(
+                db.execute(
                     'UPDATE relationships SET trust_score = ? WHERE user_id = ?',
-                    (new_trust, user_id)
+                    (new_trust, user_id),
+                    commit=True
                 )
-            
-            conn.commit()
         
         logger.debug("信任度衰减完成")
 

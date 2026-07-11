@@ -302,9 +302,7 @@ class SystemStateSensor:
     def _get_knowledge_stats(self) -> Dict:
         """获取知识库统计"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            
-            cur = conn.execute('''
+            row = DatabaseManager.get(self.db_path).query_one('''
                 SELECT 
                     COUNT(*) as total,
                     AVG(quality_score) as avg_quality,
@@ -315,7 +313,6 @@ class SystemStateSensor:
                 FROM knowledge_items
                 WHERE knowledge_type = 'qa'
             ''')
-            row = cur.fetchone()
             
             return {
                 'total': row['total'] or 0,
@@ -340,13 +337,12 @@ class SystemStateSensor:
     def _get_health_stats(self) -> Dict:
         """获取健康状态"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cur = conn.execute('''
+            row = DatabaseManager.get(self.db_path).query_one('''
                 SELECT COUNT(*) as error_count
                 FROM knowledge_items
                 WHERE quality_score < 15
             ''')
-            error_count = cur.fetchone()[0]
+            error_count = row[0] if row else 0
             
             total = self._get_knowledge_stats().get('total', 1)
             error_rate = error_count / max(total, 1)

@@ -38,28 +38,22 @@ class KnowledgeBasedValidator:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(exist_ok=True)
 
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS category_mapping (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category TEXT,
                 keyword TEXT,
                 created_at TEXT,
                 UNIQUE(category, keyword)
-            )
-        ''')
-
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS entity_mapping (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 entity_type TEXT,
                 pattern TEXT,
                 confidence REAL,
                 created_at TEXT
-            )
-        ''')
-
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS type_compatibility (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 type_a TEXT,
@@ -69,10 +63,7 @@ class KnowledgeBasedValidator:
                 created_at TEXT,
                 updated_at TEXT,
                 UNIQUE(type_a, type_b)
-            )
-        ''')
-
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS validation_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query_hash TEXT,
@@ -86,9 +77,9 @@ class KnowledgeBasedValidator:
 
     def _load_initial_knowledge(self):
         """从外部配置文件加载初始知识"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute("SELECT COUNT(*) FROM category_mapping")
-        if cursor.fetchone()[0] > 0:
+        db = DatabaseManager.get(self.db_path)
+        row = db.query_one("SELECT COUNT(*) FROM category_mapping")
+        if row[0] > 0:
             return
 
         init_data = self._load_init_file()
@@ -96,26 +87,25 @@ class KnowledgeBasedValidator:
             logger.info("⚠️ 无初始知识文件，以空知识库启动")
             return
 
-        conn = DatabaseManager.get(self.db_path)._get_conn()
         for category, keyword in init_data.get("category_keywords", []):
-            conn.execute(
+            db.execute(
                 "INSERT OR IGNORE INTO category_mapping (category, keyword, created_at) VALUES (?, ?, ?)",
                 (category, keyword, datetime.now().isoformat())
             )
 
         for entity_type, pattern, confidence in init_data.get("entity_patterns", []):
-            conn.execute(
+            db.execute(
                 "INSERT INTO entity_mapping (entity_type, pattern, confidence, created_at) VALUES (?, ?, ?, ?)",
                 (entity_type, pattern, confidence, datetime.now().isoformat())
             )
 
         for type_a, type_b, confidence in init_data.get("type_compatibilities", []):
-            conn.execute(
+            db.execute(
                 "INSERT OR IGNORE INTO type_compatibility (type_a, type_b, confidence, occurrences, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (type_a, type_b, confidence, 1, datetime.now().isoformat(), datetime.now().isoformat())
             )
 
-        conn.commit()
+        db.execute("SELECT 1", commit=True)
         logger.info("✅ 初始知识已加载")
 
     def _load_init_file(self) -> dict:
@@ -203,11 +193,11 @@ class KnowledgeBasedValidator:
         """从知识库查询需求类型（纯 Python 匹配，无 SQL 拼接）"""
         categories = []
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.execute("SELECT category, keyword FROM category_mapping")
-            for category, keyword in cursor.fetchall():
-                if keyword in query:
-                    categories.append(category)
+            db = DatabaseManager.get(self.db_path)
+            rows = db.query("SELECT category, keyword FROM category_mapping")
+            for row in rows:
+                if row['keyword'] in query:
+                    categories.append(row['category'])
         except Exception as e:
             logger.debug(f"需求识别失败: {e}")
         return list(set(categories))
@@ -215,16 +205,16 @@ class KnowledgeBasedValidator:
     def _identify_entity_type(self, text: str) -> Optional[str]:
         """从知识库识别实体类型"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.execute("SELECT entity_type, pattern, confidence FROM entity_mapping")
+            db = DatabaseManager.get(self.db_path)
+            rows = db.query("SELECT entity_type, pattern, confidence FROM entity_mapping")
             best_type = None
             best_score = 0.0
 
-            for entity_type, pattern, confidence in cursor.fetchall():
-                if pattern in text:
-                    if confidence > best_score:
-                        best_score = confidence
-                        best_type = entity_type
+            for row in rows:
+                if row['pattern'] in text:
+                    if row['confidence'] > best_score:
+                        best_score = row['confidence']
+                        best_type = row['entity_type']
 
             return best_type
         except Exception as e:
@@ -237,17 +227,16 @@ class KnowledgeBasedValidator:
             return True
 
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.execute('''
+            db = DatabaseManager.get(self.db_path)
+            row = db.query_one('''
                 SELECT confidence FROM type_compatibility
                 WHERE (type_a = ? AND type_b = ?)
                    OR (type_a = ? AND type_b = ?)
                 ORDER BY confidence DESC
                 LIMIT 1
             ''', (type_a, type_b, type_b, type_a))
-            row = cursor.fetchone()
             if row:
-                return row[0] > 0.5
+                return row['confidence'] > 0.5
         except Exception as e:
             logger.debug(f"兼容性查询失败: {e}")
 
@@ -302,13 +291,13 @@ class KnowledgeBasedValidator:
         return {}
 
     def _record_validation(self, query: str, recommendation: str,
-                          is_valid: Optional[bool], issues: List[str],
-                          confidence: float):
+                           is_valid: Optional[bool], issues: List[str],
+                           confidence: float):
         """记录验证历史"""
         try:
             query_hash = hashlib.sha256(query.encode()).hexdigest()[:16]
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get(self.db_path)
+            db.execute('''
                 INSERT INTO validation_history
                 (query_hash, recommendation, is_valid, issues, confidence, validated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -319,56 +308,54 @@ class KnowledgeBasedValidator:
                 json.dumps(issues, ensure_ascii=False),
                 confidence,
                 datetime.now().isoformat()
-            ))
-            conn.commit()
+            ), commit=True)
         except Exception as e:
             logger.debug(f"记录验证历史失败: {e}")
 
     def add_category_keyword(self, category: str, keyword: str):
         """添加类别关键词映射"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute(
+        db = DatabaseManager.get(self.db_path)
+        db.execute(
             "INSERT OR IGNORE INTO category_mapping (category, keyword, created_at) VALUES (?, ?, ?)",
-            (category, keyword, datetime.now().isoformat())
+            (category, keyword, datetime.now().isoformat()),
+            commit=True
         )
-        conn.commit()
         logger.info(f"✅ 添加类别映射: {category} <- {keyword}")
 
     def add_entity_pattern(self, entity_type: str, pattern: str, confidence: float = 0.9):
         """添加实体模式"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute(
+        db = DatabaseManager.get(self.db_path)
+        db.execute(
             "INSERT INTO entity_mapping (entity_type, pattern, confidence, created_at) VALUES (?, ?, ?, ?)",
-            (entity_type, pattern, confidence, datetime.now().isoformat())
+            (entity_type, pattern, confidence, datetime.now().isoformat()),
+            commit=True
         )
-        conn.commit()
         logger.info(f"✅ 添加实体模式: {entity_type} <- {pattern}")
 
     def learn_compatibility(self, type_a: str, type_b: str):
         """学习类型兼容性"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cursor = conn.execute(
+        db = DatabaseManager.get(self.db_path)
+        row = db.query_one(
             "SELECT id, occurrences FROM type_compatibility WHERE type_a = ? AND type_b = ?",
             (type_a, type_b)
         )
-        row = cursor.fetchone()
 
         if row:
-            conn.execute('''
+            db.execute('''
                 UPDATE type_compatibility
                 SET occurrences = occurrences + 1,
                     confidence = ?,
                     updated_at = ?
                 WHERE id = ?
-            ''', (min(1.0, (row[1] + 1) / 10), datetime.now().isoformat(), row[0]))
+            ''', (min(1.0, (row['occurrences'] + 1) / 10), datetime.now().isoformat(), row['id']))
         else:
-            conn.execute('''
+            db.execute('''
                 INSERT INTO type_compatibility
                 (type_a, type_b, confidence, occurrences, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (type_a, type_b, 0.5, 1, datetime.now().isoformat(), datetime.now().isoformat()))
 
-        conn.commit()
+        db.execute("SELECT 1", commit=True)
         logger.info(f"📚 学习类型兼容性: {type_a} ↔ {type_b}")
 
 

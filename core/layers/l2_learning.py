@@ -81,10 +81,9 @@ class L2LearningLayer:
         db_path = "data/knowledge_store.db"
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         
-        conn = DatabaseManager.get(db_path)._get_conn()
-        cursor = conn.cursor()
+        db = DatabaseManager.get(db_path)
         
-        cursor.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS knowledge_items (
                 id TEXT PRIMARY KEY,
                 question TEXT,
@@ -96,8 +95,6 @@ class L2LearningLayer:
                 confidence REAL
             )
         ''')
-        
-        conn.commit()
     
     def learn(self, target: Dict, context: Optional[Dict] = None) -> LearningResult:
         """
@@ -223,7 +220,7 @@ class L2LearningLayer:
         try:
             db_path = "data/knowledge_store.db"
             
-            conn = DatabaseManager.get(db_path)._get_conn()
+            db = DatabaseManager.get(db_path)
             
             keywords = target.get('keywords', [])
             if not keywords:
@@ -232,15 +229,13 @@ class L2LearningLayer:
             placeholders = ' OR '.join(['question LIKE ?' for _ in keywords[:5]])
             params = [f'%{kw}%' for kw in keywords[:5]]
             
-            cursor = conn.execute(f'''
+            return [dict(row) for row in db.query(f'''
                 SELECT id, question, answer, quality_score
                 FROM knowledge_items
                 WHERE {placeholders}
                 ORDER BY quality_score DESC
                 LIMIT 10
-            ''', params)
-            
-            return [dict(row) for row in cursor.fetchall()]
+            ''', params)]
         except Exception as e:
             logger.warning(f"检索现有知识失败: {e}")
             return []
@@ -270,11 +265,10 @@ class L2LearningLayer:
         try:
             db_path = "data/knowledge_store.db"
             
-            conn = DatabaseManager.get(db_path)._get_conn()
-            cursor = conn.cursor()
+            db = DatabaseManager.get(db_path)
             
             for item in knowledge:
-                cursor.execute('''
+                db.execute('''
                     INSERT OR REPLACE INTO knowledge_items 
                     (id, question, answer, source, knowledge_type, quality_score, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -286,10 +280,8 @@ class L2LearningLayer:
                     'external',
                     item.get('quality_score', 50),
                     datetime.now().isoformat()
-                ))
+                ), commit=True)
                 stored_ids.append(item.get('id', ''))
-            
-            conn.commit()
         except Exception as e:
             logger.error(f"存储知识失败: {e}")
         

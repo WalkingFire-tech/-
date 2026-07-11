@@ -235,13 +235,10 @@ class SkillEmergence:
         """查找匹配的已有技能"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute(
+            rows = db.query(
                 "SELECT skill_name, skill_type, trigger_patterns, solution_path, success_count, fail_count, success_rate FROM skills WHERE skill_type=? AND is_active=1",
                 (skill_type,)
             )
-            rows = c.fetchall()
 
 
             for row in rows:
@@ -339,21 +336,17 @@ class SkillEmergence:
                     failed_names.add(name)
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT skill_name, success_count, fail_count FROM skills WHERE is_active=1")
-            rows = c.fetchall()
+            rows = db.query("SELECT skill_name, success_count, fail_count FROM skills WHERE is_active=1")
             for row in rows:
                 skill_name, succ, fail = row
                 new_fail = fail + 1
                 total = succ + new_fail
                 new_rate = succ / max(total, 1)
-                c.execute("UPDATE skills SET fail_count=?, success_rate=? WHERE skill_name=?",
-                          (new_fail, new_rate, skill_name))
+                db.execute("UPDATE skills SET fail_count=?, success_rate=? WHERE skill_name=?",
+                          (new_fail, new_rate, skill_name), commit=True)
                 if new_rate < 0.3 and total >= 5:
-                    c.execute("UPDATE skills SET is_active=0 WHERE skill_name=?", (skill_name,))
+                    db.execute("UPDATE skills SET is_active=0 WHERE skill_name=?", (skill_name,), commit=True)
                     logger.info(f"技能退化: {skill_name} 成功率{new_rate:.0%}<{30}%，已标记为休眠")
-            conn.commit()
 
         except Exception as e:
             logger.debug(f"技能失败记录异常: {e}")
@@ -362,12 +355,9 @@ class SkillEmergence:
         """获取适用于当前问题的技能（按成功率排序）"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute(
+            rows = db.query(
                 "SELECT skill_name, skill_type, trigger_patterns, solution_path, success_count, success_rate FROM skills WHERE is_active=1 AND success_count >= 2 ORDER BY success_rate DESC, success_count DESC LIMIT 5"
             )
-            rows = c.fetchall()
 
 
             applicable = []

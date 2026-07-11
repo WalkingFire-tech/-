@@ -238,8 +238,7 @@ class FolderLearner:
     def _init_db(self):
         """初始化数据库"""
         db = DatabaseManager.get(self.state_db)
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS learned_files (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 root_path TEXT,
@@ -255,10 +254,8 @@ class FolderLearner:
                 extracted_preview TEXT,
                 created_at TEXT,
                 updated_at TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
+
             CREATE TABLE IF NOT EXISTS learning_sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 root_path TEXT,
@@ -270,14 +267,12 @@ class FolderLearner:
                 failed_files INTEGER,
                 skipped_files INTEGER,
                 status TEXT
-            )
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_file_path ON learned_files(file_path);
+            CREATE INDEX IF NOT EXISTS idx_root_path ON learned_files(root_path);
+            CREATE INDEX IF NOT EXISTS idx_status ON learned_files(status)
         ''')
-        
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_file_path ON learned_files(file_path)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_root_path ON learned_files(root_path)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_status ON learned_files(status)')
-        
-        conn.commit()
     
     def _load_snapshot(self):
         """加载快照到内存缓存"""
@@ -286,8 +281,7 @@ class FolderLearner:
         
         try:
             db = DatabaseManager.get(self.state_db)
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            rows = db.query('''
                 SELECT relative_path, file_hash
                 FROM learned_files
                 WHERE root_path = ? AND status = 'success'
@@ -295,7 +289,7 @@ class FolderLearner:
             
             self._snapshot_cache = {
                 row['relative_path']: row['file_hash']
-                for row in cursor.fetchall()
+                for row in rows
             }
             
             logger.debug(f"加载快照: {len(self._snapshot_cache)} 个文件")
@@ -457,8 +451,7 @@ class FolderLearner:
                          knowledge_count: int = 0, preview: str = None):
         """保存文件学习状态"""
         db = DatabaseManager.get(self.state_db)
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             INSERT OR REPLACE INTO learned_files
             (root_path, file_path, relative_path, file_hash, file_size,
              last_modified, last_learned, status, error_msg, knowledge_count,
@@ -477,8 +470,7 @@ class FolderLearner:
             knowledge_count,
             preview[:500] if preview else None,
             datetime.now().isoformat()
-        ))
-        conn.commit()
+        ), commit=True)
     
     def scan_and_learn(self, progress_callback: Callable = None) -> Dict:
         """扫描文件夹并学习所有文件"""
@@ -562,9 +554,8 @@ class FolderLearner:
     def _record_session(self, start: str, end: str, results: Dict):
         """记录学习会话"""
         db = DatabaseManager.get(self.state_db)
-        conn = db._get_conn()
         status = 'completed' if results["failed"] == 0 else 'completed_with_errors'
-        conn.execute('''
+        db.execute('''
             INSERT INTO learning_sessions
             (root_path, session_start, session_end, total_files,
              new_files, updated_files, failed_files, skipped_files, status)
@@ -579,8 +570,7 @@ class FolderLearner:
             results["failed"],
             results["skipped"],
             status
-        ))
-        conn.commit()
+        ), commit=True)
     
     def start_background_monitor(self, interval_seconds: int = 300):
         """启动后台监控"""
@@ -628,8 +618,7 @@ class FolderLearner:
             return {"root_path": None, "total_files": 0}
         
         db = DatabaseManager.get(self.state_db)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        row = db.query_one('''
             SELECT 
                 COUNT(*) as total,
                 SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as successful,
@@ -639,8 +628,6 @@ class FolderLearner:
             FROM learned_files
             WHERE root_path = ?
         ''', (str(self.root_path),))
-        
-        row = cursor.fetchone()
         
         return {
             "root_path": str(self.root_path),
@@ -657,15 +644,14 @@ class FolderLearner:
             return []
         
         db = DatabaseManager.get(self.state_db)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT relative_path, error_msg, last_learned
             FROM learned_files
             WHERE root_path = ? AND status = 'failed'
             ORDER BY last_learned DESC
         ''', (str(self.root_path),))
         
-        return [dict(row) for row in cursor.fetchall()]
+        return [dict(row) for row in rows]
     
     def get_recent_learned(self, limit: int = 10) -> List[Dict]:
         """获取最近学习的文件"""
@@ -673,8 +659,7 @@ class FolderLearner:
             return []
         
         db = DatabaseManager.get(self.state_db)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT relative_path, knowledge_count, last_learned, status
             FROM learned_files
             WHERE root_path = ?
@@ -682,7 +667,7 @@ class FolderLearner:
             LIMIT ?
         ''', (str(self.root_path), limit))
         
-        return [dict(row) for row in cursor.fetchall()]
+        return [dict(row) for row in rows]
     
     def pop_notifications(self) -> List[Dict]:
         """取出并清空未读通知"""

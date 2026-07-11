@@ -105,11 +105,7 @@ class DataDrivenReflectionEngine:
         Path(self.db_path).parent.mkdir(exist_ok=True)
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.cursor()
-        
-        # 错误案例表
-        cursor.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS error_cases (
                 id TEXT PRIMARY KEY,
                 problem TEXT,
@@ -120,11 +116,7 @@ class DataDrivenReflectionEngine:
                 resolved_at TEXT,
                 resolution_status TEXT,
                 reflection TEXT
-            )
-        ''')
-        
-        # 行为模式表
-        cursor.execute('''
+            );
             CREATE TABLE IF NOT EXISTS behavior_patterns (
                 pattern_id TEXT PRIMARY KEY,
                 pattern_type TEXT,
@@ -135,11 +127,7 @@ class DataDrivenReflectionEngine:
                 failure_count INTEGER,
                 last_triggered TEXT,
                 evolution_stage INTEGER
-            )
-        ''')
-        
-        # 知识置信度表（跟踪知识的变化）
-        cursor.execute('''
+            );
             CREATE TABLE IF NOT EXISTS knowledge_confidence (
                 knowledge_id TEXT PRIMARY KEY,
                 current_confidence REAL,
@@ -150,11 +138,7 @@ class DataDrivenReflectionEngine:
                 last_updated TEXT,
                 verification_count INTEGER,
                 dispute_count INTEGER
-            )
-        ''')
-        
-        # 元认知日志（跟踪系统自身表现）
-        cursor.execute('''
+            );
             CREATE TABLE IF NOT EXISTS metacognition_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT,
@@ -164,8 +148,6 @@ class DataDrivenReflectionEngine:
                 triggered_reflection BOOLEAN
             )
         ''')
-        
-        conn.commit()
 
     
     def detect_errors(self, knowledge_items: List[Dict]) -> List[ErrorCase]:
@@ -227,17 +209,11 @@ class DataDrivenReflectionEngine:
         # 从数据库中获取相关知识
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.cursor()
-            
-            # 查找相同问题的其他答案
-            cursor.execute('''
+            results = db.query('''
                 SELECT id, answer, confidence 
                 FROM knowledge_confidence 
                 WHERE knowledge_id != ?
             ''', (item.get('id', ''),))
-            
-            results = cursor.fetchall()
 
             
             for result in results:
@@ -377,10 +353,7 @@ class DataDrivenReflectionEngine:
         """记录反思结果"""
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
+        db.execute('''
             UPDATE error_cases
             SET correct_answer = ?, resolved_at = ?, resolution_status = ?, reflection = ?
             WHERE id = ?
@@ -390,9 +363,7 @@ class DataDrivenReflectionEngine:
             'resolved',
             f"原错误: {error_case.reflection}\n处理方式: {resolution}",
             error_case.id
-        ))
-        
-        conn.commit()
+        ), commit=True)
 
         
         logger.info(f"✅ 反思已记录: {error_case.id[:8]}...")
@@ -427,10 +398,7 @@ class CognitiveLoopManager:
         Path(self.db_path).parent.mkdir(exist_ok=True)
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS cognitive_cycles (
                 cycle_id TEXT PRIMARY KEY,
                 start_time TEXT,
@@ -440,10 +408,7 @@ class CognitiveLoopManager:
                 errors_resolved INTEGER,
                 confidence_change REAL,
                 status TEXT
-            )
-        ''')
-        
-        cursor.execute('''
+            );
             CREATE TABLE IF NOT EXISTS verification_queue (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 knowledge_id TEXT,
@@ -454,8 +419,6 @@ class CognitiveLoopManager:
                 retry_count INTEGER
             )
         ''')
-        
-        conn.commit()
 
     
     def run_complete_cycle(self, new_knowledge: List[Dict]) -> Dict:
@@ -527,9 +490,7 @@ class CognitiveLoopManager:
         
         # 记录循环
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.cursor()
-        cursor.execute('''
+        db.execute('''
             INSERT INTO cognitive_cycles 
             (cycle_id, start_time, end_time, knowledge_learned, errors_detected, errors_resolved, status)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -541,8 +502,7 @@ class CognitiveLoopManager:
             len(detected_errors),
             0,
             'completed'
-        ))
-        conn.commit()
+        ), commit=True)
 
         
         return {
@@ -557,15 +517,14 @@ class CognitiveLoopManager:
         """从主系统知识库获取已有知识"""
         try:
             db = DatabaseManager.get("data/knowledge_store.db")
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            rows = db.query('''
                 SELECT id, question, answer, quality_score as confidence
                 FROM knowledge_items
                 WHERE question LIKE ?
                 ORDER BY quality_score DESC
                 LIMIT 10
             ''', (f'%{question[:30]}%',))
-            results = [dict(row) for row in cursor.fetchall()]
+            results = [dict(row) for row in rows]
             return results
         except Exception as e:
             logger.debug(f"获取已有知识失败: {e}")
@@ -575,15 +534,14 @@ class CognitiveLoopManager:
         """从主系统知识库获取所有知识"""
         try:
             db = DatabaseManager.get("data/knowledge_store.db")
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            rows = db.query('''
                 SELECT id, question, answer, quality_score as confidence, 
                        source, created_at
                 FROM knowledge_items
                 ORDER BY created_at DESC
                 LIMIT 100
             ''')
-            results = [dict(row) for row in cursor.fetchall()]
+            results = [dict(row) for row in rows]
             return results
         except Exception as e:
             logger.debug(f"获取所有知识失败: {e}")
@@ -593,12 +551,10 @@ class CognitiveLoopManager:
         """存储通过验证的知识到主系统知识库"""
         try:
             db = DatabaseManager.get("data/knowledge_store.db")
-            conn = db._get_conn()
-            cursor = conn.cursor()
             
             question_hash = hashlib.md5(item.get('question', '').lower().encode()).hexdigest()
             
-            cursor.execute('''
+            db.execute('''
                 INSERT OR REPLACE INTO knowledge_items 
                 (id, question, answer, source, knowledge_type, quality_score, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -610,9 +566,7 @@ class CognitiveLoopManager:
                 item.get('knowledge_type', 'learned'),
                 item.get('confidence', 0.7),
                 datetime.now().isoformat()
-            ))
-            
-            conn.commit()
+            ), commit=True)
 
             logger.debug(f"✓ 知识已存储: {item.get('question', '')[:30]}...")
         except Exception as e:
@@ -624,10 +578,7 @@ class CognitiveLoopManager:
             knowledge = pending_item.get('knowledge', {})
             
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
+            db.execute('''
                 INSERT INTO verification_queue 
                 (knowledge_id, question, answer, created_at, status, retry_count)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -638,9 +589,7 @@ class CognitiveLoopManager:
                 datetime.now().isoformat(),
                 'pending',
                 0
-            ))
-            
-            conn.commit()
+            ), commit=True)
 
             logger.info(f"  ✓ 已加入验证队列: {knowledge.get('question', '')[:30]}...")
         except Exception as e:
@@ -690,10 +639,7 @@ class CognitiveLoopManager:
         
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
+            db.executescript('''
                 CREATE TABLE IF NOT EXISTS knowledge_conflicts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     error_id TEXT,
@@ -703,8 +649,7 @@ class CognitiveLoopManager:
                     resolution TEXT
                 )
             ''')
-            
-            cursor.execute('''
+            db.execute('''
                 INSERT INTO knowledge_conflicts 
                 (error_id, problem, detected_at, resolution_status)
                 VALUES (?, ?, ?, ?)
@@ -713,9 +658,7 @@ class CognitiveLoopManager:
                 error.problem,
                 datetime.now().isoformat(),
                 'pending'
-            ))
-            
-            conn.commit()
+            ), commit=True)
 
         except Exception as e:
             logger.debug(f"标记冲突失败: {e}")
@@ -726,10 +669,7 @@ class CognitiveLoopManager:
         
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cursor = conn.cursor()
-            
-            cursor.execute('''
+            db.executescript('''
                 CREATE TABLE IF NOT EXISTS high_priority_corrections (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     error_id TEXT,
@@ -740,8 +680,7 @@ class CognitiveLoopManager:
                     status TEXT
                 )
             ''')
-            
-            cursor.execute('''
+            db.execute('''
                 INSERT INTO high_priority_corrections 
                 (error_id, problem, wrong_answer, priority, created_at, status)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -752,9 +691,7 @@ class CognitiveLoopManager:
                 10,
                 datetime.now().isoformat(),
                 'pending'
-            ))
-            
-            conn.commit()
+            ), commit=True)
 
             
             from core.external_learner import external_learner
@@ -799,20 +736,14 @@ class MetacognitionMonitor:
         Path(self.db_path).parent.mkdir(exist_ok=True)
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS system_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT,
                 metric_type TEXT,
                 value REAL,
                 context TEXT
-            )
-        ''')
-        
-        cursor.execute('''
+            );
             CREATE TABLE IF NOT EXISTS behavior_adjustments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT,
@@ -823,8 +754,6 @@ class MetacognitionMonitor:
                 effectiveness REAL
             )
         ''')
-        
-        conn.commit()
 
     
     def monitor_and_adjust(self, system_state: Dict) -> Dict:
@@ -889,10 +818,7 @@ class MetacognitionMonitor:
         """记录行为调整"""
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
+        db.execute('''
             INSERT INTO behavior_adjustments 
             (timestamp, adjustment_type, reason)
             VALUES (?, ?, ?)
@@ -900,9 +826,7 @@ class MetacognitionMonitor:
             datetime.now().isoformat(),
             adjustment['type'],
             adjustment['reason']
-        ))
-        
-        conn.commit()
+        ), commit=True)
 
     
     def _update_metrics(self, system_state: Dict):
@@ -1106,12 +1030,8 @@ class ReflectiveModelFreeEvolution:
         """计算错误率"""
         try:
             db = DatabaseManager.get(self.reflection_engine.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute("SELECT COUNT(*) FROM error_cases")
-            total_errors = cursor.fetchone()[0]
-            
-            cursor = conn.execute("SELECT COUNT(*) FROM error_cases WHERE resolution_status='resolved'")
-            resolved = cursor.fetchone()[0]
+            total_errors = db.query_one("SELECT COUNT(*) FROM error_cases")[0]
+            resolved = db.query_one("SELECT COUNT(*) FROM error_cases WHERE resolution_status='resolved'")[0]
             
             return total_errors / max(resolved + 1, 1) * 0.1
         except:
@@ -1121,9 +1041,7 @@ class ReflectiveModelFreeEvolution:
         """计算学习效率"""
         try:
             db = DatabaseManager.get("data/knowledge_store.db")
-            conn = db._get_conn()
-            cursor = conn.execute("SELECT AVG(quality_score) FROM knowledge_items")
-            result = cursor.fetchone()[0]
+            result = db.query_one("SELECT AVG(quality_score) FROM knowledge_items")[0]
             return result if result else 0.5
         except:
             return 0.5
@@ -1132,14 +1050,13 @@ class ReflectiveModelFreeEvolution:
         """计算置信度趋势"""
         try:
             db = DatabaseManager.get(self.reflection_engine.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            rows = db.query('''
                 SELECT metric_value FROM metacognition_log
                 WHERE metric_name='confidence'
                 ORDER BY timestamp DESC
                 LIMIT 10
             ''')
-            values = [row[0] for row in cursor.fetchall()]
+            values = [row[0] for row in rows]
             
             if len(values) >= 2:
                 return values[-1] - values[0]
@@ -1151,12 +1068,10 @@ class ReflectiveModelFreeEvolution:
         """计算适应速度"""
         try:
             db = DatabaseManager.get(self.metacognition.db_path)
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            adjustments = db.query_one('''
                 SELECT COUNT(*) FROM behavior_adjustments
                 WHERE timestamp > datetime('now', '-1 day')
-            ''')
-            adjustments = cursor.fetchone()[0]
+            ''')[0]
             return min(1.0, adjustments / 10)
         except:
             return 0.1

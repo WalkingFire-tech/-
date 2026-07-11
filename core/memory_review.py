@@ -28,10 +28,9 @@ class MemoryReview:
         """
         one_week_ago = (datetime.now() - timedelta(days=7)).isoformat()
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         
-        # 查询最近7天内即将遗忘的知识（L3层且salience低）
-        cur = conn.execute('''
+        rows = db.query('''
             SELECT question, answer, source, salience, last_accessed
             FROM knowledge_items
             WHERE memory_layer = 3 
@@ -41,11 +40,10 @@ class MemoryReview:
             LIMIT 10
         ''', (one_week_ago,))
         
-        forgotten_items = [dict(row) for row in cur.fetchall()]
+        forgotten_items = [dict(row) for row in rows]
         forgotten_count = len(forgotten_items)
         
-        # 查询正在衰减的知识
-        cur = conn.execute('''
+        fading_row = db.query_one('''
             SELECT COUNT(*) as count
             FROM knowledge_items
             WHERE memory_layer = 3
@@ -53,7 +51,7 @@ class MemoryReview:
             AND last_accessed < ?
         ''', (one_week_ago,))
         
-        fading_count = cur.fetchone()['count']
+        fading_count = fading_row['count'] if fading_row else 0
         
         # 生成回顾消息
         message = ""
@@ -86,49 +84,43 @@ class MemoryReview:
     
     def get_memory_stats(self) -> Dict:
         """获取记忆统计信息"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
+        db = DatabaseManager.get(self.db_path)
         
-        # L1核心记忆
-        cur = conn.execute('''
+        l1_row = db.query_one('''
             SELECT COUNT(*) as count
             FROM knowledge_items
             WHERE memory_layer = 1
         ''')
-        l1_count = cur.fetchone()['count']
+        l1_count = l1_row['count'] if l1_row else 0
         
-        # L2框架记忆
-        cur = conn.execute('''
+        l2_row = db.query_one('''
             SELECT COUNT(*) as count
             FROM knowledge_items
             WHERE memory_layer = 2
         ''')
-        l2_count = cur.fetchone()['count']
+        l2_count = l2_row['count'] if l2_row else 0
         
-        # L3情境碎片
-        cur = conn.execute('''
+        l3_row = db.query_one('''
             SELECT COUNT(*) as count
             FROM knowledge_items
             WHERE memory_layer = 3
         ''')
-        l3_count = cur.fetchone()['count']
+        l3_count = l3_row['count'] if l3_row else 0
         
-        # 即将遗忘
-        cur = conn.execute('''
+        fading_row = db.query_one('''
             SELECT COUNT(*) as count
             FROM knowledge_items
             WHERE memory_layer = 3 AND salience < 0.3
         ''')
-        fading_count = cur.fetchone()['count']
+        fading_count = fading_row['count'] if fading_row else 0
         
-        # 最近访问
-        cur = conn.execute('''
+        hot_memories = [dict(row) for row in db.query('''
             SELECT question, access_count, last_accessed
             FROM knowledge_items
             WHERE access_count > 0
             ORDER BY access_count DESC
             LIMIT 5
-        ''')
-        hot_memories = [dict(row) for row in cur.fetchall()]
+        ''')]
         
         return {
             "l1_core": l1_count,

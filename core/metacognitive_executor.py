@@ -430,13 +430,10 @@ class MetacognitiveExecutor:
         def _do_retrieve(q):
             try:
                 from infrastructure.database_manager import DatabaseManager
-                conn = DatabaseManager.get("data/knowledge_store.db")._get_conn()
-                cursor = conn.cursor()
-                cursor.execute(
+                rows = DatabaseManager.get("data/knowledge_store.db").query(
                     "SELECT content FROM knowledge WHERE content LIKE ? LIMIT 3",
                     (f"%{q[:30]}%",)
                 )
-                rows = cursor.fetchall()
                 if rows:
                     results = [row[0] for row in rows]
                     return {"answer": "\n".join(results), "confidence": 0.7}
@@ -605,14 +602,12 @@ class MetacognitiveExecutor:
             # 1. 存储到经验池（SQLite，快速）
             try:
                 from infrastructure.database_manager import DatabaseManager
-                conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
-                cursor = conn.cursor()
                 answer = self._extract_best_answer(execution_results)
-                cursor.execute(
+                DatabaseManager.get("data/experience_pool.db").execute(
                     "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
-                    (user_query, answer, datetime.now().isoformat(), "metacognitive", int(validation.get("quality_score", 50)))
+                    (user_query, answer, datetime.now().isoformat(), "metacognitive", int(validation.get("quality_score", 50))),
+                    commit=True
                 )
-                conn.commit()
                 logger.debug("✓ 经验已存储")
             except Exception as e:
                 logger.debug(f"经验存储失败: {e}")

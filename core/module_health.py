@@ -28,9 +28,7 @@ class ModuleHealthMonitor:
     def _init_db(self):
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute('''CREATE TABLE IF NOT EXISTS module_health (
+            db.executescript('''CREATE TABLE IF NOT EXISTS module_health (
                 module_name TEXT PRIMARY KEY,
                 status TEXT DEFAULT 'healthy',
                 failure_count INTEGER DEFAULT 0,
@@ -40,15 +38,14 @@ class ModuleHealthMonitor:
                 isolated_at TEXT,
                 restarted_at TEXT,
                 anomaly_patterns TEXT
-            )''')
-            c.execute('''CREATE TABLE IF NOT EXISTS health_events (
+            );
+            CREATE TABLE IF NOT EXISTS health_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 module_name TEXT,
                 event_type TEXT,
                 detail TEXT,
                 timestamp TEXT
             )''')
-            conn.commit()
 
         except Exception as e:
             logger.debug(f"模块健康数据库初始化失败: {e}")
@@ -57,14 +54,11 @@ class ModuleHealthMonitor:
         """记录模块成功"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("INSERT OR IGNORE INTO module_health (module_name) VALUES (?)", (module_name,))
-            c.execute("UPDATE module_health SET success_count=success_count+1, last_success=?, status=CASE WHEN status='degraded' THEN 'degraded' ELSE 'healthy' END WHERE module_name=?",
-                      (datetime.now().isoformat(), module_name))
-            c.execute("INSERT INTO health_events (module_name, event_type, detail, timestamp) VALUES (?, 'success', '', ?)",
-                      (module_name, datetime.now().isoformat()))
-            conn.commit()
+            db.execute("INSERT OR IGNORE INTO module_health (module_name) VALUES (?)", (module_name,), commit=True)
+            db.execute("UPDATE module_health SET success_count=success_count+1, last_success=?, status=CASE WHEN status='degraded' THEN 'degraded' ELSE 'healthy' END WHERE module_name=?",
+                      (datetime.now().isoformat(), module_name), commit=True)
+            db.execute("INSERT INTO health_events (module_name, event_type, detail, timestamp) VALUES (?, 'success', '', ?)",
+                      (module_name, datetime.now().isoformat()), commit=True)
 
         except:
             pass
@@ -73,31 +67,26 @@ class ModuleHealthMonitor:
         """记录模块失败，检查是否需要隔离"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("INSERT OR IGNORE INTO module_health (module_name) VALUES (?)", (module_name,))
-            c.execute("UPDATE module_health SET failure_count=failure_count+1, last_failure=? WHERE module_name=?",
-                      (datetime.now().isoformat(), module_name))
-            c.execute("INSERT INTO health_events (module_name, event_type, detail, timestamp) VALUES (?, 'failure', ?, ?)",
-                      (module_name, detail[:200], datetime.now().isoformat()))
+            db.execute("INSERT OR IGNORE INTO module_health (module_name) VALUES (?)", (module_name,), commit=True)
+            db.execute("UPDATE module_health SET failure_count=failure_count+1, last_failure=? WHERE module_name=?",
+                      (datetime.now().isoformat(), module_name), commit=True)
+            db.execute("INSERT INTO health_events (module_name, event_type, detail, timestamp) VALUES (?, 'failure', ?, ?)",
+                      (module_name, detail[:200], datetime.now().isoformat()), commit=True)
 
-            c.execute("SELECT failure_count, success_count FROM module_health WHERE module_name=?", (module_name,))
-            row = c.fetchone()
+            row = db.query_one("SELECT failure_count, success_count FROM module_health WHERE module_name=?", (module_name,))
             if row:
-                failures, successes = row
+                failures, successes = row[0], row[1]
                 total = failures + successes
                 error_rate = failures / max(total, 1)
                 if failures >= self.FAILURE_THRESHOLD or (total >= 10 and error_rate > 0.5):
-                    c.execute("UPDATE module_health SET status='isolated', isolated_at=? WHERE module_name=?",
-                              (datetime.now().isoformat(), module_name))
+                    db.execute("UPDATE module_health SET status='isolated', isolated_at=? WHERE module_name=?",
+                              (datetime.now().isoformat(), module_name), commit=True)
                     logger.warning(f"🔒 模块{module_name}已隔离: 失败{failures}次, 错误率{error_rate:.0%}")
-                    c.execute("INSERT INTO health_events (module_name, event_type, detail, timestamp) VALUES (?, 'isolated', ?, ?)",
-                              (module_name, f"失败{failures}次,错误率{error_rate:.0%}", datetime.now().isoformat()))
+                    db.execute("INSERT INTO health_events (module_name, event_type, detail, timestamp) VALUES (?, 'isolated', ?, ?)",
+                              (module_name, f"失败{failures}次,错误率{error_rate:.0%}", datetime.now().isoformat()), commit=True)
                 elif error_rate > 0.2:
-                    c.execute("UPDATE module_health SET status='degraded' WHERE module_name=?", (module_name,))
+                    db.execute("UPDATE module_health SET status='degraded' WHERE module_name=?", (module_name,), commit=True)
                     logger.warning(f"⚠️ 模块{module_name}降级: 错误率{error_rate:.0%}")
-
-            conn.commit()
 
         except:
             pass
@@ -106,14 +95,11 @@ class ModuleHealthMonitor:
         """检查模块是否可用（未隔离）"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT status, isolated_at FROM module_health WHERE module_name=?", (module_name,))
-            row = c.fetchone()
+            row = db.query_one("SELECT status, isolated_at FROM module_health WHERE module_name=?", (module_name,))
 
             if not row:
                 return True
-            status, isolated_at = row
+            status, isolated_at = row[0], row[1]
             if status == "isolated" and isolated_at:
                 try:
                     isolated_time = datetime.fromisoformat(isolated_at)
@@ -130,10 +116,8 @@ class ModuleHealthMonitor:
         report = {"healthy": [], "degraded": [], "isolated": [], "unknown": []}
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT module_name, status, failure_count, success_count, last_failure FROM module_health")
-            for row in c.fetchall():
+            rows = db.query("SELECT module_name, status, failure_count, success_count, last_failure FROM module_health")
+            for row in rows:
                 entry = {"name": row[0], "status": row[1], "failures": row[2], "successes": row[3], "last_failure": row[4]}
                 if row[1] in report:
                     report[row[1]].append(entry)
@@ -148,12 +132,9 @@ class ModuleHealthMonitor:
         """异常吞噬：清理模块的异常状态"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("UPDATE module_health SET failure_count=0, status='healthy' WHERE module_name=?", (module_name,))
-            c.execute("INSERT INTO health_events (module_name, event_type, detail, timestamp) VALUES (?, 'cleared', '异常吞噬：状态重置', ?)",
-                      (module_name, datetime.now().isoformat()))
-            conn.commit()
+            db.execute("UPDATE module_health SET failure_count=0, status='healthy' WHERE module_name=?", (module_name,), commit=True)
+            db.execute("INSERT INTO health_events (module_name, event_type, detail, timestamp) VALUES (?, 'cleared', '异常吞噬：状态重置', ?)",
+                      (module_name, datetime.now().isoformat()), commit=True)
 
             logger.info(f"🧹 模块{module_name}异常已清除")
         except:

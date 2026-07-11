@@ -205,9 +205,7 @@ class TruthAccumulator:
     def _init_db(self):
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute('''CREATE TABLE IF NOT EXISTS truths (
+            db.executescript('''CREATE TABLE IF NOT EXISTS truths (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT UNIQUE NOT NULL,
                 level TEXT NOT NULL,
@@ -221,8 +219,8 @@ class TruthAccumulator:
                 last_applied TEXT,
                 apply_count INTEGER DEFAULT 0,
                 is_active INTEGER DEFAULT 1
-            )''')
-            c.execute('''CREATE TABLE IF NOT EXISTS analogy_applications (
+            );
+            CREATE TABLE IF NOT EXISTS analogy_applications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 truth_name TEXT,
                 original_domain TEXT,
@@ -232,7 +230,6 @@ class TruthAccumulator:
                 insight TEXT,
                 timestamp TEXT
             )''')
-            conn.commit()
 
         except Exception as e:
             logger.debug(f"真谛库初始化失败: {e}")
@@ -241,12 +238,10 @@ class TruthAccumulator:
         """确保种子真谛已写入"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
             for seed in SEED_TRUTHS:
-                c.execute("SELECT id FROM truths WHERE name=?", (seed["name"],))
-                if not c.fetchone():
-                    c.execute(
+                row = db.query_one("SELECT id FROM truths WHERE name=?", (seed["name"],))
+                if not row:
+                    db.execute(
                         "INSERT INTO truths (name, level, domain, statement, source, evidence_count, applicable_to, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             seed["name"],
@@ -257,9 +252,9 @@ class TruthAccumulator:
                             seed.get("evidence_count", 1),
                             json.dumps(seed.get("applicable_to", []), ensure_ascii=False),
                             datetime.now().isoformat()
-                        )
+                        ),
+                        commit=True
                     )
-            conn.commit()
 
         except Exception as e:
             logger.debug(f"种子真谛写入失败: {e}")
@@ -349,22 +344,19 @@ class TruthAccumulator:
         """佐证已有真谛——增加证据计数"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT name, applicable_to, evidence_count FROM truths WHERE is_active=1")
-            rows = c.fetchall()
+            rows = db.query("SELECT name, applicable_to, evidence_count FROM truths WHERE is_active=1")
             for row in rows:
-                name, applicable_json, count = row
+                name = row['name']
+                applicable_json = row['applicable_to']
+                count = row['evidence_count']
                 try:
                     applicable = json.loads(applicable_json) if applicable_json else []
                 except Exception:
                     applicable = []
-                # 简单匹配：如果成功方法与真谛适用领域相关
                 for method in [a[0] for a in successful]:
                     if any(app in method for app in applicable):
-                        c.execute("UPDATE truths SET evidence_count=? WHERE name=?", (count + 1, name))
+                        db.execute("UPDATE truths SET evidence_count=? WHERE name=?", (count + 1, name), commit=True)
                         break
-            conn.commit()
 
         except Exception:
             pass
@@ -382,13 +374,11 @@ class TruthAccumulator:
             pass
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute(
+            db.execute(
                 "INSERT OR IGNORE INTO truths (name, level, domain, statement, source, evidence_count, applicable_to, created_at) VALUES (?, ?, ?, ?, ?, 1, '[]', ?)",
-                (name, level, domain, statement, source, datetime.now().isoformat())
+                (name, level, domain, statement, source, datetime.now().isoformat()),
+                commit=True
             )
-            conn.commit()
 
             logger.info(f"💎 真谛沉淀: {name} ({level}) — {statement[:50]}")
         except Exception:
@@ -411,14 +401,16 @@ class TruthAccumulator:
         results = []
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT name, level, domain, statement, applicable_to, evidence_count FROM truths WHERE is_active=1 ORDER BY evidence_count DESC")
-            rows = c.fetchall()
+            rows = db.query("SELECT name, level, domain, statement, applicable_to, evidence_count FROM truths WHERE is_active=1 ORDER BY evidence_count DESC")
 
 
             for row in rows:
-                name, level, truth_domain, statement, applicable_json, evidence = row
+                name = row['name']
+                level = row['level']
+                truth_domain = row['domain']
+                statement = row['statement']
+                applicable_json = row['applicable_to']
+                evidence = row['evidence_count']
                 try:
                     applicable = json.loads(applicable_json) if applicable_json else []
                 except Exception:
@@ -483,14 +475,11 @@ class TruthAccumulator:
         if not l4_core and not other:
             try:
                 db = DatabaseManager.get(self.db_path)
-                conn = db._get_conn()
-                c = conn.cursor()
-                c.execute("SELECT name, statement FROM truths WHERE is_active=1 AND level='L4' ORDER BY evidence_count DESC LIMIT 3")
-                rows = c.fetchall()
+                rows = db.query("SELECT name, statement FROM truths WHERE is_active=1 AND level='L4' ORDER BY evidence_count DESC LIMIT 3")
                 if rows:
                     parts.append("▼ 大道原则（必须遵循）：")
                     for row in rows:
-                        parts.append(f"  ★ [L4] {row[0]}：{row[1][:100]}")
+                        parts.append(f"  ★ [L4] {row['name']}：{row['statement'][:100]}")
             except Exception:
                 pass
 
@@ -505,12 +494,9 @@ class TruthAccumulator:
         """获取所有真谛"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT name, level, domain, statement, evidence_count, source FROM truths WHERE is_active=1 ORDER BY level, evidence_count DESC")
-            rows = c.fetchall()
+            rows = db.query("SELECT name, level, domain, statement, evidence_count, source FROM truths WHERE is_active=1 ORDER BY level, evidence_count DESC")
 
-            return [{"name": r[0], "level": r[1], "domain": r[2], "statement": r[3], "evidence": r[4], "source": r[5]} for r in rows]
+            return [{"name": r['name'], "level": r['level'], "domain": r['domain'], "statement": r['statement'], "evidence": r['evidence_count'], "source": r['source']} for r in rows]
         except Exception:
             return []
 
@@ -518,19 +504,16 @@ class TruthAccumulator:
         """获取真谛统计"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM truths WHERE is_active=1")
-            total = c.fetchone()[0]
-            c.execute("SELECT level, COUNT(*) FROM truths WHERE is_active=1 GROUP BY level")
-            by_level = dict(c.fetchall())
-            c.execute("SELECT name, evidence_count FROM truths WHERE is_active=1 ORDER BY evidence_count DESC LIMIT 5")
-            top = c.fetchall()
+            total_row = db.query_one("SELECT COUNT(*) FROM truths WHERE is_active=1")
+            total = total_row[0]
+            level_rows = db.query("SELECT level, COUNT(*) FROM truths WHERE is_active=1 GROUP BY level")
+            by_level = {r['level']: r[1] for r in level_rows}
+            top_rows = db.query("SELECT name, evidence_count FROM truths WHERE is_active=1 ORDER BY evidence_count DESC LIMIT 5")
 
             return {
                 "total_truths": total,
                 "by_level": by_level,
-                "top_truths": [{"name": r[0], "evidence": r[1]} for r in top]
+                "top_truths": [{"name": r['name'], "evidence": r['evidence_count']} for r in top_rows]
             }
         except Exception:
             return {"total_truths": 0, "by_level": {}, "top_truths": []}
@@ -557,15 +540,16 @@ class TruthAccumulator:
 
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT level, domain, statement, evidence_count, applicable_to FROM truths WHERE name=?", (truth_name,))
-            row = c.fetchone()
+            row = db.query_one("SELECT level, domain, statement, evidence_count, applicable_to FROM truths WHERE name=?", (truth_name,))
 
             if not row:
                 return result
 
-            level, domain, statement, evidence, applicable_json = row
+            level = row['level']
+            domain = row['domain']
+            statement = row['statement']
+            evidence = row['evidence_count']
+            applicable_json = row['applicable_to']
             try:
                 applicable = json.loads(applicable_json) if applicable_json else []
             except Exception:
@@ -633,14 +617,14 @@ class TruthAccumulator:
         candidates = []
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT name, level, statement, evidence_count FROM truths WHERE is_active=1 AND evidence_count >= 3 ORDER BY evidence_count DESC")
-            rows = c.fetchall()
+            rows = db.query("SELECT name, level, statement, evidence_count FROM truths WHERE is_active=1 AND evidence_count >= 3 ORDER BY evidence_count DESC")
 
 
             for row in rows:
-                name, level, statement, evidence = row
+                name = row['name']
+                level = row['level']
+                statement = row['statement']
+                evidence = row['evidence_count']
                 eval_result = self.evaluate_for_upgrade(name)
                 if eval_result["eligible"]:
                     candidates.append({
@@ -695,9 +679,7 @@ class TruthAccumulator:
         # 持久化提案
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute('''CREATE TABLE IF NOT EXISTS reorganization_proposals (
+            db.executescript('''CREATE TABLE IF NOT EXISTS reorganization_proposals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 proposal_id TEXT UNIQUE,
                 status TEXT DEFAULT 'pending',
@@ -709,16 +691,16 @@ class TruthAccumulator:
                 executed_at TEXT,
                 rollback_snapshot TEXT
             )''')
-            c.execute(
+            db.execute(
                 "INSERT INTO reorganization_proposals (proposal_id, status, candidates_json, risk_assessment, created_at) VALUES (?, 'pending', ?, ?, ?)",
                 (
                     proposal["proposal_id"],
                     json.dumps(candidates[:10], ensure_ascii=False)[:5000],
                     json.dumps(proposal["risk_assessment"], ensure_ascii=False),
                     datetime.now().isoformat()
-                )
+                ),
+                commit=True
             )
-            conn.commit()
 
         except Exception:
             pass
@@ -755,11 +737,8 @@ class TruthAccumulator:
         """
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("UPDATE reorganization_proposals SET status='approved', approved_by=?, approved_at=? WHERE proposal_id=?",
-                      (approver, datetime.now().isoformat(), proposal_id))
-            conn.commit()
+            db.execute("UPDATE reorganization_proposals SET status='approved', approved_by=?, approved_at=? WHERE proposal_id=?",
+                      (approver, datetime.now().isoformat(), proposal_id), commit=True)
 
             logger.info(f"✅ 重组提案{proposal_id}已获{approver}批准，进入沙盒验证阶段")
             return {"status": "approved", "next_step": "sandbox_verification"}
@@ -775,22 +754,18 @@ class TruthAccumulator:
         """
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT status, candidates_json FROM reorganization_proposals WHERE proposal_id=?", (proposal_id,))
-            row = c.fetchone()
+            row = db.query_one("SELECT status, candidates_json FROM reorganization_proposals WHERE proposal_id=?", (proposal_id,))
             if not row:
     
                 return {"status": "error", "message": "提案不存在"}
 
-            current_status = row[0]
-            candidates_json = row[1]
+            current_status = row['status']
+            candidates_json = row['candidates_json']
 
             if step == "sandbox" and current_status == "approved":
                 snapshot = self._create_snapshot()
-                c.execute("UPDATE reorganization_proposals SET status='sandbox_passed', rollback_snapshot=? WHERE proposal_id=?",
-                          (json.dumps(snapshot), proposal_id))
-                conn.commit()
+                db.execute("UPDATE reorganization_proposals SET status='sandbox_passed', rollback_snapshot=? WHERE proposal_id=?",
+                          (json.dumps(snapshot), proposal_id), commit=True)
     
                 logger.info(f"🧪 重组{proposal_id}沙盒验证通过，快照已保存")
                 return {"status": "sandbox_passed", "next_step": "inject_1pct", "snapshot_saved": True}
@@ -799,8 +774,7 @@ class TruthAccumulator:
                 entropy = self.get_cognitive_entropy()
                 if entropy["entropy_score"] > 0.7:
                     return self._rollback_reorganization(proposal_id, "1%注入前熵值过高")
-                c.execute("UPDATE reorganization_proposals SET status='inject_1pct_done' WHERE proposal_id=?", (proposal_id,))
-                conn.commit()
+                db.execute("UPDATE reorganization_proposals SET status='inject_1pct_done' WHERE proposal_id=?", (proposal_id,), commit=True)
     
                 logger.info(f"💉 重组{proposal_id} 1%注入完成")
                 return {"status": "inject_1pct_done", "next_step": "inject_20pct", "entropy": entropy["entropy_score"]}
@@ -809,8 +783,7 @@ class TruthAccumulator:
                 entropy = self.get_cognitive_entropy()
                 if entropy["entropy_score"] > 0.7:
                     return self._rollback_reorganization(proposal_id, "20%注入前熵值过高")
-                c.execute("UPDATE reorganization_proposals SET status='inject_20pct_done' WHERE proposal_id=?", (proposal_id,))
-                conn.commit()
+                db.execute("UPDATE reorganization_proposals SET status='inject_20pct_done' WHERE proposal_id=?", (proposal_id,), commit=True)
     
                 logger.info(f"💉 重组{proposal_id} 20%注入完成")
                 return {"status": "inject_20pct_done", "next_step": "inject_100pct", "entropy": entropy["entropy_score"]}
@@ -822,9 +795,8 @@ class TruthAccumulator:
                 candidates = json.loads(candidates_json) if candidates_json else []
                 for cand in candidates:
                     self._apply_reorganization_candidate(cand)
-                c.execute("UPDATE reorganization_proposals SET status='completed', executed_at=? WHERE proposal_id=?",
-                          (datetime.now().isoformat(), proposal_id))
-                conn.commit()
+                db.execute("UPDATE reorganization_proposals SET status='completed', executed_at=? WHERE proposal_id=?",
+                          (datetime.now().isoformat(), proposal_id), commit=True)
     
                 logger.info(f"✅ 重组{proposal_id} 100%注入完成，重组成功")
                 return {"status": "completed", "entropy": entropy["entropy_score"]}
@@ -842,13 +814,11 @@ class TruthAccumulator:
         snapshot = {"truths": [], "timestamp": datetime.now().isoformat()}
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT name, level, evidence_count, is_active FROM truths")
-            for row in c.fetchall():
+            rows = db.query("SELECT name, level, evidence_count, is_active FROM truths")
+            for row in rows:
                 snapshot["truths"].append({
-                    "name": row[0], "level": row[1],
-                    "evidence_count": row[2], "is_active": row[3]
+                    "name": row['name'], "level": row['level'],
+                    "evidence_count": row['evidence_count'], "is_active": row['is_active']
                 })
 
         except Exception:
@@ -860,17 +830,13 @@ class TruthAccumulator:
         logger.error(f"🚨 重组{proposal_id}回滚! 原因: {reason}")
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT rollback_snapshot FROM reorganization_proposals WHERE proposal_id=?", (proposal_id,))
-            row = c.fetchone()
-            if row and row[0]:
-                snapshot = json.loads(row[0])
+            row = db.query_one("SELECT rollback_snapshot FROM reorganization_proposals WHERE proposal_id=?", (proposal_id,))
+            if row and row['rollback_snapshot']:
+                snapshot = json.loads(row['rollback_snapshot'])
                 for truth in snapshot.get("truths", []):
-                    c.execute("UPDATE truths SET is_active=?, evidence_count=? WHERE name=?",
+                    db.execute("UPDATE truths SET is_active=?, evidence_count=? WHERE name=?",
                               (truth["is_active"], truth["evidence_count"], truth["name"]))
-            c.execute("UPDATE reorganization_proposals SET status='rolled_back' WHERE proposal_id=?", (proposal_id,))
-            conn.commit()
+            db.execute("UPDATE reorganization_proposals SET status='rolled_back' WHERE proposal_id=?", (proposal_id,), commit=True)
 
             return {"status": "rolled_back", "reason": reason, "铁律": "未经沙盒验证的真谛视同毒药"}
         except Exception as e:
@@ -880,13 +846,10 @@ class TruthAccumulator:
         """应用单个重组候选（提升真谛层级或合并）"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
             name = candidate.get("name", "")
             new_level = candidate.get("target_level", "")
             if name and new_level:
-                c.execute("UPDATE truths SET level=? WHERE name=?", (new_level, name))
-            conn.commit()
+                db.execute("UPDATE truths SET level=? WHERE name=?", (new_level, name), commit=True)
 
         except Exception:
             pass
@@ -915,24 +878,20 @@ class TruthAccumulator:
         try:
             # 矛盾率：最近交互中核心失败的占比（排除多策略中部分路径失败）
             db = DatabaseManager.get("data/spirit_lessons.db")
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM reflections WHERE timestamp > datetime('now', '-1 day')")
-            recent = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM reflections WHERE timestamp > datetime('now', '-1 day') AND lessons LIKE '%全部失败%' OR (lessons LIKE '%失败%' AND lessons NOT LIKE '%成功%')")
-            failed = c.fetchone()[0]
+            recent_row = db.query_one("SELECT COUNT(*) FROM reflections WHERE timestamp > datetime('now', '-1 day')")
+            recent = recent_row[0]
+            failed_row = db.query_one("SELECT COUNT(*) FROM reflections WHERE timestamp > datetime('now', '-1 day') AND lessons LIKE '%全部失败%' OR (lessons LIKE '%失败%' AND lessons NOT LIKE '%成功%')")
+            failed = failed_row[0]
 
             if recent > 0:
                 entropy["contradiction_rate"] = round(min(failed / recent, 1.0), 3)
 
             # 真谛冲突率：弱证据真谛占比（新沉淀的真谛evidence<2是正常的，降低权重）
             db2 = DatabaseManager.get(self.db_path)
-            conn2 = db2._get_conn()
-            c2 = conn2.cursor()
-            c2.execute("SELECT COUNT(*) FROM truths WHERE is_active=1")
-            total_truths = c2.fetchone()[0]
-            c2.execute("SELECT COUNT(*) FROM truths WHERE is_active=1 AND evidence_count < 2")
-            weak_truths = c2.fetchone()[0]
+            total_truths_row = db2.query_one("SELECT COUNT(*) FROM truths WHERE is_active=1")
+            total_truths = total_truths_row[0]
+            weak_truths_row = db2.query_one("SELECT COUNT(*) FROM truths WHERE is_active=1 AND evidence_count < 2")
+            weak_truths = weak_truths_row[0]
 
             if total_truths > 0:
                 entropy["truth_conflict_rate"] = round(weak_truths / total_truths, 3)
@@ -941,11 +900,11 @@ class TruthAccumulator:
             try:
                 from core.task_queue import gene_pool
                 db_v = DatabaseManager.get(gene_pool.db_path)
-                conn_v = db_v._get_conn()
                 one_hour_ago = (datetime.now() - __import__('datetime').timedelta(hours=1)).isoformat()
-                recent_violations = conn_v.execute(
+                recent_violations_row = db_v.query_one(
                     "SELECT COUNT(*) FROM safety_violations WHERE timestamp > ?", (one_hour_ago,)
-                ).fetchone()[0]
+                )
+                recent_violations = recent_violations_row[0]
 
                 entropy["gene_safety_violations"] = gene_pool.get_safety_violations().get("total", 0)
                 entropy["recent_safety_violations"] = recent_violations

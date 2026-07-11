@@ -125,8 +125,7 @@ class SleepConsolidationEngine:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
             
             db = DatabaseManager.get(str(self._db_path))
-            conn = db._get_conn()
-            conn.execute('''
+            db.executescript('''
                 CREATE TABLE IF NOT EXISTS consolidation_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp TEXT,
@@ -138,9 +137,7 @@ class SleepConsolidationEngine:
                     extracted_patterns INTEGER,
                     overall_impact REAL,
                     details TEXT
-                )
-            ''')
-            conn.execute('''
+                );
                 CREATE TABLE IF NOT EXISTS solidified_skills (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     skill_name TEXT UNIQUE,
@@ -149,9 +146,8 @@ class SleepConsolidationEngine:
                     first_seen TEXT,
                     last_updated TEXT,
                     importance REAL
-                )
+                );
             ''')
-            conn.commit()
             logger.debug("睡眠整合数据库初始化成功")
         except Exception as e:
             logger.warning(f"睡眠整合数据库初始化失败: {e}")
@@ -533,29 +529,25 @@ class SleepConsolidationEngine:
         """记录技能候选"""
         try:
             db = DatabaseManager.get(str(self._db_path))
-            conn = db._get_conn()
-            cursor = conn.execute(
+            row = db.query_one(
                 'SELECT occurrence_count FROM solidified_skills WHERE skill_name = ?',
                 (topic,)
             )
-            row = cursor.fetchone()
             
             if row:
                 new_count = row[0] + count
-                conn.execute('''
+                db.execute('''
                     UPDATE solidified_skills 
                     SET occurrence_count = ?, last_updated = ?
                     WHERE skill_name = ?
-                ''', (new_count, datetime.now().isoformat(), topic))
+                ''', (new_count, datetime.now().isoformat(), topic), commit=True)
             else:
-                conn.execute('''
+                db.execute('''
                     INSERT INTO solidified_skills 
                     (skill_name, topic, occurrence_count, first_seen, last_updated, importance)
                     VALUES (?, ?, ?, ?, ?, ?)
                 ''', (topic, topic, count, datetime.now().isoformat(), 
-                     datetime.now().isoformat(), 0.5))
-            
-            conn.commit()
+                     datetime.now().isoformat(), 0.5), commit=True)
             return 0
         except Exception as e:
             logger.debug(f"记录技能候选失败: {e}")
@@ -565,31 +557,27 @@ class SleepConsolidationEngine:
         """固化技能"""
         try:
             db = DatabaseManager.get(str(self._db_path))
-            conn = db._get_conn()
-            cursor = conn.execute(
+            row = db.query_one(
                 'SELECT occurrence_count, importance FROM solidified_skills WHERE skill_name = ?',
                 (topic,)
             )
-            row = cursor.fetchone()
             
             if row:
                 new_count = row[0] + count
                 new_importance = min(1.0, row[1] + 0.1)
-                conn.execute('''
+                db.execute('''
                     UPDATE solidified_skills 
                     SET occurrence_count = ?, importance = ?, last_updated = ?
                     WHERE skill_name = ?
-                ''', (new_count, new_importance, datetime.now().isoformat(), topic))
-                conn.commit()
+                ''', (new_count, new_importance, datetime.now().isoformat(), topic), commit=True)
                 return 1
             else:
-                conn.execute('''
+                db.execute('''
                     INSERT INTO solidified_skills 
                     (skill_name, topic, occurrence_count, first_seen, last_updated, importance)
                     VALUES (?, ?, ?, ?, ?, ?)
                 ''', (topic, topic, count, datetime.now().isoformat(), 
-                     datetime.now().isoformat(), importance))
-                conn.commit()
+                     datetime.now().isoformat(), importance), commit=True)
                 return 1
         except Exception as e:
             logger.debug(f"固化技能失败: {e}")
@@ -617,20 +605,18 @@ class SleepConsolidationEngine:
         reorganized = 0
         try:
             db = DatabaseManager.get(str(self._db_path))
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            rows = db.query('''
                 SELECT skill_name, occurrence_count, importance
                 FROM solidified_skills
                 WHERE importance < 0.5 AND occurrence_count >= 5
             ''')
-            for row in cursor:
-                conn.execute('''
+            for row in rows:
+                db.execute('''
                     UPDATE solidified_skills
                     SET importance = importance + 0.1, last_updated = ?
                     WHERE skill_name = ?
-                ''', (datetime.now().isoformat(), row[0]))
+                ''', (datetime.now().isoformat(), row[0]), commit=True)
                 reorganized += 1
-            conn.commit()
         except Exception as e:
             logger.debug(f"知识结构重组失败: {e}")
         return reorganized
@@ -639,8 +625,7 @@ class SleepConsolidationEngine:
         """保存整合结果"""
         try:
             db = DatabaseManager.get(str(self._db_path))
-            conn = db._get_conn()
-            conn.execute('''
+            db.execute('''
                 INSERT INTO consolidation_history
                 (timestamp, stage, consolidated_memories, solidified_skills,
                  reorganized_knowledge, forgotten_items, extracted_patterns,
@@ -656,8 +641,7 @@ class SleepConsolidationEngine:
                 result.extracted_patterns,
                 result.overall_impact,
                 json.dumps(result.details)
-            ))
-            conn.commit()
+            ), commit=True)
         except Exception as e:
             logger.debug(f"保存整合结果失败: {e}")
 
@@ -702,8 +686,7 @@ class SleepConsolidationEngine:
         """获取已固化的技能"""
         try:
             db = DatabaseManager.get(str(self._db_path))
-            conn = db._get_conn()
-            cursor = conn.execute('''
+            rows = db.query('''
                 SELECT skill_name, topic, occurrence_count, importance, last_updated
                 FROM solidified_skills
                 ORDER BY importance DESC, occurrence_count DESC
@@ -717,7 +700,7 @@ class SleepConsolidationEngine:
                     "importance": row[3],
                     "last_updated": row[4],
                 }
-                for row in cursor
+                for row in rows
             ]
         except Exception as e:
             logger.debug(f"获取固化技能失败: {e}")

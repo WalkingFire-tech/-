@@ -28,8 +28,8 @@ class ContribAttributor:
     def _init_db(self):
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS attributions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query TEXT,
@@ -127,27 +127,27 @@ class ContribAttributor:
     def _save_attribution(self, query: str, final_source: str,
                            contributions: Dict, top_source: str, entropy: float):
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get(self.db_path)
+            db.execute('''
                 INSERT INTO attributions (query, final_source, contributions, top_source, entropy, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (query[:200], final_source,
                   json.dumps(contributions, ensure_ascii=False),
-                  top_source, entropy, datetime.now().isoformat()))
+                  top_source, entropy, datetime.now().isoformat()), commit=True)
         except Exception as e:
             logger.debug(f"归因保存失败: {e}")
 
     def get_recent_attributions(self, limit: int = 20) -> List[Dict]:
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cur = conn.execute(
+            db = DatabaseManager.get(self.db_path)
+            rows = db.query(
                 "SELECT query, final_source, contributions, top_source, entropy, created_at FROM attributions ORDER BY id DESC LIMIT ?",
                 (limit,)
             )
             return [
                 {"query": r[0], "final_source": r[1], "contributions": json.loads(r[2]),
                  "top_source": r[3], "entropy": r[4], "created_at": r[5]}
-                for r in cur.fetchall()
+                for r in rows
             ]
         except Exception:
             return []

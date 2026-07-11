@@ -123,25 +123,18 @@ class UnifiedReader:
         if not db_path.exists():
             return {"type": "error", "content": "", "error": "数据库不存在"}
         
-        conn = DatabaseManager.get(path)._get_conn()
-        cursor = conn.cursor()
+        db = DatabaseManager.get(path)
         
         try:
             if query:
-                # 执行自定义查询
-                cursor.execute(query)
-                rows = cursor.fetchall()
+                rows = db.query(query)
                 content = str(rows)
             elif table:
-                # 查询指定表
-                cursor.execute(f"SELECT * FROM {table} LIMIT 100")
-                rows = cursor.fetchall()
+                rows = db.query(f"SELECT * FROM {table} LIMIT 100")
                 content = str(rows)
             else:
-                # 列出所有表
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                tables = cursor.fetchall()
-                content = f"数据库表: {', '.join(t[0] for t in tables)}"
+                rows = db.query("SELECT name FROM sqlite_master WHERE type='table'")
+                content = f"数据库表: {', '.join(t[0] for t in rows)}"
             
             return {
                 "type": "sqlite",

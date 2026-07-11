@@ -31,15 +31,13 @@ class KnowledgeForgetting:
         self._last_report: Dict = {}
 
     def _db(self, name: str):
-        return DatabaseManager.get(f"{self.root_dir}/data/{name}")._get_conn()
+        return DatabaseManager.get(f"{self.root_dir}/data/{name}")
 
     def evaluate_rules(self) -> dict:
         result = {"retain": [], "fade": [], "prune": [], "stats": {}}
         try:
-            conn = self._db("learning_rules.db")
-            c = conn.cursor()
-            c.execute("SELECT id, condition, action, confidence, status, apply_count, last_applied, created_at, success_count, trial_count FROM learning_rules")
-            rows = c.fetchall()
+            db = self._db("learning_rules.db")
+            rows = db.query("SELECT id, condition, action, confidence, status, apply_count, last_applied, created_at, success_count, trial_count FROM learning_rules")
 
 
             for row in rows:
@@ -82,12 +80,10 @@ class KnowledgeForgetting:
     def evaluate_experiences(self) -> dict:
         result = {"retain": [], "fade": [], "prune": [], "stats": {}}
         try:
-            conn = self._db("experience_pool.db")
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM experiences")
-            total = c.fetchone()[0]
-            c.execute("SELECT id, raw_input, success, quality_score, timestamp, intent_type FROM experiences ORDER BY timestamp DESC LIMIT 500")
-            rows = c.fetchall()
+            db = self._db("experience_pool.db")
+            total_row = db.query_one("SELECT COUNT(*) FROM experiences")
+            total = total_row[0] if total_row else 0
+            rows = db.query("SELECT id, raw_input, success, quality_score, timestamp, intent_type FROM experiences ORDER BY timestamp DESC LIMIT 500")
 
 
             for row in rows:
@@ -205,51 +201,43 @@ class KnowledgeForgetting:
     def _fade_rules(self, dry_run: bool) -> dict:
         result = {"faded": 0, "pruned": 0, "reactivated": 0}
         try:
-            conn = self._db("learning_rules.db")
-            c = conn.cursor()
+            db = self._db("learning_rules.db")
 
-            c.execute("SELECT id, confidence, apply_count, status, trial_count, trial_success FROM learning_rules WHERE status='pending'")
-            pending = c.fetchall()
+            pending = db.query("SELECT id, confidence, apply_count, status, trial_count, trial_success FROM learning_rules WHERE status='pending'")
             for row in pending:
                 rid, conf, apply_cnt, status, trial_cnt, trial_succ = row
                 trial_cnt = trial_cnt or 0
                 trial_succ = trial_succ or 0
                 if conf >= 0.5 and trial_cnt >= 3 and trial_succ / max(trial_cnt, 1) >= 0.6:
                     if not dry_run:
-                        c.execute("UPDATE learning_rules SET status='active', promoted_at=?, promotion_reason='遗忘机制自动激活：置信度达标+试用期通过' WHERE id=?",
-                                  (datetime.now().isoformat(), rid))
+                        db.execute("UPDATE learning_rules SET status='active', promoted_at=?, promotion_reason='遗忘机制自动激活：置信度达标+试用期通过' WHERE id=?",
+                                  (datetime.now().isoformat(), rid), commit=True)
                     result["reactivated"] += 1
                 elif conf < 0.2 and (apply_cnt or 0) == 0:
                     if not dry_run:
-                        c.execute("DELETE FROM learning_rules WHERE id=?", (rid,))
+                        db.execute("DELETE FROM learning_rules WHERE id=?", (rid,), commit=True)
                     result["pruned"] += 1
                 elif conf < 0.3:
                     if not dry_run:
-                        c.execute("UPDATE learning_rules SET status='dormant' WHERE id=?", (rid,))
+                        db.execute("UPDATE learning_rules SET status='dormant' WHERE id=?", (rid,), commit=True)
                     result["faded"] += 1
 
-            c.execute("SELECT id, apply_count, last_applied, confidence FROM learning_rules WHERE status='active'")
-            active = c.fetchall()
+            active = db.query("SELECT id, apply_count, last_applied, confidence FROM learning_rules WHERE status='active'")
             for row in active:
                 rid, apply_cnt, last_applied, conf = row
                 apply_cnt = apply_cnt or 0
                 if apply_cnt == 0 and last_applied is None:
                     days_old = 999
                     try:
-                        c2 = conn.cursor()
-                        c2.execute("SELECT created_at FROM learning_rules WHERE id=?", (rid,))
-                        cr = c2.fetchone()
+                        cr = db.query_one("SELECT created_at FROM learning_rules WHERE id=?", (rid,))
                         if cr and cr[0]:
                             days_old = (datetime.now() - datetime.fromisoformat(cr[0])).days
                     except:
                         pass
                     if days_old > self.DORMANT_DAYS:
                         if not dry_run:
-                            c.execute("UPDATE learning_rules SET status='dormant' WHERE id=?", (rid,))
+                            db.execute("UPDATE learning_rules SET status='dormant' WHERE id=?", (rid,), commit=True)
                         result["faded"] += 1
-
-            if not dry_run:
-                conn.commit()
 
         except Exception as e:
             logger.error(f"规则遗忘执行失败: {e}")
@@ -260,27 +248,23 @@ class KnowledgeForgetting:
     def _fade_experiences(self, dry_run: bool) -> dict:
         result = {"faded": 0, "pruned": 0}
         try:
-            conn = self._db("experience_pool.db")
-            c = conn.cursor()
+            db = self._db("experience_pool.db")
 
-            c.execute("SELECT COUNT(*) FROM experiences WHERE success=0 AND quality_score < 30")
-            low_quality_failures = c.fetchone()[0]
+            lq_row = db.query_one("SELECT COUNT(*) FROM experiences WHERE success=0 AND quality_score < 30")
+            low_quality_failures = lq_row[0] if lq_row else 0
             if low_quality_failures > 100:
                 prune_limit = low_quality_failures - 50
                 if not dry_run:
-                    c.execute("DELETE FROM experiences WHERE id IN (SELECT id FROM experiences WHERE success=0 AND quality_score < 30 LIMIT ?)", (prune_limit,))
+                    db.execute("DELETE FROM experiences WHERE id IN (SELECT id FROM experiences WHERE success=0 AND quality_score < 30 LIMIT ?)", (prune_limit,), commit=True)
                 result["pruned"] += min(prune_limit, low_quality_failures)
 
-            c.execute("SELECT COUNT(*) FROM experiences WHERE success=0 AND quality_score >= 30")
-            medium_failures = c.fetchone()[0]
+            mf_row = db.query_one("SELECT COUNT(*) FROM experiences WHERE success=0 AND quality_score >= 30")
+            medium_failures = mf_row[0] if mf_row else 0
             if medium_failures > 200:
                 fade_limit = medium_failures - 100
                 if not dry_run:
-                    c.execute("DELETE FROM experiences WHERE id IN (SELECT id FROM experiences WHERE success=0 AND quality_score >= 30 AND quality_score < 50 LIMIT ?)", (fade_limit,))
+                    db.execute("DELETE FROM experiences WHERE id IN (SELECT id FROM experiences WHERE success=0 AND quality_score >= 30 AND quality_score < 50 LIMIT ?)", (fade_limit,), commit=True)
                 result["faded"] += min(fade_limit, medium_failures)
-
-            if not dry_run:
-                conn.commit()
 
         except Exception as e:
             logger.error(f"经验遗忘执行失败: {e}")

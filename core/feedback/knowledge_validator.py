@@ -87,27 +87,18 @@ class KnowledgeValidator:
         return ValidationResult(passed, total_score, dimensions, issues, evidence, recommendation)
     
     def _assess_consistency(self, content: str) -> float:
-        """
-        评估与现有知识的一致性
-        
-        使用语义分析而非简单的长度比较：
-        1. 提取关键概念
-        2. 检查概念关系
-        3. 识别潜在冲突
-        """
         try:
             if not self.knowledge_db_path.exists():
                 return 0.95
             
-            conn = DatabaseManager.get(str(self.knowledge_db_path))._get_conn()
-            cursor = conn.cursor()
+            db = DatabaseManager.get(str(self.knowledge_db_path))
             
-            cursor.execute("""
+            table_row = db.query_one("""
                 SELECT name FROM sqlite_master 
                 WHERE type='table' AND name='knowledge_base'
             """)
             
-            if not cursor.fetchone():
+            if not table_row:
                 return 0.95
             
             import re
@@ -119,13 +110,11 @@ class KnowledgeValidator:
             if not content_words:
                 return 0.8
             
-            cursor.execute("""
+            existing_knowledge = db.query("""
                 SELECT question, answer FROM knowledge_base
                 ORDER BY created_at DESC
                 LIMIT 50
             """)
-            
-            existing_knowledge = cursor.fetchall()
             
             if not existing_knowledge:
                 return 0.95
@@ -326,15 +315,14 @@ class KnowledgeValidator:
             if not self.knowledge_db_path.exists():
                 return 0.9
             
-            conn = DatabaseManager.get(str(self.knowledge_db_path))._get_conn()
-            cursor = conn.cursor()
+            db = DatabaseManager.get(str(self.knowledge_db_path))
             
-            cursor.execute("""
+            table_row = db.query_one("""
                 SELECT name FROM sqlite_master 
                 WHERE type='table' AND name='knowledge_base'
             """)
             
-            if not cursor.fetchone():
+            if not table_row:
                 return 0.9
             
             import re
@@ -354,13 +342,11 @@ class KnowledgeValidator:
             if not content_key_phrases:
                 return 0.6
             
-            cursor.execute("""
+            existing_answers = [row[0] for row in db.query("""
                 SELECT answer FROM knowledge_base
                 ORDER BY created_at DESC
                 LIMIT 30
-            """)
-            
-            existing_answers = [row[0] for row in cursor.fetchall()]
+            """)]
             
             if not existing_answers:
                 return 0.9

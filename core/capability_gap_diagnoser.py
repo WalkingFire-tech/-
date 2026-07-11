@@ -105,8 +105,8 @@ class CapabilityGapDiagnoser:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS interactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
@@ -116,10 +116,8 @@ class CapabilityGapDiagnoser:
                 failure_type TEXT,
                 confidence REAL DEFAULT 0,
                 metadata TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
+
             CREATE TABLE IF NOT EXISTS gap_reports (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 period TEXT NOT NULL,
@@ -129,10 +127,8 @@ class CapabilityGapDiagnoser:
                 failure_rate REAL,
                 gaps TEXT,
                 recommendations TEXT
-            )
+            );
         ''')
-        
-        conn.commit()
         logger.info(f"🔍 能力缺口诊断器已初始化: {self.db_path}")
     
     def record_interaction(
@@ -157,8 +153,8 @@ class CapabilityGapDiagnoser:
         """
         import json
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
             INSERT INTO interactions
             (timestamp, question, response, success, failure_type, confidence, metadata)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -170,8 +166,7 @@ class CapabilityGapDiagnoser:
             failure_type,
             confidence,
             json.dumps(metadata or {}, ensure_ascii=False)
-        ))
-        conn.commit()
+        ), commit=True)
     
     def diagnose(self, period: str = "week") -> GapReport:
         """
@@ -195,15 +190,12 @@ class CapabilityGapDiagnoser:
             start_time = now - timedelta(weeks=1)
         
         # 查询交互记录
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        
-        cursor = conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        interactions = [dict(row) for row in db.query('''
             SELECT * FROM interactions
             WHERE timestamp >= ?
             ORDER BY timestamp DESC
-        ''', (start_time.isoformat(),))
-        
-        interactions = [dict(row) for row in cursor.fetchall()]
+        ''', (start_time.isoformat(),))]
         
         # 统计
         total = len(interactions)
@@ -330,8 +322,8 @@ class CapabilityGapDiagnoser:
         """保存报告"""
         import json
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
             INSERT INTO gap_reports
             (period, generated_at, total_interactions, failed_interactions,
              failure_rate, gaps, recommendations)
@@ -351,8 +343,7 @@ class CapabilityGapDiagnoser:
                 'priority': g.priority
             } for g in report.gaps], ensure_ascii=False),
             json.dumps(report.recommendations, ensure_ascii=False)
-        ))
-        conn.commit()
+        ), commit=True)
     
     def format_report(self, report: GapReport) -> str:
         """格式化报告"""

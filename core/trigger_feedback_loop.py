@@ -67,10 +67,8 @@ class TriggerFeedbackLoop:
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.cursor()
         
-        cursor.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS trigger_events (
                 id TEXT PRIMARY KEY,
                 user_input TEXT,
@@ -81,10 +79,8 @@ class TriggerFeedbackLoop:
                 correction_needed INTEGER,
                 actual_need TEXT,
                 created_at TEXT
-            )
-        ''')
-        
-        cursor.execute('''
+            );
+            
             CREATE TABLE IF NOT EXISTS pattern_weights (
                 pattern TEXT PRIMARY KEY,
                 weight REAL,
@@ -92,10 +88,8 @@ class TriggerFeedbackLoop:
                 successes INTEGER,
                 failures INTEGER,
                 last_updated TEXT
-            )
-        ''')
-        
-        cursor.execute('''
+            );
+            
             CREATE TABLE IF NOT EXISTS adjustment_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT,
@@ -106,17 +100,13 @@ class TriggerFeedbackLoop:
                 effectiveness REAL
             )
         ''')
-        
-        conn.commit()
     
     def record_decision(self, event: TriggerEvent):
         """记录触发决策"""
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.cursor()
         
-        cursor.execute('''
+        db.execute('''
             INSERT INTO trigger_events
             (id, user_input, trigger_decision, processing_depth, 
              route_reason, user_satisfied, correction_needed, actual_need, created_at)
@@ -131,9 +121,7 @@ class TriggerFeedbackLoop:
             1 if event.correction_needed else 0,
             event.actual_need,
             event.created_at
-        ))
-        
-        conn.commit()
+        ), commit=True)
         
         self.stats['total_decisions'] += 1
     
@@ -151,10 +139,8 @@ class TriggerFeedbackLoop:
         """
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.cursor()
         
-        cursor.execute('''
+        db.execute('''
             UPDATE trigger_events
             SET user_satisfied = ?, correction_needed = ?, actual_need = ?
             WHERE id = ?
@@ -163,9 +149,7 @@ class TriggerFeedbackLoop:
             1 if correction_needed else 0,
             actual_need,
             event_id
-        ))
-        
-        conn.commit()
+        ), commit=True)
         
         event = self._get_event(event_id)
         if not event:
@@ -187,12 +171,10 @@ class TriggerFeedbackLoop:
     def _get_event(self, event_id: str) -> Optional[TriggerEvent]:
         """获取事件"""
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.execute(
+        row = db.query_one(
             "SELECT * FROM trigger_events WHERE id = ?",
             (event_id,)
         )
-        row = cursor.fetchone()
         
         if not row:
             return None
@@ -239,14 +221,13 @@ class TriggerFeedbackLoop:
         patterns = defaultdict(lambda: {'count': 0, 'false_positives': 0, 'false_negatives': 0})
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
         
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT * FROM trigger_events
             ORDER BY created_at DESC LIMIT 100
         ''')
         
-        for row in cursor:
+        for row in rows:
             route_reason = row['route_reason']
             pattern = self._extract_pattern(route_reason)
             
@@ -286,10 +267,8 @@ class TriggerFeedbackLoop:
         """记录调整历史"""
         
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        cursor = conn.cursor()
         
-        cursor.execute('''
+        db.execute('''
             INSERT INTO adjustment_history
             (timestamp, adjustment_type, previous_value, new_value, reason)
             VALUES (?, ?, ?, ?, ?)
@@ -299,9 +278,7 @@ class TriggerFeedbackLoop:
             old_value,
             new_value,
             f"基于误判分析自动调整"
-        ))
-        
-        conn.commit()
+        ), commit=True)
     
     def get_learning_summary(self) -> Dict:
         """获取学习摘要"""

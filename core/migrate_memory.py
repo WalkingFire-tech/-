@@ -10,9 +10,8 @@ def migrate_database(db_path: str = "data/knowledge_store.db"):
     
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     
-    conn = DatabaseManager.get(db_path)._get_conn()
-    cursor = conn.execute("PRAGMA table_info(knowledge_items)")
-    columns = [row[1] for row in cursor.fetchall()]
+    db = DatabaseManager.get(db_path)
+    columns = [row[1] for row in db.query("PRAGMA table_info(knowledge_items)")]
     
     migrations = []
     
@@ -33,19 +32,19 @@ def migrate_database(db_path: str = "data/knowledge_store.db"):
     
     for migration in migrations:
         try:
-            conn.execute(migration)
+            db.execute(migration, commit=True)
             logger.info(f"执行迁移: {migration}")
         except Exception as e:
             logger.warning(f"迁移失败（可能已存在）: {e}")
     
     try:
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_salience ON knowledge_items(salience)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_layer ON knowledge_items(memory_layer)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_emotion ON knowledge_items(emotional_valence)')
+        db.executescript('''
+            CREATE INDEX IF NOT EXISTS idx_salience ON knowledge_items(salience);
+            CREATE INDEX IF NOT EXISTS idx_layer ON knowledge_items(memory_layer);
+            CREATE INDEX IF NOT EXISTS idx_emotion ON knowledge_items(emotional_valence)
+        ''')
     except:
         pass
-    
-    conn.commit()
     
     logger.info("数据库迁移完成")
 

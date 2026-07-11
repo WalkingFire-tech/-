@@ -148,8 +148,7 @@ class HistoryReflector:
         """获取最近的对话历史"""
         
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cursor = conn.execute('''
+            rows = DatabaseManager.get(self.db_path).query('''
                 SELECT question as user, answer as assistant, created_at
                 FROM knowledge_items
                 WHERE knowledge_type = 'chat'
@@ -158,7 +157,7 @@ class HistoryReflector:
             ''', (n,))
             
             history = []
-            for row in cursor.fetchall():
+            for row in rows:
                 history.append({
                     'user': row['user'],
                     'assistant': row['assistant'],

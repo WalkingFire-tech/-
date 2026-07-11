@@ -32,17 +32,14 @@ class DeltaKnowledgeUpdater:
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS knowledge_base (
                 topic TEXT PRIMARY KEY,
                 content TEXT,
                 version INTEGER DEFAULT 1,
                 last_updated TEXT,
                 created_at TEXT
-            )
-        ''')
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS delta_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 topic TEXT,
@@ -111,18 +108,17 @@ class DeltaKnowledgeUpdater:
     def get_delta_stats(self, topic: str = "", limit: int = 20) -> List[Dict]:
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
             if topic:
-                cur = conn.execute(
+                rows = db.query(
                     "SELECT topic, delta_size, total_size, compression_ratio, version, timestamp FROM delta_history WHERE topic=? ORDER BY id DESC LIMIT ?",
                     (topic, limit))
             else:
-                cur = conn.execute(
+                rows = db.query(
                     "SELECT topic, delta_size, total_size, compression_ratio, version, timestamp FROM delta_history ORDER BY id DESC LIMIT ?",
                     (limit,))
             return [{"topic": r[0], "delta_size": r[1], "total_size": r[2],
-                     "compression_ratio": r[3], "version": r[4], "timestamp": r[5]}
-                    for r in cur.fetchall()]
+                      "compression_ratio": r[3], "version": r[4], "timestamp": r[5]}
+                    for r in rows]
         except Exception:
             return []
 
@@ -140,9 +136,7 @@ class DeltaKnowledgeUpdater:
     def _load_topic(self, topic: str) -> Optional[Dict]:
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cur = conn.execute("SELECT content FROM knowledge_base WHERE topic=?", (topic,))
-            row = cur.fetchone()
+            row = db.query_one("SELECT content FROM knowledge_base WHERE topic=?", (topic,))
             if row:
                 return json.loads(row[0])
         except Exception:
@@ -152,18 +146,15 @@ class DeltaKnowledgeUpdater:
     def _save_topic(self, topic: str, knowledge: Dict, version: int = 1):
         now = datetime.now().isoformat()
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             INSERT OR REPLACE INTO knowledge_base (topic, content, version, last_updated, created_at)
             VALUES (?, ?, ?, ?, ?)
-        ''', (topic, json.dumps(knowledge, ensure_ascii=False), version, now, now))
+        ''', (topic, json.dumps(knowledge, ensure_ascii=False), version, now, now), commit=True)
 
     def _get_version(self, topic: str) -> int:
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            cur = conn.execute("SELECT version FROM knowledge_base WHERE topic=?", (topic,))
-            row = cur.fetchone()
+            row = db.query_one("SELECT version FROM knowledge_base WHERE topic=?", (topic,))
             return row[0] if row else 0
         except Exception:
             return 0
@@ -174,11 +165,10 @@ class DeltaKnowledgeUpdater:
         total_size = delta_size
         compression = delta_size / max(1, total_size)
         db = DatabaseManager.get(self.db_path)
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             INSERT INTO delta_history (topic, delta_size, total_size, compression_ratio, version, timestamp)
             VALUES (?, ?, ?, ?, ?, ?)
-        ''', (topic, delta_size, total_size, compression, version, now))
+        ''', (topic, delta_size, total_size, compression, version, now), commit=True)
 
 
 delta_knowledge_updater = DeltaKnowledgeUpdater()

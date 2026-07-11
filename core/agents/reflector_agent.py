@@ -103,8 +103,8 @@ class ReflectorAgent(BaseAgent):
         try:
             from infrastructure.database_manager import DatabaseManager
             from datetime import datetime
-            conn = DatabaseManager.get("data/spirit_lessons.db")._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get("data/spirit_lessons.db")
+            db.execute('''
                 CREATE TABLE IF NOT EXISTS lessons (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     lesson TEXT,
@@ -114,11 +114,11 @@ class ReflectorAgent(BaseAgent):
                 )
             ''')
             for lesson in lessons:
-                conn.execute(
+                db.execute(
                     "INSERT INTO lessons (lesson, context, quality_score, created_at) VALUES (?, ?, ?, ?)",
                     (lesson, query[:100], quality, datetime.now().isoformat()),
+                    commit=True
                 )
-            conn.commit()
         except Exception as e:
             logger.debug(f"ReflectorAgent: 教训保存失败: {e}")
 

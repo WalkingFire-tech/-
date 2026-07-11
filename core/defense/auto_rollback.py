@@ -27,23 +27,23 @@ class AutoRollback:
 
     def _init_db(self):
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            c = conn.cursor()
-            c.execute('''CREATE TABLE IF NOT EXISTS snapshots (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                target TEXT,
-                data TEXT,
-                created_at TEXT
-            )''')
-            c.execute('''CREATE TABLE IF NOT EXISTS rollback_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                target TEXT,
-                reason TEXT,
-                entropy_before REAL,
-                entropy_after REAL,
-                created_at TEXT
-            )''')
-            conn.commit()
+            db = DatabaseManager.get(self.db_path)
+            db.executescript('''
+                CREATE TABLE IF NOT EXISTS snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    target TEXT,
+                    data TEXT,
+                    created_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS rollback_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    target TEXT,
+                    reason TEXT,
+                    entropy_before REAL,
+                    entropy_after REAL,
+                    created_at TEXT
+                )
+            ''')
         except Exception as e:
             logger.debug(f"快照数据库初始化失败: {e}")
 
@@ -61,10 +61,9 @@ class AutoRollback:
         if len(self._snapshots[target]) > self.MAX_SNAPSHOTS:
             self._snapshots[target] = self._snapshots[target][-self.MAX_SNAPSHOTS:]
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            conn.execute("INSERT INTO snapshots (target, data, created_at) VALUES (?, ?, ?)",
-                         (target, json.dumps(data, default=str, ensure_ascii=False)[:10000], datetime.now().isoformat()))
-            conn.commit()
+            db = DatabaseManager.get(self.db_path)
+            db.execute("INSERT INTO snapshots (target, data, created_at) VALUES (?, ?, ?)",
+                         (target, json.dumps(data, default=str, ensure_ascii=False)[:10000], datetime.now().isoformat()), commit=True)
         except:
             pass
         return snapshot_id
@@ -85,10 +84,9 @@ class AutoRollback:
         if len(self._rollback_log) > 200:
             self._rollback_log = self._rollback_log[-200:]
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            conn.execute("INSERT INTO rollback_log (target, reason, entropy_before, entropy_after, created_at) VALUES (?, ?, ?, ?, ?)",
-                         (target, reason, entropy, 0.0, datetime.now().isoformat()))
-            conn.commit()
+            db = DatabaseManager.get(self.db_path)
+            db.execute("INSERT INTO rollback_log (target, reason, entropy_before, entropy_after, created_at) VALUES (?, ?, ?, ?, ?)",
+                         (target, reason, entropy, 0.0, datetime.now().isoformat()), commit=True)
         except:
             pass
         logger.info(f"⏪ 自动回滚: {target} (原因: {reason}, 熵值: {entropy:.2f})")

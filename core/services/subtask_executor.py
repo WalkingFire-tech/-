@@ -386,8 +386,8 @@ class SubTaskExecutor:
         """存储执行统计到数据库"""
         try:
             from infrastructure.database_manager import DatabaseManager
-            conn = DatabaseManager.get('data/task_decomposition.db')._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get('data/task_decomposition.db')
+            db.execute('''
                 CREATE TABLE IF NOT EXISTS execution_stats (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     total INTEGER,
@@ -397,12 +397,11 @@ class SubTaskExecutor:
                     timestamp TEXT
                 )
             ''')
-            conn.execute('''
+            db.execute('''
                 INSERT INTO execution_stats (total, success, failed, total_duration, timestamp)
                 VALUES (?, ?, ?, ?, ?)
             ''', (stats['total'], stats['success'], stats['failed'], 
-                  stats['total_duration'], stats['timestamp']))
-            conn.commit()
+                  stats['total_duration'], stats['timestamp']), commit=True)
 
         except Exception as e:
             logger.debug(f"存储执行统计失败: {e}")
