@@ -54,18 +54,16 @@ class CampfireLogger:
     
     def _init_db(self):
         db = DatabaseManager.get(self.log_file)
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS memory_entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT,
                 role TEXT,
                 content TEXT
-            )
+            );
+            CREATE INDEX IF NOT EXISTS idx_timestamp ON memory_entries(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_role ON memory_entries(role);
         ''')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON memory_entries(timestamp)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_role ON memory_entries(role)')
-        conn.commit()
     
     def log_user(self, message: str):
         """记录用户消息"""
@@ -74,14 +72,12 @@ class CampfireLogger:
         
         with self._lock:
             db = DatabaseManager.get(self.log_file)
-            conn = db._get_conn()
-            conn.execute('''
+            db.execute('''
                 INSERT INTO memory_entries (timestamp, role, content)
                 VALUES (?, '用户', ?)
-            ''', (timestamp, content))
-            conn.commit()
+            ''', (timestamp, content), commit=True)
             
-            self._cleanup_if_needed(conn)
+            self._cleanup_if_needed()
     
     def log_assistant(self, message: str):
         """记录助手消息"""
@@ -90,78 +86,66 @@ class CampfireLogger:
         
         with self._lock:
             db = DatabaseManager.get(self.log_file)
-            conn = db._get_conn()
-            conn.execute('''
+            db.execute('''
                 INSERT INTO memory_entries (timestamp, role, content)
                 VALUES (?, '拓荒者', ?)
-            ''', (timestamp, content))
-            conn.commit()
+            ''', (timestamp, content), commit=True)
             
-            self._cleanup_if_needed(conn)
+            self._cleanup_if_needed()
     
-    def _cleanup_if_needed(self, conn):
-        cursor = conn.execute('SELECT COUNT(*) FROM memory_entries')
-        count = cursor.fetchone()[0]
+    def _cleanup_if_needed(self):
+        row = DatabaseManager.get(self.log_file).query_one('SELECT COUNT(*) FROM memory_entries')
+        count = row[0] if row else 0
         
         if count > self.MAX_ENTRIES:
-            conn.execute('''
+            DatabaseManager.get(self.log_file).execute('''
                 DELETE FROM memory_entries 
                 WHERE id IN (
                     SELECT id FROM memory_entries 
                     ORDER BY timestamp ASC 
                     LIMIT ?
                 )
-            ''', (count - self.MAX_ENTRIES,))
+            ''', (count - self.MAX_ENTRIES,), commit=True)
     
     def _parse_all_entries(self) -> List[MemoryEntry]:
         """解析所有记忆条目"""
         entries = []
         
         db = DatabaseManager.get(self.log_file)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT timestamp, role, content
             FROM memory_entries
             ORDER BY timestamp ASC
         ''')
         
-        for row in cursor.fetchall():
-            entries.append(MemoryEntry(row[0], row[1], row[2]))
-        
-        return entries
+        return [MemoryEntry(row[0], row[1], row[2]) for row in rows]
     
     def get_recent_context(self, rounds: int = None) -> str:
-        """获取最近N轮对话上下文"""
         if rounds is None:
             rounds = self.max_rounds
         
         db = DatabaseManager.get(self.log_file)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = list(db.query('''
             SELECT role, content
             FROM memory_entries
             ORDER BY timestamp DESC
             LIMIT ?
-        ''', (rounds * 2,))
+        ''', (rounds * 2,)))
         
-        rows = cursor.fetchall()
         rows.reverse()
         
         context_lines = [f"{row[0]}: {row[1]}" for row in rows]
         return "\n".join(context_lines)
     
     def get_conversation_summary(self, rounds: int = 3) -> str:
-        """获取对话摘要(用于记忆查询)"""
         db = DatabaseManager.get(self.log_file)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = list(db.query('''
             SELECT role, content
             FROM memory_entries
             ORDER BY timestamp DESC
             LIMIT ?
-        ''', (rounds * 2,))
+        ''', (rounds * 2,)))
         
-        rows = cursor.fetchall()
         rows.reverse()
         
         if not rows:
@@ -177,10 +161,8 @@ class CampfireLogger:
         return "、".join(summary_parts[-3:])
     
     def search_memory(self, keyword: str, limit: int = 5) -> List[MemoryEntry]:
-        """搜索记忆"""
         db = DatabaseManager.get(self.log_file)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT timestamp, role, content
             FROM memory_entries
             WHERE content LIKE ?
@@ -188,22 +170,20 @@ class CampfireLogger:
             LIMIT ?
         ''', (f'%{keyword}%', limit))
         
-        return [MemoryEntry(row[0], row[1], row[2]) for row in cursor.fetchall()]
+        return [MemoryEntry(row[0], row[1], row[2]) for row in rows]
     
     def get_user_info(self) -> Dict[str, str]:
-        """提取用户信息(如名字等)"""
         user_info = {}
         
         db = DatabaseManager.get(self.log_file)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT content
             FROM memory_entries
             WHERE role = '用户'
             ORDER BY timestamp ASC
         ''')
         
-        for row in cursor.fetchall():
+        for row in rows:
             content = row[0]
             name_match = re.search(r'我[叫是](.+?)(?:[,.。!!\s]|$)', content)
             if name_match:
@@ -213,10 +193,8 @@ class CampfireLogger:
         return user_info
     
     def get_last_user_message(self) -> Optional[str]:
-        """获取用户最后一条消息"""
         db = DatabaseManager.get(self.log_file)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        row = db.query_one('''
             SELECT content
             FROM memory_entries
             WHERE role = '用户'
@@ -224,14 +202,11 @@ class CampfireLogger:
             LIMIT 1
         ''')
         
-        row = cursor.fetchone()
         return row[0] if row else None
     
     def get_last_assistant_message(self) -> Optional[str]:
-        """获取助手最后一条消息"""
         db = DatabaseManager.get(self.log_file)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        row = db.query_one('''
             SELECT content
             FROM memory_entries
             WHERE role = '拓荒者'
@@ -239,37 +214,32 @@ class CampfireLogger:
             LIMIT 1
         ''')
         
-        row = cursor.fetchone()
         return row[0] if row else None
     
     def clear_old_memories(self, keep_rounds: int = 10):
         """清理旧记忆,保留最近N轮"""
         with self._lock:
             db = DatabaseManager.get(self.log_file)
-            conn = db._get_conn()
-            cursor = conn.execute('SELECT COUNT(*) FROM memory_entries')
-            total = cursor.fetchone()[0]
+            row = db.query_one('SELECT COUNT(*) FROM memory_entries')
+            total = row[0] if row else 0
             
             if total <= keep_rounds * 2:
                 return
             
-            conn.execute('''
+            db.execute('''
                 DELETE FROM memory_entries 
                 WHERE id IN (
                     SELECT id FROM memory_entries 
                     ORDER BY timestamp ASC 
                     LIMIT ?
                 )
-            ''', (total - keep_rounds * 2,))
-            conn.commit()
+            ''', (total - keep_rounds * 2,), commit=True)
             
             logger.info(f"已清理旧记忆,保留最近{keep_rounds}轮对话")
     
     def get_stats(self) -> Dict:
-        """获取记忆统计信息"""
         db = DatabaseManager.get(self.log_file)
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        row = db.query_one('''
             SELECT 
                 COUNT(*) as total,
                 SUM(CASE WHEN role = '用户' THEN 1 ELSE 0 END) as user_count,
@@ -277,7 +247,6 @@ class CampfireLogger:
             FROM memory_entries
         ''')
         
-        row = cursor.fetchone()
         return {
             "total": row[0] if row[0] else 0,
             "user_messages": row[1] if row[1] else 0,

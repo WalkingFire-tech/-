@@ -33,8 +33,7 @@ class KnowledgeIndex:
     
     def _init_db(self):
         db = DatabaseManager.get(str(self.index_path))
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS knowledge_sources (
                 name TEXT PRIMARY KEY,
                 type TEXT,
@@ -43,11 +42,7 @@ class KnowledgeIndex:
                 count INTEGER DEFAULT 0,
                 registered_at TEXT,
                 updated_at TEXT
-            )
-        ''')
-        conn.commit()
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS topic_index (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 topic TEXT,
@@ -55,24 +50,20 @@ class KnowledgeIndex:
                 location TEXT,
                 data TEXT,
                 indexed_at TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE TABLE IF NOT EXISTS recent_access (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source TEXT,
                 action TEXT,
                 timestamp TEXT
-            )
+            );
+            CREATE INDEX IF NOT EXISTS idx_topic ON topic_index(topic);
+            CREATE INDEX IF NOT EXISTS idx_timestamp ON recent_access(timestamp);
         ''')
         
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_topic ON topic_index(topic)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON recent_access(timestamp)')
-        
-        self._ensure_default_sources(conn)
+        self._ensure_default_sources()
     
-    def _ensure_default_sources(self, conn):
+    def _ensure_default_sources(self):
         default_sources = [
             ("experiences", "database", "experience_pool.db", "长期经验存储"),
             ("rules", "database", "learning_rules.db", "学习规则库"),
@@ -80,49 +71,45 @@ class KnowledgeIndex:
             ("vector_index", "faiss", "data/vector_index.faiss", "向量检索索引"),
         ]
         
+        db = DatabaseManager.get(str(self.index_path))
         for name, source_type, path, desc in default_sources:
-            cursor = conn.execute('SELECT 1 FROM knowledge_sources WHERE name = ?', (name,))
-            if not cursor.fetchone():
-                conn.execute('''
+            row = db.query_one('SELECT 1 FROM knowledge_sources WHERE name = ?', (name,))
+            if not row:
+                db.execute('''
                     INSERT INTO knowledge_sources (name, type, path, description, count, registered_at)
                     VALUES (?, ?, ?, ?, 0, ?)
-                ''', (name, source_type, path, desc, datetime.now().isoformat()))
+                ''', (name, source_type, path, desc, datetime.now().isoformat()), commit=True)
     
     def register_source(self, name: str, source_type: str, path: str, description: str = ""):
         with self._lock:
             now = datetime.now().isoformat()
             db = DatabaseManager.get(str(self.index_path))
-            conn = db._get_conn()
-            conn.execute('''
+            db.execute('''
                 INSERT OR REPLACE INTO knowledge_sources 
                 (name, type, path, description, count, registered_at, updated_at)
                 VALUES (?, ?, ?, ?, 
                     COALESCE((SELECT count FROM knowledge_sources WHERE name = ?), 0),
                     COALESCE((SELECT registered_at FROM knowledge_sources WHERE name = ?), ?),
                     ?)
-            ''', (name, source_type, path, description, name, name, now, now))
-            conn.commit()
+            ''', (name, source_type, path, description, name, name, now, now), commit=True)
             
             logger.info(f"注册知识源: {name} ({source_type})")
     
     def update_count(self, source_name: str, count: int):
         with self._lock:
             db = DatabaseManager.get(str(self.index_path))
-            conn = db._get_conn()
-            conn.execute('''
+            db.execute('''
                 UPDATE knowledge_sources 
                 SET count = ?, updated_at = ?
                 WHERE name = ?
-            ''', (count, datetime.now().isoformat(), source_name))
-            conn.commit()
+            ''', (count, datetime.now().isoformat(), source_name), commit=True)
     
     def add_topic_entry(self, topic: str, entry: Dict):
         with self._lock:
             now = datetime.now().isoformat()
             
             db = DatabaseManager.get(str(self.index_path))
-            conn = db._get_conn()
-            conn.execute('''
+            db.execute('''
                 INSERT INTO topic_index (topic, source, location, data, indexed_at)
                 VALUES (?, ?, ?, ?, ?)
             ''', (
@@ -131,14 +118,13 @@ class KnowledgeIndex:
                 entry.get("location", ""),
                 json.dumps(entry, ensure_ascii=False),
                 now
-            ))
-            conn.commit()
+            ), commit=True)
             
-            cursor = conn.execute('SELECT COUNT(*) FROM topic_index WHERE topic = ?', (topic,))
-            count = cursor.fetchone()[0]
+            row = db.query_one('SELECT COUNT(*) FROM topic_index WHERE topic = ?', (topic,))
+            count = row[0] if row else 0
             
             if count > self.MAX_TOPIC_ENTRIES:
-                conn.execute('''
+                db.execute('''
                     DELETE FROM topic_index 
                     WHERE topic = ? AND id IN (
                         SELECT id FROM topic_index 
@@ -146,20 +132,19 @@ class KnowledgeIndex:
                         ORDER BY indexed_at ASC 
                         LIMIT ?
                     )
-                ''', (topic, topic, count - self.MAX_TOPIC_ENTRIES))
+                ''', (topic, topic, count - self.MAX_TOPIC_ENTRIES), commit=True)
     
     def find_knowledge(self, query: str, limit: int = 10) -> List[Dict]:
         results = []
         query_lower = query.lower()
         
         db = DatabaseManager.get(str(self.index_path))
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT topic, source, location, data
             FROM topic_index
         ''')
         
-        for row in cursor.fetchall():
+        for row in rows:
             topic, source, location, data_json = row
             try:
                 entry = json.loads(data_json)
@@ -173,12 +158,12 @@ class KnowledgeIndex:
             except:
                 pass
         
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT name, path, description
             FROM knowledge_sources
         ''')
         
-        for row in cursor.fetchall():
+        for row in rows:
             name, path, description = row
             if query_lower in (description or "").lower():
                 results.append({
@@ -195,25 +180,23 @@ class KnowledgeIndex:
             now = datetime.now().isoformat()
             
             db = DatabaseManager.get(str(self.index_path))
-            conn = db._get_conn()
-            conn.execute('''
+            db.execute('''
                 INSERT INTO recent_access (source, action, timestamp)
                 VALUES (?, ?, ?)
-            ''', (source, action, now))
-            conn.commit()
+            ''', (source, action, now), commit=True)
             
-            cursor = conn.execute('SELECT COUNT(*) FROM recent_access')
-            count = cursor.fetchone()[0]
+            row = db.query_one('SELECT COUNT(*) FROM recent_access')
+            count = row[0] if row else 0
             
             if count > self.MAX_ACCESS_RECORDS:
-                conn.execute('''
+                db.execute('''
                     DELETE FROM recent_access 
                     WHERE id IN (
                         SELECT id FROM recent_access 
                         ORDER BY timestamp ASC 
                         LIMIT ?
                     )
-                ''', (count - self.MAX_ACCESS_RECORDS,))
+                ''', (count - self.MAX_ACCESS_RECORDS,), commit=True)
     
     def rebuild_index(self):
         logger.info("开始重建知识索引...")
@@ -221,41 +204,37 @@ class KnowledgeIndex:
         with self._lock:
             try:
                 db = DatabaseManager.get("experience_pool.db")
-                conn = db._get_conn()
-                cursor = conn.execute("SELECT COUNT(*) FROM experiences")
-                exp_count = cursor.fetchone()[0]
+                row = db.query_one("SELECT COUNT(*) FROM experiences")
+                exp_count = row[0] if row else 0
                 self.update_count("experiences", exp_count)
             except Exception as e:
                 logger.warning(f"统计经验池失败: {e}")
             
             try:
                 db = DatabaseManager.get("data/learning_rules.db")
-                conn = db._get_conn()
-                cursor = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
-                rule_count = cursor.fetchone()[0]
+                row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
+                rule_count = row[0] if row else 0
                 self.update_count("rules", rule_count)
             except Exception as e:
                 logger.warning(f"统计规则库失败: {e}")
             
             try:
                 db = DatabaseManager.get("tool_cache.db")
-                conn = db._get_conn()
-                cursor = conn.execute("SELECT COUNT(*) FROM tool_cache")
-                cache_count = cursor.fetchone()[0]
+                row = db.query_one("SELECT COUNT(*) FROM tool_cache")
+                cache_count = row[0] if row else 0
                 self.update_count("tool_cache", cache_count)
             except Exception as e:
                 logger.warning(f"统计工具缓存失败: {e}")
             
             try:
                 db = DatabaseManager.get("experience_pool.db")
-                conn = db._get_conn()
-                cursor = conn.execute("""
+                rows = db.query("""
                     SELECT intent_type, COUNT(*) 
                     FROM experiences 
                     GROUP BY intent_type
                 """)
                 
-                for row in cursor.fetchall():
+                for row in rows:
                     intent_type, count = row
                     self.add_topic_entry(intent_type, {
                         "source": "experiences",
@@ -272,29 +251,28 @@ class KnowledgeIndex:
         lines = ["=" * 60, "知识索引摘要", "=" * 60]
         
         db = DatabaseManager.get(str(self.index_path))
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT name, type, count, description
             FROM knowledge_sources
         ''')
         
         lines.append("\n【知识源】")
-        for row in cursor.fetchall():
+        for row in rows:
             name, source_type, count, description = row
             lines.append(f"  {name}: {count or 0}条 ({source_type})")
         
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT topic, COUNT(*) 
             FROM topic_index 
             GROUP BY topic
         ''')
         
         lines.append("\n【主题分类】")
-        for row in cursor.fetchall():
+        for row in rows:
             topic, count = row
             lines.append(f"  {topic}: {count}个条目")
         
-        cursor = conn.execute('''
+        rows = db.query('''
             SELECT timestamp, source, action
             FROM recent_access
             ORDER BY timestamp DESC
@@ -302,7 +280,7 @@ class KnowledgeIndex:
         ''')
         
         lines.append(f"\n【最近访问】")
-        for row in cursor.fetchall():
+        for row in rows:
             timestamp, source, action = row
             lines.append(f"  {timestamp[:19]} - {source} ({action})")
         
@@ -311,14 +289,12 @@ class KnowledgeIndex:
     
     def get_source(self, name: str) -> Optional[Dict]:
         db = DatabaseManager.get(str(self.index_path))
-        conn = db._get_conn()
-        cursor = conn.execute('''
+        row = db.query_one('''
             SELECT name, type, path, description, count, registered_at, updated_at
             FROM knowledge_sources
             WHERE name = ?
         ''', (name,))
         
-        row = cursor.fetchone()
         if not row:
             return None
         

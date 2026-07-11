@@ -88,8 +88,7 @@ class ActiveLearner:
         self._knowledge_db.parent.mkdir(parents=True, exist_ok=True)
         
         db = DatabaseManager.get(str(self._activities_db))
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS learning_activities (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 trigger TEXT,
@@ -102,16 +101,14 @@ class ActiveLearner:
                 impact_score REAL,
                 user_approved INTEGER,
                 metadata TEXT
-            )
+            );
+            CREATE INDEX IF NOT EXISTS idx_trigger ON learning_activities(trigger);
+            CREATE INDEX IF NOT EXISTS idx_status ON learning_activities(status);
+            CREATE INDEX IF NOT EXISTS idx_created ON learning_activities(created_at);
         ''')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_trigger ON learning_activities(trigger)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_status ON learning_activities(status)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_created ON learning_activities(created_at)')
-        conn.commit()
         
         db = DatabaseManager.get(str(self._knowledge_db))
-        conn = db._get_conn()
-        conn.execute('''
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS knowledge_base (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 topic TEXT,
@@ -123,11 +120,10 @@ class ActiveLearner:
                 last_accessed TEXT,
                 usefulness_score REAL DEFAULT 0.5,
                 is_active INTEGER DEFAULT 1
-            )
+            );
+            CREATE INDEX IF NOT EXISTS idx_topic ON knowledge_base(topic);
+            CREATE INDEX IF NOT EXISTS idx_active ON knowledge_base(is_active);
         ''')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_topic ON knowledge_base(topic)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_active ON knowledge_base(is_active)')
-        conn.commit()
     
     def record_event(self, event_type: str, details: Dict = None):
         """记录事件（用于触发学习）"""
@@ -279,8 +275,7 @@ class ActiveLearner:
         import json
         
         db = DatabaseManager.get(str(self._activities_db))
-        conn = db._get_conn()
-        cur = conn.execute('''
+        cur = db.execute('''
             INSERT INTO learning_activities 
             (trigger, query, source, knowledge, status, created_at, completed_at, 
              impact_score, user_approved, metadata)
@@ -296,8 +291,7 @@ class ActiveLearner:
             activity.impact_score,
             activity.user_approved,
             json.dumps(activity.metadata, ensure_ascii=False)
-        ))
-        conn.commit()
+        ), commit=True)
         return cur.lastrowid
     
     def _update_activity(self, activity: LearningActivity):
@@ -305,8 +299,7 @@ class ActiveLearner:
         import json
         
         db = DatabaseManager.get(str(self._activities_db))
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             UPDATE learning_activities
             SET knowledge=?, status=?, completed_at=?, impact_score=?, 
                 user_approved=?, metadata=?
@@ -319,14 +312,12 @@ class ActiveLearner:
             activity.user_approved,
             json.dumps(activity.metadata, ensure_ascii=False),
             activity.id
-        ))
-        conn.commit()
+        ), commit=True)
     
     def _save_knowledge(self, topic: str, content: str, activity_id: int):
         """保存知识到知识库"""
         db = DatabaseManager.get(str(self._knowledge_db))
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             INSERT INTO knowledge_base
             (topic, content, source, learning_activity_id, created_at)
             VALUES (?, ?, ?, ?, ?)
@@ -336,72 +327,69 @@ class ActiveLearner:
             "web_search",
             activity_id,
             datetime.now().isoformat()
-        ))
-        conn.commit()
+        ), commit=True)
     
     def get_activities(self, limit: int = 20, status: LearningStatus = None) -> List[Dict]:
         """获取学习活动"""
         db = DatabaseManager.get(str(self._activities_db))
-        conn = db._get_conn()
         if status:
-            cur = conn.execute('''
+            rows = db.query('''
                 SELECT * FROM learning_activities
                 WHERE status=?
                 ORDER BY created_at DESC
                 LIMIT ?
             ''', (status.value, limit))
         else:
-            cur = conn.execute('''
+            rows = db.query('''
                 SELECT * FROM learning_activities
                 ORDER BY created_at DESC
                 LIMIT ?
             ''', (limit,))
         
-        columns = [desc[0] for desc in cur.description]
-        return [dict(zip(columns, row)) for row in cur.fetchall()]
+        if rows:
+            columns = rows[0].keys()
+            return [dict(zip(columns, row)) for row in rows]
+        return []
     
     def get_knowledge(self, topic: str = None, limit: int = 20) -> List[Dict]:
         """获取知识"""
         db = DatabaseManager.get(str(self._knowledge_db))
-        conn = db._get_conn()
         if topic:
             safe_topic = topic.replace('%', r'\%').replace('_', r'\_')
-            cur = conn.execute('''
+            rows = db.query('''
                 SELECT * FROM knowledge_base
                 WHERE topic LIKE ? ESCAPE '\\' AND is_active=1
                 ORDER BY usefulness_score DESC, created_at DESC
                 LIMIT ?
             ''', (f"%{safe_topic}%", limit))
         else:
-            cur = conn.execute('''
+            rows = db.query('''
                 SELECT * FROM knowledge_base
                 WHERE is_active=1
                 ORDER BY usefulness_score DESC, created_at DESC
                 LIMIT ?
             ''', (limit,))
         
-        columns = [desc[0] for desc in cur.description]
-        return [dict(zip(columns, row)) for row in cur.fetchall()]
+        if rows:
+            columns = rows[0].keys()
+            return [dict(zip(columns, row)) for row in rows]
+        return []
     
     def rollback_learning(self, activity_id: int) -> bool:
         """回滚学习"""
         db = DatabaseManager.get(str(self._activities_db))
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             UPDATE learning_activities
             SET status=?
             WHERE id=?
-        ''', (LearningStatus.ROLLED_BACK.value, activity_id))
-        conn.commit()
+        ''', (LearningStatus.ROLLED_BACK.value, activity_id), commit=True)
         
         db2 = DatabaseManager.get(str(self._knowledge_db))
-        conn2 = db2._get_conn()
-        conn2.execute('''
+        db2.execute('''
             UPDATE knowledge_base
             SET is_active=0
             WHERE learning_activity_id=?
-        ''', (activity_id,))
-        conn2.commit()
+        ''', (activity_id,), commit=True)
         
         logger.info(f"已回滚学习活动: {activity_id}")
         return True
@@ -409,13 +397,11 @@ class ActiveLearner:
     def delete_knowledge(self, knowledge_id: int) -> bool:
         """删除知识"""
         db = DatabaseManager.get(str(self._knowledge_db))
-        conn = db._get_conn()
-        conn.execute('''
+        db.execute('''
             UPDATE knowledge_base
             SET is_active=0
             WHERE id=?
-        ''', (knowledge_id,))
-        conn.commit()
+        ''', (knowledge_id,), commit=True)
         
         logger.info(f"已删除知识: {knowledge_id}")
         return True
@@ -436,21 +422,19 @@ class ActiveLearner:
     def get_statistics(self) -> Dict:
         """获取统计信息"""
         db = DatabaseManager.get(str(self._activities_db))
-        conn = db._get_conn()
-        cur = conn.execute('SELECT COUNT(*) FROM learning_activities')
-        total_activities = cur.fetchone()[0]
+        row = db.query_one('SELECT COUNT(*) FROM learning_activities')
+        total_activities = row[0] if row else 0
         
-        cur = conn.execute('''
+        rows = db.query('''
             SELECT status, COUNT(*) 
             FROM learning_activities 
             GROUP BY status
         ''')
-        by_status = {row[0]: row[1] for row in cur.fetchall()}
+        by_status = {row[0]: row[1] for row in rows}
         
         db2 = DatabaseManager.get(str(self._knowledge_db))
-        conn2 = db2._get_conn()
-        cur = conn2.execute('SELECT COUNT(*) FROM knowledge_base WHERE is_active=1')
-        total_knowledge = cur.fetchone()[0]
+        row = db2.query_one('SELECT COUNT(*) FROM knowledge_base WHERE is_active=1')
+        total_knowledge = row[0] if row else 0
         
         return {
             "total_activities": total_activities,
