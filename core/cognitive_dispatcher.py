@@ -26,6 +26,7 @@
 5. dispatch_history：记录调度决策历史，为自进化提供数据
 """
 import json
+import re
 import time
 import asyncio
 from typing import Dict, List, Any, Optional, Tuple
@@ -282,7 +283,7 @@ class CognitiveDispatcher:
     def _quick_intent_classification(self, query: str) -> Tuple[str, float]:
         """快速意图分类（规则匹配 + 向量相似度降级）"""
         query_lower = query.lower().strip()
-        import re
+
         query_clean = re.sub(r'[？?！!。.，,、；;：:""''\"\'\s]+$', '', query_lower)
         query_clean_all = re.sub(r'[？?！!。.，,、；;：:""''\"\'\s]', '', query_lower)
         
@@ -344,7 +345,7 @@ class CognitiveDispatcher:
         2. 信息需求：事实/方法/观点/能力
         3. 复杂度信号：多从句/条件/对比
         """
-        import re
+
         
         has_question_mark = '？' in query or '?' in query
         
@@ -497,57 +498,7 @@ class CognitiveDispatcher:
             self.cache_timestamp = now
         
         return capabilities
-        """扫描系统能力（带缓存和锁保护）"""
-        now = time.time()
-        
-        with self._cache_lock:
-            if self.capability_cache and (now - self.cache_timestamp) < self.cache_ttl:
-                return self.capability_cache
-        
-        tools = []
-        if self.enable_capability_scan.get("tools", True):
-            try:
-                from tools.registry import ToolRegistry
-                registry = ToolRegistry()
-                # 跳过工具扫描（可能导致卡住）
-                # TODO: 修复工具扫描后重新启用
-                logger.debug("跳过工具扫描（可能导致卡住）")
-            except Exception as e:
-                logger.debug(f"工具扫描失败: {e}")
-        
-        models = []
-        if self.enable_capability_scan.get("models", True):
-            try:
-                import requests
-                response = requests.get("http://localhost:11434/api/tags", timeout=3)
-                if response.status_code == 200:
-                    for model in response.json().get("models", []):
-                        models.append({
-                            "name": model["name"],
-                            "available": True
-                        })
-            except Exception as e:
-                logger.debug(f"模型扫描失败: {e}")
-        
-        knowledge_bases = []
-        if self.enable_capability_scan.get("knowledge_bases", True):
-            if Path("data/knowledge_store.db").exists():
-                knowledge_bases.append({"name": "主知识库", "available": True})
-            if Path("data/experience_pool.db").exists():
-                knowledge_bases.append({"name": "经验池", "available": True})
-        
-        capabilities = {
-            "tools": tools,
-            "models": models,
-            "knowledge_bases": knowledge_bases,
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        with self._cache_lock:
-            self.capability_cache = capabilities
-            self.cache_timestamp = now
-        
-        return capabilities
+
     
     def _get_reflection_lessons(self, query: str, intent_type: str) -> List[Dict]:
         """P1-7: 从spirit_lessons.db读取相关反思教训，回流到规划"""
@@ -675,7 +626,7 @@ class CognitiveDispatcher:
         return explanations.get(route, "未知路由")
     
     def _record_dispatch(self, result: Dict, query: str):
-        """记录调度决策历史（为自进化提供数据）"""
+        """记录调度决策历史（同步写入，为自进化提供数据）"""
         try:
             db = DatabaseManager.get("data/dispatch_history.db")
             db.execute(
