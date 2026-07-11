@@ -52,28 +52,56 @@ class DatabaseManager:
                 raise
 
     def executemany(self, sql: str, seq_params, commit: bool = True) -> None:
-        with self._lock:
-            conn = self._get_conn()
-            conn.executemany(sql, seq_params)
-            if commit:
-                conn.commit()
+        for attempt in range(3):
+            try:
+                with self._lock:
+                    conn = self._get_conn()
+                    conn.executemany(sql, seq_params)
+                    if commit:
+                        conn.commit()
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e).lower() and attempt < 2:
+                    time.sleep(0.1 * (attempt + 1))
+                    continue
+                raise
 
     def executescript(self, script: str) -> None:
-        with self._lock:
-            conn = self._get_conn()
-            conn.executescript(script)
+        for attempt in range(3):
+            try:
+                with self._lock:
+                    conn = self._get_conn()
+                    conn.executescript(script)
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e).lower() and attempt < 2:
+                    time.sleep(0.1 * (attempt + 1))
+                    continue
+                raise
 
     def query(self, sql: str, params=()) -> List[sqlite3.Row]:
-        with self._lock:
-            conn = self._get_conn()
-            cursor = conn.execute(sql, params)
-            return cursor.fetchall()
+        for attempt in range(3):
+            try:
+                conn = self._get_conn()
+                cursor = conn.execute(sql, params)
+                return cursor.fetchall()
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e).lower() and attempt < 2:
+                    time.sleep(0.05 * (attempt + 1))
+                    continue
+                raise
 
     def query_one(self, sql: str, params=()) -> Optional[sqlite3.Row]:
-        with self._lock:
-            conn = self._get_conn()
-            cursor = conn.execute(sql, params)
-            return cursor.fetchone()
+        for attempt in range(3):
+            try:
+                conn = self._get_conn()
+                cursor = conn.execute(sql, params)
+                return cursor.fetchone()
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e).lower() and attempt < 2:
+                    time.sleep(0.05 * (attempt + 1))
+                    continue
+                raise
 
     def transaction(self, func, *args, **kwargs):
         with self._lock:

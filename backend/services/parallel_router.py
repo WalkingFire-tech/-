@@ -129,7 +129,7 @@ async def execute_parallel_paths(
         task_name_local = local_names[local_tasks.index(d)] if d in local_tasks else "未知"
         try:
             result = d.result()
-            logger.info(f"[ROUTER_DIAG] 本地先行完成: {task_name_local}, type={type(result).__name__}, is_list={isinstance(result, list)}")
+            logger.debug(f"[ROUTER_DIAG] 本地先行完成: {task_name_local}, type={type(result).__name__}, is_list={isinstance(result, list)}")
             if isinstance(result, list):
                 for item in result:
                     if isinstance(item, dict) and item.get("response"):
@@ -138,34 +138,34 @@ async def execute_parallel_paths(
                         q = item.get("quality", 0)
                         if q > local_best_quality:
                             local_best_quality = q
-                        logger.info(f"[ROUTER_DIAG] 候选: source={item.get('source')}, quality={q}, resp_len={len(item.get('response',''))}")
+                        logger.debug(f"[ROUTER_DIAG] 候选: source={item.get('source')}, quality={q}, resp_len={len(item.get('response',''))}")
             elif isinstance(result, dict) and result.get("response"):
                 candidates.append(result)
                 local_count += 1
                 q = result.get("quality", 0)
                 if q > local_best_quality:
                     local_best_quality = q
-                logger.info(f"[ROUTER_DIAG] 候选: source={result.get('source')}, quality={q}, resp_len={len(result.get('response',''))}")
+                logger.debug(f"[ROUTER_DIAG] 候选: source={result.get('source')}, quality={q}, resp_len={len(result.get('response',''))}")
             elif result is None:
-                logger.info(f"[ROUTER_DIAG] {task_name_local}返回None")
+                logger.debug(f"[ROUTER_DIAG] {task_name_local}返回None")
             else:
-                logger.info(f"[ROUTER_DIAG] {task_name_local}返回非预期类型: {type(result)}")
+                logger.debug(f"[ROUTER_DIAG] {task_name_local}返回非预期类型: {type(result)}")
         except Exception as e:
             logger.warning(f"[ROUTER_DIAG] {task_name_local}异常: {e}")
 
     for p in local_pending:
         task_name_local = local_names[local_tasks.index(p)] if p in local_tasks else "未知"
-        logger.info(f"[ROUTER_DIAG] 本地先行未完成: {task_name_local}, done={p.done()}, cancelled={p.cancelled()}")
+        logger.debug(f"[ROUTER_DIAG] 本地先行未完成: {task_name_local}, done={p.done()}, cancelled={p.cancelled()}")
 
     logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] 本地先行完成: {local_count}个结果, 最高质量={local_best_quality}, _tool_intent={_tool_intent}, tool_task_done={tool_task.done() if tool_task else 'N/A'}")
 
     if local_best_quality >= LOCAL_QUALITY_THRESHOLD and local_count >= 1:
         if _tool_intent and tool_task and not tool_task.done():
-            logger.info(f"[ROUTER_DIAG] 本地先行命中(质量{local_best_quality})，工具意图=True，tool_task未完成，等待工具...")
+            logger.debug(f"[ROUTER_DIAG] 本地先行命中(质量{local_best_quality})，工具意图=True，tool_task未完成，等待工具...")
             yield _emit("step", {"phase": "本地先行", "status": "running", "detail": f"本地能力已有结果，但等待工具执行完成..."})
             try:
                 tool_result = await asyncio.wait_for(tool_task, timeout=25.0)
-                logger.info(f"[ROUTER_DIAG] 工具等待返回: type={type(tool_result).__name__}, is_list={isinstance(tool_result, list)}, is_dict={isinstance(tool_result, dict)}")
+                logger.debug(f"[ROUTER_DIAG] 工具等待返回: type={type(tool_result).__name__}, is_list={isinstance(tool_result, list)}, is_dict={isinstance(tool_result, dict)}")
                 if isinstance(tool_result, list):
                     for item in tool_result:
                         if isinstance(item, dict) and item.get("response"):
@@ -173,14 +173,14 @@ async def execute_parallel_paths(
                             q = item.get("quality", 0)
                             if q > local_best_quality:
                                 local_best_quality = q
-                            logger.info(f"[ROUTER_DIAG] 工具候选: source={item.get('source')}, quality={q}, resp_len={len(item.get('response',''))}")
-                    logger.info(f"[ROUTER_DIAG] 工具列表结果: {len(tool_result)}项, 有效候选已添加")
+                            logger.debug(f"[ROUTER_DIAG] 工具候选: source={item.get('source')}, quality={q}, resp_len={len(item.get('response',''))}")
+                    logger.debug(f"[ROUTER_DIAG] 工具列表结果: {len(tool_result)}项, 有效候选已添加")
                 elif isinstance(tool_result, dict) and tool_result.get("response"):
                     candidates.append(tool_result)
                     q = tool_result.get("quality", 0)
                     if q > local_best_quality:
                         local_best_quality = q
-                    logger.info(f"[ROUTER_DIAG] 工具单结果: source={tool_result.get('source')}, quality={q}")
+                    logger.debug(f"[ROUTER_DIAG] 工具单结果: source={tool_result.get('source')}, quality={q}")
                 elif tool_result is None:
                     logger.warning(f"[ROUTER_DIAG] 工具等待返回None! 工具执行可能失败")
                 else:
@@ -189,9 +189,9 @@ async def execute_parallel_paths(
                 logger.warning("[ROUTER_DIAG] 工具执行超时(25秒)，用已有本地结果继续")
             except Exception as e:
                 logger.warning(f"[ROUTER_DIAG] 工具等待异常: {e}", exc_info=True)
-            logger.info(f"[ROUTER_DIAG] 工具等待完成，candidates={len(candidates)}个, 最高质量={local_best_quality}，直接返回，API后台补充")
+            logger.debug(f"[ROUTER_DIAG] 工具等待完成，candidates={len(candidates)}个, 最高质量={local_best_quality}，直接返回，API后台补充")
             yield _emit("step", {"phase": "本地先行", "status": "done", "detail": f"✅ 工具已执行完成(质量{local_best_quality})，无需等待API"})
-            logger.info(f"[ROUTER_DIAG] yield candidates: {[{'source':c.get('source'),'quality':c.get('quality')} for c in candidates]}")
+            logger.debug(f"[ROUTER_DIAG] yield candidates: {[{'source':c.get('source'),'quality':c.get('quality')} for c in candidates]}")
             yield candidates
             return
         else:
@@ -200,28 +200,28 @@ async def execute_parallel_paths(
 
     if local_best_quality >= 60 and local_count >= 1 and _tool_intent:
         if tool_task and not tool_task.done():
-            logger.info(f"[ROUTER_DIAG] 工具意图+本地高质量({local_best_quality})，tool_task未完成，等待工具...")
+            logger.debug(f"[ROUTER_DIAG] 工具意图+本地高质量({local_best_quality})，tool_task未完成，等待工具...")
             yield _emit("step", {"phase": "本地先行", "status": "running", "detail": f"本地能力已有结果，但等待工具执行完成..."})
             try:
                 tool_result = await asyncio.wait_for(tool_task, timeout=25.0)
-                logger.info(f"[ROUTER_DIAG] 工具等待返回(分支2): type={type(tool_result).__name__}")
+                logger.debug(f"[ROUTER_DIAG] 工具等待返回(分支2): type={type(tool_result).__name__}")
                 if isinstance(tool_result, list):
                     for item in tool_result:
                         if isinstance(item, dict) and item.get("response"):
                             candidates.append(item)
-                            logger.info(f"[ROUTER_DIAG] 工具候选(分支2): source={item.get('source')}, quality={item.get('quality')}")
+                            logger.debug(f"[ROUTER_DIAG] 工具候选(分支2): source={item.get('source')}, quality={item.get('quality')}")
                 elif isinstance(tool_result, dict) and tool_result.get("response"):
                     candidates.append(tool_result)
-                    logger.info(f"[ROUTER_DIAG] 工具单结果(分支2): source={tool_result.get('source')}, quality={tool_result.get('quality')}")
+                    logger.debug(f"[ROUTER_DIAG] 工具单结果(分支2): source={tool_result.get('source')}, quality={tool_result.get('quality')}")
                 elif tool_result is None:
                     logger.warning(f"[ROUTER_DIAG] 工具等待返回None(分支2)! 工具执行可能失败")
             except asyncio.TimeoutError:
                 logger.warning("[ROUTER_DIAG] 工具执行超时(25秒)(分支2)，用已有本地结果继续")
             except Exception as e:
                 logger.warning(f"[ROUTER_DIAG] 工具等待异常(分支2): {e}", exc_info=True)
-        logger.info(f"[ROUTER_DIAG] 工具意图+结果就绪({local_best_quality})，candidates={len(candidates)}个，直接返回")
+        logger.debug(f"[ROUTER_DIAG] 工具意图+结果就绪({local_best_quality})，candidates={len(candidates)}个，直接返回")
         yield _emit("step", {"phase": "本地先行", "status": "done", "detail": f"✅ 工具已解决(质量{local_best_quality})，无需等待API"})
-        logger.info(f"[ROUTER_DIAG] yield candidates(分支2): {[{'source':c.get('source'),'quality':c.get('quality')} for c in candidates]}")
+        logger.debug(f"[ROUTER_DIAG] yield candidates(分支2): {[{'source':c.get('source'),'quality':c.get('quality')} for c in candidates]}")
         yield candidates
         return
 
