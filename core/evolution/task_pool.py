@@ -59,9 +59,9 @@ def build_task_pool(main_db_path: str,
             
             keywords = []
             if include_keywords:
-                keywords = self._extract_keywords_advanced(answer, question)
+                keywords = _extract_keywords(answer, question)
             
-            difficulty = self._calculate_difficulty_advanced(question, answer)
+            difficulty = _calculate_difficulty(question, answer)
             
             tasks.append({
                 'question': question,
@@ -119,7 +119,11 @@ def load_existing_skills(main_db_path: str) -> List[Dict]:
         ''')
         
         for row in cur.fetchall():
-            triggers = json.loads(row['triggers']) if row['triggers'] else []
+            triggers_raw = row['triggers'] if row['triggers'] else '[]'
+            try:
+                triggers = json.loads(triggers_raw) if isinstance(triggers_raw, str) else triggers_raw
+            except (json.JSONDecodeError, TypeError):
+                triggers = [row['name']]
             trigger = triggers[0] if triggers else row['name']
             
             skills.append({
@@ -172,7 +176,7 @@ def create_sample_tasks() -> List[Dict]:
         }
     ]
     
-    def _extract_keywords_advanced(self, answer: str, question: str = "") -> List[str]:
+    def _extract_keywords(answer: str, question: str = "") -> List[str]:
         """
         高级关键词提取
         
@@ -232,7 +236,7 @@ def create_sample_tasks() -> List[Dict]:
         
         return keywords
     
-    def _calculate_difficulty_advanced(self, question: str, answer: str) -> float:
+    def _calculate_difficulty(question: str, answer: str) -> float:
         """
         高级难度计算
         
