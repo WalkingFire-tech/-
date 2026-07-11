@@ -387,22 +387,19 @@ class SkillEmergence:
             return []
 
     def get_skill_stats(self) -> dict:
-        """获取技能统计"""
         try:
             db = DatabaseManager.get(self.db_path)
-            conn = db._get_conn()
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM skills WHERE is_active=1")
-            total = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM skills WHERE success_count >= 3 AND success_rate >= 0.7 AND is_active=1")
-            mature = c.fetchone()[0]
-            c.execute("SELECT skill_name, success_count, success_rate FROM skills WHERE is_active=1 ORDER BY success_count DESC LIMIT 5")
-            top = c.fetchall()
+            total_row = db.query_one("SELECT COUNT(*) FROM skills WHERE is_active=1")
+            total = total_row[0] if total_row else 0
+            mature_row = db.query_one("SELECT COUNT(*) FROM skills WHERE success_count >= 3 AND success_rate >= 0.7 AND is_active=1")
+            mature = mature_row[0] if mature_row else 0
+            top_rows = db.query("SELECT skill_name, success_count, success_rate FROM skills WHERE is_active=1 ORDER BY success_count DESC LIMIT 5")
+            top = [{"name": r[0], "successes": r[1], "rate": r[2]} for r in top_rows]
 
             return {
                 "total_skills": total,
                 "mature_skills": mature,
-                "top_skills": [{"name": r[0], "successes": r[1], "rate": r[2]} for r in top]
+                "top_skills": top
             }
         except Exception:
             return {"total_skills": 0, "mature_skills": 0, "top_skills": []}

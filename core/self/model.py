@@ -56,6 +56,7 @@ class SelfModel:
         self.introspection: Dict[str, Any] = {}
         self.reflection: Dict[str, Any] = {}
         self.capabilities: Dict[str, Any] = {}
+        self.capability_profile: Dict[str, Any] = {}
         self.memory_self: Dict[str, Any] = {}
         self.cognitive_layers: Dict[str, Any] = {}
 
@@ -90,7 +91,7 @@ class SelfModel:
             for key in (
                 "values", "health", "presence", "assessment", "relationship",
                 "evolution", "learning", "introspection", "reflection",
-                "capabilities", "memory_self", "cognitive_layers",
+                "capabilities", "capability_profile", "memory_self", "cognitive_layers",
             ):
                 val = getattr(self, key, None)
                 if val is not None:
@@ -148,6 +149,11 @@ class SelfModel:
             logger.debug(f"SelfModel sync capabilities failed: {e}")
 
         try:
+            self.update("capability_profile", self._extract_capability_profile())
+        except Exception as e:
+            logger.debug(f"SelfModel sync capability_profile failed: {e}")
+
+        try:
             self.update("learning", self._extract_learning(cp))
         except Exception as e:
             logger.debug(f"SelfModel sync learning failed: {e}")
@@ -193,8 +199,8 @@ class SelfModel:
             self.update("cognitive_layers", {"L6_introspection": introspection})
 
     def get_status_summary(self) -> Dict[str, Any]:
-        """获取简短状态摘要，用于 SSE 推送和 API 响应"""
         snap = self.snapshot()
+        profile = snap.get("capability_profile", {})
         return {
             "health_score": snap.get("health", {}).get("score", 0.0),
             "confidence": snap.get("health", {}).get("confidence", 0.0),
@@ -203,6 +209,12 @@ class SelfModel:
             "trust_level": snap.get("relationship", {}).get("trust", 0.0),
             "relationship_phase": snap.get("relationship", {}).get("phase", "initial"),
             "evolution_progress": snap.get("evolution", {}).get("progress", 0.0),
+            "capability_strength": profile.get("overall_strength", 0.0),
+            "tools_registered": profile.get("tools", {}).get("registered", 0),
+            "skills_mature": profile.get("skills", {}).get("mature", 0),
+            "experience_success_rate": profile.get("experience", {}).get("success_rate", 0.0),
+            "rules_active": profile.get("rules", {}).get("active", 0),
+            "capability_gaps": len(profile.get("gaps", [])),
             "learning_count": len(snap.get("recent_learning", [])),
             "thinking_count": len(snap.get("current_thinking", [])),
             "growth_edges_count": len(snap.get("growth_edges", [])),
@@ -309,7 +321,6 @@ class SelfModel:
         return {}
 
     def _extract_capabilities(self, cp) -> Dict[str, Any]:
-        """从 CapabilityIntrospection 提取能力状态"""
         try:
             from core.capability_introspection import CapabilityIntrospection
             ci = CapabilityIntrospection()
@@ -318,6 +329,101 @@ class SelfModel:
         except Exception:
             pass
         return {}
+
+    def _extract_capability_profile(self) -> Dict[str, Any]:
+        """聚合各学习模块的运行时能力画像"""
+        profile = {
+            "tools": {},
+            "skills": {},
+            "experience": {},
+            "rules": {},
+            "gaps": [],
+            "overall_strength": 0.0,
+        }
+
+        try:
+            from core.tool_registry import tool_registry
+            tools = tool_registry.list_tools()
+            tool_stats = tool_registry.tool_executor.get_stats() if hasattr(tool_registry, 'tool_executor') else {}
+            profile["tools"] = {
+                "registered": len(tools),
+                "categories": list(set(t.get("category", "other") for t in tools)) if tools else [],
+                "top_by_usage": sorted(
+                    [{"name": n, "calls": s.get("calls", 0), "success_rate": s.get("success_rate", 0)}
+                     for n, s in tool_stats.items()],
+                    key=lambda x: x["calls"], reverse=True
+                )[:5] if tool_stats else [],
+            }
+        except Exception:
+            pass
+
+        try:
+            from core.skill_emergence import skill_emergence
+            stats = skill_emergence.get_skill_stats()
+            profile["skills"] = {
+                "total": stats.get("total_skills", 0),
+                "mature": stats.get("mature_skills", 0),
+                "top": stats.get("top_skills", []),
+            }
+        except Exception:
+            pass
+
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get("data/experience_pool.db")
+            total_row = db.query_one("SELECT COUNT(*) FROM experiences")
+            total = total_row[0] if total_row else 0
+            success_row = db.query_one("SELECT COUNT(*) FROM experiences WHERE success=1")
+            success = success_row[0] if success_row else 0
+            intent_rows = db.query(
+                "SELECT intent_type, COUNT(*) as cnt, SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) as ok "
+                "FROM experiences GROUP BY intent_type ORDER BY cnt DESC LIMIT 10"
+            )
+            by_intent = {}
+            for row in intent_rows:
+                by_intent[row[0]] = {"total": row[1], "success": row[2], "rate": row[2] / max(1, row[1])}
+            profile["experience"] = {
+                "total": total,
+                "success": success,
+                "success_rate": success / max(1, total),
+                "by_intent": by_intent,
+            }
+        except Exception:
+            pass
+
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get("data/learning_rules.db")
+            active_row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
+            active = active_row[0] if active_row else 0
+            total_row = db.query_one("SELECT COUNT(*) FROM learning_rules")
+            total = total_row[0] if total_row else 0
+            profile["rules"] = {"active": active, "total": total}
+        except Exception:
+            pass
+
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get("data/capability_gaps.db")
+            gap_rows = db.query(
+                "SELECT gap_type, COUNT(*) as cnt FROM capability_gaps WHERE resolved=0 GROUP BY gap_type ORDER BY cnt DESC LIMIT 5"
+            )
+            profile["gaps"] = [{"type": r[0], "count": r[1]} for r in gap_rows]
+        except Exception:
+            pass
+
+        strength_parts = []
+        if profile["tools"].get("registered", 0) > 0:
+            strength_parts.append(min(profile["tools"]["registered"] / 10, 1.0) * 0.25)
+        if profile["skills"].get("mature", 0) > 0:
+            strength_parts.append(min(profile["skills"]["mature"] / 5, 1.0) * 0.25)
+        if profile["experience"].get("success_rate", 0) > 0:
+            strength_parts.append(profile["experience"]["success_rate"] * 0.25)
+        if profile["rules"].get("active", 0) > 0:
+            strength_parts.append(min(profile["rules"]["active"] / 20, 1.0) * 0.25)
+        profile["overall_strength"] = sum(strength_parts) if strength_parts else 0.0
+
+        return profile
 
     def _extract_learning(self, cp) -> Dict[str, Any]:
         """从学习层提取学习状态"""
@@ -365,10 +471,17 @@ class SelfModel:
             })
 
         capability_gaps = snap.get("capabilities", {}).get("gaps", [])
-        if capability_gaps and len(capability_gaps) > 0:
+        profile_gaps = snap.get("capability_profile", {}).get("gaps", [])
+        all_gaps = capability_gaps + profile_gaps
+        if all_gaps:
+            gap_types = set()
+            for g in all_gaps:
+                gt = g.get("gap_type", g.get("type", ""))
+                if gt:
+                    gap_types.add(gt)
             actions.append({
                 "action": "capability_gap_learning",
-                "reason": f"检测到{len(capability_gaps)}个能力缺失: {[g.get('gap_type','') for g in capability_gaps[:3]]}",
+                "reason": f"检测到{len(all_gaps)}个能力缺失: {list(gap_types)[:3]}",
                 "handler": self._action_capability_gap_learning,
             })
 
