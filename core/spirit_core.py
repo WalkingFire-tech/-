@@ -130,7 +130,7 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
     _META_LAWS = _ImmutableNamespace({
         "SANDBOX": "未经沙盒验证的真谛，视同毒药",
         "GRADUAL": "未经渐进式注入的重组，视同自杀",
-        "HUMAN_APPROVAL": "未经人类批准的进化，视同背叛",
+        "HUMAN_APPROVAL": "未经人类允许的进化，视同背叛",
         "SEVEN_DIM_CHECK": "行动前七维自检——方向一致、看板衔接、最小侵入、无过度设计、治标+治本、可验证、精神内核对齐",
     })
     
@@ -147,7 +147,7 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
     
     META_LAW_SANDBOX: Final[str] = "未经沙盒验证的真谛，视同毒药"
     META_LAW_GRADUAL: Final[str] = "未经渐进式注入的重组，视同自杀"
-    META_LAW_HUMAN_APPROVAL: Final[str] = "未经人类批准的进化，视同背叛"
+    META_LAW_HUMAN_APPROVAL: Final[str] = "未经人类允许的进化，视同背叛"
     META_LAW_SEVEN_DIM_CHECK: Final[str] = "行动前七维自检——方向一致、看板衔接、最小侵入、无过度设计、治标+治本、可验证、精神内核对齐"
     
     # ========== 能力定义（不可修改） ==========
