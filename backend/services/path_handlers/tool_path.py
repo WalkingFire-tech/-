@@ -88,6 +88,12 @@ def query_needs_tools(query: str) -> bool:
 
 def extract_tool_params(query: str, intent_type: str = "", methodology: dict = None) -> dict:
     """从用户消息中智能提取工具参数，methodology提供认知层理解指导"""
+    try:
+        from core.evolution.pattern_migrator import PatternMigrator
+        query = PatternMigrator.apply_migration(query)
+    except Exception:
+        pass
+
     params = {"query": query}
 
     if methodology:

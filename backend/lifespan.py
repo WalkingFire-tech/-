@@ -395,6 +395,11 @@ async def lifespan(app):
     await _start_evolution_loop(app)
     await _register_builtin_tools()
     await _start_existence_layer()
+    try:
+        from core.evolution.pattern_migrator import PatternMigrator
+        PatternMigrator.bootstrap()
+    except Exception as e:
+        logger.debug(f"模式迁移器引导跳过: {e}")
     await _init_cognitive_planner(app)
     await _start_scheduled_tasks()
     await _register_event_bus()
