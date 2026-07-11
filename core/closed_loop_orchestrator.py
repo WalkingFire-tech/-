@@ -183,6 +183,7 @@ class ClosedLoopOrchestrator:
             logger.debug(f"元认知启动异常: {e}")
             if emit_func:
                 emit_func("step", {"phase": "元认知启动", "status": "done", "detail": f"降级: {str(e)[:50]}"})
+            ctx.state = LoopState.METACOGNITION
 
 
     async def _phase_decomposition(self, ctx: LoopContext, emit_func):
@@ -412,17 +413,16 @@ class ClosedLoopOrchestrator:
         try:
             from infrastructure.database_manager import DatabaseManager
             from datetime import datetime
-            conn = DatabaseManager.get("data/experience_pool.db")._get_conn()
-            cursor = conn.cursor()
-            cursor.execute("""
+            db = DatabaseManager.get("data/experience_pool.db")
+            db.execute("""
                 INSERT INTO experiences (raw_input, raw_output, intent_type, success, quality_score, timestamp, duration)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (ctx.query[:500], ctx.final_response[:2000], ctx.intent_type,
                   1 if ctx.evaluation_passed else 0,
                   int(ctx.fitness_score.final_score) if ctx.fitness_score else 50,
                   datetime.now().isoformat(),
-                  int((time.time() - ctx.start_time) * 1000)))
-            conn.commit()
+                  int((time.time() - ctx.start_time) * 1000)),
+            commit=True)
         except Exception as e:
             logger.debug(f"闭环沉淀异常: {e}")
 
@@ -448,7 +448,11 @@ class ClosedLoopOrchestrator:
             return True
 
         if ctx.iteration >= ctx.max_iterations:
-            return False
+            if ctx.final_response:
+                ctx.state = LoopState.ACCUMULATION
+            else:
+                ctx.state = LoopState.PROTECTION
+            return True
 
         return False
 
