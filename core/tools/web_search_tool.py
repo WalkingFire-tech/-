@@ -68,6 +68,8 @@ class WebSearchTool(ToolInterface):
             source_tag = r.get("source", "web")
             if snippet:
                 snippets.append(f"[{source_tag}] {title}: {snippet}")
+            elif title:
+                snippets.append(f"[{source_tag}] {title}")
 
         combined = "\n".join(snippets)
         quality = min(80, 30 + len(results) * 8)

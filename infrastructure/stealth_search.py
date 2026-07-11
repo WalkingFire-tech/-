@@ -63,15 +63,20 @@ def search_baidu(query: str, max_results: int = 8, timeout: int = 15) -> List[Di
                 continue
 
             snippet = ""
-            for cls in ['content-right_8Zs40', 'c-abstract']:
+            for cls in ['content-right_8Zs40', 'c-abstract', 'c-span-last', 'content-right_8Zs40']:
                 snippet_el = item.find('span', class_=cls) or item.find('div', class_=cls)
                 if snippet_el:
                     snippet = snippet_el.get_text().strip()
                     break
             if not snippet:
-                snippet_el = item.find('p')
-                if snippet_el:
-                    snippet = snippet_el.get_text().strip()
+                for tag in ['p', 'div', 'span']:
+                    for el in item.find_all(tag, limit=3):
+                        text = el.get_text().strip()
+                        if len(text) > 20 and len(text) < 500:
+                            snippet = text
+                            break
+                    if snippet:
+                        break
 
             link_el = item.find('a')
             link = link_el.get('href', '') if link_el else ''

@@ -9,16 +9,16 @@ async def fetch_tool_results(query: str, intent_type: str = "", methodology: dic
     """路径I：工具调用框架（P0-4）— 使用独立线程池，不阻塞共享_executor"""
     try:
         from core.tool_registry import tool_executor, tool_registry
-        logger.info(f"[TOOL_DIAG] fetch_tool_results入口: query='{query[:50]}', tool_intent={tool_intent}, registry_id={id(tool_registry)}, tool_count={tool_registry.tool_count}")
+        logger.debug(f"[TOOL_DIAG] fetch_tool_results入口: query='{query[:50]}', tool_intent={tool_intent}, registry_id={id(tool_registry)}, tool_count={tool_registry.tool_count}")
         if tool_registry.tool_count == 0:
             try:
                 from core.tool_registry import register_builtin_tools
                 register_builtin_tools()
-                logger.info(f"[TOOL_DIAG] 自动注册后: tool_count={tool_registry.tool_count}, registry_id={id(tool_registry)}")
+                logger.debug(f"[TOOL_DIAG] 自动注册后: tool_count={tool_registry.tool_count}, registry_id={id(tool_registry)}")
             except Exception as reg_e:
                 logger.warning(f"[TOOL_DIAG] 自动注册失败: {reg_e}")
         tool_names = tool_registry.plan_tools(query, intent_type, methodology=methodology)
-        logger.info(f"[TOOL_DIAG] plan_tools返回: {tool_names}, tool_count={tool_registry.tool_count}")
+        logger.debug(f"[TOOL_DIAG] plan_tools返回: {tool_names}, tool_count={tool_registry.tool_count}")
         if not tool_names:
             logger.warning(f"[TOOL_DIAG] plan_tools返回空! query='{query[:50]}', tool_count={tool_registry.tool_count}")
             return None
@@ -32,16 +32,16 @@ async def fetch_tool_results(query: str, intent_type: str = "", methodology: dic
                 other_tools.remove(hint_tool)
                 other_tools.insert(0, hint_tool)
             tool_names = code_tools + other_tools[:3]
-        logger.info(f"[TOOL_DIAG] 执行工具: {tool_names}, params={params}")
+        logger.debug(f"[TOOL_DIAG] 执行工具: {tool_names}, params={params}")
         results = await tool_executor.execute_parallel(tool_names, params, total_timeout=20.0)
-        logger.info(f"[TOOL_DIAG] execute_parallel返回: {len(results)}个结果")
+        logger.debug(f"[TOOL_DIAG] execute_parallel返回: {len(results)}个结果")
         candidates = []
         for r in results:
-            logger.info(f"[TOOL_DIAG] 工具结果: source={r.source}, success={r.success}, quality={r.quality}, data_len={len(str(r.data)) if r.data else 0}, error={r.error[:80] if r.error else ''}")
+            logger.debug(f"[TOOL_DIAG] 工具结果: source={r.source}, success={r.success}, quality={r.quality}, data_len={len(str(r.data)) if r.data else 0}, error={r.error[:80] if r.error else ''}")
             c = r.to_candidate()
             if c:
                 candidates.append(c)
-                logger.info(f"[TOOL_DIAG] to_candidate成功: source={c['source']}, quality={c['quality']}, resp_len={len(c['response'])}")
+                logger.debug(f"[TOOL_DIAG] to_candidate成功: source={c['source']}, quality={c['quality']}, resp_len={len(c['response'])}")
             else:
                 logger.warning(f"[TOOL_DIAG] to_candidate返回None: source={r.source}, success={r.success}, has_data={r.data is not None}")
             try:
@@ -51,7 +51,7 @@ async def fetch_tool_results(query: str, intent_type: str = "", methodology: dic
                 )
             except Exception:
                 pass
-        logger.info(f"[TOOL_DIAG] 最终candidates: {len(candidates)}个, sources={[c['source'] for c in candidates]}")
+        logger.debug(f"[TOOL_DIAG] 最终candidates: {len(candidates)}个, sources={[c['source'] for c in candidates]}")
         return candidates if candidates else None
     except Exception as e:
         logger.error(f"[TOOL_DIAG] 工具调用异常: {e}", exc_info=True)
