@@ -33,9 +33,12 @@ from typing import Dict, List, Any, Optional, Tuple, TypedDict
 
 
 class FieldContextDict(TypedDict, total=False):
-    topic_continuity: str
+    topic_continuity: float
+    field_stability: float
     previous_topic: str
     residual_strength: float
+    active_residuals: int
+    dominant_topic: str
     scent: Dict[str, str]
     _sensing_mode: str
     _available: bool
@@ -183,9 +186,12 @@ class CognitiveDispatcher:
     def _get_field_context(self, query: str) -> Dict[str, Any]:
         """场域层激活：获取跨对话残余信号、话题连续性"""
         field = {
-            "topic_continuity": "new",
+            "topic_continuity": 0.0,
+            "field_stability": 0.5,
             "previous_topic": None,
             "residual_strength": 0.0,
+            "active_residuals": 0,
+            "dominant_topic": None,
             "scent": {},
             "_sensing_mode": "full",
             "is_new_topic": False,
@@ -202,8 +208,12 @@ class CognitiveDispatcher:
             previous = residual._retrieve_previous_state(input_data)
             if previous:
                 field["previous_topic"] = previous.get("similar_input", "")[:80]
-                field["residual_strength"] = previous.get("semantic_similarity", 0.5)
-                field["topic_continuity"] = "continued" if previous.get("semantic_similarity", 0) > 0.6 else "shifted"
+                sim = previous.get("semantic_similarity", 0.5)
+                field["residual_strength"] = sim
+                field["topic_continuity"] = sim
+                field["field_stability"] = sim if sim > 0.5 else sim * 0.6
+                field["dominant_topic"] = previous.get("similar_input", "")[:50] if sim > 0.6 else None
+                field["active_residuals"] = 1 if sim > 0.3 else 0
                 if previous.get("_sensing_mode") == "blind":
                     field["_sensing_mode"] = "blind"
                     field["residual_strength"] = -1.0

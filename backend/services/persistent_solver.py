@@ -386,3 +386,30 @@ async def review_solution(
             logger.info("📋 回顾: 方法效率观察已记录")
     except Exception as e:
         logger.warning(f"方法效率观察跳过: {e}")
+
+    try:
+        from core.cognition.experience_abstractor import ExperienceAbstractor
+        ea = ExperienceAbstractor()
+        steps = [{"method": a[0], "success": a[1], "detail": a[2] if len(a) > 2 else ""}
+                 for a in all_attempts if isinstance(a, tuple) and len(a) >= 2]
+        skeleton = ea._extract_skeleton({
+            "user_query": user_input,
+            "steps": steps,
+            "success": solved,
+            "final_response": final_response[:200],
+        })
+        if skeleton:
+            logger.info(f"📋 回顾: 方法论骨架已沉淀(skeleton_id={skeleton.get('skeleton_id', '?')})")
+            try:
+                from core.skill_emergence import SkillEmergence
+                se = SkillEmergence()
+                se.add_reflex_pattern(
+                    trigger=user_input[:60],
+                    solution_path=skeleton.get("steps_summary", ""),
+                    confidence=0.6,
+                )
+                logger.info("📋 回顾: 骨架已注册为本能模式(置信度0.6)")
+            except Exception as se2:
+                logger.warning(f"骨架本能注册跳过: {se2}")
+    except Exception as e:
+        logger.warning(f"方法论骨架沉淀跳过: {e}")
