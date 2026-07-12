@@ -222,7 +222,7 @@ class ModelCapability:
                 from infrastructure.model_health_checker import model_health_checker
                 models = [m for m in models if model_health_checker.is_available(m)]
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         ranked = []
         for model_name in models:
@@ -358,7 +358,7 @@ class ModelCapability:
                     ''', (new_score, model_name, dimension), commit=True)
             
             except Exception as e:
-                logger.debug(f"衰减计算失败: {e}")
+                logger.error(f"衰减计算失败: {e}")
         
 
         logger.info(f"已应用时效衰减: 因子={decay_factor}, 阈值={days_threshold}天")

@@ -74,7 +74,7 @@ class CapabilityGapLearner:
                 )
             """)
         except Exception as e:
-            logger.debug(f"能力缺失库初始化: {e}")
+            logger.warning(f"能力缺失库初始化: {e}")
 
     def assess_capability(self, query: str, intent_type: str, methodology: dict) -> dict:
         gap_type = self._classify_gap(query)
@@ -202,6 +202,7 @@ class CapabilityGapLearner:
             result = subprocess.run(
                 install_cmd.split(),
                 capture_output=True, text=True, timeout=60,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             if result.returncode == 0:
                 logger.info(f"📦 依赖安装成功: {dep_name}")
@@ -210,7 +211,7 @@ class CapabilityGapLearner:
                 logger.warning(f"依赖安装失败: {dep_name} - {result.stderr[:100]}")
                 return f"安装{dep_name}失败: {result.stderr[:100]}"
         except Exception as e:
-            logger.debug(f"安装依赖异常: {e}")
+            logger.error(f"安装依赖异常: {e}")
             return ""
 
     async def _ensure_tool_registered(self, tool_name: str) -> str:
@@ -233,7 +234,7 @@ class CapabilityGapLearner:
                 logger.info(f"🔧 工具已注册: {tool_name}")
                 return f"已注册工具 {tool_name}"
         except Exception as e:
-            logger.debug(f"工具注册失败: {tool_name} - {e}")
+            logger.error(f"工具注册失败: {tool_name} - {e}")
         return ""
 
     def update_methodology(self, methodology: dict, assessment: dict) -> dict:
@@ -300,7 +301,7 @@ class CapabilityGapLearner:
                     commit=True,
                 )
         except Exception as e:
-            logger.debug(f"能力缺失记录失败: {e}")
+            logger.error(f"能力缺失记录失败: {e}")
 
 
 capability_gap_learner = CapabilityGapLearner()

@@ -267,7 +267,7 @@ class SleepConsolidationEngine:
             status = gap_engine.get_queue_status()
             workload += status.get('queue_size', 0)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         try:
             from core.memory.stereo_memory import get_stereo_memory
@@ -276,7 +276,7 @@ class SleepConsolidationEngine:
             unprocessed = sum(1 for m in recent if not m.get('consolidated', False))
             workload += unprocessed
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         return workload
 
@@ -351,7 +351,7 @@ class SleepConsolidationEngine:
             consolidated = signals_to_process
             details['gap_signals'] = signals_to_process
         except Exception as e:
-            logger.debug(f"读取间隙生长队列失败: {e}")
+            logger.error(f"读取间隙生长队列失败: {e}")
         
         try:
             from core.memory.stereo_memory import get_stereo_memory
@@ -370,7 +370,7 @@ class SleepConsolidationEngine:
             
             details['memory_topics'] = len(topic_counts)
         except Exception as e:
-            logger.debug(f"读取立体记忆失败: {e}")
+            logger.error(f"读取立体记忆失败: {e}")
         
         impact = 0.2 + consolidated * 0.02 + solidified * 0.05
         
@@ -428,13 +428,13 @@ class SleepConsolidationEngine:
             
             consolidated = len(recent)
         except Exception as e:
-            logger.debug(f"深睡整合失败: {e}")
+            logger.error(f"深睡整合失败: {e}")
         
         try:
             forgotten = self._cleanup_old_memories()
             details['forgotten'] = forgotten
         except Exception as e:
-            logger.debug(f"记忆清理失败: {e}")
+            logger.error(f"记忆清理失败: {e}")
         
         impact = 0.4 + consolidated * 0.01 + solidified * 0.05 + patterns * 0.03
         
@@ -498,18 +498,18 @@ class SleepConsolidationEngine:
             
             consolidated = len(recent)
         except Exception as e:
-            logger.debug(f"REM整合失败: {e}")
+            logger.error(f"REM整合失败: {e}")
         
         try:
             forgotten = self._cleanup_old_memories(aggressive=True)
             details['forgotten'] = forgotten
         except Exception as e:
-            logger.debug(f"记忆清理失败: {e}")
+            logger.error(f"记忆清理失败: {e}")
         
         try:
             reorganized += self._reorganize_from_db()
         except Exception as e:
-            logger.debug(f"知识结构更新失败: {e}")
+            logger.error(f"知识结构更新失败: {e}")
         
         impact = 0.6 + consolidated * 0.005 + solidified * 0.03 + patterns * 0.05
         
@@ -550,7 +550,7 @@ class SleepConsolidationEngine:
                      datetime.now().isoformat(), 0.5), commit=True)
             return 0
         except Exception as e:
-            logger.debug(f"记录技能候选失败: {e}")
+            logger.error(f"记录技能候选失败: {e}")
             return 0
 
     def _solidify_skill(self, topic: str, count: int, importance: float = 0.7) -> int:
@@ -580,7 +580,7 @@ class SleepConsolidationEngine:
                      datetime.now().isoformat(), importance), commit=True)
                 return 1
         except Exception as e:
-            logger.debug(f"固化技能失败: {e}")
+            logger.error(f"固化技能失败: {e}")
             return 0
 
     def _cleanup_old_memories(self, aggressive: bool = False) -> int:
@@ -596,7 +596,7 @@ class SleepConsolidationEngine:
             
             forgotten = store.cleanup_before(cutoff)
         except Exception as e:
-            logger.debug(f"记忆清理失败: {e}")
+            logger.error(f"记忆清理失败: {e}")
         
         return forgotten
 
@@ -618,7 +618,7 @@ class SleepConsolidationEngine:
                 ''', (datetime.now().isoformat(), row[0]), commit=True)
                 reorganized += 1
         except Exception as e:
-            logger.debug(f"知识结构重组失败: {e}")
+            logger.error(f"知识结构重组失败: {e}")
         return reorganized
 
     def _save_consolidation_result(self, result: ConsolidationResult) -> None:
@@ -643,7 +643,7 @@ class SleepConsolidationEngine:
                 json.dumps(result.details)
             ), commit=True)
         except Exception as e:
-            logger.debug(f"保存整合结果失败: {e}")
+            logger.error(f"保存整合结果失败: {e}")
 
     def _update_stats(self, result: ConsolidationResult) -> None:
         """更新统计"""
@@ -703,7 +703,7 @@ class SleepConsolidationEngine:
                 for row in rows
             ]
         except Exception as e:
-            logger.debug(f"获取固化技能失败: {e}")
+            logger.error(f"获取固化技能失败: {e}")
             return []
 
     def is_running(self) -> bool:

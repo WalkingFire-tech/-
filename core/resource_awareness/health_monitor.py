@@ -99,7 +99,8 @@ def _detect_hardware() -> HardwareProfile:
     try:
         result = subprocess.run(
             ['nvidia-smi', '--query-gpu=name,memory.total', '--format=csv,noheader,nounits'],
-            capture_output=True, text=True, timeout=3
+            capture_output=True, text=True, timeout=3,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         if result.returncode == 0 and result.stdout.strip():
             parts = result.stdout.strip().split(',')
@@ -109,13 +110,14 @@ def _detect_hardware() -> HardwareProfile:
                 profile.gpu_vram_gb = float(parts[1].strip()) / 1024.0
                 return profile
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     try:
         result = subprocess.run(
             ['powershell', '-Command',
              'Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM | Format-List'],
-            capture_output=True, text=True, timeout=10
+            capture_output=True, text=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         if result.returncode == 0 and result.stdout.strip():
             name = ""
@@ -141,7 +143,7 @@ def _detect_hardware() -> HardwareProfile:
                 else:
                     profile.gpu_vendor = "unknown"
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     return profile
 
@@ -416,7 +418,8 @@ class SystemHealthMonitor:
         try:
             result = subprocess.run(
                 ['nvidia-smi', '--query-gpu=memory.used,memory.total', '--format=csv,noheader,nounits'],
-                capture_output=True, text=True, timeout=3
+                capture_output=True, text=True, timeout=3,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             if result.returncode == 0:
                 lines = result.stdout.strip().split('\n')
@@ -430,7 +433,7 @@ class SystemHealthMonitor:
                         ratio = used_mb / total_mb if total_mb > 0 else 0.0
                         return ratio, used_gb, total_gb
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return 0.0, 0.0, 0.0
 
     def _get_amd_gpu(self) -> Tuple[float, float, float]:

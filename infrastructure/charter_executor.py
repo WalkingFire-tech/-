@@ -99,7 +99,7 @@ class CharterExecutor:
                         "failure_count": task['failure_count']
                     })
                 except Exception as al_error:
-                    logger.debug(f"主动学习器触发失败: {al_error}")
+                    logger.error(f"主动学习器触发失败: {al_error}")
             
             return learning_tasks
             

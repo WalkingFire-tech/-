@@ -127,7 +127,7 @@ async def feedback(request: dict):
         )
 
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     return {"success": True, "message": "感谢反馈"}
 
 

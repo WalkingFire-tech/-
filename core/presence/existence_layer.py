@@ -233,7 +233,7 @@ class ExistenceLayer:
             try:
                 callback(perception)
             except Exception as e:
-                logger.debug(f"状态回调错误: {e}")
+                logger.warning(f"状态回调错误: {e}")
     
     def _perceive_self(self) -> SelfPerceptionResult:
         """自我感知"""
@@ -290,7 +290,7 @@ class ExistenceLayer:
         
         self.metrics.resting_cycles += 1
         
-        logger.debug(f"😴 休息状态: 进行轻量整合...")
+        logger.warning(f"😴 休息状态: 进行轻量整合...")
         
         if len(self.pending_signals) > 50:
             self.pending_signals = self.pending_signals[-30:]
@@ -304,7 +304,7 @@ class ExistenceLayer:
                 "resting_cycles": self.metrics.resting_cycles,
             })
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
     
     def _sleep(self):
         """睡眠：深度整合记忆"""
@@ -328,7 +328,7 @@ class ExistenceLayer:
         """接收信号"""
         signal["received_at"] = datetime.now().isoformat()
         self.pending_signals.append(signal)
-        logger.debug(f"📥 存在层接收信号，当前待处理: {len(self.pending_signals)}")
+        logger.warning(f"📥 存在层接收信号，当前待处理: {len(self.pending_signals)}")
     
     def user_interaction(self):
         """记录用户交互"""

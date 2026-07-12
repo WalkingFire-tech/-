@@ -214,7 +214,7 @@ class WorldModel:
                 commit=True
             )
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     def pre_enact(self, current_state: Dict, possible_actions: List[str], intent: str = "") -> Dict:
         results = []

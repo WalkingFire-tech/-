@@ -140,7 +140,7 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
                         )
                         _trial_matched = True
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
     except Exception as _e:
         logger.warning(f"规则匹配统计失败: {_e}")
 
@@ -332,7 +332,7 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
                     final_response += disclaimer
                     attempts.append(("科学免责", True, f"已附加{domain_ref}不确定性声明"))
         except Exception as _e:
-            logger.debug(f"科学免责跳过: {_e}")
+            logger.warning(f"科学免责跳过: {_e}")
     
     elapsed = time.time() - start_time
     logger.info(f"✅ 问题解决: {user_input[:30]} → {[(a[0], a[1]) for a in attempts]} ({elapsed:.1f}秒)")
@@ -357,7 +357,7 @@ async def _quick_solve(query: str, intent_type: str) -> str:
         if row and len(row[0]) > 30:
             return row[0]
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     
     # 2. 知识库
     try:
@@ -366,7 +366,7 @@ async def _quick_solve(query: str, intent_type: str) -> str:
         if row and len(row[0]) > 30:
             return row[0]
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     
     return None
 
@@ -439,7 +439,7 @@ def _save_to_experience_pool(query: str, response: str, success: bool = True, in
             commit=True,
         )
     except Exception as e:
-        logger.debug(f"经验存储失败: {e}")
+        logger.error(f"经验存储失败: {e}")
 
 
 async def _solve_history_query(query: str) -> str:

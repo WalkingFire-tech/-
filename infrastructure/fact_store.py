@@ -98,12 +98,12 @@ class FactStore:
             try:
                 db.execute(alter_sql, commit=True)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         try:
             db.execute('CREATE INDEX IF NOT EXISTS idx_active ON fact_assertions(is_active)', commit=True)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         db.executescript('''
             CREATE TABLE IF NOT EXISTS correction_history (
@@ -426,7 +426,7 @@ class FactStore:
                             )
                             decayed += 1
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
 
         if decayed > 0:
             logger.info(f"📉 置信度衰减: {decayed}条断言已衰减")

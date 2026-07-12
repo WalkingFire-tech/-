@@ -209,7 +209,7 @@ class SleepConsolidator:
                 summary = self.llm.generate(prompt)
                 return summary[:200]
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         # 降级：直接截取
         return answer[:200] + "..." if len(answer) > 200 else answer

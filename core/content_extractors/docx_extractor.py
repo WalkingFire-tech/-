@@ -49,7 +49,7 @@ class DocxExtractor(ContentExtractor):
             return '\n\n'.join(text_parts) if text_parts else ''
             
         except Exception as e:
-            logger.debug(f"DOCX 提取失败 {file_path}: {e}")
+            logger.error(f"DOCX 提取失败 {file_path}: {e}")
             return None
     
     def get_supported_extensions(self) -> List[str]:

@@ -89,7 +89,7 @@ class LearningLoop:
                     "learning_priority": "medium"
                 })
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         return result
     
@@ -166,7 +166,7 @@ class LearningLoop:
             return results
             
         except Exception as e:
-            logger.debug(f"ddgs包失败: {e}")
+            logger.error(f"ddgs包失败: {e}")
         
         # 尝试旧包名
         try:

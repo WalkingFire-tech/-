@@ -101,7 +101,7 @@ class ContribAttributor:
 
         self._save_attribution(query, final_source, contributions, top_source, entropy)
 
-        logger.debug(f"贡献归因: top={top_source}({contributions.get(top_source, 0) or 0:.2f}) "
+        logger.warning(f"贡献归因: top={top_source}({contributions.get(top_source, 0) or 0:.2f}) "
                       f"entropy={entropy:.3f} candidates={len(candidates)}"
                       f"{' unc=' + str(len(retrieval_uncertainties)) + 'dims' if retrieval_uncertainties else ''}")
 
@@ -135,7 +135,7 @@ class ContribAttributor:
                   json.dumps(contributions, ensure_ascii=False),
                   top_source, entropy, datetime.now().isoformat()), commit=True)
         except Exception as e:
-            logger.debug(f"归因保存失败: {e}")
+            logger.error(f"归因保存失败: {e}")
 
     def get_recent_attributions(self, limit: int = 20) -> List[Dict]:
         try:

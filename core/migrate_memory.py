@@ -44,7 +44,7 @@ def migrate_database(db_path: str = "data/knowledge_store.db"):
             CREATE INDEX IF NOT EXISTS idx_emotion ON knowledge_items(emotional_valence)
         ''')
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     
     logger.info("数据库迁移完成")
 

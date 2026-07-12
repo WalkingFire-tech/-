@@ -258,7 +258,7 @@ class RecommendationValidator:
                 result['recommendation'] = recommendation
                 return result
         except Exception as e:
-            logger.debug(f"LLM验证失败: {e}")
+            logger.error(f"LLM验证失败: {e}")
         
         return {
             'is_valid': None,
@@ -279,7 +279,7 @@ class RecommendationValidator:
                 commit=True
             )
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
     
     def add_product(self, product_id: str, name: str, category: str,
                    features: List[str], keywords: List[str]):

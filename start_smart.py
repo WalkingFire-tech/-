@@ -39,18 +39,20 @@ def clear_pycache():
                 import shutil
                 shutil.rmtree(pycache_path, ignore_errors=True)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
 
 def kill_port():
     try:
         result = subprocess.run(
-            ["netstat", "-ano"], capture_output=True, text=True, timeout=5
+            ["netstat", "-ano"], capture_output=True, text=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         for line in result.stdout.splitlines():
             if f":{PORT}" in line and "LISTENING" in line:
                 parts = line.strip().split()
                 pid = parts[-1]
-                subprocess.run(["taskkill", "/F", "/PID", pid], capture_output=True, timeout=5)
+                subprocess.run(["taskkill", "/F", "/PID", pid], capture_output=True, timeout=5,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
                 print(f"  Killed PID {pid}")
     except Exception as e:
         print(f"  Warning: {e}")
@@ -59,13 +61,14 @@ def wait_port_free(timeout=10):
     for i in range(timeout):
         try:
             result = subprocess.run(
-                ["netstat", "-ano"], capture_output=True, text=True, timeout=5
+                ["netstat", "-ano"], capture_output=True, text=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             listening = any(f":{PORT}" in l and "LISTENING" in l for l in result.stdout.splitlines())
             if not listening:
                 return True
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         time.sleep(1)
     return False
 
@@ -92,6 +95,7 @@ def start_server(log_file=None):
         env=env,
         stdout=log_out if log_out else subprocess.PIPE,
         stderr=subprocess.STDOUT if log_out else subprocess.PIPE,
+        creationflags=subprocess.CREATE_NO_WINDOW,
     )
     return proc, log_out
 

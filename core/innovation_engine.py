@@ -203,7 +203,7 @@ class InnovationEngine:
                     avg_quality = sum(e.get('quality', 50) for e in similar_exp) / len(similar_exp)
                     return avg_quality / 100.0
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         if content_length < 20:
             return 0.3

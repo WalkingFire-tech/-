@@ -207,7 +207,7 @@ def discover_methodology(query: str, intent_type: str) -> dict:
                 result["strategy"] = f"技能驱动({best_skill['skill_name']})+多源验证"
                 result["skill_path"] = best_skill["solution_path"]
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     if any(kw in query_lower for kw in ["代码", "编程", "函数", "程序", "算法", "单片机", "stm32", "arduino", "嵌入式", "写一段", "实现"]):
         result["strategy"] = "代码生成+语法检查+模拟验证"

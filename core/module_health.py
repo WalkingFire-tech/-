@@ -48,7 +48,7 @@ class ModuleHealthMonitor:
             )''')
 
         except Exception as e:
-            logger.debug(f"模块健康数据库初始化失败: {e}")
+            logger.error(f"模块健康数据库初始化失败: {e}")
 
     def record_success(self, module_name: str):
         """记录模块成功"""
@@ -61,7 +61,7 @@ class ModuleHealthMonitor:
                       (module_name, datetime.now().isoformat()), commit=True)
 
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     def record_failure(self, module_name: str, detail: str = ""):
         """记录模块失败，检查是否需要隔离"""
@@ -89,7 +89,7 @@ class ModuleHealthMonitor:
                     logger.warning(f"⚠️ 模块{module_name}降级: 错误率{error_rate:.0%}")
 
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     def is_module_available(self, module_name: str) -> bool:
         """检查模块是否可用（未隔离）"""
@@ -106,7 +106,7 @@ class ModuleHealthMonitor:
                     if (datetime.now() - isolated_time).total_seconds() > self.ISOLATION_DURATION:
                         return True
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
             return status != "isolated"
         except Exception:
             return True
@@ -125,7 +125,7 @@ class ModuleHealthMonitor:
                     report["unknown"].append(entry)
 
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return report
 
     def clear_anomalies(self, module_name: str):
@@ -138,7 +138,7 @@ class ModuleHealthMonitor:
 
             logger.info(f"🧹 模块{module_name}异常已清除")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
 
 module_health = ModuleHealthMonitor()

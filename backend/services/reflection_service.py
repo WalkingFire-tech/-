@@ -38,7 +38,7 @@ def reflect_and_learn(query: str, response: str, attempts: list, start_time: flo
             commit=True
         )
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     if successful:
         try:
@@ -62,7 +62,7 @@ def reflect_and_learn(query: str, response: str, attempts: list, start_time: flo
                     commit=True
                 )
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             from core.skill_emergence import skill_emergence
@@ -70,7 +70,7 @@ def reflect_and_learn(query: str, response: str, attempts: list, start_time: flo
             if skill_name:
                 lessons.append(f"✨ 技能涌现: {skill_name}")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             from core.truth_accumulator import truth_accumulator
@@ -78,7 +78,7 @@ def reflect_and_learn(query: str, response: str, attempts: list, start_time: flo
             if truth_name:
                 lessons.append(f"💎 真谛沉淀: {truth_name}")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     return "; ".join(lessons) if lessons else "交互正常"
 
@@ -121,7 +121,7 @@ def try_solidify_to_gene_pool(query: str, response: str, attempts: list, compari
         )
         solidified.append("知识库")
     except Exception as e:
-        logger.debug(f"基因库固化-知识库写入失败: {e}")
+        logger.error(f"基因库固化-知识库写入失败: {e}")
 
     try:
         db = DatabaseManager.get("data/experience_pool.db")
@@ -132,7 +132,7 @@ def try_solidify_to_gene_pool(query: str, response: str, attempts: list, compari
         )
         solidified.append("经验池升级")
     except Exception as e:
-        logger.debug(f"基因库固化-经验池升级失败: {e}")
+        logger.error(f"基因库固化-经验池升级失败: {e}")
 
     try:
         from core.delta_knowledge_updater import delta_knowledge_updater
@@ -141,7 +141,7 @@ def try_solidify_to_gene_pool(query: str, response: str, attempts: list, compari
         if delta_result.get("updated"):
             solidified.append(f"增量知识(v{delta_result['version']}, 压缩{delta_result['compression_ratio']:.2f})")
     except Exception as e:
-        logger.debug(f"增量知识更新跳过: {e}")
+        logger.warning(f"增量知识更新跳过: {e}")
 
     try:
         from datetime import datetime
@@ -159,7 +159,7 @@ def try_solidify_to_gene_pool(query: str, response: str, attempts: list, compari
             commit=True
         )
     except Exception as e:
-        logger.debug(f"基因库固化-日志写入失败: {e}")
+        logger.error(f"基因库固化-日志写入失败: {e}")
 
     if solidified:
         logger.info(f"🧬 基因库固化: {query[:30]} → {', '.join(solidified)} (评分{best_score:.0f})")

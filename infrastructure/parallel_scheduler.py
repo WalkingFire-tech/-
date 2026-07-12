@@ -82,7 +82,7 @@ class ParallelScheduler:
             for row in rows:
                 self.model_blacklist[row[0]] = row[1]
         except Exception as e:
-            logger.debug(f"加载黑名单失败: {e}")
+            logger.error(f"加载黑名单失败: {e}")
     
     def _save_blacklist(self, model_name: str, until_timestamp: float, reason: str = ""):
         """保存黑名单到数据库"""
@@ -94,7 +94,7 @@ class ParallelScheduler:
                 VALUES (?, ?, ?, ?)
             ''', (model_name, until_timestamp, reason, datetime.now().isoformat()), commit=True)
         except Exception as e:
-            logger.debug(f"保存黑名单失败: {e}")
+            logger.error(f"保存黑名单失败: {e}")
     
     async def _is_blacklisted(self, model_name: str) -> bool:
         """检查模型是否在黑名单中 - 已禁用"""
@@ -231,7 +231,7 @@ class ParallelScheduler:
                     from infrastructure.model_health_checker import model_health_checker
                     model_health_checker.record_success(model_name, duration)
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
                 
                 return {
                     'task_id': task_id,
@@ -251,7 +251,7 @@ class ParallelScheduler:
                     from infrastructure.model_health_checker import model_health_checker
                     model_health_checker.record_failure(model_name, "permanent_error", str(e))
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
                 
                 break
             
@@ -274,7 +274,7 @@ class ParallelScheduler:
             from infrastructure.model_health_checker import model_health_checker
             model_health_checker.record_failure(model_name, "call_failed", last_error)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         return {
             'task_id': task_id,

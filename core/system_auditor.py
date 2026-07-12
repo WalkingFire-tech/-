@@ -81,7 +81,7 @@ class SystemAuditor:
                     })
 
         except Exception as e:
-            logger.debug(f"API端点审核失败: {e}")
+            logger.error(f"API端点审核失败: {e}")
 
         return result
 
@@ -121,7 +121,7 @@ class SystemAuditor:
                 with open(chat_stream_path, 'r', encoding='utf-8') as f:
                     chat_stream_content = f.read()
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         for name, path in dormant_modules:
             full_path = os.path.join(self.root_dir, path)
@@ -160,7 +160,7 @@ class SystemAuditor:
                     "description": f"经验池success率仅{success_rate:.0%}，学习闭环可能失效",
                 })
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             row = DatabaseManager.get(os.path.join(self.root_dir, "data", "learning_rules.db")).query_one("SELECT AVG(confidence) FROM learning_rules WHERE status='active'")
@@ -173,7 +173,7 @@ class SystemAuditor:
                     "description": f"活跃规则平均置信度{avg_conf:.2f}，未分化（大部分=0.5）",
                 })
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         return result
 
@@ -191,7 +191,7 @@ class SystemAuditor:
                 if v:
                     versions.add(("main_fast.py", v.group(1)))
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         if len(versions) > 1:
             result["gaps"].append({
@@ -214,7 +214,7 @@ class SystemAuditor:
                 genes = re.findall(r'"(\w+)":\s*[\d.]+', content[:3000])
                 result["gene_sources"]["task_queue"] = genes[:15]
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         return result
 

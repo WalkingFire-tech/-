@@ -32,7 +32,7 @@ class CodeExtractor(ContentExtractor):
         try:
             file_size = file_path.stat().st_size
             if file_size > self.max_size_mb * 1024 * 1024:
-                logger.debug(f"文件过大，跳过: {file_path}")
+                logger.warning(f"文件过大，跳过: {file_path}")
                 return None
             
             content = file_path.read_text(encoding='utf-8', errors='ignore')
@@ -56,7 +56,7 @@ class CodeExtractor(ContentExtractor):
             return '\n'.join(extracted) if extracted else None
             
         except Exception as e:
-            logger.debug(f"代码提取失败 {file_path}: {e}")
+            logger.error(f"代码提取失败 {file_path}: {e}")
             return None
     
     def _is_structure_line(self, line: str, suffix: str) -> bool:

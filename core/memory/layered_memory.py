@@ -107,7 +107,7 @@ class LayeredMemory:
                     )
                 count += 1
         except Exception as e:
-            logger.debug(f"战略记忆同步(真谛)跳过: {e}")
+            logger.warning(f"战略记忆同步(真谛)跳过: {e}")
 
         try:
             db1 = DatabaseManager.get("data/trajectory_evolution.db")
@@ -138,7 +138,7 @@ class LayeredMemory:
                     )
                     count += 1
         except Exception as e:
-            logger.debug(f"战略记忆同步(轨迹)跳过: {e}")
+            logger.warning(f"战略记忆同步(轨迹)跳过: {e}")
 
         logger.info(f"战略记忆同步完成: {count}条")
         return count
@@ -171,7 +171,7 @@ class LayeredMemory:
                     )
                     count += 1
         except Exception as e:
-            logger.debug(f"程序记忆同步(规则)跳过: {e}")
+            logger.warning(f"程序记忆同步(规则)跳过: {e}")
 
         logger.info(f"程序记忆同步完成: {count}条")
         return count
@@ -203,7 +203,7 @@ class LayeredMemory:
                     )
                 count += 1
         except Exception as e:
-            logger.debug(f"工具记忆同步跳过: {e}")
+            logger.warning(f"工具记忆同步跳过: {e}")
 
         logger.info(f"工具记忆同步完成: {count}条")
         return count
@@ -291,7 +291,7 @@ class LayeredMemory:
                      quality, duration_ms, 1, 1 if success else 0, now, now), commit=True
                 )
         except Exception as e:
-            logger.debug(f"工具记忆记录失败: {e}")
+            logger.error(f"工具记忆记录失败: {e}")
 
     def decay_outdated(self) -> Dict:
         now = datetime.now()
@@ -317,7 +317,7 @@ class LayeredMemory:
                 (tool_cutoff,), commit=True
             ).rowcount
         except Exception as e:
-            logger.debug(f"分层记忆衰减失败: {e}")
+            logger.error(f"分层记忆衰减失败: {e}")
 
         return result
 

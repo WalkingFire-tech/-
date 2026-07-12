@@ -45,7 +45,7 @@ class AutoRollback:
                 )
             ''')
         except Exception as e:
-            logger.debug(f"快照数据库初始化失败: {e}")
+            logger.error(f"快照数据库初始化失败: {e}")
 
     def create_snapshot(self, target: str, data: Any) -> str:
         snapshot_id = f"snap_{int(time.time()*1000)}"
@@ -65,7 +65,7 @@ class AutoRollback:
             db.execute("INSERT INTO snapshots (target, data, created_at) VALUES (?, ?, ?)",
                          (target, json.dumps(data, default=str, ensure_ascii=False)[:10000], datetime.now().isoformat()), commit=True)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return snapshot_id
 
     def rollback(self, target: str, reason: str = "", entropy: float = 0.0) -> Optional[Any]:
@@ -88,7 +88,7 @@ class AutoRollback:
             db.execute("INSERT INTO rollback_log (target, reason, entropy_before, entropy_after, created_at) VALUES (?, ?, ?, ?, ?)",
                          (target, reason, entropy, 0.0, datetime.now().isoformat()), commit=True)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         logger.info(f"⏪ 自动回滚: {target} (原因: {reason}, 熵值: {entropy:.2f})")
         return snapshot["data"]
 

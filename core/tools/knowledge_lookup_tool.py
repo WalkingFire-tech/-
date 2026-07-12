@@ -51,7 +51,7 @@ class KnowledgeLookupTool(ToolInterface):
                     if isinstance(exp, dict) and exp.get("response"):
                         results.append(exp)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             from infrastructure.database_manager import DatabaseManager
@@ -77,7 +77,7 @@ class KnowledgeLookupTool(ToolInterface):
                         "quality": item.get("quality", 50),
                     })
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         if not results:
             return ToolResult(success=False, error="知识库中未找到相关信息",

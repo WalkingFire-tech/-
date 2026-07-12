@@ -48,7 +48,7 @@ class HealthMetricsCollector:
                 )
             ''')
         except Exception as e:
-            logger.debug(f"指标数据库初始化失败: {e}")
+            logger.error(f"指标数据库初始化失败: {e}")
 
     def record(self, metric_name: str, value: float):
         ts = time.time()
@@ -63,7 +63,7 @@ class HealthMetricsCollector:
             db.execute("INSERT INTO metrics (metric_name, value, timestamp) VALUES (?, ?, ?)",
                          (metric_name, value, datetime.now().isoformat()), commit=True)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     def _check_threshold(self, metric_name: str, value: float):
         threshold = self.ALERT_THRESHOLDS.get(metric_name)
@@ -84,7 +84,7 @@ class HealthMetricsCollector:
                 db.execute("INSERT INTO alerts (metric_name, value, threshold, message, timestamp) VALUES (?, ?, ?, ?, ?)",
                              (metric_name, value, threshold, alert["message"], alert["timestamp"]), commit=True)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
 
     def get_current(self, metric_name: str) -> Optional[float]:
         if metric_name in self._metrics and self._metrics[metric_name]:

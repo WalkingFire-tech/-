@@ -227,7 +227,7 @@ class GenomeEvolver:
                 )
                 logger.info("已从GenePool同步基因值到活跃基因组")
         except Exception as e:
-            logger.debug(f"GenePool同步跳过: {e}")
+            logger.warning(f"GenePool同步跳过: {e}")
     
     def evolve(self, current_fitness: float = None) -> List[int]:
         """

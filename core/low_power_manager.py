@@ -231,7 +231,7 @@ class LowPowerManager:
                 try:
                     mechanism.set_active(should_be_active)
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
     
     def _estimate_power_usage(self):
         """估算当前功耗"""
@@ -266,7 +266,7 @@ class LowPowerManager:
             try:
                 callback(activity_type)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
     
     def force_power_level(self, level: PowerLevel):
         """强制设置功耗等级"""

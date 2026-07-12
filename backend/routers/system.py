@@ -313,7 +313,7 @@ async def get_models():
             models = response.json().get('models', [])
             return {"models": [{"name": m['name'], "type": "Ollama"} for m in models], "count": len(models)}
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     return {"models": [], "count": 0}
 
 
@@ -326,7 +326,7 @@ async def models_reload():
             models = response.json().get('models', [])
             return {"success": True, "added": [m['name'] for m in models], "total": len(models)}
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     return {"success": False, "added": [], "total": 0}
 
 
@@ -452,7 +452,7 @@ async def get_reflection_stats():
         if pipeline:
             return pipeline.get_stats()
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     return {"total_reflections": 0, "status": "unavailable"}
 
 
@@ -557,7 +557,7 @@ async def get_path_weights():
                 result["prob_mode"] = "dynamic_field"
                 result["query_entropy"] = dist.get("entropy", 0)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         try:
             from infrastructure.vector_retriever import _ST_AVAILABLE
             result["prob_mode"] = "semantic" if _ST_AVAILABLE else "tfidf"
@@ -594,7 +594,7 @@ async def get_probability_field():
             from infrastructure.vector_retriever import vector_retriever
             result["calibration_stats"] = vector_retriever._calibrator.get_calibration_stats()
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return result
     except Exception as e:
         return {"error": str(e)}

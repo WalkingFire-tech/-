@@ -121,7 +121,7 @@ async def fetch_external_api(query: str, conversation_context: str = "", truth_i
                 if content and len(content) > 20:
                     return {"source": "OpenAI", "response": content, "quality": 90, "tokens": token_info}
     except Exception as e:
-        logger.debug(f"外部API调用失败: {e}")
+        logger.error(f"外部API调用失败: {e}")
     return None
 
 
@@ -148,5 +148,5 @@ async def fetch_external_learning(query: str, conversation_context: str = "") ->
                 source_label = f"外部学习({'+'.join(sorted(sources))})"
                 return {"source": source_label, "response": "\n\n".join(parts), "quality": 70}
     except Exception as e:
-        logger.debug(f"外部学习器异常: {e}")
+        logger.error(f"外部学习器异常: {e}")
     return None

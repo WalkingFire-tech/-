@@ -97,7 +97,7 @@ class CapabilityIntrospection:
                     "module": f"tools.{tool['name']}"
                 }
         except Exception as e:
-            logger.debug(f"工具扫描失败: {e}")
+            logger.error(f"工具扫描失败: {e}")
             
     def _scan_models(self):
         """扫描模型能力"""
@@ -116,7 +116,7 @@ class CapabilityIntrospection:
                         "module": "adapters.llm.ollama_adapter"
                     }
         except Exception as e:
-            logger.debug(f"模型扫描失败: {e}")
+            logger.error(f"模型扫描失败: {e}")
             
     def _scan_knowledge_bases(self):
         """扫描知识库"""
@@ -191,7 +191,7 @@ class CapabilityIntrospection:
             }
             
         except Exception as e:
-            logger.debug(f"能力检查失败 {name}: {e}")
+            logger.error(f"能力检查失败 {name}: {e}")
             return None
     
     def get_capabilities_by_category(self) -> Dict[str, List[str]]:

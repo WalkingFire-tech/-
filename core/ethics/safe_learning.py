@@ -117,7 +117,7 @@ class SafeLearningLayer:
             if rhythm_alerts:
                 logger.warning(f"🎵 学习节奏预警: {rhythm_alerts}")
         except Exception as e:
-            logger.debug(f"学习节奏监控失败（降级继续）: {e}")
+            logger.error(f"学习节奏监控失败（降级继续）: {e}")
             rhythm_alerts = []
         
         journal_entry = {
@@ -148,7 +148,7 @@ class SafeLearningLayer:
                     alignment_status=alignment.status.value
                 )
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
             
             return {
                 "success": True,

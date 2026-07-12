@@ -63,19 +63,24 @@ def search_baidu(query: str, max_results: int = 8, timeout: int = 15) -> List[Di
                 continue
 
             snippet = ""
-            for cls in ['content-right_8Zs40', 'c-abstract', 'c-span-last', 'content-right_8Zs40']:
+            for cls in ['content-right_8Zs40', 'c-abstract', 'c-span-last']:
                 snippet_el = item.find('span', class_=cls) or item.find('div', class_=cls)
                 if snippet_el:
                     snippet = snippet_el.get_text().strip()
                     break
             if not snippet:
-                for tag in ['p', 'div', 'span']:
-                    for el in item.find_all(tag, limit=3):
-                        text = el.get_text().strip()
-                        if len(text) > 20 and len(text) < 500:
-                            snippet = text
+                for attr in ['data-tts', 'data-log']:
+                    snippet_el = item.find(attrs={attr: True})
+                    if snippet_el:
+                        snippet = snippet_el.get_text().strip()
+                        if len(snippet) > 20:
                             break
-                    if snippet:
+                        snippet = ""
+            if not snippet:
+                all_texts = item.get_text(separator='\n', strip=True).split('\n')
+                for text in all_texts:
+                    if 20 < len(text) < 500 and text != title:
+                        snippet = text
                         break
 
             link_el = item.find('a')
@@ -92,7 +97,7 @@ def search_baidu(query: str, max_results: int = 8, timeout: int = 15) -> List[Di
         return parsed
 
     except Exception as e:
-        logger.debug(f"百度搜索失败: {e}")
+        logger.error(f"百度搜索失败: {e}")
         return []
 
 
@@ -140,7 +145,7 @@ def search_bing(query: str, max_results: int = 8, timeout: int = 15) -> List[Dic
         return parsed
 
     except Exception as e:
-        logger.debug(f"Bing搜索失败: {e}")
+        logger.error(f"Bing搜索失败: {e}")
         return []
 
 

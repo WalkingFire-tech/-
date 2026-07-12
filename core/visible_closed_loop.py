@@ -188,7 +188,7 @@ class VisibleClosedLoop:
             if isinstance(questions, list):
                 return questions
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         # 降级：生成默认追问
         return [
@@ -217,7 +217,7 @@ class VisibleClosedLoop:
             if isinstance(tasks, list):
                 return tasks
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         # 默认拆解
         return [
@@ -329,7 +329,7 @@ class VisibleClosedLoop:
                     ), commit=True)
                     gained.append(f"新增知识: {result['type']}")
                 except Exception as e:
-                    logger.debug(f"知识存储失败: {e}")
+                    logger.error(f"知识存储失败: {e}")
         
         return gained
     
@@ -350,7 +350,7 @@ class VisibleClosedLoop:
                 json.dumps(results, ensure_ascii=False)[:500]
             ), commit=True)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         return "经验已记录，策略已更新"
     

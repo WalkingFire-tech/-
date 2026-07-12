@@ -280,7 +280,7 @@ class VectorRetriever:
             else:
                 logger.info("sentence_transformers不可用，使用TF-IDF检索")
         except Exception as e:
-            logger.debug(f"ST加载异常: {e}")
+            logger.error(f"ST加载异常: {e}")
 
     def is_available(self) -> bool:
         return True
@@ -382,7 +382,7 @@ class VectorRetriever:
                     results.append((self.id_map[idx], sim))
             return results
         except Exception as e:
-            logger.debug(f"稀疏检索失败: {e}")
+            logger.error(f"稀疏检索失败: {e}")
             return []
 
     def _search_dense(self, query: str, k: int, threshold: float) -> List[Tuple[Dict, float]]:
@@ -437,7 +437,7 @@ class VectorRetriever:
                         results.append((self.id_map[idx], sim))
                 return results
             except Exception as e:
-                logger.debug(f"稠密检索失败: {e}")
+                logger.error(f"稠密检索失败: {e}")
         return self._search_hash(query, k, threshold)
 
     def _search_hash(self, query: str, k: int, threshold: float) -> List[Tuple[Dict, float]]:

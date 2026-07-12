@@ -87,6 +87,7 @@ class BashTool(ToolInterface):
                     cwd=workdir if workdir else None,
                     encoding="utf-8",
                     errors="replace",
+                    creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0,
                 )
 
                 output_parts = []

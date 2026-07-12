@@ -171,7 +171,7 @@ class LearningFeedbackLoop:
                 if rule.condition(expected, actual):
                     scores.append(rule.weight)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         if not scores:
             return 0.0

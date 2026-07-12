@@ -110,7 +110,7 @@ class ShadowModeLogger:
                 try:
                     records.append(json.loads(line))
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
         
         if not records:
             return {'total': 0}

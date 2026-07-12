@@ -188,7 +188,7 @@ class NeverGiveUpEngine:
                 "route": result.get("route")
             }
         except Exception as e:
-            logger.debug(f"意图理解失败: {e}")
+            logger.error(f"意图理解失败: {e}")
             return {"success": False, "error": str(e)}
     
     async def _try_knowledge_retrieval(self, question: str) -> Dict:
@@ -199,7 +199,7 @@ class NeverGiveUpEngine:
             if row:
                 return {"success": True, "answer": row[0], "confidence": 0.8}
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return {"success": False}
     
     async def _try_deep_cognition(self, question: str, context: dict) -> Dict:
@@ -219,7 +219,7 @@ class NeverGiveUpEngine:
                     "confidence": result.get("confidence", 0.7)
                 }
         except Exception as e:
-            logger.debug(f"深度认知失败: {e}")
+            logger.error(f"深度认知失败: {e}")
         return {"success": False}
     
     async def _try_model_inference(self, question: str) -> Dict:
@@ -238,7 +238,7 @@ class NeverGiveUpEngine:
             if content and len(content) > 20:
                 return {"success": True, "answer": content, "confidence": 0.6}
         except Exception as e:
-            logger.debug(f"模型推理失败: {e}")
+            logger.error(f"模型推理失败: {e}")
         return {"success": False}
     
     async def _try_tool_execution(self, question: str) -> Dict:
@@ -257,7 +257,7 @@ class NeverGiveUpEngine:
                 if hasattr(result, 'output'):
                     return {"success": True, "answer": str(result.output), "confidence": 0.7}
         except Exception as e:
-            logger.debug(f"工具调用失败: {e}")
+            logger.error(f"工具调用失败: {e}")
         return {"success": False}
     
     async def _try_experience_recall(self, question: str) -> Dict:
@@ -268,7 +268,7 @@ class NeverGiveUpEngine:
             if row:
                 return {"success": True, "answer": row[0], "confidence": 0.6}
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return {"success": False}
     
     async def _try_combine_knowledge_model(self, question: str) -> Dict:

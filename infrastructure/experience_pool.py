@@ -62,7 +62,7 @@ class ExperiencePool:
             q = min(1.0, quality_score / 100.0)
             guard_change("experience", q, f"exp: {intent_type} q={quality_score}")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         db = self._db()
         cur = db.execute('''
             INSERT INTO experiences (timestamp, intent_type, raw_input, plan, model_name,
@@ -85,7 +85,7 @@ class ExperiencePool:
                 "quality_score": quality_score,
             })
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         return experience_id
     

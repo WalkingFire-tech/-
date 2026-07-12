@@ -156,7 +156,7 @@ class TripleExtractor:
                         triples.append(Triple(w1, w2, "发生", confidence=0.65))
         
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         return triples
     

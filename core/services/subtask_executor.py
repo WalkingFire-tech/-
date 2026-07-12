@@ -404,7 +404,7 @@ class SubTaskExecutor:
                   stats['total_duration'], stats['timestamp']), commit=True)
 
         except Exception as e:
-            logger.debug(f"存储执行统计失败: {e}")
+            logger.error(f"存储执行统计失败: {e}")
     
     def get_execution_summary(self) -> Dict:
         """获取执行摘要"""

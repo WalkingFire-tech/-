@@ -120,7 +120,7 @@ class AdaptiveGovernor:
                         degraded_to="throttled_inference",
                     )
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         if mode == OperatingMode.EMERGENCY:
             if action in self._emergency_blocked:

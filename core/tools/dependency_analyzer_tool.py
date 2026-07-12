@@ -124,7 +124,7 @@ class DependencyAnalyzerTool(ToolInterface):
                     "lines": len(source.splitlines()),
                 }
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
 
         return modules
 

@@ -48,6 +48,7 @@ class ScheduledTaskManager:
         self.register_job("introspection", 300.0, self._job_introspection)
         self.register_job("deferred_deep_process", 600.0, self._job_deferred_deep_process)
         self.register_job("sleep_consolidation", 3600.0, self._job_sleep_consolidation)
+        self.register_job("metabolism", 300.0, self._job_metabolism)
 
     def register_job(self, name: str, interval_seconds: float, callback: Optional[Callable] = None):
         with self._lock:
@@ -56,7 +57,7 @@ class ScheduledTaskManager:
                 interval_seconds=interval_seconds,
                 callback=callback,
             )
-        logger.debug(f"定时任务已注册: {name} (间隔{interval_seconds}s)")
+        logger.warning(f"定时任务已注册: {name} (间隔{interval_seconds}s)")
 
     def unregister_job(self, name: str):
         with self._lock:
@@ -110,7 +111,7 @@ class ScheduledTaskManager:
                 "timestamp": time.time(),
             })
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         if job.callback:
             try:
@@ -133,7 +134,7 @@ class ScheduledTaskManager:
             else:
                 logger.debug("⏰ 系统自检: 所有模块健康 ✅")
         except Exception as e:
-            logger.debug(f"自检跳过: {e}")
+            logger.warning(f"自检跳过: {e}")
 
     def _job_periodic_learning(self):
         try:
@@ -146,7 +147,7 @@ class ScheduledTaskManager:
             })
             logger.info("⏰ 定时学习: 已发布IdlePeriod事件触发知识整合")
         except Exception as e:
-            logger.debug(f"定时学习跳过: {e}")
+            logger.warning(f"定时学习跳过: {e}")
 
     def _job_daily_report(self):
         try:
@@ -160,7 +161,7 @@ class ScheduledTaskManager:
                 f"整合记忆={status.get('memories_consolidated', 0)}"
             )
         except Exception as e:
-            logger.debug(f"每日报告跳过: {e}")
+            logger.warning(f"每日报告跳过: {e}")
 
     def _job_memory_decay(self):
         try:
@@ -173,7 +174,7 @@ class ScheduledTaskManager:
                 f"经验淡化{experiences.get('faded',0)}+清除{experiences.get('pruned',0)}"
             )
         except Exception as e:
-            logger.debug(f"记忆衰减跳过: {e}")
+            logger.warning(f"记忆衰减跳过: {e}")
 
     def _job_layered_memory_sync(self):
         try:
@@ -189,7 +190,7 @@ class ScheduledTaskManager:
                 f"总计{stats['total']}条"
             )
         except Exception as e:
-            logger.debug(f"分层记忆同步跳过: {e}")
+            logger.warning(f"分层记忆同步跳过: {e}")
 
     def _job_slow_evolution(self):
         try:
@@ -202,7 +203,7 @@ class ScheduledTaskManager:
                 f"棘轮={result['steps'].get('ratchet_validation', {}).get('status', '?')}"
             )
         except Exception as e:
-            logger.debug(f"慢循环进化跳过: {e}")
+            logger.warning(f"慢循环进化跳过: {e}")
 
     def _job_proactivity_check(self):
         try:
@@ -242,7 +243,7 @@ class ScheduledTaskManager:
                         "confidence": decision.confidence,
                     })
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
                 try:
                     from backend.main_fast import _enqueue_proactivity
                     _enqueue_proactivity({
@@ -253,7 +254,7 @@ class ScheduledTaskManager:
                         "confidence": decision.confidence,
                     })
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
                 try:
                     db = DatabaseManager.get("data/experience_pool.db")
                     db.execute(
@@ -263,7 +264,7 @@ class ScheduledTaskManager:
                         commit=True
                     )
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
                 try:
                     from core.knowledge_graph import get_knowledge_graph, NodeType as _NT
                     _kg = get_knowledge_graph()
@@ -272,11 +273,11 @@ class ScheduledTaskManager:
                         node_type=_NT.EXPERIENCE, importance=decision.confidence * 0.6
                     )
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
             else:
-                logger.debug(f"主动性检查: 暂无行动 (silence={silence:.0f}s)")
+                logger.warning(f"主动性检查: 暂无行动 (silence={silence:.0f}s)")
         except Exception as e:
-            logger.debug(f"主动性检查跳过: {e}")
+            logger.warning(f"主动性检查跳过: {e}")
 
     def _job_introspection(self):
         try:
@@ -294,7 +295,7 @@ class ScheduledTaskManager:
                         "recommendations": report.recommendations[:3],
                     })
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
                 try:
                     from backend.main_fast import _enqueue_proactivity
                     _enqueue_proactivity({
@@ -306,10 +307,10 @@ class ScheduledTaskManager:
                         "recommendations": report.recommendations[:2],
                     })
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
                 self._auto_repair(report)
         except Exception as e:
-            logger.debug(f"内省检查跳过: {e}")
+            logger.warning(f"内省检查跳过: {e}")
 
     def _auto_repair(self, report):
         try:
@@ -327,7 +328,7 @@ class ScheduledTaskManager:
                             gc.collect()
                             logger.info("自动修复: 内存过高，执行gc.collect()")
                     except Exception:
-                        pass
+                        logger.warning("操作降级跳过")
 
                 elif category == "DATA_LOOP" and "规则" in title:
                     try:
@@ -335,7 +336,7 @@ class ScheduledTaskManager:
                         db.execute("DELETE FROM rules WHERE apply_count = 0 AND created_at < datetime('now', '-7 days')", commit=True)
                         logger.info("自动修复: 清理7天未使用的trial规则")
                     except Exception:
-                        pass
+                        logger.warning("操作降级跳过")
 
                 elif category == "SUBSYSTEM" and "任务" in title:
                     try:
@@ -344,7 +345,7 @@ class ScheduledTaskManager:
                             j.enabled = True
                             logger.info(f"自动修复: 重新启用任务 {j.name}")
                     except Exception:
-                        pass
+                        logger.warning("操作降级跳过")
 
                 elif category == "PERFORMANCE":
                     try:
@@ -354,12 +355,12 @@ class ScheduledTaskManager:
                             bc.set_mode("conservative")
                             logger.info("自动修复: 性能异常，切换到conservative模式")
                     except Exception:
-                        pass
+                        logger.warning("操作降级跳过")
 
                 elif category == "ALIGNMENT":
                     logger.warning(f"自动修复: 思想对齐异常需人工审查 - {title}")
         except Exception as e:
-            logger.debug(f"自动修复跳过: {e}")
+            logger.warning(f"自动修复跳过: {e}")
 
     def _job_deferred_deep_process(self):
         """
@@ -401,7 +402,7 @@ class ScheduledTaskManager:
                             commit=True
                         )
                     except Exception as e:
-                        logger.debug(f"延迟输入存入经验池失败: {e}")
+                        logger.error(f"延迟输入存入经验池失败: {e}")
 
                     try:
                         from core.knowledge_graph import get_knowledge_graph, NodeType
@@ -412,18 +413,18 @@ class ScheduledTaskManager:
                                 new_node = kg.add_node(entity, node_type=NodeType.CONCEPT)
                                 kg.auto_connect(new_node.id)
                     except Exception:
-                        pass
+                        logger.warning("操作降级跳过")
 
                     if item in deferred:
                         processor.remove_deferred_input(item)
                     processed_count += 1
                 except Exception as e:
-                    logger.debug(f"延迟输入处理失败: {e}")
+                    logger.error(f"延迟输入处理失败: {e}")
 
             if processed_count > 0:
                 logger.info(f"延迟深度处理: 处理了{processed_count}条学习型输入，剩余{len(processor._deferred_inputs)}条")
         except Exception as e:
-            logger.debug(f"延迟深度处理跳过: {e}")
+            logger.warning(f"延迟深度处理跳过: {e}")
 
     def get_status(self) -> Dict:
         with self._lock:
@@ -477,7 +478,25 @@ class ScheduledTaskManager:
             if consolidated > 0 or forgotten > 0:
                 logger.info(f"睡眠巩固: 强化{consolidated}条高价值经验, 遗忘{forgotten}条低质量经验, 清理{rules_forgotten}条无用规则")
         except Exception as e:
-            logger.debug(f"睡眠巩固跳过: {e}")
+            logger.warning(f"睡眠巩固跳过: {e}")
+
+    def _job_metabolism(self):
+        try:
+            from core.instinct.metabolism import metabolism_orchestrator
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(metabolism_orchestrator.tick())
+            finally:
+                loop.close()
+            status = metabolism_orchestrator.get_status()
+            logger.debug(
+                f"⏰ 代谢: 阶段={status['phase']}, "
+                f"完整循环={status['stats']['full_cycles']}, "
+                f"快速摄入={status['stats']['quick_ingests']}, "
+                f"跳过峰值={status['stats']['skipped_peak']}"
+            )
+        except Exception as e:
+            logger.warning(f"代谢跳过: {e}")
 
 
 scheduled_task_manager = ScheduledTaskManager()

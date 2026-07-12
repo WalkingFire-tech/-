@@ -117,7 +117,7 @@ class PerceptionLayer:
             if result:
                 return result.get('confidence', 0.5)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         # 默认置信度
         return 0.4

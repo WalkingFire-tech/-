@@ -232,7 +232,7 @@ class TruthAccumulator:
             )''')
 
         except Exception as e:
-            logger.debug(f"真谛库初始化失败: {e}")
+            logger.error(f"真谛库初始化失败: {e}")
 
     def _ensure_seeds(self):
         """确保种子真谛已写入"""
@@ -257,7 +257,7 @@ class TruthAccumulator:
                     )
 
         except Exception as e:
-            logger.debug(f"种子真谛写入失败: {e}")
+            logger.error(f"种子真谛写入失败: {e}")
 
     def accumulate(self, query: str, attempts: list, final_response: str, essence_result: dict = None) -> Optional[str]:
         """
@@ -359,7 +359,7 @@ class TruthAccumulator:
                         break
 
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     def _save_truth(self, name: str, level: str, domain: str, statement: str, source: str):
         """保存真谛"""
@@ -371,7 +371,7 @@ class TruthAccumulator:
                 logger.warning(f"真谛注入被棘轮门控拒绝: {name} | {decision.reason}")
                 return
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         try:
             db = DatabaseManager.get(self.db_path)
             db.execute(
@@ -382,7 +382,7 @@ class TruthAccumulator:
 
             logger.info(f"💎 真谛沉淀: {name} ({level}) — {statement[:50]}")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             from core.knowledge_graph import get_knowledge_graph, NodeType, ConnectionType
@@ -390,7 +390,7 @@ class TruthAccumulator:
             node = kg.add_node(statement, NodeType.TRUTH, 0.8 if level in ("L3", "L4") else 0.6, {"domain": domain, "level": level, "name": name})
             kg.auto_connect(node.id, threshold=0.2)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     def analogize(self, query: str, domain: str = "") -> List[dict]:
         """
@@ -446,7 +446,7 @@ class TruthAccumulator:
 
             results.sort(key=lambda x: x["relevance"], reverse=True)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         return results[:5]
 
@@ -481,7 +481,7 @@ class TruthAccumulator:
                     for row in rows:
                         parts.append(f"  ★ [L4] {row['name']}：{row['statement'][:100]}")
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
 
         if len(parts) <= 1:
             return ""
@@ -608,7 +608,7 @@ class TruthAccumulator:
                 logger.info(f"🔒 真谛'{truth_name}'未通过筛子：{', '.join(failed_checks)}")
 
         except Exception as e:
-            logger.debug(f"真谛升级评估失败: {e}")
+            logger.error(f"真谛升级评估失败: {e}")
 
         return result
 
@@ -635,7 +635,7 @@ class TruthAccumulator:
                         "score": eval_result["score"]
                     })
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         return candidates
 
@@ -703,7 +703,7 @@ class TruthAccumulator:
             )
 
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         logger.warning(f"📋 认知重组提案已生成: {proposal['proposal_id']} ({len(candidates)}条候选真谛)")
         return proposal
@@ -822,7 +822,7 @@ class TruthAccumulator:
                 })
 
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return snapshot
 
     def _rollback_reorganization(self, proposal_id: str, reason: str) -> dict:
@@ -852,7 +852,7 @@ class TruthAccumulator:
                 db.execute("UPDATE truths SET level=? WHERE name=?", (new_level, name), commit=True)
 
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     # ========== 认知熵值监测器 ==========
 
@@ -931,7 +931,7 @@ class TruthAccumulator:
                 entropy["status"] = "normal"
 
         except Exception as e:
-            logger.debug(f"认知熵值监测失败: {e}")
+            logger.error(f"认知熵值监测失败: {e}")
 
         return entropy
 

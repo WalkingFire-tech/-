@@ -91,7 +91,7 @@ class EvolutionScheduler:
             try:
                 self._meta_learner.stop_auto_learning()
             except Exception as e:
-                logger.debug(f"停止元学习失败: {e}")
+                logger.error(f"停止元学习失败: {e}")
         
         logger.info("🛑 进化调度器已停止")
     
@@ -154,7 +154,7 @@ class EvolutionScheduler:
                 stats = self._behavior_engine.get_statistics()
                 
                 if stats.get('total_profiles', 0) > 0:
-                    logger.debug(f"行为进化完成: {stats['total_profiles']} 个档案, {stats['profiles_with_feedback']} 个有反馈")
+                    logger.warning(f"行为进化完成: {stats['total_profiles']} 个档案, {stats['profiles_with_feedback']} 个有反馈")
                 else:
                     logger.debug("行为进化完成: 无档案数据")
         except Exception as e:
@@ -173,7 +173,7 @@ class EvolutionScheduler:
                     for conflict in pending[:3]:
                         logger.info(f"  - 冲突: {conflict.knowledge_id_a} vs {conflict.knowledge_id_b} ({conflict.conflict_type})")
                 else:
-                    logger.debug(f"知识进化完成: {stats['total_verifications']} 次验证, 无待处理冲突")
+                    logger.warning(f"知识进化完成: {stats['total_verifications']} 次验证, 无待处理冲突")
         except Exception as e:
             logger.error(f"知识进化失败: {e}")
     
@@ -193,7 +193,7 @@ class EvolutionScheduler:
                     for opt in high_priority[:2]:
                         logger.warning(f"  - {opt['intent_type']}: {opt['pattern_text'][:30]}... (成功率: {opt['success_rate']:.1%})")
                 else:
-                    logger.debug(f"策略进化完成: {stats['total_intent_patterns']} 个模式, 无高优先级优化")
+                    logger.warning(f"策略进化完成: {stats['total_intent_patterns']} 个模式, 无高优先级优化")
         except Exception as e:
             logger.error(f"策略进化失败: {e}")
     
@@ -219,7 +219,7 @@ class EvolutionScheduler:
                         logger.warning(f"  - {p.description}")
                 
                 if not declining and not volatile:
-                    logger.debug(f"元学习完成: {stats['total_observations']} 次观察, 系统稳定")
+                    logger.warning(f"元学习完成: {stats['total_observations']} 次观察, 系统稳定")
         except Exception as e:
             logger.error(f"元学习失败: {e}")
     
@@ -268,25 +268,25 @@ class EvolutionScheduler:
             if self._behavior_engine:
                 report["behavior_evolution"] = self._behavior_engine.get_evolution_report()
         except Exception as e:
-            logger.debug(f"获取行为进化报告失败: {e}")
+            logger.error(f"获取行为进化报告失败: {e}")
         
         try:
             if self._knowledge_engine:
                 report["knowledge_evolution"] = self._knowledge_engine.get_evolution_report()
         except Exception as e:
-            logger.debug(f"获取知识进化报告失败: {e}")
+            logger.error(f"获取知识进化报告失败: {e}")
         
         try:
             if self._strategy_engine:
                 report["strategy_evolution"] = self._strategy_engine.get_evolution_report()
         except Exception as e:
-            logger.debug(f"获取策略进化报告失败: {e}")
+            logger.error(f"获取策略进化报告失败: {e}")
         
         try:
             if self._meta_learner:
                 report["meta_learning"] = self._meta_learner.get_learning_report()
         except Exception as e:
-            logger.debug(f"获取元学习报告失败: {e}")
+            logger.error(f"获取元学习报告失败: {e}")
         
         return report
 

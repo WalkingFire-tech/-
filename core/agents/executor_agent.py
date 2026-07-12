@@ -103,7 +103,7 @@ class ExecutorAgent(BaseAgent):
                     except (json.JSONDecodeError, KeyError):
                         pass
         except Exception as e:
-            logger.debug(f"ExecutorAgent: chat_stream执行异常: {e}")
+            logger.error(f"ExecutorAgent: chat_stream执行异常: {e}")
 
         return best_result
 
@@ -144,7 +144,7 @@ class ExecutorAgent(BaseAgent):
                 best = results[0]
                 return {"response": best.get("response", ""), "source": "experience_pool", "quality": 60, "success": True}
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return {"response": "", "source": "knowledge_search", "quality": 0, "success": False}
 
     def _step_model_reasoning(self, query: str) -> Dict:
@@ -163,7 +163,7 @@ class ExecutorAgent(BaseAgent):
             if text:
                 return {"response": text, "source": f"ollama_{model}", "quality": 55, "success": True}
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return {"response": "", "source": "model_reasoning", "quality": 0, "success": False}
 
     def _step_external_search(self, query: str) -> Dict:
@@ -174,7 +174,7 @@ class ExecutorAgent(BaseAgent):
                 text = "\n".join(r.get("snippet", "") for r in results[:3])
                 return {"response": text, "source": "external_search", "quality": 45, "success": True}
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return {"response": "", "source": "external_search", "quality": 0, "success": False}
 
     def _step_tool_execution(self, query: str) -> Dict:
@@ -199,7 +199,7 @@ class ExecutorAgent(BaseAgent):
             if result.success:
                 return {"response": result.data, "source": "tool", "quality": 70, "success": True}
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return {"response": "", "source": "tool_execution", "quality": 0, "success": False}
 
 

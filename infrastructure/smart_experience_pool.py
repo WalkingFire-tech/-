@@ -45,7 +45,7 @@ class SmartExperiencePool:
             try:
                 db.execute(f'ALTER TABLE experiences ADD COLUMN {column} {definition}', commit=True)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         db.execute('CREATE INDEX IF NOT EXISTS idx_intent ON experiences(intent_type)', commit=True)
         db.execute('CREATE INDEX IF NOT EXISTS idx_score ON experiences(quality_score)', commit=True)
@@ -141,7 +141,7 @@ class SmartExperiencePool:
             try:
                 db.execute('UPDATE experiences SET access_count = access_count + 1 WHERE id = ?', (row[0],), commit=True)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         return [dict(r) for r in rows]
     
     def get_failed_experiences(self, intent_type: str = None, limit: int = 50):

@@ -179,7 +179,7 @@ class DynamicProbabilityField:
                   dist.get("top", {}).get("probability", 0),
                   dist["evidence_count"], datetime.now().isoformat()), commit=True)
         except Exception as e:
-            logger.debug(f"概率场快照保存失败: {e}")
+            logger.error(f"概率场快照保存失败: {e}")
 
     def get_recent_snapshots(self, limit: int = 20) -> List[Dict]:
         try:
@@ -282,7 +282,7 @@ class DynamicProbabilityField:
                 from infrastructure.vector_retriever import vector_retriever
                 vector_retriever._calibrator.record_calibration_outcome(predicted_prob, is_relevant)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         self._calibration_history.append({
             "chosen_source": chosen_source,

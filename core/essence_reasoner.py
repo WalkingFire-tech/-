@@ -69,7 +69,7 @@ class EssenceReasoner:
                 )
             ''')
         except Exception as e:
-            logger.debug(f"本质推理器数据库初始化失败: {e}")
+            logger.error(f"本质推理器数据库初始化失败: {e}")
 
     HISTORY_PHILOSOPHY_KEYWORDS = [
         "古文明", "文明", "历史", "朝代", "帝国", "王朝", "古代", "近代",
@@ -327,7 +327,7 @@ class EssenceReasoner:
                 if row[0] and len(row[0]) > 20:
                     truths.append({"keywords": row[0][:10].split(), "reasoning": row[0][:200], "verified": True})
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         return truths
 
@@ -652,7 +652,7 @@ class EssenceReasoner:
                                 result["contradictions"].append(f"「{stmt[:40]}」与搜索结果冲突：{c}")
                                 check_entry["result"] = "contradicted"
             except Exception as e:
-                logger.debug(f"web事实校验跳过: {str(e)[:60]}")
+                logger.warning(f"web事实校验跳过: {str(e)[:60]}")
                 check_entry["result"] = "skipped"
                 break
 
@@ -700,7 +700,7 @@ class EssenceReasoner:
                 commit=True
             )
         except Exception as e:
-            logger.debug(f"推理结果持久化失败: {e}")
+            logger.error(f"推理结果持久化失败: {e}")
 
     def essence_gate(self, query: str) -> Dict[str, Any]:
         """

@@ -206,7 +206,7 @@ class MetacognitiveExecutor:
         except asyncio.TimeoutError:
             logger.debug("模型扫描超时，跳过")
         except Exception as e:
-            logger.debug(f"模型扫描失败: {e}")
+            logger.error(f"模型扫描失败: {e}")
         
         # 3. 扫描知识库
         knowledge_bases = []
@@ -422,7 +422,7 @@ class MetacognitiveExecutor:
                 return result.output
             return result
         except Exception as e:
-            logger.debug(f"工具执行失败: {e}")
+            logger.error(f"工具执行失败: {e}")
             return None
     
     async def _retrieve_knowledge(self, query: str) -> Any:
@@ -438,7 +438,7 @@ class MetacognitiveExecutor:
                     results = [row[0] for row in rows]
                     return {"answer": "\n".join(results), "confidence": 0.7}
             except Exception as e:
-                logger.debug(f"知识检索失败: {e}")
+                logger.error(f"知识检索失败: {e}")
             return None
         
         try:
@@ -451,7 +451,7 @@ class MetacognitiveExecutor:
             logger.debug("知识检索超时")
             return None
         except Exception as e:
-            logger.debug(f"知识检索异常: {e}")
+            logger.error(f"知识检索异常: {e}")
             return None
     
     async def _llm_reasoning(self, query: str, previous_results: List) -> str:
@@ -510,7 +510,7 @@ class MetacognitiveExecutor:
                     logger.info(f"  ✅ 模型推理完成: {len(content)}字")
                     return content
         except Exception as e:
-            logger.debug(f"Ollama推理失败: {e}")
+            logger.error(f"Ollama推理失败: {e}")
         
         # 2. 尝试DeepSeek远程API
         try:
@@ -524,7 +524,7 @@ class MetacognitiveExecutor:
             if result and len(result) > 10:
                 return result
         except Exception as e:
-            logger.debug(f"远程API推理失败: {e}")
+            logger.error(f"远程API推理失败: {e}")
         
         return None
     
@@ -610,7 +610,7 @@ class MetacognitiveExecutor:
                 )
                 logger.debug("✓ 经验已存储")
             except Exception as e:
-                logger.debug(f"经验存储失败: {e}")
+                logger.error(f"经验存储失败: {e}")
             
             # 2. 生成训练数据（JSONL，快速）
             try:
@@ -624,7 +624,7 @@ class MetacognitiveExecutor:
                         f.write(json.dumps(sample, ensure_ascii=False) + "\n")
                     logger.debug("✓ 训练数据已生成")
             except Exception as e:
-                logger.debug(f"训练数据生成失败: {e}")
+                logger.error(f"训练数据生成失败: {e}")
             
             logger.info("✓ 反思沉淀完成")
             

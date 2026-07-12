@@ -177,10 +177,10 @@ class PersistentTaskSystem:
                         "strategy": strategy_name
                     }
                 else:
-                    logger.debug(f"策略 {strategy_name} 未成功: {result.get('error', 'unknown')}")
+                    logger.warning(f"策略 {strategy_name} 未成功: {result.get('error', 'unknown')}")
                     
             except Exception as e:
-                logger.debug(f"策略 {strategy_name} 异常: {e}")
+                logger.error(f"策略 {strategy_name} 异常: {e}")
                 task["partial_results"].append({
                     "strategy": strategy_name,
                     "error": str(e),
@@ -210,7 +210,7 @@ class PersistentTaskSystem:
             if content and len(content) > 20:
                 return {"success": True, "answer": content}
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return {"success": False, "error": "直接模型调用失败"}
     
     async def _try_alternative_model(self, question: str, context: dict) -> Dict:
@@ -241,7 +241,7 @@ class PersistentTaskSystem:
                     except Exception:
                         continue
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return {"success": False, "error": "备选模型调用失败"}
     
     async def _try_tools(self, question: str, context: dict) -> Dict:
@@ -264,7 +264,7 @@ class PersistentTaskSystem:
                     return {"success": True, "answer": str(result.output)}
                     
         except Exception as e:
-            logger.debug(f"工具调用失败: {e}")
+            logger.error(f"工具调用失败: {e}")
         return {"success": False, "error": "工具调用失败"}
     
     async def _try_search(self, question: str, context: dict) -> Dict:
@@ -278,7 +278,7 @@ class PersistentTaskSystem:
             if row:
                 return {"success": True, "answer": row[0]}
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return {"success": False, "error": "知识检索失败"}
     
     async def _try_decompose(self, question: str, context: dict) -> Dict:
@@ -311,7 +311,7 @@ class PersistentTaskSystem:
             if row and row['response']:
                 return {"success": True, "answer": row['response']}
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return {"success": False, "error": "RAG检索失败"}
     
     async def _try_code_generation(self, question: str, context: dict) -> Dict:
@@ -384,7 +384,7 @@ if __name__ == "__main__":
                     "partial_results": json.loads(row['partial_results'])
                 }
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return None
     
     async def get_task_status(self, task_id: str) -> Dict:

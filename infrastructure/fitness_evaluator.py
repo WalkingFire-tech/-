@@ -153,7 +153,7 @@ class FitnessEvaluator:
                 source="low_objective_score"
             )
         except Exception as e:
-            logger.debug(f"知识注入触发失败: {e}")
+            logger.error(f"知识注入触发失败: {e}")
     
     def _is_factual_question(self, question: str, intent_type: str) -> bool:
         """判断是否为事实性问题"""

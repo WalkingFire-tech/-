@@ -186,7 +186,7 @@ class WikipediaLearner(ExternalLearnerBase):
                             logger.info(f"📖 Wikipedia: 获取到 '{title}' 的知识")
                 
             except Exception as e:
-                logger.debug(f"Wikipedia查询失败 '{term}': {e}")
+                logger.error(f"Wikipedia查询失败 '{term}': {e}")
         
         return results
     
@@ -390,7 +390,7 @@ class ArxivLearner(ExternalLearnerBase):
                 
                 logger.info(f"📄 arXiv: 获取到 {len(results)} 篇论文摘要")
         except Exception as e:
-            logger.debug(f"arXiv查询失败: {e}")
+            logger.error(f"arXiv查询失败: {e}")
         
         return results
     
@@ -440,7 +440,7 @@ class MultiSourceSearchLearner(ExternalLearnerBase):
                     logger.info(f"🌐 隐身搜索: 获取到 {len(results)} 条结果")
                     return results[:max_results * 2]
         except Exception as e:
-            logger.debug(f"隐身搜索失败: {e}")
+            logger.error(f"隐身搜索失败: {e}")
         
         try:
             if _DDGS is None:
@@ -490,7 +490,7 @@ class MultiSourceSearchLearner(ExternalLearnerBase):
                             ))
                 
             except Exception as e:
-                logger.debug(f"多源搜索失败 '{sq[:30]}': {e}")
+                logger.error(f"多源搜索失败 '{sq[:30]}': {e}")
             
             if len(results) >= max_results * 2:
                 break
@@ -554,7 +554,7 @@ class MultiSourceSearchLearner(ExternalLearnerBase):
             content = self._strip_html(text)
             return content[:1000] if content and len(content) > 100 else None
         except Exception as e:
-            logger.debug(f"深度抓取失败 {url[:50]}: {e}")
+            logger.error(f"深度抓取失败 {url[:50]}: {e}")
             return None
     
     def _parse_arxiv_html(self, html: str) -> Optional[str]:
@@ -568,7 +568,7 @@ class MultiSourceSearchLearner(ExternalLearnerBase):
                 t = title.text.strip() if title is not None else ""
                 return f"[arXiv深度] {t}: {summary.text.strip()[:500]}"
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return None
     
     def _strip_html(self, html: str) -> Optional[str]:

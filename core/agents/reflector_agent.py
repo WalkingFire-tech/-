@@ -120,7 +120,7 @@ class ReflectorAgent(BaseAgent):
                     commit=True
                 )
         except Exception as e:
-            logger.debug(f"ReflectorAgent: 教训保存失败: {e}")
+            logger.error(f"ReflectorAgent: 教训保存失败: {e}")
 
 
 reflector_agent = ReflectorAgent()

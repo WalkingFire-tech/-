@@ -293,7 +293,7 @@ class ClosedLoopEngine:
                 if result and result.get('confidence', 0) > 0.5:
                     return result
             except Exception as e:
-                logger.debug(f"策略 {strategy_name} 失败: {e}")
+                logger.error(f"策略 {strategy_name} 失败: {e}")
                 continue
         
         return None
@@ -325,7 +325,7 @@ class ClosedLoopEngine:
                         'source': 'search'
                     }
             except Exception as e:
-                logger.debug(f"搜索失败: {e}")
+                logger.error(f"搜索失败: {e}")
         return None
     
     def _answer_from_other_model(self, question: str) -> Optional[Dict]:
@@ -340,7 +340,7 @@ class ClosedLoopEngine:
                         'source': 'other_model'
                     }
             except Exception as e:
-                logger.debug(f"其他模型调用失败: {e}")
+                logger.error(f"其他模型调用失败: {e}")
         return None
     
     def _decompose_question(self, question: str) -> List[str]:
@@ -364,7 +364,7 @@ class ClosedLoopEngine:
                             sub_questions.append(line)
                     return sub_questions
             except Exception as e:
-                logger.debug(f"LLM拆解失败: {e}")
+                logger.error(f"LLM拆解失败: {e}")
         
         return self._decompose_by_rules(question)
     
@@ -428,7 +428,7 @@ class ClosedLoopEngine:
                 if json_match:
                     return json.loads(json_match.group())
             except Exception as e:
-                logger.debug(f"生成执行计划失败: {e}")
+                logger.error(f"生成执行计划失败: {e}")
         return None
     
     def _execute_plan(self, plan: Dict) -> Dict:
@@ -460,7 +460,7 @@ class ClosedLoopEngine:
                     'confidence': sum(self.question_tree[sid].confidence for sid in node.sub_questions) / len(node.sub_questions)
                 }
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         return {
             'content': '\n\n'.join(answers),
@@ -688,7 +688,8 @@ class ClosedLoopIntegrator:
                     ['python', script_path],
                     capture_output=True,
                     text=True,
-                    timeout=30
+                    timeout=30,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                 )
                 return result.stdout + result.stderr
             except Exception as e:

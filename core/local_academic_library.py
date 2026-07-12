@@ -118,7 +118,7 @@ class LocalAcademicLibrary:
                     embedding_vec = self._embedding_model.encode(content[:1000])
                     embedding = json.dumps(embedding_vec.tolist())
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
             
             db = DatabaseManager.get(self.db_path)
             db.execute('''
@@ -224,7 +224,7 @@ class LocalAcademicLibrary:
                     logger.info(f"语义搜索返回 {len(results)} 条结果")
                     return results
             except Exception as e:
-                logger.debug(f"语义搜索失败: {e}")
+                logger.error(f"语义搜索失败: {e}")
         
         try:
             db = DatabaseManager.get(self.db_path)

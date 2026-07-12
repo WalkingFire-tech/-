@@ -37,7 +37,7 @@ def _enqueue_proactivity(msg: dict):
     """入队主动性消息（如果存在SSE订阅者）"""
     try:
         if not _proactivity_subscribers:
-            logger.debug(f"无SSE订阅者，消息丢弃: type={msg.get('type')}")
+            logger.warning(f"无SSE订阅者，消息丢弃: type={msg.get('type')}")
             return
         _broadcast_proactivity(msg)
         logger.info(f"主动性消息已广播: type={msg.get('type')} subscribers={len(_proactivity_subscribers)}")
@@ -101,7 +101,7 @@ async def _start_hardware_monitoring():
                 from infrastructure.hardware_monitor import log_hardware_stats
                 log_hardware_stats(force=True)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
             await asyncio.sleep(30)
 
     asyncio.create_task(_periodic_hardware_log())
@@ -124,7 +124,7 @@ async def _start_assessment_loop(app):
                 if any(v > 0 for v in s.values()):
                     logger.info(f"评估驱动重组: 激活{s.get('rules_activated',0)} 合并{s.get('rules_merged',0)} 提取{s.get('rules_extracted',0)}")
             except Exception as e:
-                logger.debug(f"评估驱动重组失败: {e}")
+                logger.error(f"评估驱动重组失败: {e}")
 
         # 知识活力低 → 触发遗忘清理
         vitality_score = report.get("knowledge_vitality", {}).get("score", 1.0)
@@ -134,7 +134,7 @@ async def _start_assessment_loop(app):
                 result = knowledge_forgetting.execute_fading(dry_run=False)
                 logger.info(f"评估驱动遗忘: 规则淡化{result['rules']['faded']}+清除{result['rules']['pruned']}, 经验淡化{result['experiences']['faded']}+清除{result['experiences']['pruned']}")
             except Exception as e:
-                logger.debug(f"评估驱动遗忘失败: {e}")
+                logger.error(f"评估驱动遗忘失败: {e}")
 
         # 行为偏差 → 触发认知自修复
         deviation = report.get("behavior_deviation", {})
@@ -144,7 +144,7 @@ async def _start_assessment_loop(app):
                 result = cognitive_self_repair.run_full_repair()
                 logger.info(f"评估驱动修复: {result['repairs']}")
             except Exception as e:
-                logger.debug(f"评估驱动修复失败: {e}")
+                logger.error(f"评估驱动修复失败: {e}")
 
     async def _periodic_assessment():
         await asyncio.sleep(120)
@@ -162,7 +162,7 @@ async def _start_assessment_loop(app):
                 # 评估→修复闭环
                 await _assessment_driven_repair(report)
             except Exception as e:
-                logger.debug(f"自我评估失败: {e}")
+                logger.error(f"自我评估失败: {e}")
             await asyncio.sleep(300)
 
     asyncio.create_task(_periodic_assessment())
@@ -197,7 +197,7 @@ async def _start_evolution_loop(app):
                     from core.self.model import get_self_model
                     _sm = get_self_model()
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
                 if _sm:
                     _sm.update("evolution", {
                         "last_fitness": best_fitness,
@@ -207,7 +207,7 @@ async def _start_evolution_loop(app):
 
                 app.state.evolution_running = False
             except Exception as e:
-                logger.debug(f"进化岛周期运行失败: {e}")
+                logger.error(f"进化岛周期运行失败: {e}")
                 app.state.evolution_running = False
             await asyncio.sleep(600)
 
@@ -297,7 +297,7 @@ async def _register_event_bus():
                         "confidence": decision.confidence,
                     })
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
 
         def _on_knowledge_update(data):
             try:
@@ -306,7 +306,7 @@ async def _register_event_bus():
                 if isinstance(data, dict) and data.get("content"):
                     kg.add_node(data["content"], node_type=NodeType.FACT, importance=0.6)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
 
         def _on_system_health(data):
             try:
@@ -314,7 +314,7 @@ async def _register_event_bus():
                     gc.collect()
                     logger.info("事件驱动: 系统健康度过低，执行gc.collect()")
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
 
         bus.subscribe(EventTypes.IdlePeriod, _on_idle_period)
         bus.subscribe(EventTypes.KnowledgeUpdate, _on_knowledge_update)
@@ -333,7 +333,7 @@ async def _stop_cognitive_planner(app):
             app.state.cognitive_planner.shutdown()
             logger.info("认知规划器已关闭")
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
 
 async def _stop_existence_layer():
@@ -343,7 +343,7 @@ async def _stop_existence_layer():
         existence_layer = get_existence_layer()
         existence_layer.stop()
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
 
 async def _stop_scheduled_tasks():
@@ -352,7 +352,7 @@ async def _stop_scheduled_tasks():
         from infrastructure.scheduled_tasks import scheduled_task_manager
         scheduled_task_manager.stop()
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
 
 async def _stop_file_monitor(app):
@@ -361,7 +361,7 @@ async def _stop_file_monitor(app):
         if hasattr(app.state, 'directory_monitor') and app.state.directory_monitor:
             app.state.directory_monitor.stop()
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
 
 async def _stop_task_queue():
@@ -370,7 +370,7 @@ async def _stop_task_queue():
         from core.task_queue import task_queue
         task_queue.stop_worker()
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
 
 # ========== 主生命周期 ==========
@@ -399,7 +399,7 @@ async def lifespan(app):
         from core.evolution.pattern_migrator import PatternMigrator
         PatternMigrator.bootstrap()
     except Exception as e:
-        logger.debug(f"模式迁移器引导跳过: {e}")
+        logger.warning(f"模式迁移器引导跳过: {e}")
     await _init_cognitive_planner(app)
     await _start_scheduled_tasks()
     await _register_event_bus()

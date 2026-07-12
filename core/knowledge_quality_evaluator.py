@@ -320,7 +320,7 @@ class KnowledgeQualityEvaluator:
             return 0.9
         
         except Exception as e:
-            logger.debug(f"一致性检查失败: {e}")
+            logger.error(f"一致性检查失败: {e}")
             return 0.7
     
     def _extract_concepts(self, text: str) -> set:

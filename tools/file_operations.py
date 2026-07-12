@@ -213,7 +213,7 @@ class FileSearchTool(BaseFileTool):
                                     break
                 
                 except Exception as e:
-                    logger.debug(f"无法读取文件 {file_path}: {e}")
+                    logger.warning(f"无法读取文件 {file_path}: {e}")
                 
                 if len(results) >= 100:
                     break

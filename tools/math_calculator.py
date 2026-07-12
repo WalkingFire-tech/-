@@ -185,20 +185,20 @@ class MathCalculator:
                 result = ne.evaluate(expression, local_dict=safe_dict)
                 return self._format_result(result)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         try:
             result = eval(expression, {"__builtins__": {}}, safe_dict)
             return self._format_result(result)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         if MPMATH_AVAILABLE:
             try:
                 result = mpmath.mpf(expression)
                 return self._format_result(result)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         raise ValueError(f"无法计算表达式: {expression}")
     

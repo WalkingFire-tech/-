@@ -154,7 +154,7 @@ class ClosedLoopReasoning:
                     "source": "knowledge_base"
                 }
         except Exception as e:
-            logger.debug(f"知识库检索失败: {e}")
+            logger.error(f"知识库检索失败: {e}")
         
         return {"found": False, "answer": None, "confidence": 0}
     
@@ -176,7 +176,7 @@ class ClosedLoopReasoning:
                 "source": "deepseek"
             }
         except Exception as e:
-            logger.debug(f"模型调用失败: {e}")
+            logger.error(f"模型调用失败: {e}")
         
         return {"found": False, "answer": None, "confidence": 0}
     
@@ -191,7 +191,7 @@ class ClosedLoopReasoning:
                 # 这里简化处理
                 return {"found": False, "answer": None, "confidence": 0}
             except Exception as e:
-                logger.debug(f"工具调用失败: {e}")
+                logger.error(f"工具调用失败: {e}")
         
         return {"found": False, "answer": None, "confidence": 0}
     
@@ -328,7 +328,7 @@ class ClosedLoopReasoning:
                 
                 learned.append("新增知识到知识库")
             except Exception as e:
-                logger.debug(f"知识存储失败: {e}")
+                logger.error(f"知识存储失败: {e}")
         
         # 2. 提取知识点
         # 简化处理
@@ -371,7 +371,7 @@ class ClosedLoopReasoning:
             
             improvements.append("记录推理经验")
         except Exception as e:
-            logger.debug(f"经验记录失败: {e}")
+            logger.error(f"经验记录失败: {e}")
         
         # 2. 更新策略（如果有反思结果）
         reflection = results.get("reflection", {})

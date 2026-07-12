@@ -38,7 +38,7 @@ class OnlineReflector:
         # 冷却时间检查
         elapsed = time.time() - self.last_reflection_time
         if elapsed < self.cooldown_seconds:
-            logger.debug(f"反思冷却中，还需等待 {self.cooldown_seconds - elapsed:.0f}秒")
+            logger.warning(f"反思冷却中，还需等待 {self.cooldown_seconds - elapsed:.0f}秒")
             return False
         
         return True
@@ -209,7 +209,7 @@ class OnlineReflector:
             return None
             
         except Exception as e:
-            logger.debug(f"查找更好模型失败: {e}")
+            logger.error(f"查找更好模型失败: {e}")
             return None
     
     def _save_rule(self, rule: Dict):

@@ -156,7 +156,7 @@ class KnowledgeIndex:
                         "relevance": "topic_match"
                     })
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         rows = db.query('''
             SELECT name, path, description

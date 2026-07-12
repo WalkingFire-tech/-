@@ -340,7 +340,7 @@ def {name}(items):
                 tool_registry.register(self._wrap_tool_for_registry(tool))
                 logger.info(f"ToolBuilder: 工具 {tool.name} 已自动注册到tool_registry")
             except Exception as e:
-                logger.debug(f"ToolBuilder自动注册失败: {e}")
+                logger.error(f"ToolBuilder自动注册失败: {e}")
         
         return BuildResult(
             success=len(errors) == 0 and tool.status == ToolStatus.ACTIVE,
@@ -407,7 +407,7 @@ def {func_name}(params: dict) -> dict:
                     logger.info(f"ToolBuilder: LLM合成了工具代码 ({len(code)}字符)")
                     return code
         except Exception as e:
-            logger.debug(f"LLM工具合成失败，降级为模板: {e}")
+            logger.error(f"LLM工具合成失败，降级为模板: {e}")
         return None
     
     def _generate_tool_name(self, description: str) -> str:

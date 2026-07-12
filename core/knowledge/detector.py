@@ -245,7 +245,7 @@ class SemanticGapDetector:
                 return best_domain, float(best_score)
 
         except Exception as e:
-            logger.debug(f"语义领域识别失败: {e}")
+            logger.error(f"语义领域识别失败: {e}")
 
         return self._identify_domain_keyword(query)
 
@@ -262,7 +262,7 @@ class SemanticGapDetector:
                     if kw in query:
                         return domain, 0.7
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return None, 0.0
 
     def _get_domain_embeddings(self) -> Dict[str, np.ndarray]:
@@ -281,7 +281,7 @@ class SemanticGapDetector:
                         json.loads(embedding_json)
                     )
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         return self._domain_embeddings
 
@@ -300,7 +300,7 @@ class SemanticGapDetector:
                     )
                     return min(1.0, max_sim * 2)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
 
         return self._get_domain_coverage_count(domain)
 
@@ -341,7 +341,7 @@ class SemanticGapDetector:
                 embedding = self._embedding_model.encode(text_for_embedding)
                 embedding_json = json.dumps(embedding.tolist())
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
 
         db = DatabaseManager.get(self.db_path)
         db.execute(
@@ -363,7 +363,7 @@ class SemanticGapDetector:
                 embedding = self._embedding_model.encode(question)
                 embedding_json = json.dumps(embedding.tolist())
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
 
         db = DatabaseManager.get(self.db_path)
         db.execute(

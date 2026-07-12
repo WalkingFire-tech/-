@@ -137,7 +137,7 @@ class DomainKnowledgeLearner:
             return best_domain, float(best_score)
 
         except Exception as e:
-            logger.debug(f"语义匹配失败: {e}")
+            logger.error(f"语义匹配失败: {e}")
             return None, 0.0
 
     def _detect_by_keyword(self, query: str) -> Tuple[Optional[str], float]:
@@ -166,7 +166,7 @@ class DomainKnowledgeLearner:
             return best_domain, best_score
 
         except Exception as e:
-            logger.debug(f"关键词匹配失败: {e}")
+            logger.error(f"关键词匹配失败: {e}")
             return None, 0.0
 
     def learn_from_correction(

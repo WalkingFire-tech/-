@@ -155,7 +155,7 @@ class CognitiveHighway:
                                 "confidence": r.get('final_score', 0.5)
                             })
         except Exception as e:
-            logger.debug(f"策略检索失败: {e}")
+            logger.error(f"策略检索失败: {e}")
         
         # 如果没有检索到，返回默认范例
         if not strategies:
@@ -183,7 +183,7 @@ class CognitiveHighway:
             for tool in tool_registry.list_tools():
                 tools.append(tool["name"])
         except Exception as e:
-            logger.debug(f"工具扫描失败: {e}")
+            logger.error(f"工具扫描失败: {e}")
         
         # 添加默认工具（即使注册表失败）
         if not tools:
@@ -233,7 +233,7 @@ class CognitiveHighway:
                     plan = json.loads(json_match.group())
                     return plan
         except Exception as e:
-            logger.debug(f"计划生成失败: {e}")
+            logger.error(f"计划生成失败: {e}")
         
         # 降级：紧急兜底计划
         return self._emergency_plan(query, tools)

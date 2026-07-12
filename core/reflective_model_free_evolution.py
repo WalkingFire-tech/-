@@ -222,7 +222,7 @@ class DataDrivenReflectionEngine:
                     inconsistencies.append(result[0])
                     
         except Exception as e:
-            logger.debug(f"一致性检查失败: {e}")
+            logger.error(f"一致性检查失败: {e}")
         
         return inconsistencies
     
@@ -527,7 +527,7 @@ class CognitiveLoopManager:
             results = [dict(row) for row in rows]
             return results
         except Exception as e:
-            logger.debug(f"获取已有知识失败: {e}")
+            logger.error(f"获取已有知识失败: {e}")
             return []
     
     def _get_all_knowledge(self) -> List[Dict]:
@@ -544,7 +544,7 @@ class CognitiveLoopManager:
             results = [dict(row) for row in rows]
             return results
         except Exception as e:
-            logger.debug(f"获取所有知识失败: {e}")
+            logger.error(f"获取所有知识失败: {e}")
             return []
     
     def _store_verified_knowledge(self, item: Dict):
@@ -568,7 +568,7 @@ class CognitiveLoopManager:
                 datetime.now().isoformat()
             ), commit=True)
 
-            logger.debug(f"✓ 知识已存储: {item.get('question', '')[:30]}...")
+            logger.warning(f"✓ 知识已存储: {item.get('question', '')[:30]}...")
         except Exception as e:
             logger.warning(f"存储知识失败: {e}")
     
@@ -631,7 +631,7 @@ class CognitiveLoopManager:
             if result.get("saved_count", 0) > 0:
                 logger.info(f"    ✅ 重新学习成功，获取{result['saved_count']}条新知识")
         except Exception as e:
-            logger.debug(f"重新学习失败: {e}")
+            logger.error(f"重新学习失败: {e}")
     
     def _mark_conflict(self, error: ErrorCase):
         """标记冲突"""
@@ -661,7 +661,7 @@ class CognitiveLoopManager:
             ), commit=True)
 
         except Exception as e:
-            logger.debug(f"标记冲突失败: {e}")
+            logger.error(f"标记冲突失败: {e}")
     
     def _prioritize_correction(self, error: ErrorCase):
         """高优先级修正"""
@@ -701,7 +701,7 @@ class CognitiveLoopManager:
                 trigger_reason="frequent_errors"
             )
         except Exception as e:
-            logger.debug(f"高优先级修正失败: {e}")
+            logger.error(f"高优先级修正失败: {e}")
 
 
 # ==================== 第2层：元认知监控器 ====================
@@ -1021,7 +1021,7 @@ class ReflectiveModelFreeEvolution:
                 'adaptation_speed': self._calculate_adaptation_speed()
             }
         except Exception as e:
-            logger.debug(f"收集系统状态失败: {e}")
+            logger.error(f"收集系统状态失败: {e}")
             return {
                 'error_rate': 0.1,
                 'learning_efficiency': 0.4,
@@ -1095,11 +1095,11 @@ class ReflectiveModelFreeEvolution:
                     if hasattr(l4, 'thresholds'):
                         l4.thresholds['pass'] = 0.7 + (changes['verification_strictness'] - 0.7) * 0.2
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
             
             logger.info(f"✅ 进化参数已应用: {changes}")
         except Exception as e:
-            logger.debug(f"应用进化结果失败: {e}")
+            logger.error(f"应用进化结果失败: {e}")
     
     def get_status(self) -> Dict:
         """获取系统状态"""

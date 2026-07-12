@@ -80,7 +80,7 @@ class SystemGuardian:
                 health_metrics.record("error_rate", error_rate)
                 anomaly_detector.check("error_rate", error_rate)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     def _check_circuit_breakers(self):
         for name, state in circuit_breaker.get_all_states().items():
@@ -95,7 +95,7 @@ class SystemGuardian:
         try:
             cognitive_self_repair.run_full_repair()
         except Exception as e:
-            logger.debug(f"认知自修复失败: {e}")
+            logger.error(f"认知自修复失败: {e}")
 
     def _run_knowledge_forgetting(self):
         try:
@@ -104,7 +104,7 @@ class SystemGuardian:
             if report["rules"]["pruned"] > 0 or report["experiences"]["pruned"] > 0:
                 logger.info(f"🧹 知识遗忘: 规则淡化{report['rules']['faded']}+清除{report['rules']['pruned']}, 经验淡化{report['experiences']['faded']}+清除{report['experiences']['pruned']}")
         except Exception as e:
-            logger.debug(f"知识遗忘失败: {e}")
+            logger.error(f"知识遗忘失败: {e}")
 
     def _run_low_load_reorganization(self):
         try:
@@ -114,7 +114,7 @@ class SystemGuardian:
             if any(v > 0 for v in s.values()):
                 logger.info(f"🔄 低负载重组: 激活{s.get('rules_activated',0)} 合并{s.get('rules_merged',0)} 提取{s.get('rules_extracted',0)} 连接{s.get('connections_found',0)}")
         except Exception as e:
-            logger.debug(f"低负载重组失败: {e}")
+            logger.error(f"低负载重组失败: {e}")
 
     def sanitize_input(self, raw: str) -> tuple:
         return input_sanitizer.sanitize(raw)
