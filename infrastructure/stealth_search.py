@@ -33,6 +33,49 @@ def _create_stealth_session():
     return CurlSession(impersonate="chrome120")
 
 
+def _extract_baidu_snippet(item, title: str) -> str:
+    snippet = ""
+
+    for cls in ['content-right_8Zs40', 'c-abstract', 'c-span-last',
+                'c-color-text', 'content-right_1RfYz', 'c-span9 c-line-clamp2']:
+        snippet_el = item.find('span', class_=cls) or item.find('div', class_=cls)
+        if snippet_el:
+            snippet = snippet_el.get_text().strip()
+            if len(snippet) > 15:
+                break
+            snippet = ""
+
+    if not snippet:
+        for attr in ['data-tts', 'data-log']:
+            snippet_el = item.find(attrs={attr: True})
+            if snippet_el:
+                snippet = snippet_el.get_text().strip()
+                if len(snippet) > 20:
+                    break
+                snippet = ""
+
+    if not snippet:
+        for tag in ['span', 'div', 'p']:
+            for el in item.find_all(tag):
+                text = el.get_text().strip()
+                if 20 < len(text) < 500 and text != title and not el.find(['h3', 'a']):
+                    has_useful_content = any(c.isalpha() or '\u4e00' <= c <= '\u9fff' for c in text[:30])
+                    if has_useful_content:
+                        snippet = text
+                        break
+            if snippet:
+                break
+
+    if not snippet:
+        all_texts = item.get_text(separator='\n', strip=True).split('\n')
+        for text in all_texts:
+            if 20 < len(text) < 500 and text != title:
+                snippet = text
+                break
+
+    return snippet
+
+
 def search_baidu(query: str, max_results: int = 8, timeout: int = 15) -> List[Dict]:
     if not _CURL_CFFI_AVAILABLE:
         return []
@@ -62,26 +105,7 @@ def search_baidu(query: str, max_results: int = 8, timeout: int = 15) -> List[Di
             if not title or len(title) < 4:
                 continue
 
-            snippet = ""
-            for cls in ['content-right_8Zs40', 'c-abstract', 'c-span-last']:
-                snippet_el = item.find('span', class_=cls) or item.find('div', class_=cls)
-                if snippet_el:
-                    snippet = snippet_el.get_text().strip()
-                    break
-            if not snippet:
-                for attr in ['data-tts', 'data-log']:
-                    snippet_el = item.find(attrs={attr: True})
-                    if snippet_el:
-                        snippet = snippet_el.get_text().strip()
-                        if len(snippet) > 20:
-                            break
-                        snippet = ""
-            if not snippet:
-                all_texts = item.get_text(separator='\n', strip=True).split('\n')
-                for text in all_texts:
-                    if 20 < len(text) < 500 and text != title:
-                        snippet = text
-                        break
+            snippet = _extract_baidu_snippet(item, title)
 
             link_el = item.find('a')
             link = link_el.get('href', '') if link_el else ''
