@@ -64,6 +64,7 @@ class LoopContext:
     execution_results: List[Dict] = field(default_factory=list)
     fitness_score: Any = None
     iteration_history: List[Dict] = field(default_factory=list)
+    field_context: Dict[str, Any] = field(default_factory=dict)
 
 
 
@@ -173,6 +174,19 @@ class ClosedLoopOrchestrator:
             ctx.complexity = result.get("complexity", 0.5)
             ctx.confidence = result.get("confidence", 0.5)
             ctx.route = result.get("route", "fast")
+            ctx.field_context = result.get("field_context", {})
+
+            _fc = ctx.field_context
+            if _fc:
+                _fc_sensing = _fc.get("_sensing_mode", "unknown")
+                _fc_new_topic = _fc.get("is_new_topic", False)
+                _fc_familiar = _fc.get("is_familiar", False)
+                if _fc_sensing == "blind":
+                    logger.warning("闭环场域失明: embedding不可用, 闭环决策降级")
+                if _fc_new_topic:
+                    logger.info("闭环场域感知: 话题跳跃, 提升搜索深度")
+                elif _fc_familiar:
+                    logger.info("闭环场域感知: 熟悉话题, 优先经验匹配")
 
             if emit_func:
                 emit_func("step", {"phase": "元认知启动", "status": "done",
@@ -196,8 +210,19 @@ class ClosedLoopOrchestrator:
 
         ctx.tasks = []
 
+        _fc = ctx.field_context
+        _is_familiar = _fc.get("is_familiar", False) if _fc else False
+        _is_new_topic = _fc.get("is_new_topic", False) if _fc else False
+
         if ctx.route == "fast" or ctx.complexity < 0.3:
             ctx.tasks.append({"id": "T1", "type": "direct_reply", "description": ctx.query})
+        elif _is_familiar:
+            ctx.tasks.append({"id": "T1", "type": "experience_search", "description": f"检索相似经验「{ctx.query[:30]}」"})
+            ctx.tasks.append({"id": "T2", "type": "direct_reply", "depends_on": ["T1"], "description": "基于经验生成回复"})
+        elif _is_new_topic:
+            ctx.tasks.append({"id": "T1", "type": "multi_source", "description": f"多源搜索「{ctx.query[:30]}」"})
+            ctx.tasks.append({"id": "T2", "type": "reasoning", "depends_on": ["T1"], "description": "深度推理"})
+            ctx.tasks.append({"id": "T3", "type": "synthesize", "depends_on": ["T2"], "description": "综合分析"})
         else:
             if ctx.intent_type in ["question", "factual", "verification"]:
                 ctx.tasks.append({"id": "T1", "type": "knowledge_search", "description": f"检索关于「{ctx.query[:30]}」的知识"})
@@ -253,7 +278,7 @@ class ClosedLoopOrchestrator:
         try:
             if task_type == "direct_reply":
                 return await self._execute_direct_reply(ctx, emit_func)
-            elif task_type in ("knowledge_search", "fact_check", "multi_source"):
+            elif task_type in ("knowledge_search", "fact_check", "multi_source", "experience_search"):
                 return await self._execute_knowledge_search(ctx, emit_func)
             elif task_type in ("reasoning", "synthesize", "decompose"):
                 return await self._execute_reasoning(ctx, emit_func)
@@ -436,6 +461,21 @@ class ClosedLoopOrchestrator:
             from infrastructure.fact_store import fact_store
             if ctx.evaluation_passed and ctx.final_response and len(ctx.final_response) > 50:
                 fact_store.extract_and_store(ctx.query, ctx.final_response, source="closed_loop")
+        except Exception:
+            logger.warning("操作降级跳过")
+
+        try:
+            from core.cognition.experience_abstractor import ExperienceAbstractor
+            ea = ExperienceAbstractor()
+            steps = [{"phase": ctx.state.value, "success": ctx.evaluation_passed}]
+            skeleton = ea._extract_skeleton({
+                "user_query": ctx.query,
+                "steps": steps,
+                "success": ctx.evaluation_passed,
+                "final_response": ctx.final_response[:200],
+            })
+            if skeleton:
+                logger.info(f"闭环沉淀: 方法论骨架已提取")
         except Exception:
             logger.warning("操作降级跳过")
 
