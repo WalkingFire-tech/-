@@ -16,6 +16,7 @@ import time
 import hashlib
 
 import json as _json
+import numpy as np
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 from enum import Enum
@@ -184,9 +185,9 @@ class OrchestratorAgent:
                                 "source": "world_model",
                             })
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         if not hypotheses:
             hypotheses.append({
@@ -276,6 +277,7 @@ class CognitiveResidual:
         self._process_count = 0
         self._reuse_count = 0
         self._db_path = "data/cbnr_l3_state.db"
+        self._embedding_available: Optional[bool] = None
         self._load_search_tree()
 
     def process(self, current_input: Dict[str, Any], bottleneck_result: Dict[str, Any]) -> ResidualResult:
@@ -301,7 +303,14 @@ class CognitiveResidual:
         delta = self._compute_delta(previous, bottleneck_result, validated)
         
         new_state = self._residual_add(previous, delta)
-        
+
+        topic = current_input.get("topic", "") or bottleneck_result.get("topic", "")
+        if topic:
+            topic_emb = self._compute_embedding(topic)
+            if topic_emb is not None:
+                new_state["_topic_embedding_dim"] = len(topic_emb)
+                new_state["_embedding_source"] = "shared_embedding"
+
         fallback_used = False
         if not new_state.get("has_meaningful_output"):
             new_state = self._fallback_path(current_input, previous)
@@ -328,7 +337,7 @@ class CognitiveResidual:
             timestamp=time.time(),
         )
         
-        logger.debug(f"认知残差: 复用率={reuse_rate:.1%}, 搜索树={self._search_tree.size()}, 假设={orchestrator_count}, 拒绝={critic_rejections}")
+        logger.warning(f"认知残差: 复用率={reuse_rate:.1%}, 搜索树={self._search_tree.size()}, 假设={orchestrator_count}, 拒绝={critic_rejections}")
         
         return result
 
@@ -336,7 +345,13 @@ class CognitiveResidual:
         topic = input_data.get("topic", "")
         if not topic:
             return None
-        
+
+        semantic_result = self._semantic_retrieve(topic)
+        if semantic_result:
+            if semantic_result.get("_sensing_mode") == "blind":
+                logger.warning(f"场域失明: embedding不可用, 降级为关键词匹配")
+            return semantic_result
+
         try:
             db = DatabaseManager.get("data/experience_pool.db")
             row = db.query_one(
@@ -351,8 +366,73 @@ class CognitiveResidual:
                     "previous_quality": row[2],
                 }
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
+        return None
+
+    def _compute_embedding(self, text: str) -> Optional[np.ndarray]:
+        if self._embedding_available is False:
+            return None
+        try:
+            from core.shared_embedding import get_embeddings
+            emb = get_embeddings([text])
+            if emb is not None and len(emb) > 0:
+                self._embedding_available = True
+                return emb[0]
+            self._embedding_available = False
+            return None
+        except Exception as e:
+            logger.warning(f"语义向量计算降级: {e}")
+            self._embedding_available = False
+            return None
+
+    def _semantic_retrieve(self, topic: str) -> Optional[Dict]:
+        query_emb = self._compute_embedding(topic)
+        if query_emb is None:
+            return {
+                "_state_id": "keyword_fallback",
+                "_sensing_mode": "blind",
+                "_blind_reason": "embedding_unavailable",
+                "similar_input": None,
+                "previous_response": None,
+                "previous_quality": 0,
+                "semantic_similarity": 0.0,
+            }
+
+        try:
+            db = DatabaseManager.get("data/experience_pool.db")
+            rows = db.query(
+                "SELECT raw_input, response, quality_score FROM experiences ORDER BY quality_score DESC LIMIT 50"
+            )
+            if not rows:
+                return None
+
+            best_row = None
+            best_sim = 0.4
+
+            for row in rows:
+                text = row[0] or ""
+                if not text:
+                    continue
+                row_emb = self._compute_embedding(text[:200])
+                if row_emb is None:
+                    continue
+                cos_sim = float(np.dot(query_emb, row_emb) / (np.linalg.norm(query_emb) * np.linalg.norm(row_emb) + 1e-8))
+                if cos_sim > best_sim:
+                    best_sim = cos_sim
+                    best_row = row
+
+            if best_row:
+                return {
+                    "_state_id": "semantic_retrieved",
+                    "similar_input": best_row[0][:100],
+                    "previous_response": best_row[1][:100],
+                    "previous_quality": best_row[2],
+                    "semantic_similarity": best_sim,
+                }
+        except Exception as e:
+            logger.warning(f"语义检索降级: {e}")
+
         return None
 
     def _compute_delta(self, previous: Optional[Dict], bottleneck_result: Dict, validated_hypotheses: List[Dict]) -> Dict[str, Any]:
@@ -457,9 +537,9 @@ class CognitiveResidual:
                 if not self._search_tree._root_id:
                     self._search_tree._root_id = node_id
             if self._search_tree.size() > 0:
-                logger.debug(f"L3搜索树从数据库加载: {self._search_tree.size()}个节点")
+                logger.warning(f"L3搜索树从数据库加载: {self._search_tree.size()}个节点")
         except Exception as e:
-            logger.debug(f"L3搜索树加载失败(首次运行正常): {e}")
+            logger.error(f"L3搜索树加载失败(首次运行正常): {e}")
 
     def _save_search_tree(self):
         try:
@@ -481,7 +561,7 @@ class CognitiveResidual:
                     commit=True
                 )
         except Exception as e:
-            logger.debug(f"L3搜索树保存失败: {e}")
+            logger.error(f"L3搜索树保存失败: {e}")
 
     def get_stats(self) -> Dict[str, Any]:
         return {

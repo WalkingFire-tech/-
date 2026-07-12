@@ -32,6 +32,17 @@ import asyncio
 from typing import Dict, List, Any, Optional, Tuple, TypedDict
 
 
+class FieldContextDict(TypedDict, total=False):
+    topic_continuity: str
+    previous_topic: str
+    residual_strength: float
+    scent: Dict[str, str]
+    _sensing_mode: str
+    _available: bool
+    _blind_reason: str
+    is_new_topic: bool
+    is_familiar: bool
+
 class CognitiveDispatchResult(TypedDict, total=False):
     route: str
     complexity: float
@@ -43,6 +54,7 @@ class CognitiveDispatchResult(TypedDict, total=False):
     execution_plan: Dict[str, Any]
     reasoning: str
     elapsed_ms: int
+    field_context: FieldContextDict
 from datetime import datetime
 from loguru import logger
 from pathlib import Path
@@ -114,7 +126,7 @@ class CognitiveDispatcher:
                 )
             ''', commit=True)
         except Exception as e:
-            logger.debug(f"调度历史数据库初始化失败: {e}")
+            logger.error(f"调度历史数据库初始化失败: {e}")
     
     def _load_intent_patterns(self, config: Dict = None) -> Dict[str, List[str]]:
         """加载意图模式（支持外部配置）"""
@@ -168,6 +180,51 @@ class CognitiveDispatcher:
             ]
         }
     
+    def _get_field_context(self, query: str) -> Dict[str, Any]:
+        """场域层激活：获取跨对话残余信号、话题连续性"""
+        field = {
+            "topic_continuity": "new",
+            "previous_topic": None,
+            "residual_strength": 0.0,
+            "scent": {},
+            "_sensing_mode": "full",
+            "is_new_topic": False,
+            "is_familiar": False,
+        }
+
+        try:
+            from core.cbnr.cognitive_residual import CognitiveResidual
+            if not hasattr(self, '_residual_instance'):
+                self._residual_instance = CognitiveResidual()
+            residual = self._residual_instance
+
+            input_data = {"topic": query}
+            previous = residual._retrieve_previous_state(input_data)
+            if previous:
+                field["previous_topic"] = previous.get("similar_input", "")[:80]
+                field["residual_strength"] = previous.get("semantic_similarity", 0.5)
+                field["topic_continuity"] = "continued" if previous.get("semantic_similarity", 0) > 0.6 else "shifted"
+                if previous.get("_sensing_mode") == "blind":
+                    field["_sensing_mode"] = "blind"
+                    field["residual_strength"] = -1.0
+                    logger.warning(f"场域失明: 认知残差层embedding不可用, 场域感知降级")
+                else:
+                    sim = previous.get("semantic_similarity", 0)
+                    field["is_new_topic"] = sim < 0.3 and field["previous_topic"] is not None
+                    field["is_familiar"] = sim > 0.7
+        except Exception as e:
+            logger.warning(f"场域层激活降级: {e}")
+            field["_sensing_mode"] = "blind"
+            field["_available"] = False
+
+        try:
+            from core.cognition.experience_abstractor import ExperienceAbstractor
+            field["scent"] = ExperienceAbstractor.extract_scent(query)
+        except Exception:
+            pass
+
+        return field
+
     def _assess_urgency_confusion(self, query: str) -> Dict[str, float]:
         urgency_keywords = ['紧急', '急', '马上', '立刻', '赶紧', '快点', 'urgent', 'asap', 'immediately', 'now']
         confusion_keywords = ['不确定', '不太确定', '困惑', '迷茫', '不懂', '不明白', '什么意思', '为什么', '怎么回事', '怎么用', '怎么搞', '怎么办', 'confused', 'what', 'why', 'how']
@@ -213,6 +270,9 @@ class CognitiveDispatcher:
         """
         start_time = time.time()
         
+        # ========== 场域层激活：跨对话残余信号 ==========
+        field_context = self._get_field_context(user_query)
+        
         # ========== 第一步：快速意图分类（System 1） ==========
         intent_type, confidence = self._quick_intent_classification(user_query)
         
@@ -252,7 +312,8 @@ class CognitiveDispatcher:
                 "capabilities": {"tools": [], "models": [], "knowledge_bases": []},
                 "execution_plan": {"tasks": []},
                 "reasoning": f"简单意图({intent_type})，快速响应",
-                "elapsed_ms": int((time.time() - start_time) * 1000)
+                "elapsed_ms": int((time.time() - start_time) * 1000),
+                "field_context": field_context,
             }
         
         # ========== 第四步：能力盘点（缓存） ==========
@@ -285,11 +346,16 @@ class CognitiveDispatcher:
             "capabilities": capabilities,
             "execution_plan": execution_plan,
             "reasoning": self._explain_routing(route, intent_type, complexity),
-            "elapsed_ms": int((time.time() - start_time) * 1000)
+            "elapsed_ms": int((time.time() - start_time) * 1000),
+            "field_context": field_context,
         }
         
         # 记录调度决策历史（异步，不阻塞）
-        self._record_dispatch(result, user_query)
+        try:
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, self._record_dispatch, result, user_query)
+        except RuntimeError:
+            self._record_dispatch(result, user_query)
         
         return result
     
@@ -339,7 +405,7 @@ class CognitiveDispatcher:
             if similarity_result:
                 return similarity_result
         except Exception as e:
-            logger.debug(f"向量意图匹配失败: {e}")
+            logger.error(f"向量意图匹配失败: {e}")
         
         # 语义级意图推断：分析query的语义结构而非关键词
         semantic_result = self._semantic_intent_inference(query)
@@ -490,7 +556,7 @@ class CognitiveDispatcher:
                 for t in tool_registry.list_tools():
                     tools.append({"name": t["name"], "description": t["description"], "category": t["category"]})
             except Exception as e:
-                logger.debug(f"工具扫描失败: {e}")
+                logger.error(f"工具扫描失败: {e}")
         models = []
         # 跳过Ollama扫描，避免卡住
         knowledge_bases = []
@@ -660,7 +726,7 @@ class CognitiveDispatcher:
                 commit=True
             )
         except Exception as e:
-            logger.debug(f"调度历史记录失败: {e}")
+            logger.error(f"调度历史记录失败: {e}")
     
     def get_dispatch_history(self, limit: int = 10) -> List[Dict]:
         """获取调度决策历史"""
@@ -672,7 +738,7 @@ class CognitiveDispatcher:
             )
             return [dict(r) for r in rows]
         except Exception as e:
-            logger.debug(f"获取调度历史失败: {e}")
+            logger.error(f"获取调度历史失败: {e}")
             return []
     
     def analyze_dispatch_patterns(self) -> Dict:
@@ -699,7 +765,7 @@ class CognitiveDispatcher:
                 "avg_elapsed_ms": avg_elapsed
             }
         except Exception as e:
-            logger.debug(f"分析调度模式失败: {e}")
+            logger.error(f"分析调度模式失败: {e}")
             return {}
     
     def build_capability_prompt(self, capabilities: Dict) -> str:
@@ -709,7 +775,7 @@ class CognitiveDispatcher:
             try:
                 return self.prompt_template.format(**capabilities)
             except Exception as e:
-                logger.debug(f"模板渲染失败: {e}，使用默认格式")
+                logger.warning(f"模板渲染失败: {e}，使用默认格式")
         
         prompt = "\n【当前能力清单 - 实时扫描结果】\n\n"
         

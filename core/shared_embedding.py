@@ -2,6 +2,11 @@
 共享嵌入模型管理器 - 避免重复加载
 """
 import os
+
+os.environ.setdefault('HF_HUB_OFFLINE', '1')
+os.environ.setdefault('TRANSFORMERS_OFFLINE', '1')
+os.environ.setdefault('HF_ENDPOINT', 'https://hf-mirror.com')
+
 from loguru import logger
 
 _model = None
@@ -29,10 +34,7 @@ def get_embedding_model():
         
         cache_folder = os.path.expanduser('~/.cache/huggingface/hub')
         
-        os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
-        os.environ['HF_HUB_OFFLINE'] = '1'
-        os.environ['TRANSFORMERS_OFFLINE'] = '1'
-        
+
         _model = SentenceTransformer(model_name, cache_folder=cache_folder)
         _model_name = model_name
         
@@ -53,7 +55,7 @@ def get_embeddings(texts):
     try:
         return model.encode(texts, convert_to_numpy=True)
     except Exception as e:
-        logger.debug(f"嵌入计算失败: {e}")
+        logger.error(f"嵌入计算失败: {e}")
         return None
 
 def similarity(text1, text2):

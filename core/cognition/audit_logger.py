@@ -39,7 +39,7 @@ class AuditLogger:
             with open(cls.LOG_PATH, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception as e:
-            logger.debug(f"审计日志写入失败: {e}")
+            logger.error(f"审计日志写入失败: {e}")
 
         if entry["learning_triggered"]:
             logger.warning(f"[认知审计] 偏差发现: {entry['reflection_reason']}")
@@ -57,7 +57,7 @@ class AuditLogger:
                         if entry.get("learning_triggered"):
                             entries.append(entry)
                     except Exception:
-                        pass
+                        logger.warning("操作降级跳过")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return entries[-limit:]
