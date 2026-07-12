@@ -16,8 +16,7 @@ from dataclasses import dataclass
 
 from core.state_report import (
     LayerStateReport,
-    LayerStatus,
-    LayerName
+    LayerStatus
 )
 
 try:

@@ -1,7 +1,7 @@
 """
 LoRA推理引擎 - 加载并使用训练好的闭环能力
 """
-import torch
+
 from pathlib import Path
 from loguru import logger
 from typing import Optional, Dict, Any
@@ -38,6 +38,7 @@ class LoRAInferenceEngine:
             
             # 尝试加载模型（需要transformers和peft）
             try:
+                import torch
                 from transformers import AutoModelForCausalLM, AutoTokenizer
                 from peft import PeftModel
                 
@@ -114,7 +115,13 @@ class LoRAInferenceEngine:
             ).to(self.model.device)
             
             # 生成
-            with torch.no_grad():
+            try:
+                import torch
+                no_grad = torch.no_grad()
+            except ImportError:
+                from contextlib import nullcontext
+                no_grad = nullcontext()
+            with no_grad:
                 outputs = self.model.generate(
                     **inputs,
                     max_new_tokens=512,

@@ -230,7 +230,9 @@ class SelfReflector:
         """获取活跃规则"""
         db = DatabaseManager.get(self.db_path)
         rows = db.query('''
-            SELECT * FROM learning_rules
+            SELECT id as rule_id, condition, action, priority, created_at, status,
+                   last_applied, apply_count, success_count, confidence
+            FROM learning_rules
             WHERE status = 'active'
             ORDER BY priority DESC, confidence DESC
         ''')

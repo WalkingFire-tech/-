@@ -4,7 +4,7 @@
 提供文件和文件夹处理适配接口。
 """
 
-from .file_adapter import FileAdapter
+from .file_adapter import FileInputAdapter as FileAdapter
 from .folder_processor import FolderBatchProcessor
 
 __all__ = [

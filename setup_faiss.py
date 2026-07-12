@@ -83,7 +83,7 @@ except Exception as e:
 # 4. 初始化向量检索器
 print("\n【4. 初始化向量检索器】")
 try:
-    from core.vector_retriever import VectorRetriever
+    from infrastructure.vector_retriever import VectorRetriever
     
     retriever = VectorRetriever()
     

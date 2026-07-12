@@ -507,9 +507,13 @@ class EnhancedCliUI(UIPort):
                     self.console.print("[red]请提供失败描述[/]")
                     return
                 
-                from core.services.planner import planner
+                try:
+                    from core.services.planner import Planner
+                    planner = Planner({})
+                except Exception:
+                    planner = None
                 
-                if not planner.tool_generator:
+                if not planner or not planner.tool_generator:
                     self.console.print("[red]工具生成器未激活[/]")
                     return
                 
