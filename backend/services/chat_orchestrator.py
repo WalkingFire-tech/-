@@ -369,6 +369,46 @@ async def chat_stream(user_input: str, context: dict):
                 methodology.setdefault("field_continuity", _fc_residual)
                 methodology.setdefault("previous_topic", _field_context.get("previous_topic", ""))
         
+        # 教训行为映射消费：将dispatcher的methodology_patch注入methodology
+        _exec_plan = dispatch_result.get("execution_plan", {})
+        _lessons_patch = _exec_plan.get("methodology_patch", {})
+        if _lessons_patch:
+            methodology.update(_lessons_patch)
+            logger.info(f"📝 教训行为映射消费: {list(_lessons_patch.keys())}")
+        
+        # SelfModel能力画像消费：根据系统自身能力调整决策
+        try:
+            from core.self.model import get_self_model
+            _sm = get_self_model()
+            _profile = _sm.get("capability_profile", {}) if isinstance(_sm, dict) else {}
+            if not _profile and hasattr(_sm, 'capability_profile'):
+                _profile = _sm.capability_profile
+            if _profile:
+                _strength = _profile.get("overall_strength", 0.0)
+                _gaps = _profile.get("gaps", [])
+                _tool_count = _profile.get("tools", {}).get("registered", 0)
+                
+                if _strength < 0.3:
+                    methodology["conservative_mode"] = True
+                    methodology["reduced_confidence_factor"] = 0.6
+                    logger.info(f"🧠 SelfModel: 能力不足(strength={_strength:.2f}), 启用保守模式")
+                elif _strength > 0.7:
+                    methodology["aggressive_mode"] = True
+                    methodology["confidence_boost"] = 1.1
+                    logger.info(f"🧠 SelfModel: 能力充沛(strength={_strength:.2f}), 提升置信度")
+                
+                if _gaps:
+                    gap_types = [g.get("type", "") for g in _gaps[:3]]
+                    methodology["known_capability_gaps"] = gap_types
+                    logger.info(f"🧠 SelfModel: 已知能力缺口 {gap_types}")
+                
+                if _tool_count < 3:
+                    methodology["prefer_knowledge_path"] = True
+                    methodology["skip_tool_path"] = True
+                    logger.info(f"🧠 SelfModel: 工具不足({_tool_count}个), 优先知识路径")
+        except Exception:
+            pass
+        
         # 额外验证：直接调用_quick_intent_classification
         raw_intent, raw_conf = dispatcher._quick_intent_classification(user_input)
         logger.info(f"🔍 意图识别: query='{user_input}' dispatch_intent={intent_type} raw_intent={raw_intent} route={route}")

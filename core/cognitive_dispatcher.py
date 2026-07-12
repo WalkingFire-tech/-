@@ -337,11 +337,14 @@ class CognitiveDispatcher:
             user_query, route, capabilities, intent_type
         )
         
-        # ========== P1-7：反思教训注入 ==========
+        # ========== P1-7：反思教训注入 + 行为映射 ==========
         lessons_context = self._get_reflection_lessons(user_query, intent_type)
         if lessons_context:
             execution_plan["reflection_lessons"] = lessons_context
-            logger.info(f"📝 反思教训注入: {len(lessons_context)}条")
+            methodology_patch = self._map_lessons_to_behavior(lessons_context)
+            if methodology_patch:
+                execution_plan["methodology_patch"] = methodology_patch
+            logger.info(f"📝 反思教训注入: {len(lessons_context)}条, 行为映射: {list(methodology_patch.keys()) if methodology_patch else '无'}")
         
         logger.info(f"📋 执行计划: {len(execution_plan['tasks'])}个任务")
         
@@ -607,6 +610,70 @@ class CognitiveDispatcher:
             return [dict(r) for r in rows]
         except Exception:
             return []
+    
+    def _map_lessons_to_behavior(self, lessons: List[Dict]) -> Dict[str, Any]:
+        """
+        将spirit_lessons映射为具体行为调整（methodology_patch）。
+        教训不再只是"被读到"，而是转化为可执行的行为指令。
+        """
+        patch = {}
+        lesson_types = set()
+        high_severity_count = 0
+        
+        for lesson in lessons:
+            lt = lesson.get("lesson_type", "")
+            severity = lesson.get("severity", 0)
+            text = lesson.get("lesson_text", "")
+            lesson_types.add(lt)
+            
+            try:
+                sev_int = int(severity) if severity else 0
+            except (ValueError, TypeError):
+                sev_int = 0
+            if sev_int >= 3:
+                high_severity_count += 1
+            
+            lt_lower = lt.lower()
+            text_lower = text.lower() if text else ""
+            
+            if "hallucination" in lt_lower or "伪造" in text_lower or "幻觉" in text_lower:
+                patch["force_honest_response"] = True
+                patch["disable_llm_generation"] = True
+                patch["require_data_verification"] = True
+            
+            if "field_blind" in lt_lower or "场域失明" in text_lower:
+                patch["skip_field_sensing"] = True
+                patch["use_keyword_fallback"] = True
+            
+            if "intent" in lt_lower or "意图" in text_lower or "误判" in text_lower:
+                patch["force_slow_path"] = True
+                patch["require_intent_confirmation"] = True
+            
+            if "timeout" in lt_lower or "超时" in text_lower:
+                patch["use_cache_fallback"] = True
+                patch["skip_slow_path"] = True
+            
+            if "entity" in lt_lower or "别名" in text_lower or "实体" in text_lower:
+                patch["require_entity_normalization"] = True
+            
+            if "tool_not_found" in lt_lower or "工具未找到" in text_lower:
+                patch["trigger_capability_creation"] = True
+            
+            if "context_lost" in lt_lower or "上下文" in text_lower:
+                patch["require_explicit_confirmation"] = True
+                patch["ask_for_clarification"] = True
+            
+            if "knowledge_gap" in lt_lower or "知识缺口" in text_lower:
+                patch["trigger_external_learning"] = True
+            
+            if "audit_" in lt_lower:
+                patch["enhanced_self_verification"] = True
+        
+        if high_severity_count >= 2:
+            patch["conservative_mode"] = True
+            patch["reduced_confidence_factor"] = 0.7
+        
+        return patch
     
     def _generate_execution_plan(
         self, 
