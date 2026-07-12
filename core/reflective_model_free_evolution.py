@@ -820,12 +820,15 @@ class MetacognitionMonitor:
         db = DatabaseManager.get(self.db_path)
         db.execute('''
             INSERT INTO behavior_adjustments 
-            (timestamp, adjustment_type, reason)
-            VALUES (?, ?, ?)
+            (timestamp, adjustment_type, previous_value, new_value, reason, effectiveness)
+            VALUES (?, ?, ?, ?, ?, ?)
         ''', (
             datetime.now().isoformat(),
             adjustment['type'],
-            adjustment['reason']
+            adjustment.get('previous_value', 0.0),
+            adjustment.get('new_value', 0.0),
+            adjustment['reason'],
+            adjustment.get('effectiveness', 0.0)
         ), commit=True)
 
     

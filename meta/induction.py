@@ -472,6 +472,15 @@ class InductionScheduler:
             
             activated = cur.rowcount
             
+            try:
+                db.execute("ALTER TABLE learning_rules ADD COLUMN promoted_at TEXT", commit=False)
+            except Exception:
+                pass
+            try:
+                db.execute("ALTER TABLE learning_rules ADD COLUMN promotion_reason TEXT", commit=False)
+            except Exception:
+                pass
+            
             cur2 = db.execute('''
                 UPDATE learning_rules
                 SET status = 'trial', promoted_at = ?,

@@ -8,10 +8,11 @@ from loguru import logger
 
 def init_learning_rules_db(db_path: str = "learning_rules.db"):
     """初始化学习规则数据库"""
+    from infrastructure.database_manager import DatabaseManager
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     
-    with sqlite3.connect(db_path) as conn:
-        conn.execute('''
+    db = DatabaseManager.get(db_path)
+    db.executescript('''
             CREATE TABLE IF NOT EXISTS learning_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 condition TEXT NOT NULL,
@@ -25,20 +26,12 @@ def init_learning_rules_db(db_path: str = "learning_rules.db"):
                 apply_count INTEGER DEFAULT 0,
                 success_count INTEGER DEFAULT 0,
                 metadata TEXT
-            )
-        ''')
-        
-        conn.execute('''
+            );
             CREATE INDEX IF NOT EXISTS idx_learning_rules_status 
-            ON learning_rules(status)
-        ''')
-        
-        conn.execute('''
+            ON learning_rules(status);
             CREATE INDEX IF NOT EXISTS idx_learning_rules_condition 
             ON learning_rules(condition)
-        ''')
-        
-        conn.commit()
+    ''')
     
     logger.info(f"学习规则数据库初始化完成: {db_path}")
 

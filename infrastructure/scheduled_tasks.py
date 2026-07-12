@@ -339,7 +339,7 @@ class ScheduledTaskManager:
 
                 elif category == "SUBSYSTEM" and "任务" in title:
                     try:
-                        paused = [j for j in self.jobs if not j.enabled]
+                        paused = [j for j in self._jobs if not j.enabled]
                         for j in paused[:2]:
                             j.enabled = True
                             logger.info(f"自动修复: 重新启用任务 {j.name}")
@@ -414,7 +414,7 @@ class ScheduledTaskManager:
                     except Exception:
                         pass
 
-                    if item in items_to_process:
+                    if item in deferred:
                         processor.remove_deferred_input(item)
                     processed_count += 1
                 except Exception as e:

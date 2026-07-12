@@ -2,7 +2,10 @@
 元控制层核心控制器 - 统一调度优化、归纳、冲突检测
 实现每周自动任务、配置热加载、评估函数
 """
-import schedule
+try:
+    import schedule
+except ImportError:
+    schedule = None
 import time
 import threading
 from typing import Dict, Optional
@@ -187,6 +190,9 @@ class MetaController:
     
     def start_scheduler(self):
         """启动后台调度器(每周运行)"""
+        if schedule is None:
+            logger.warning("schedule库未安装，调度器不可用")
+            return
         schedule.every().week.do(self.run_weekly_tasks)
         
         self.running = True
@@ -198,7 +204,8 @@ class MetaController:
     def _scheduler_loop(self):
         """调度循环"""
         while self.running:
-            schedule.run_pending()
+            if schedule is not None:
+                schedule.run_pending()
             time.sleep(60)
     
     def stop_scheduler(self):

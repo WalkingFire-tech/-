@@ -387,13 +387,8 @@ class ReflectionPipeline:
                 run_induction = ri
                 logger.debug("✅ 元归纳模块导入成功 (meta.induction)")
             except ImportError:
-                try:
-                    from core.meta.induction import run_induction as ri
-                    run_induction = ri
-                    logger.debug("✅ 元归纳模块导入成功 (core.meta.induction)")
-                except ImportError:
-                    logger.warning("元归纳模块未找到，跳过触发")
-                    return
+                logger.warning("元归纳模块未找到，跳过触发")
+                return
             
             experience = {
                 "query": context["query"],
