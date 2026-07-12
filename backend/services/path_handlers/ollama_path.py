@@ -76,7 +76,7 @@ async def ollama_background_save(ollama_task: asyncio.Task, query: str):
                 _save_to_experience_pool(query, r["response"], success=True, intent_type="ollama_background", model_name="ollama")
                 logger.info(f"🔄 Ollama后台结果已存入经验池: {query[:30]}")
     except Exception as e:
-        logger.debug(f"Ollama后台保存失败: {e}")
+        logger.error(f"Ollama后台保存失败: {e}")
 
 
 async def fetch_ollama(query: str, model: str, timeout: int = 60, conversation_context: str = "", truth_insights: str = "") -> dict:
@@ -91,14 +91,14 @@ async def fetch_ollama(query: str, model: str, timeout: int = 60, conversation_c
                 await asyncio.sleep(throttle["delay_seconds"])
             _num_predict = throttle.get("max_tokens", 1024)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         if _RESOURCE_AWARE:
             try:
                 monitor = get_health_monitor()
                 monitor.register_ollama_request()
                 monitor.register_ollama_model(model)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         try:
             import requests
             exp_context = get_experience_context(query)
@@ -149,7 +149,7 @@ async def fetch_ollama(query: str, model: str, timeout: int = 60, conversation_c
                             budget=int(MAX_PROMPT_LENGTH * 0.8),
                             cognitive_strategy=cognitive_strategy
                         )
-                        logger.debug(f"Prompt动态提炼: {len(prompt)}字符, 策略={cognitive_strategy}")
+                        logger.warning(f"Prompt动态提炼: {len(prompt)}字符, 策略={cognitive_strategy}")
                     except Exception:
                         query_part = f"【当前问题】\n{query[:2000]}"
                         if len(prompt_parts) > 2:
@@ -164,7 +164,7 @@ async def fetch_ollama(query: str, model: str, timeout: int = 60, conversation_c
                         prompt = context_part + "\n\n" + query_part + "\n\n请结合上下文，给出连贯、准确、完整的回答。"
                     else:
                         prompt = prompt[:MAX_PROMPT_LENGTH]
-                logger.debug(f"Prompt截断: {len(prompt)}字符")
+                logger.warning(f"Prompt截断: {len(prompt)}字符")
             
             loop = asyncio.get_running_loop()
             future = loop.run_in_executor(
@@ -189,14 +189,14 @@ async def fetch_ollama(query: str, model: str, timeout: int = 60, conversation_c
         except asyncio.TimeoutError:
             logger.warning(f"Ollama({model}) asyncio.wait_for超时({timeout+10}秒)")
         except Exception as e:
-            logger.debug(f"Ollama({model})调用失败: {e}")
+            logger.error(f"Ollama({model})调用失败: {e}")
         finally:
             _ollama_last_inference_time = time.time()
             if _RESOURCE_AWARE:
                 try:
                     get_health_monitor().unregister_ollama_request()
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
     return None
 
 
@@ -213,7 +213,7 @@ async def fetch_ollama_all(query: str, conversation_context: str = "", truth_ins
         w = path_weight_manager.get_weight("ollama")
         ollama_timeout = int(30 + 30 * w / max(path_weight_manager.get_weights().values()))
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     result = await fetch_ollama(query, model, timeout=ollama_timeout, conversation_context=conversation_context, truth_insights=truth_insights)
     return [result] if result else []
 
@@ -308,7 +308,8 @@ async def diagnose_ollama_status() -> dict:
             proc = await asyncio.wait_for(
                 loop.run_in_executor(_slow_executor, lambda: subprocess.run(
                     ["tasklist", "/FI", "IMAGENAME eq ollama.exe"],
-                    capture_output=True, text=True, timeout=5
+                    capture_output=True, text=True, timeout=5,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                 )),
                 timeout=8
             )
@@ -328,7 +329,8 @@ async def diagnose_ollama_status() -> dict:
             proc = await asyncio.wait_for(
                 loop.run_in_executor(_slow_executor, lambda: subprocess.run(
                     ["nvidia-smi", "--query-compute-apps=pid,name,used_memory", "--format=csv,noheader"],
-                    capture_output=True, text=True, timeout=5
+                    capture_output=True, text=True, timeout=5,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
                 )),
                 timeout=8
             )

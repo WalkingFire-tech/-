@@ -12,7 +12,7 @@ def get_last_response(query: str) -> str:
         if rows and rows[0][0] and len(rows[0][0]) > 20:
             return rows[0][0]
     except Exception as e:
-        logger.debug(f"获取上一轮回复失败: {e}")
+        logger.error(f"获取上一轮回复失败: {e}")
     return ""
 
 
@@ -40,12 +40,12 @@ async def fetch_experience(query: str) -> dict:
                                 "source": "经验池(向量)", "content": text[:300],
                             })
                     except Exception:
-                        pass
+                        logger.warning("操作降级跳过")
                     return result
         except asyncio.TimeoutError:
             logger.warning("向量检索超时(10秒)")
         except Exception as e:
-            logger.debug(f"向量检索降级: {e}")
+            logger.warning(f"向量检索降级: {e}")
     
     try:
         loop = asyncio.get_running_loop()
@@ -69,10 +69,10 @@ async def fetch_experience(query: str) -> dict:
                             if successful_phases:
                                 result["trajectory_hint"] = f"历史最优路径: {'→'.join(successful_phases[:6])}"
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
                 return result
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     return None
 
 
@@ -92,5 +92,5 @@ def get_experience_context(query: str) -> str:
             if context_parts:
                 return "\n".join(context_parts)
     except Exception as e:
-        logger.debug(f"经验池上下文检索失败: {e}")
+        logger.error(f"经验池上下文检索失败: {e}")
     return ""

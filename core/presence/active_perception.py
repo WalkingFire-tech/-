@@ -167,7 +167,7 @@ class ActivePerceptionEngine:
                 last_content = getattr(last_msg, 'content', '') or getattr(last_msg, 'response', '') or ''
                 state["emotion"] = self._infer_emotion(last_content)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             if self._relationship_model is None:
@@ -180,7 +180,7 @@ class ActivePerceptionEngine:
             state["dependency"] = metrics.get("dependency", 0.2)
             state["activity_level"] = (state["trust"] + state["intimacy"]) / 2
         except Exception as e:
-            logger.debug(f"获取关系状态失败: {e}")
+            logger.error(f"获取关系状态失败: {e}")
 
         try:
             if self._stereo_store is None:
@@ -194,7 +194,7 @@ class ActivePerceptionEngine:
                 state["topic"] = topics[-1]
             state["conversation_count"] = len(recent)
         except Exception as e:
-            logger.debug(f"获取记忆失败: {e}")
+            logger.error(f"获取记忆失败: {e}")
 
         return state
 
@@ -229,7 +229,7 @@ class ActivePerceptionEngine:
                 sig.confidence = adapted_confidence
                 adapted_signals.append(sig)
             else:
-                logger.debug(f"神经适应: {sig.signal.value} 被抑制 (adapted_conf={adapted_confidence:.2f})")
+                logger.warning(f"神经适应: {sig.signal.value} 被抑制 (adapted_conf={adapted_confidence:.2f})")
 
         return adapted_signals
 
@@ -371,7 +371,7 @@ class ActivePerceptionEngine:
             if hasattr(el, 'receive_perception_signal'):
                 el.receive_perception_signal(signal.to_dict())
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             from core.task_queue import get_task_queue
@@ -383,7 +383,7 @@ class ActivePerceptionEngine:
                     priority=3,
                 )
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     def _update_baseline(self, current: Dict) -> None:
         if not self._baseline_state:

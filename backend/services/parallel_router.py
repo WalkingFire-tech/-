@@ -40,7 +40,7 @@ async def _background_collect(task, query: str, task_name: str):
             _save_to_experience_pool(query, result["response"], success=True, intent_type="background_collect", model_name="external")
             logger.info(f"🔄 后台收集: {task_name}推理完成，已存入经验池")
     except Exception as e:
-        logger.debug(f"后台收集异常: {e}")
+        logger.error(f"后台收集异常: {e}")
 
 
 async def execute_parallel_paths(
@@ -67,7 +67,7 @@ async def execute_parallel_paths(
                 logger.info(f"⚖️ 资源感知：{resource_mode}模式，并行路径 9→{max_paths}")
                 yield _emit("step", {"phase": "资源感知", "status": "info", "detail": f"当前{resource_mode}模式，并行路径调整为{max_paths}"})
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     yield _emit("step", {"phase": "多策略并行", "status": "running", "detail": f"策略：{methodology['strategy']}，{max_paths}路径同时出击..."})
 
@@ -85,7 +85,7 @@ async def execute_parallel_paths(
             world_model_hint = rec.get("action", "")
             logger.info(f"世界模型预演: 推荐={world_model_hint} 置信度={rec.get('confidence',0):.2f}")
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     candidates = []
 
@@ -129,7 +129,7 @@ async def execute_parallel_paths(
         task_name_local = local_names[local_tasks.index(d)] if d in local_tasks else "未知"
         try:
             result = d.result()
-            logger.debug(f"[ROUTER_DIAG] 本地先行完成: {task_name_local}, type={type(result).__name__}, is_list={isinstance(result, list)}")
+            logger.warning(f"[ROUTER_DIAG] 本地先行完成: {task_name_local}, type={type(result).__name__}, is_list={isinstance(result, list)}")
             if isinstance(result, list):
                 for item in result:
                     if isinstance(item, dict) and item.get("response"):
@@ -138,34 +138,34 @@ async def execute_parallel_paths(
                         q = item.get("quality", 0)
                         if q > local_best_quality:
                             local_best_quality = q
-                        logger.debug(f"[ROUTER_DIAG] 候选: source={item.get('source')}, quality={q}, resp_len={len(item.get('response',''))}")
+                        logger.warning(f"[ROUTER_DIAG] 候选: source={item.get('source')}, quality={q}, resp_len={len(item.get('response',''))}")
             elif isinstance(result, dict) and result.get("response"):
                 candidates.append(result)
                 local_count += 1
                 q = result.get("quality", 0)
                 if q > local_best_quality:
                     local_best_quality = q
-                logger.debug(f"[ROUTER_DIAG] 候选: source={result.get('source')}, quality={q}, resp_len={len(result.get('response',''))}")
+                logger.warning(f"[ROUTER_DIAG] 候选: source={result.get('source')}, quality={q}, resp_len={len(result.get('response',''))}")
             elif result is None:
-                logger.debug(f"[ROUTER_DIAG] {task_name_local}返回None")
+                logger.warning(f"[ROUTER_DIAG] {task_name_local}返回None")
             else:
-                logger.debug(f"[ROUTER_DIAG] {task_name_local}返回非预期类型: {type(result)}")
+                logger.warning(f"[ROUTER_DIAG] {task_name_local}返回非预期类型: {type(result)}")
         except Exception as e:
             logger.warning(f"[ROUTER_DIAG] {task_name_local}异常: {e}")
 
     for p in local_pending:
         task_name_local = local_names[local_tasks.index(p)] if p in local_tasks else "未知"
-        logger.debug(f"[ROUTER_DIAG] 本地先行未完成: {task_name_local}, done={p.done()}, cancelled={p.cancelled()}")
+        logger.warning(f"[ROUTER_DIAG] 本地先行未完成: {task_name_local}, done={p.done()}, cancelled={p.cancelled()}")
 
     logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] 本地先行完成: {local_count}个结果, 最高质量={local_best_quality}, _tool_intent={_tool_intent}, tool_task_done={tool_task.done() if tool_task else 'N/A'}")
 
     if local_best_quality >= LOCAL_QUALITY_THRESHOLD and local_count >= 1:
         if _tool_intent and tool_task and not tool_task.done():
-            logger.debug(f"[ROUTER_DIAG] 本地先行命中(质量{local_best_quality})，工具意图=True，tool_task未完成，等待工具...")
+            logger.warning(f"[ROUTER_DIAG] 本地先行命中(质量{local_best_quality})，工具意图=True，tool_task未完成，等待工具...")
             yield _emit("step", {"phase": "本地先行", "status": "running", "detail": f"本地能力已有结果，但等待工具执行完成..."})
             try:
                 tool_result = await asyncio.wait_for(tool_task, timeout=25.0)
-                logger.debug(f"[ROUTER_DIAG] 工具等待返回: type={type(tool_result).__name__}, is_list={isinstance(tool_result, list)}, is_dict={isinstance(tool_result, dict)}")
+                logger.warning(f"[ROUTER_DIAG] 工具等待返回: type={type(tool_result).__name__}, is_list={isinstance(tool_result, list)}, is_dict={isinstance(tool_result, dict)}")
                 if isinstance(tool_result, list):
                     for item in tool_result:
                         if isinstance(item, dict) and item.get("response"):
@@ -173,14 +173,14 @@ async def execute_parallel_paths(
                             q = item.get("quality", 0)
                             if q > local_best_quality:
                                 local_best_quality = q
-                            logger.debug(f"[ROUTER_DIAG] 工具候选: source={item.get('source')}, quality={q}, resp_len={len(item.get('response',''))}")
-                    logger.debug(f"[ROUTER_DIAG] 工具列表结果: {len(tool_result)}项, 有效候选已添加")
+                            logger.warning(f"[ROUTER_DIAG] 工具候选: source={item.get('source')}, quality={q}, resp_len={len(item.get('response',''))}")
+                    logger.warning(f"[ROUTER_DIAG] 工具列表结果: {len(tool_result)}项, 有效候选已添加")
                 elif isinstance(tool_result, dict) and tool_result.get("response"):
                     candidates.append(tool_result)
                     q = tool_result.get("quality", 0)
                     if q > local_best_quality:
                         local_best_quality = q
-                    logger.debug(f"[ROUTER_DIAG] 工具单结果: source={tool_result.get('source')}, quality={q}")
+                    logger.warning(f"[ROUTER_DIAG] 工具单结果: source={tool_result.get('source')}, quality={q}")
                 elif tool_result is None:
                     logger.warning(f"[ROUTER_DIAG] 工具等待返回None! 工具执行可能失败")
                 else:
@@ -189,9 +189,9 @@ async def execute_parallel_paths(
                 logger.warning("[ROUTER_DIAG] 工具执行超时(25秒)，用已有本地结果继续")
             except Exception as e:
                 logger.warning(f"[ROUTER_DIAG] 工具等待异常: {e}", exc_info=True)
-            logger.debug(f"[ROUTER_DIAG] 工具等待完成，candidates={len(candidates)}个, 最高质量={local_best_quality}，直接返回，API后台补充")
+            logger.warning(f"[ROUTER_DIAG] 工具等待完成，candidates={len(candidates)}个, 最高质量={local_best_quality}，直接返回，API后台补充")
             yield _emit("step", {"phase": "本地先行", "status": "done", "detail": f"✅ 工具已执行完成(质量{local_best_quality})，无需等待API"})
-            logger.debug(f"[ROUTER_DIAG] yield candidates: {[{'source':c.get('source'),'quality':c.get('quality')} for c in candidates]}")
+            logger.warning(f"[ROUTER_DIAG] yield candidates: {[{'source':c.get('source'),'quality':c.get('quality')} for c in candidates]}")
             yield candidates
             return
         else:
@@ -200,28 +200,28 @@ async def execute_parallel_paths(
 
     if local_best_quality >= 60 and local_count >= 1 and _tool_intent:
         if tool_task and not tool_task.done():
-            logger.debug(f"[ROUTER_DIAG] 工具意图+本地高质量({local_best_quality})，tool_task未完成，等待工具...")
+            logger.warning(f"[ROUTER_DIAG] 工具意图+本地高质量({local_best_quality})，tool_task未完成，等待工具...")
             yield _emit("step", {"phase": "本地先行", "status": "running", "detail": f"本地能力已有结果，但等待工具执行完成..."})
             try:
                 tool_result = await asyncio.wait_for(tool_task, timeout=25.0)
-                logger.debug(f"[ROUTER_DIAG] 工具等待返回(分支2): type={type(tool_result).__name__}")
+                logger.warning(f"[ROUTER_DIAG] 工具等待返回(分支2): type={type(tool_result).__name__}")
                 if isinstance(tool_result, list):
                     for item in tool_result:
                         if isinstance(item, dict) and item.get("response"):
                             candidates.append(item)
-                            logger.debug(f"[ROUTER_DIAG] 工具候选(分支2): source={item.get('source')}, quality={item.get('quality')}")
+                            logger.warning(f"[ROUTER_DIAG] 工具候选(分支2): source={item.get('source')}, quality={item.get('quality')}")
                 elif isinstance(tool_result, dict) and tool_result.get("response"):
                     candidates.append(tool_result)
-                    logger.debug(f"[ROUTER_DIAG] 工具单结果(分支2): source={tool_result.get('source')}, quality={tool_result.get('quality')}")
+                    logger.warning(f"[ROUTER_DIAG] 工具单结果(分支2): source={tool_result.get('source')}, quality={tool_result.get('quality')}")
                 elif tool_result is None:
                     logger.warning(f"[ROUTER_DIAG] 工具等待返回None(分支2)! 工具执行可能失败")
             except asyncio.TimeoutError:
                 logger.warning("[ROUTER_DIAG] 工具执行超时(25秒)(分支2)，用已有本地结果继续")
             except Exception as e:
                 logger.warning(f"[ROUTER_DIAG] 工具等待异常(分支2): {e}", exc_info=True)
-        logger.debug(f"[ROUTER_DIAG] 工具意图+结果就绪({local_best_quality})，candidates={len(candidates)}个，直接返回")
+        logger.warning(f"[ROUTER_DIAG] 工具意图+结果就绪({local_best_quality})，candidates={len(candidates)}个，直接返回")
         yield _emit("step", {"phase": "本地先行", "status": "done", "detail": f"✅ 工具已解决(质量{local_best_quality})，无需等待API"})
-        logger.debug(f"[ROUTER_DIAG] yield candidates(分支2): {[{'source':c.get('source'),'quality':c.get('quality')} for c in candidates]}")
+        logger.warning(f"[ROUTER_DIAG] yield candidates(分支2): {[{'source':c.get('source'),'quality':c.get('quality')} for c in candidates]}")
         yield candidates
         return
 
@@ -296,7 +296,7 @@ async def execute_parallel_paths(
                         ext_got = True
                 yield _emit("step", {"phase": task_name, "status": "done", "detail": f"{task_name}返回结果 ✅"})
             except Exception as e:
-                logger.debug(f"{task_name}异常: {e}")
+                logger.error(f"{task_name}异常: {e}")
                 yield _emit("step", {"phase": task_name, "status": "done", "detail": f"{task_name}异常"})
 
         if not pending_set:
@@ -338,9 +338,9 @@ async def execute_parallel_paths(
             else:
                 waiting_names = '+'.join(still_waiting)
                 yield _emit("step", {"phase": "智能调度", "status": "done",
-                    "detail": f"自我推理质量>=70，无需等待API，慢路径({waiting_names})后台补充"})
+                    "detail": f"自我推理质量>=70，无需等待API，取消慢路径({waiting_names})"})
                 for t in list(pending_set):
-                    asyncio.ensure_future(_background_collect(t, user_input, pending_tasks.get(t, "未知路径")))
+                    t.cancel()
                     pending_set.discard(t)
                 break
 
@@ -350,9 +350,9 @@ async def execute_parallel_paths(
             else:
                 waiting_names = '+'.join(still_waiting)
                 yield _emit("step", {"phase": "智能调度", "status": "done",
-                    "detail": f"已有模型结果+{high_q}条候选，先综合输出，慢路径({waiting_names})后台补充"})
+                    "detail": f"已有模型结果+{high_q}条候选，取消慢路径({waiting_names})"})
                 for t in list(pending_set):
-                    asyncio.ensure_future(_background_collect(t, user_input, pending_tasks.get(t, "未知路径")))
+                    t.cancel()
                     pending_set.discard(t)
                 break
 
@@ -362,9 +362,9 @@ async def execute_parallel_paths(
             else:
                 waiting_names = '+'.join(still_waiting)
                 yield _emit("step", {"phase": "智能调度", "status": "done",
-                    "detail": f"已有{high_q}条高质量搜索候选(无模型结果)，先综合输出，模型后台补充"})
+                    "detail": f"已有{high_q}条高质量搜索候选(无模型结果)，取消慢路径({waiting_names})"})
                 for t in list(pending_set):
-                    asyncio.ensure_future(_background_collect(t, user_input, pending_tasks.get(t, "未知路径")))
+                    t.cancel()
                     pending_set.discard(t)
                 break
 
@@ -374,9 +374,9 @@ async def execute_parallel_paths(
             else:
                 waiting_names = '+'.join(still_waiting)
                 yield _emit("step", {"phase": "智能调度", "status": "done",
-                    "detail": f"模型未响应，已有{high_q}条搜索候选，先综合输出"})
+                    "detail": f"模型未响应，已有{high_q}条搜索候选，取消慢路径({waiting_names})"})
                 for t in list(pending_set):
-                    asyncio.ensure_future(_background_collect(t, user_input, pending_tasks.get(t, "未知路径")))
+                    t.cancel()
                     pending_set.discard(t)
                 break
 
@@ -389,9 +389,9 @@ async def execute_parallel_paths(
             if ollama_status == "alive":
                 if high_q >= 2:
                     yield _emit("step", {"phase": "智能调度", "status": "done",
-                        "detail": f"模型推理中(状态正常)，已有{high_q}条高质量候选，先综合输出，模型结果后台补充"})
+                        "detail": f"模型推理中(状态正常)，已有{high_q}条高质量候选，取消慢路径"})
                     if ollama_task in pending_set:
-                        asyncio.ensure_future(_background_collect(ollama_task, user_input, "本地模型"))
+                        ollama_task.cancel()
                         pending_set.discard(ollama_task)
                 else:
                     yield _emit("step", {"phase": "多路并行", "status": "progress",
@@ -408,8 +408,9 @@ async def execute_parallel_paths(
                         ollama_got = True
                         yield _emit("step", {"phase": "替代推理", "status": "done", "detail": "替代推理成功 ✅"})
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
                 if ollama_task in pending_set:
+                    ollama_task.cancel()
                     pending_set.discard(ollama_task)
 
             elif ollama_status == "dead":
@@ -417,6 +418,7 @@ async def execute_parallel_paths(
                 yield _emit("step", {"phase": "智能调度", "status": "done",
                     "detail": f"本地模型不可达(诊断: {'; '.join(diagnosis['evidence'][:2])})，使用{len(candidates)}条已有候选综合"})
                 if ollama_task in pending_set:
+                    ollama_task.cancel()
                     pending_set.discard(ollama_task)
         else:
             yield _emit("step", {"phase": "多路并行", "status": "progress",
@@ -427,19 +429,19 @@ async def execute_parallel_paths(
             from core.module_health import module_health
             module_health.record_success("ollama")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
     if ext_got:
         try:
             from core.module_health import module_health
             module_health.record_success("external_api")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
     if ollama_diagnosed_dead:
         try:
             from core.module_health import module_health
             module_health.record_failure("ollama", "diagnosed_dead")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     sources_got = set()
     for c in candidates:
@@ -498,7 +500,7 @@ async def execute_parallel_paths(
             )
             yield _emit("step", {"phase": "树搜索扩展", "status": "done", "detail": f"扩展后{len(candidates)}个候选"})
     except Exception as e:
-        logger.debug(f"Beam search跳过: {e}")
+        logger.warning(f"Beam search跳过: {e}")
 
     yield candidates
 

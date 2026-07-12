@@ -118,7 +118,7 @@ class ReactEnhancer:
             ''', (query[:200], gap.get("gap_type", ""), gap.get("focus", ""),
                   gap.get("severity", 0), iteration, datetime.now().isoformat()), commit=True)
         except Exception as e:
-            logger.debug(f"短板分析保存失败: {e}")
+            logger.error(f"短板分析保存失败: {e}")
 
 
 react_enhancer = ReactEnhancer()

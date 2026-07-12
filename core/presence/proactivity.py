@@ -325,7 +325,7 @@ class ProactivityEngine:
                 return "我最近学到了一些新东西，可能对你有帮助。"
 
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return fallback_reason
     def execute(
         self,

@@ -63,7 +63,7 @@ class DualSpeedEvolutionCoordinator:
             if len(self._pain_signals) > self.MAX_PAIN_SIGNALS:
                 self._pain_signals = sorted(self._pain_signals, key=lambda s: s.severity, reverse=True)[
                                       :self.MAX_PAIN_SIGNALS]
-        logger.debug(f"痛点信号: {domain} severity={severity:.2f} {description[:50]}")
+        logger.warning(f"痛点信号: {domain} severity={severity:.2f} {description[:50]}")
 
     def get_pain_signals(self, domain: str = None, min_severity: float = 0.0) -> List[PainSignal]:
         with self._pain_lock:
@@ -101,12 +101,12 @@ class DualSpeedEvolutionCoordinator:
                 "question": question, "response": response, "fitness_score": fitness_score
             }))
         except Exception as e:
-            logger.debug(f"快循环: 反思管道跳过: {e}")
+            logger.warning(f"快循环: 反思管道跳过: {e}")
 
         try:
             pass
         except Exception as e:
-            logger.debug(f"快循环: 轨迹进化跳过: {e}")
+            logger.warning(f"快循环: 轨迹进化跳过: {e}")
 
         if self._fast_loop_count % 10 == 0:
             self._try_promote_ratchet()
@@ -116,7 +116,7 @@ class DualSpeedEvolutionCoordinator:
             from infrastructure.ratchet_gate import ratchet_gate
             ratchet_gate.promote("global")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     def run_slow_loop(self) -> Dict:
         self._slow_loop_count += 1

@@ -140,7 +140,7 @@ class DeltaKnowledgeUpdater:
             if row:
                 return json.loads(row[0])
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return None
 
     def _save_topic(self, topic: str, knowledge: Dict, version: int = 1):

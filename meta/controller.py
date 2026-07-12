@@ -87,7 +87,7 @@ class MetaController:
                     speed_weight * norm_speed +
                     cost_weight * norm_cost)
         
-        logger.debug(f"参数评估: {params} -> 得分 {score:.4f}")
+        logger.warning(f"参数评估: {params} -> 得分 {score:.4f}")
         return score
     
     def _get_recent_performance(self, days: int = 7) -> Dict:
@@ -141,7 +141,7 @@ class MetaController:
                 }
         
         except Exception as e:
-            logger.debug(f"获取任务{task_type}性能失败: {e}")
+            logger.error(f"获取任务{task_type}性能失败: {e}")
         
         return {}
     

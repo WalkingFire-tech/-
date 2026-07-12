@@ -475,11 +475,11 @@ class InductionScheduler:
             try:
                 db.execute("ALTER TABLE learning_rules ADD COLUMN promoted_at TEXT", commit=False)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
             try:
                 db.execute("ALTER TABLE learning_rules ADD COLUMN promotion_reason TEXT", commit=False)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
             
             cur2 = db.execute('''
                 UPDATE learning_rules

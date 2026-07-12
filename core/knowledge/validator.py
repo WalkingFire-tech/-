@@ -199,7 +199,7 @@ class KnowledgeBasedValidator:
                 if row['keyword'] in query:
                     categories.append(row['category'])
         except Exception as e:
-            logger.debug(f"需求识别失败: {e}")
+            logger.error(f"需求识别失败: {e}")
         return list(set(categories))
 
     def _identify_entity_type(self, text: str) -> Optional[str]:
@@ -218,7 +218,7 @@ class KnowledgeBasedValidator:
 
             return best_type
         except Exception as e:
-            logger.debug(f"实体识别失败: {e}")
+            logger.error(f"实体识别失败: {e}")
             return None
 
     def _is_compatible(self, type_a: str, type_b: str) -> bool:
@@ -238,7 +238,7 @@ class KnowledgeBasedValidator:
             if row:
                 return row['confidence'] > 0.5
         except Exception as e:
-            logger.debug(f"兼容性查询失败: {e}")
+            logger.error(f"兼容性查询失败: {e}")
 
         return False
 
@@ -259,7 +259,7 @@ class KnowledgeBasedValidator:
                 if llm_result:
                     result.update(llm_result)
             except Exception as e:
-                logger.debug(f"LLM验证失败: {e}")
+                logger.error(f"LLM验证失败: {e}")
 
         self._record_validation(query, recommendation, result.get('is_valid'), result.get('issues', []), result.get('confidence', 0.5))
         return result
@@ -286,7 +286,7 @@ class KnowledgeBasedValidator:
             if json_match:
                 return json.loads(json_match.group(0))
         except Exception as e:
-            logger.debug(f"LLM验证失败: {e}")
+            logger.error(f"LLM验证失败: {e}")
 
         return {}
 
@@ -310,7 +310,7 @@ class KnowledgeBasedValidator:
                 datetime.now().isoformat()
             ), commit=True)
         except Exception as e:
-            logger.debug(f"记录验证历史失败: {e}")
+            logger.error(f"记录验证历史失败: {e}")
 
     def add_category_keyword(self, category: str, keyword: str):
         """添加类别关键词映射"""

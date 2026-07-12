@@ -162,7 +162,7 @@ class SelfAssessment:
             result["metrics"]["experience_total"] = total_exp
             result["metrics"]["experience_activity"] = recent_exp / max(total_exp, 1)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             db = self._db("learning_rules.db")
@@ -179,7 +179,7 @@ class SelfAssessment:
             dormant = active_rules - used_rules
             result["dormant_count"] = dormant
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             db = self._db("skills.db")
@@ -191,7 +191,7 @@ class SelfAssessment:
             result["metrics"]["dormant_skills"] = dormant_skills
             result["dormant_count"] += dormant_skills
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         usage_rate = result["metrics"].get("rule_usage_rate", 0)
         activity = result["metrics"].get("experience_activity", 0)
@@ -211,7 +211,7 @@ class SelfAssessment:
             result["metrics"]["failure_count"] = failure
             result["metrics"]["success_rate"] = success / max(total, 1)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             db = self._db("learning_rules.db")
@@ -224,7 +224,7 @@ class SelfAssessment:
             result["metrics"]["active_rules"] = active
             result["metrics"]["rule_conversion_rate"] = round(conversion, 3)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             db = self._db("skills.db")
@@ -234,7 +234,7 @@ class SelfAssessment:
             total_skills = row[0] if row else 0
             result["metrics"]["skill_maturation_rate"] = mature / max(total_skills, 1)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         success_rate = result["metrics"].get("success_rate", 0.5)
         conversion = result["metrics"].get("rule_conversion_rate", 0.2)
@@ -260,7 +260,7 @@ class SelfAssessment:
                     "description": f"错误率{error_rate:.0%}超过15%阈值",
                 })
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             db = self._db("learning_rules.db")
@@ -275,7 +275,7 @@ class SelfAssessment:
                     "description": f"规则平均置信度{avg_conf:.2f}低于0.4",
                 })
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             from core.module_health import module_health
@@ -292,7 +292,7 @@ class SelfAssessment:
                     "description": f"{isolated}个模块被隔离",
                 })
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         deviation_penalty = len(result["deviations"]) * 0.2
         result["score"] = max(0.0, 1.0 - deviation_penalty)
@@ -311,7 +311,7 @@ class SelfAssessment:
             result["metrics"]["daily_experiences"] = daily_exp
             result["metrics"]["weekly_experiences"] = weekly_exp
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             db = self._db("learning_rules.db")
@@ -320,7 +320,7 @@ class SelfAssessment:
             new_rules = row[0] if row else 0
             result["metrics"]["new_rules_7d"] = new_rules
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             db = self._db("skills.db")
@@ -329,7 +329,7 @@ class SelfAssessment:
             new_skills = row[0] if row else 0
             result["metrics"]["new_skills_7d"] = new_skills
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         daily = result["metrics"].get("daily_experiences", 0)
         new_rules = result["metrics"].get("new_rules_7d", 0)

@@ -106,7 +106,7 @@ class BaseAgent:
                 "timestamp": msg.timestamp,
             })
         except Exception as e:
-            logger.debug(f"Agent {self.agent_id} 发送消息失败: {e}")
+            logger.error(f"Agent {self.agent_id} 发送消息失败: {e}")
 
         return msg
 
@@ -116,7 +116,7 @@ class BaseAgent:
             from infrastructure.event_bus import bus
             bus.subscribe(event_type, handler)
         except Exception as e:
-            logger.debug(f"Agent {self.agent_id} 订阅事件失败: {e}")
+            logger.error(f"Agent {self.agent_id} 订阅事件失败: {e}")
 
     def handle_event(self, event_data: Dict):
         event_type = event_data.get("event_type", "")

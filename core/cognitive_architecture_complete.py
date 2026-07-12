@@ -173,7 +173,7 @@ class PerceptionLayer:
                 
                 return min(base_confidence * domain_weight, 1.0)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         # 默认置信度（未知领域）
         return 0.4

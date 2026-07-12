@@ -212,7 +212,7 @@ async def execute_method(method_name: str, method_config: Dict) -> Tuple[bool, s
                         elif isinstance(tool_result, dict) and tool_result.get("data"):
                             return True, str(tool_result["data"])
                     except Exception as te:
-                        logger.debug(f"新建工具执行失败: {te}")
+                        logger.error(f"新建工具执行失败: {te}")
                     return True, f"已构建工具{build_result.tool.name}，但首次执行未获得有效结果"
             return False, "工具构建失败"
 
@@ -354,14 +354,14 @@ async def review_solution(
         skill_emergence.analyze_and_learn(user_input, all_attempts, final_response, elapsed=0)
         logger.info("📋 回顾: 技能已提炼")
     except Exception as e:
-        logger.debug(f"技能提炼跳过: {e}")
+        logger.warning(f"技能提炼跳过: {e}")
 
     try:
         from core.truth_accumulator import truth_accumulator
         truth_accumulator.accumulate(user_input, all_attempts, final_response)
         logger.info("📋 回顾: 真谛已积累")
     except Exception as e:
-        logger.debug(f"真谛积累跳过: {e}")
+        logger.warning(f"真谛积累跳过: {e}")
 
     try:
         from core.memory.layered_memory import layered_memory
@@ -373,7 +373,7 @@ async def review_solution(
             )
             logger.info(f"📋 回顾: 最优方法「{best_method}」已记录")
     except Exception as e:
-        logger.debug(f"经验记录跳过: {e}")
+        logger.warning(f"经验记录跳过: {e}")
 
     try:
         from core.learning.capability_gap_learner import capability_gap_learner
@@ -385,4 +385,4 @@ async def review_solution(
             )
             logger.info("📋 回顾: 方法效率观察已记录")
     except Exception as e:
-        logger.debug(f"方法效率观察跳过: {e}")
+        logger.warning(f"方法效率观察跳过: {e}")

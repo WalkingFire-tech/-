@@ -116,47 +116,47 @@ class SelfModel:
         try:
             self.update("values", self._extract_spirit(cp))
         except Exception as e:
-            logger.debug(f"SelfModel sync spirit failed: {e}")
+            logger.warning(f"SelfModel sync spirit failed: {e}")
 
         try:
             self.update("health", self._extract_health(cp))
         except Exception as e:
-            logger.debug(f"SelfModel sync health failed: {e}")
+            logger.warning(f"SelfModel sync health failed: {e}")
 
         try:
             self.update("presence", self._extract_presence(cp))
         except Exception as e:
-            logger.debug(f"SelfModel sync presence failed: {e}")
+            logger.warning(f"SelfModel sync presence failed: {e}")
 
         try:
             self.update("relationship", self._extract_relationship(cp))
         except Exception as e:
-            logger.debug(f"SelfModel sync relationship failed: {e}")
+            logger.warning(f"SelfModel sync relationship failed: {e}")
 
         try:
             self.update("evolution", self._extract_evolution(cp))
         except Exception as e:
-            logger.debug(f"SelfModel sync evolution failed: {e}")
+            logger.warning(f"SelfModel sync evolution failed: {e}")
 
         try:
             self.update("introspection", self._extract_introspection(cp))
         except Exception as e:
-            logger.debug(f"SelfModel sync introspection failed: {e}")
+            logger.warning(f"SelfModel sync introspection failed: {e}")
 
         try:
             self.update("capabilities", self._extract_capabilities(cp))
         except Exception as e:
-            logger.debug(f"SelfModel sync capabilities failed: {e}")
+            logger.warning(f"SelfModel sync capabilities failed: {e}")
 
         try:
             self.update("capability_profile", self._extract_capability_profile())
         except Exception as e:
-            logger.debug(f"SelfModel sync capability_profile failed: {e}")
+            logger.warning(f"SelfModel sync capability_profile failed: {e}")
 
         try:
             self.update("learning", self._extract_learning(cp))
         except Exception as e:
-            logger.debug(f"SelfModel sync learning failed: {e}")
+            logger.warning(f"SelfModel sync learning failed: {e}")
 
     def record_cognitive_cycle(
         self,
@@ -251,7 +251,7 @@ class SelfModel:
                         "relationship_health": result.relationship_health,
                     }
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         return {}
 
     def _extract_presence(self, cp) -> Dict[str, Any]:
@@ -288,7 +288,7 @@ class SelfModel:
                     "phase": phase,
                 }
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         return {}
 
     def _extract_evolution(self, cp) -> Dict[str, Any]:
@@ -307,7 +307,7 @@ class SelfModel:
                     "top_priorities_count": len(priorities),
                 }
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         return {}
 
     def _extract_introspection(self, cp) -> Dict[str, Any]:
@@ -317,7 +317,7 @@ class SelfModel:
             try:
                 return l6.get_introspection_status()
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         return {}
 
     def _extract_capabilities(self, cp) -> Dict[str, Any]:
@@ -327,7 +327,7 @@ class SelfModel:
             if hasattr(ci, 'get_capability_summary'):
                 return ci.get_capability_summary()
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return {}
 
     def _extract_capability_profile(self) -> Dict[str, Any]:
@@ -355,7 +355,7 @@ class SelfModel:
                 )[:5] if tool_stats else [],
             }
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             from core.skill_emergence import skill_emergence
@@ -366,7 +366,7 @@ class SelfModel:
                 "top": stats.get("top_skills", []),
             }
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             from infrastructure.database_manager import DatabaseManager
@@ -389,7 +389,7 @@ class SelfModel:
                 "by_intent": by_intent,
             }
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             from infrastructure.database_manager import DatabaseManager
@@ -400,7 +400,7 @@ class SelfModel:
             total = total_row[0] if total_row else 0
             profile["rules"] = {"active": active, "total": total}
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             from infrastructure.database_manager import DatabaseManager
@@ -410,7 +410,7 @@ class SelfModel:
             )
             profile["gaps"] = [{"type": r[0], "count": r[1]} for r in gap_rows]
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         strength_parts = []
         if profile["tools"].get("registered", 0) > 0:
@@ -434,7 +434,7 @@ class SelfModel:
                 try:
                     info = l2.get_learning_stats()
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
             return info
         return {}
 
@@ -519,7 +519,7 @@ class SelfModel:
             engine = IntrospectionEngine()
             engine.heal()
         except Exception as e:
-            logger.debug(f"SelfModel self_repair failed: {e}")
+            logger.warning(f"SelfModel self_repair failed: {e}")
 
     def _action_external_learning(self):
         try:
@@ -536,7 +536,7 @@ class SelfModel:
                     context={}
                 )
         except Exception as e:
-            logger.debug(f"SelfModel external_learning failed: {e}")
+            logger.warning(f"SelfModel external_learning failed: {e}")
 
     def _action_capability_gap_learning(self):
         try:
@@ -555,7 +555,7 @@ class SelfModel:
                 except RuntimeError:
                     asyncio.run(capability_gap_learner.try_resolve_gap(gap))
         except Exception as e:
-            logger.debug(f"SelfModel capability_gap_learning failed: {e}")
+            logger.warning(f"SelfModel capability_gap_learning failed: {e}")
 
     def _action_proactive_engage(self):
         try:
@@ -564,7 +564,7 @@ class SelfModel:
             if hasattr(engine, 'suggest_engagement'):
                 engine.suggest_engagement()
         except Exception as e:
-            logger.debug(f"SelfModel proactive_engage failed: {e}")
+            logger.warning(f"SelfModel proactive_engage failed: {e}")
 
     def _action_trigger_evolution(self):
         try:
@@ -573,7 +573,7 @@ class SelfModel:
             if hasattr(ml, 'trigger_sandbox_evolution'):
                 ml.trigger_sandbox_evolution()
         except Exception as e:
-            logger.debug(f"SelfModel trigger_evolution failed: {e}")
+            logger.warning(f"SelfModel trigger_evolution failed: {e}")
 
 
 _self_model_instance: Optional[SelfModel] = None

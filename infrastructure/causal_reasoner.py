@@ -226,7 +226,7 @@ class CausalReasoner:
                     })
         
         except Exception as e:
-            logger.debug(f"经验池查询失败: {e}")
+            logger.error(f"经验池查询失败: {e}")
         
         return chain
     

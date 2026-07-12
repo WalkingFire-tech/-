@@ -90,4 +90,4 @@ def _save_to_experience_pool(query: str, response: str, success: bool = True, in
             response=response
         )
     except Exception as e:
-        logger.debug(f"经验存储失败: {e}")
+        logger.error(f"经验存储失败: {e}")

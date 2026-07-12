@@ -95,7 +95,7 @@ def compare_and_select(candidates: list, query: str, cbnr_ctx: dict = None) -> t
         from core.path_weight_manager import path_weight_manager
         path_weights = path_weight_manager.get_weights()
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     _surprise_boost = 1.0
     _deep_sources = {"Ollama", "DeepSeek", "Ollama(qwen2.5-coder:7b)", "self_reasoning", "本质推理"}
     _tool_sources = {"file_reader", "project_scanner", "code_indexer", "dependency_analyzer", "工具调用", "serial_port", "bash"}
@@ -183,7 +183,7 @@ async def self_verify(query: str, response: str) -> dict:
         from core.task_queue import task_queue
         task_queue.enqueue("model_review", {"query": query, "response": response})
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     return {"verified": verified, "issues": issues, "confidence": confidence, "is_science": is_science}
 

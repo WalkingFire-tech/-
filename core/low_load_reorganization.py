@@ -109,7 +109,7 @@ class LowLoadReorganization:
                             db.execute("UPDATE learning_rules SET status='superseded' WHERE id=?", (rule[0],), commit=True)
                             result["merged"] += 1
                         except Exception:
-                            pass
+                            logger.warning("操作降级跳过")
         except Exception as e:
             logger.error(f"规则合并失败: {e}")
 
@@ -168,7 +168,7 @@ class LowLoadReorganization:
                 if len(indices) >= 2:
                     result["connections"] += 1
         except Exception as e:
-            logger.debug(f"连接发现失败: {e}")
+            logger.error(f"连接发现失败: {e}")
 
         return result
 

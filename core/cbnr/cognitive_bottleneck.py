@@ -256,7 +256,7 @@ class CognitiveBottleneck:
             if related:
                 core["related_knowledge"] = [r.content[:80] if hasattr(r, 'content') else str(r)[:80] for r in related]
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         try:
             from infrastructure.fact_store import get_fact_store
@@ -265,7 +265,7 @@ class CognitiveBottleneck:
             if conflicts:
                 core["fact_conflicts"] = [c[:80] for c in conflicts[:2]]
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         return core
 

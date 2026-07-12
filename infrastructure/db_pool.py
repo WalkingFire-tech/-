@@ -75,7 +75,7 @@ class SQLiteConnectionPool:
                 with self._lock:
                     self._size -= 1
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         logger.info("数据库连接池已关闭")
 

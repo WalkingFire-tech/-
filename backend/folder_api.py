@@ -105,7 +105,7 @@ def _run_folder_learning_task(task_id: str, folder_path: str):
                 "timestamp": datetime.now().isoformat()
             })
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         logger.info(f"任务 {task_id} 完成: {result}")
         
@@ -248,7 +248,7 @@ def cleanup_old_tasks(max_age_hours: int = 24) -> int:
                 del learning_tasks[task_id]
                 cleaned += 1
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
     
     if cleaned > 0:
         logger.info(f"清理了 {cleaned} 个旧任务")

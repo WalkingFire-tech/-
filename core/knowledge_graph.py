@@ -149,7 +149,7 @@ class KnowledgeGraph:
             from infrastructure.ratchet_gate import guard_change
             guard_change("knowledge_graph", importance, f"add_node: {content[:40]}")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         node_id = hashlib.md5(content.encode()).hexdigest()[:12]
         now = datetime.now().isoformat()
         node = KnowledgeNode(
@@ -175,7 +175,7 @@ class KnowledgeGraph:
             try:
                 self.auto_connect(node.id)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         return node
 
     def get_node(self, node_id: str) -> Optional[KnowledgeNode]:

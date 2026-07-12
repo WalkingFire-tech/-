@@ -319,7 +319,7 @@ class CognitiveLoop:
                 }
                 actions.append("触发L2学习层")
             except Exception as e:
-                logger.debug(f"L2调用失败: {e}")
+                logger.error(f"L2调用失败: {e}")
         
         if rhythm_snapshot.phase.value in ["consolidation", "mastery"]:
             knowledge_updated = True
@@ -388,7 +388,7 @@ class CognitiveLoop:
                 if not passed:
                     all_passed = False
             except Exception as e:
-                logger.debug(f"评估器错误: {e}")
+                logger.warning(f"评估器错误: {e}")
         
         for validator in self.validators:
             try:
@@ -396,7 +396,7 @@ class CognitiveLoop:
                 if not valid:
                     all_passed = False
             except Exception as e:
-                logger.debug(f"验证器错误: {e}")
+                logger.warning(f"验证器错误: {e}")
         
         return all_passed
     
@@ -487,7 +487,7 @@ class CognitiveLoop:
                 try:
                     signal = signal_generator()
                 except Exception as e:
-                    logger.debug(f"信号生成器错误: {e}")
+                    logger.warning(f"信号生成器错误: {e}")
             
             result = await self.run_cycle(signal)
             results.append(result)

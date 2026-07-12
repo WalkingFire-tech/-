@@ -224,7 +224,7 @@ class RelationshipModel:
                     intimacy_trend="stable",
                 )
         except Exception as e:
-            pass
+            logger.warning(f"操作降级跳过: {e}")
     
     def record_interaction(
         self,

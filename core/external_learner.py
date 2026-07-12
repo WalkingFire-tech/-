@@ -35,7 +35,7 @@ class ExternalLearner:
             if stealth_results:
                 return [f"[{r['source']}] {r['title']}: {r['snippet']}" for r in stealth_results]
         except Exception as e:
-            logger.debug(f"隐身搜索失败: {e}")
+            logger.error(f"隐身搜索失败: {e}")
         
         try:
             from infrastructure.external_learners import composite_learner
@@ -44,7 +44,7 @@ class ExternalLearner:
                 if results:
                     return [f"[{r.source}] {r.content}" for r in results]
         except Exception as e:
-            logger.debug(f"composite_learner搜索失败: {e}")
+            logger.error(f"composite_learner搜索失败: {e}")
         
         if not self.search_api_key:
             logger.warning("外部搜索不可用，尝试本地知识库降级")
@@ -108,9 +108,9 @@ class ExternalLearner:
                             if row[1] and len(row[1]) > 20:
                                 results.append(f"[{label}] {row[1][:300]}")
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         return results[:5]
     
@@ -144,9 +144,9 @@ class ExternalLearner:
                     data = response.json()
                     return data["choices"][0]["message"]["content"]
                 else:
-                    logger.debug(f"外部LLM失败({response.status_code})，尝试本地Ollama")
+                    logger.error(f"外部LLM失败({response.status_code})，尝试本地Ollama")
             except Exception as e:
-                logger.debug(f"外部LLM失败: {e}，尝试本地Ollama")
+                logger.error(f"外部LLM失败: {e}，尝试本地Ollama")
         
         return self._ask_local_ollama(prompt, system_prompt)
     
@@ -176,7 +176,7 @@ class ExternalLearner:
             else:
                 logger.debug("Ollama推理失败: 返回空内容")
         except Exception as e:
-            logger.debug(f"Ollama推理失败: {e}")
+            logger.error(f"Ollama推理失败: {e}")
         
         return ""
     
@@ -194,7 +194,7 @@ class ExternalLearner:
             if available:
                 return available[0]
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return ""
     
     def analyze_conversation_parsing(self, user_input: str, context: str) -> Dict[str, Any]:
@@ -315,7 +315,7 @@ class ExternalLearner:
                 new_items.append(parsing_item)
                 logger.info("从LLM获取对话解析经验")
         except Exception as e:
-            logger.debug(f"LLM分析失败: {e}")
+            logger.error(f"LLM分析失败: {e}")
         
         try:
             synthesis = self._synthesize_insights(user_input, search_results)
@@ -335,7 +335,7 @@ class ExternalLearner:
                 new_items.append(synthesis_item)
                 logger.info("完成自主综合分析")
         except Exception as e:
-            logger.debug(f"综合分析失败: {e}")
+            logger.error(f"综合分析失败: {e}")
         
         return new_items
     

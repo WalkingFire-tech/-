@@ -292,7 +292,7 @@ class FolderLearner:
                 for row in rows
             }
             
-            logger.debug(f"加载快照: {len(self._snapshot_cache)} 个文件")
+            logger.warning(f"加载快照: {len(self._snapshot_cache)} 个文件")
         except Exception as e:
             logger.error(f"加载快照失败: {e}")
     
@@ -323,14 +323,14 @@ class FolderLearner:
         try:
             file_size = file_path.stat().st_size
             if file_size > self.max_file_size_mb * 1024 * 1024:
-                logger.debug(f"文件过大，跳过: {file_path}")
+                logger.warning(f"文件过大，跳过: {file_path}")
                 return None
         except Exception:
             return None
         
         extractor = self._get_extractor(file_path)
         if not extractor:
-            logger.debug(f"无合适的提取器: {file_path}")
+            logger.warning(f"无合适的提取器: {file_path}")
             return None
         
         return extractor.extract(file_path)
@@ -344,7 +344,7 @@ class FolderLearner:
                 hasher.update(data)
             return hasher.hexdigest()
         except Exception as e:
-            logger.debug(f"哈希计算失败 {file_path}: {e}")
+            logger.error(f"哈希计算失败 {file_path}: {e}")
             return ""
     
     def _get_file_info(self, file_path: Path) -> Dict:
@@ -357,7 +357,7 @@ class FolderLearner:
                 "hash": self._compute_file_hash(file_path)
             }
         except Exception as e:
-            logger.debug(f"获取文件信息失败 {file_path}: {e}")
+            logger.error(f"获取文件信息失败 {file_path}: {e}")
             return {"size": 0, "modified": 0, "hash": ""}
     
     def _should_learn(self, file_path: Path) -> tuple:
@@ -414,7 +414,7 @@ class FolderLearner:
         
         self._snapshot_cache[rel_path] = info["hash"]
         
-        logger.debug(f"学习成功: {rel_path}, 提取{knowledge_count}条知识")
+        logger.warning(f"学习成功: {rel_path}, 提取{knowledge_count}条知识")
         
         return {
             "status": "success",
@@ -438,7 +438,7 @@ class FolderLearner:
             else:
                 return self._basic_learn(content)
         except Exception as e:
-            logger.debug(f"学习引擎失败: {e}")
+            logger.error(f"学习引擎失败: {e}")
             return self._basic_learn(content)
     
     def _basic_learn(self, content: str) -> int:

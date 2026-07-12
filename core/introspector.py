@@ -121,7 +121,7 @@ class SystemIntrospector:
             with open(p, 'w', encoding='utf-8') as f:
                 json.dump(self._history[-self.MAX_HISTORY:], f, ensure_ascii=False, indent=2)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     def run_check(self) -> IntrospectionReport:
         self._check_count += 1
@@ -208,7 +208,7 @@ class SystemIntrospector:
                     suggestion="检查后台任务是否过多，考虑减少并行度",
                 ))
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return anomalies
 
     def _check_data_loops(self) -> List[Anomaly]:
@@ -231,7 +231,7 @@ class SystemIntrospector:
                     suggestion="检查推理路径配置，可能需要调整模型或搜索策略",
                 ))
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             db = DatabaseManager.get("data/rule_store.db")
@@ -251,7 +251,7 @@ class SystemIntrospector:
                     suggestion="检查规则条件是否过于严格，或context变量是否缺失",
                 ))
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         return anomalies
 
@@ -275,7 +275,7 @@ class SystemIntrospector:
                     suggestion="系统可能处于保守/紧急模式，检查资源状态",
                 ))
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             from infrastructure.vector_retriever import _ST_AVAILABLE
@@ -293,7 +293,7 @@ class SystemIntrospector:
                     suggestion="检查模型文件是否完整，或DirectEncoder是否正常",
                 ))
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         return anomalies
 
@@ -318,7 +318,7 @@ class SystemIntrospector:
                     suggestion="检查Ollama并发控制、模型加载时间、网络延迟",
                 ))
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return anomalies
 
     def _generate_recommendations(self) -> List[str]:
@@ -361,7 +361,7 @@ class SystemIntrospector:
                     suggestion="检查ALIGNMENT_CHARTER.md中的偏离记录，制定修正方案",
                 ))
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return anomalies
 
     def get_status(self) -> Dict:

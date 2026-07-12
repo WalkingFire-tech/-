@@ -34,7 +34,7 @@ class TextExtractor(ContentExtractor):
         try:
             file_size = file_path.stat().st_size
             if file_size > self.max_size_mb * 1024 * 1024:
-                logger.debug(f"文件过大，跳过: {file_path}")
+                logger.warning(f"文件过大，跳过: {file_path}")
                 return None
             
             encodings = ['utf-8', 'gbk', 'gb2312', 'latin-1']
@@ -46,14 +46,14 @@ class TextExtractor(ContentExtractor):
                 except UnicodeDecodeError:
                     continue
                 except Exception as e:
-                    logger.debug(f"读取失败 {file_path} ({encoding}): {e}")
+                    logger.error(f"读取失败 {file_path} ({encoding}): {e}")
                     continue
             
             logger.warning(f"无法解码文件: {file_path}")
             return None
             
         except Exception as e:
-            logger.debug(f"文本提取失败 {file_path}: {e}")
+            logger.error(f"文本提取失败 {file_path}: {e}")
             return None
     
     def get_supported_extensions(self) -> List[str]:

@@ -16,13 +16,13 @@ try:
     import chromadb
     CHROMA_AVAILABLE = True
 except Exception:
-    pass
+    logger.warning("操作降级跳过")
 
 try:
     from sentence_transformers import SentenceTransformer
     EMBEDDING_AVAILABLE = True
 except Exception:
-    pass
+    logger.warning("操作降级跳过")
 
 if not CHROMA_AVAILABLE or not EMBEDDING_AVAILABLE:
     logger.warning("向量存储依赖不完整，将使用SQLite关键词检索")

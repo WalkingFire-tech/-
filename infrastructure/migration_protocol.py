@@ -114,7 +114,7 @@ class MigrationProtocol:
                 except socket.timeout:
                     break
                 except Exception as e:
-                    logger.debug(f"接收响应失败: {e}")
+                    logger.error(f"接收响应失败: {e}")
             
             broadcast_socket.close()
             

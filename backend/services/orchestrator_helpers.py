@@ -60,7 +60,7 @@ def emit(event_type: str, data: dict) -> str:
             if get_health_monitor:
                 get_health_monitor().unregister_query()
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
     return f"data: {json.dumps({'type': event_type, **data}, ensure_ascii=False, cls=SafeEncoder)}\n\n"
 
 
@@ -169,7 +169,7 @@ def get_stereo_memory_context(query: str) -> str:
                 parts.append(f"[记忆:{emotion} 置信度{confidence:.0%}] {content_str}")
         return "\n".join(parts) if parts else ""
     except Exception as e:
-        logger.debug(f"立体记忆检索跳过: {e}")
+        logger.warning(f"立体记忆检索跳过: {e}")
         return ""
 
 
@@ -204,7 +204,7 @@ async def self_reason(query: str, conversation_context: str = "", truth_insights
                             quality_score += 5
                     reasoning_depth += 1
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             loop = asyncio.get_running_loop()
@@ -219,7 +219,7 @@ async def self_reason(query: str, conversation_context: str = "", truth_insights
                     quality_score += 3
             reasoning_depth += 1
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         analogy_insights = []
         try:
@@ -239,7 +239,7 @@ async def self_reason(query: str, conversation_context: str = "", truth_insights
                 reasoning_depth += 1
                 quality_score += 3
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         essence_result = None
         try:
@@ -264,7 +264,7 @@ async def self_reason(query: str, conversation_context: str = "", truth_insights
                 if essence_result.get("verdict"):
                     knowledge_parts.append(f"[本质判断] {essence_result['verdict'][:200]}")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         if truth_insights:
             knowledge_parts.append(f"[注入真谛] {truth_insights[:300]}")
@@ -305,11 +305,11 @@ async def self_reason(query: str, conversation_context: str = "", truth_insights
                 quality_score = min(quality_score, 40)
                 logger.info(f"自我推理: 操作类问题'{query[:30]}'降权 quality={quality_score}")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         return {"source": "自我推理", "response": reasoning, "quality": quality_score}
     except Exception as e:
-        logger.debug(f"自我推理异常: {e}")
+        logger.error(f"自我推理异常: {e}")
     return None
 
 
@@ -323,17 +323,17 @@ async def background_collect(task, query: str, task_name: str):
                         from backend.services.path_handlers._shared import _save_to_experience_pool
                         _save_to_experience_pool(query, item["response"], success=True, intent_type="background_collect", model_name="ollama")
                     except Exception:
-                        pass
+                        logger.warning("操作降级跳过")
                     logger.info(f"🔄 后台收集: {task_name}推理完成，已存入经验池")
         elif isinstance(result, dict) and result.get("response"):
             try:
                 from backend.services.path_handlers._shared import _save_to_experience_pool
                 _save_to_experience_pool(query, result["response"], success=True, intent_type="background_collect", model_name="external")
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
             logger.info(f"🔄 后台收集: {task_name}推理完成，已存入经验池")
     except Exception as e:
-        logger.debug(f"后台收集异常: {e}")
+        logger.error(f"后台收集异常: {e}")
 
 
 _error_alchemy_instance = None
@@ -358,5 +358,5 @@ def alchemize_error(error: Exception, context: dict = None, phase: str = "unknow
             logger.info(f"🔮 错误炼金[{phase}]: 从'{type(error).__name__}'中提炼{result.lessons_learned}个学习信号({','.join(result.patterns_found)})")
             return result
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     return None

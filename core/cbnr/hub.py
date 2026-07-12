@@ -109,7 +109,7 @@ class CBNRHub:
             cbnr_quality = 1.0 - l1_unc * 0.3 + (1.0 - min(l2_delta, 1.0)) * 0.3 + l3_reuse * 0.4
             guard_change("cbnr", cbnr_quality, f"CBNR#{self._process_count} unc={l1_unc:.2f} ΔF={l2_delta:.2f} reuse={l3_reuse:.1%}")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         return result
 
@@ -167,7 +167,7 @@ class CBNRHub:
             cbnr_quality = 1.0 - l1_unc * 0.3 + (1.0 - min(l2_delta, 1.0)) * 0.3 + l3_reuse * 0.4
             guard_change("cbnr", cbnr_quality, f"CBNR#{self._process_count} unc={l1_unc:.2f} ΔF={l2_delta:.2f} reuse={l3_reuse:.1%}")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         result = CBNRResult(
             l1_normalization=self._last_l1_result,

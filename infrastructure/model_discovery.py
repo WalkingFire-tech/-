@@ -89,9 +89,9 @@ class ModelDiscovery:
                             break
                             
             except asyncio.TimeoutError:
-                logger.debug(f"Ollama服务超时: {ollama_url}")
+                logger.warning(f"Ollama服务超时: {ollama_url}")
             except Exception as e:
-                logger.debug(f"连接Ollama失败: {ollama_url}, {e}")
+                logger.error(f"连接Ollama失败: {ollama_url}, {e}")
         
         return models
     

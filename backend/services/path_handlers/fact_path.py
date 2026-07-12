@@ -19,5 +19,5 @@ async def fetch_fact_assertions(query: str) -> Optional[dict]:
                 parts.append(f"{fa['subject']} {fa['predicate']} {fa['object']} (置信度{fa['confidence']:.0%})")
             return {"source": "事实锚点", "response": "【事实锚点】\n" + "\n".join(f"- {p}" for p in parts), "quality": 70}
     except Exception as e:
-        logger.debug(f"事实锚点查询异常: {e}")
+        logger.error(f"事实锚点查询异常: {e}")
     return None

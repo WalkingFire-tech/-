@@ -306,7 +306,7 @@ class SimulatedAgent:
                 try:
                     self.temp_db.close()
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
             
             # 删除临时文件
             if hasattr(self, 'db_path') and self.db_path and os.path.exists(self.db_path):

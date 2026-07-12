@@ -191,7 +191,8 @@ try {{
         def _run():
             r = subprocess.run(
                 ["powershell", "-NoProfile", "-Command", ps_code],
-                capture_output=True, text=True, timeout=15
+                capture_output=True, text=True, timeout=15,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             out = (r.stdout or "").strip()
             err = (r.stderr or "").strip()
@@ -237,7 +238,8 @@ try {{
         def _run():
             r = subprocess.run(
                 ["powershell", "-NoProfile", "-Command", query],
-                capture_output=True, text=True, timeout=15
+                capture_output=True, text=True, timeout=15,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             out = (r.stdout or "").strip()
             err = (r.stderr or "").strip()
@@ -270,7 +272,7 @@ try {{
                 )
                 logger.info("✅ 能力创造回路: 经验已写入经验池")
             except Exception as e:
-                logger.debug(f"经验写入失败: {e}")
+                logger.error(f"经验写入失败: {e}")
 
             try:
                 from core.learning.tool_builder import ToolSelfBuilder
@@ -278,7 +280,7 @@ try {{
                 builder.record_success("capability_creation_loop", query, result_data[:100])
                 logger.info(f"✅ 能力创造回路: 已通知ToolBuilder (pattern={pattern})")
             except Exception as e:
-                logger.debug(f"ToolBuilder通知失败: {e}")
+                logger.error(f"ToolBuilder通知失败: {e}")
                 
         except Exception as e:
             logger.warning(f"工具注册失败: {e}")

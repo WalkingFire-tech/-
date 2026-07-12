@@ -175,7 +175,7 @@ class MetaLearner:
             VALUES (?, ?, ?, ?, ?)
         ''', (layer_name, metric_name, new_value, trend, datetime.now().isoformat()), commit=True)
         
-        logger.debug(f"学习观察: {layer_name}.{metric_name} = {new_value:.2f} (Δ={delta:+.2f})")
+        logger.warning(f"学习观察: {layer_name}.{metric_name} = {new_value:.2f} (Δ={delta:+.2f})")
         return observation_id
     
     def _calculate_effectiveness(self, delta: float, metric_name: str) -> float:
@@ -336,7 +336,7 @@ class MetaLearner:
             ), commit=True)
         
         self._last_pattern_detection = datetime.now()
-        logger.debug(f"检测到 {len(patterns)} 个学习模式")
+        logger.warning(f"检测到 {len(patterns)} 个学习模式")
         return patterns
     
     def get_active_patterns(self) -> List[LearningPattern]:
@@ -549,7 +549,7 @@ class MetaLearner:
                 WHERE detected_at < ? AND status = 'active'
             ''', (cutoff_date,), commit=True)
         except Exception as e:
-            logger.debug(f"清理旧数据失败: {e}")
+            logger.error(f"清理旧数据失败: {e}")
     
     def get_statistics(self) -> Dict:
         """获取统计信息"""

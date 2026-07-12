@@ -127,12 +127,12 @@ def _collect_knowledge() -> Dict[str, Any]:
         result["experience_count"] = db.query_one("SELECT COUNT(*) FROM experiences")[0]
         result["recent_experiences"] = db.query_one("SELECT COUNT(*) FROM experiences WHERE timestamp > datetime('now', '-7 days')")[0]
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     try:
         db = DatabaseManager.get("data/truths.db")
         result["truth_count"] = db.query_one("SELECT COUNT(*) FROM truths")[0]
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     try:
         from core.knowledge_graph import get_knowledge_graph
         kg = get_knowledge_graph()
@@ -140,12 +140,12 @@ def _collect_knowledge() -> Dict[str, Any]:
         result["graph_nodes"] = stats.get("total_nodes", 0)
         result["graph_connections"] = stats.get("total_connections", 0)
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     try:
         db = DatabaseManager.get("data/knowledge_store.db")
         result["knowledge_items"] = db.query_one("SELECT COUNT(*) FROM knowledge_items")[0]
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     return result
 
 
@@ -176,7 +176,7 @@ def _collect_existence() -> Dict[str, Any]:
                 "total_cycles": metrics.total_cycles,
             }
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     return {}
 
 
@@ -201,12 +201,12 @@ def _collect_identity() -> Dict[str, Any]:
         result["open_deviations"] = db.query_one("SELECT COUNT(*) FROM deviations WHERE status='open'")[0]
         result["corrected_deviations"] = db.query_one("SELECT COUNT(*) FROM deviations WHERE status='corrected'")[0]
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     try:
         from core.spirit_core import spirit_core
         result["spirit_lessons"] = len(spirit_core.get_lessons_for_reflection())
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     return result
 
 

@@ -212,7 +212,7 @@ class ToolRegistry:
             self._categories[cat] = []
         if name not in self._categories[cat]:
             self._categories[cat].append(name)
-        logger.debug(f"工具已注册: {name} (分类:{cat}, 超时:{tool.timeout}s)")
+        logger.warning(f"工具已注册: {name} (分类:{cat}, 超时:{tool.timeout}s)")
         return True
 
     def unregister(self, name: str) -> bool:
@@ -222,7 +222,7 @@ class ToolRegistry:
         cat = tool.category
         if cat in self._categories and name in self._categories[cat]:
             self._categories[cat].remove(name)
-        logger.debug(f"工具已注销: {name}")
+        logger.warning(f"工具已注销: {name}")
         return True
 
     def get(self, name: str) -> Optional[ToolInterface]:
@@ -281,7 +281,7 @@ class ToolRegistry:
                         if skill_name and skill_name not in result:
                             result.append(f"skill:{skill_name}")
             except Exception as e:
-                logger.debug(f"技能表回退跳过: {e}")
+                logger.warning(f"技能表回退跳过: {e}")
 
         return result
 
@@ -328,7 +328,7 @@ class ToolExecutor:
                         from_cache=True, metadata=cached.get("metadata", {}),
                     )
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
 
         start = time.time()
         timeout = timeout_override or tool.timeout
@@ -345,7 +345,7 @@ class ToolExecutor:
                         "metadata": result.metadata,
                     }, quality_score=result.quality / 100.0)
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
 
             self._publish_event(tool_name, params, result)
             return result
@@ -409,7 +409,7 @@ class ToolExecutor:
                 "duration_ms": result.duration_ms,
             })
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     def get_stats(self) -> Dict:
         stats = {}
@@ -440,7 +440,7 @@ class ToolExecutor:
             self._stats_db.execute('CREATE INDEX IF NOT EXISTS idx_tool ON tool_stats(tool_name)', commit=True)
             self._stats_db.execute('CREATE INDEX IF NOT EXISTS idx_category ON tool_stats(category)', commit=True)
         except Exception as e:
-            logger.debug(f"工具统计DB初始化跳过: {e}")
+            logger.warning(f"工具统计DB初始化跳过: {e}")
             self._stats_db = None
 
     def _persist_stat(self, tool_name: str, category: str, success: bool,
@@ -460,7 +460,7 @@ class ToolExecutor:
                 commit=True,
             )
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     def update_feedback(self, tool_name: str, feedback: int, record_id: int = None):
         if not self._stats_db:
@@ -474,7 +474,7 @@ class ToolExecutor:
                         SELECT id FROM tool_stats WHERE tool_name = ? ORDER BY timestamp DESC LIMIT 1
                     )''', (feedback, tool_name), commit=True)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     def get_feedback_history(self, tool_name: str, limit: int = 10) -> List[Dict]:
         if not self._stats_db:
@@ -500,7 +500,7 @@ class ToolExecutor:
             if row and row[0] > 0:
                 return {"total_calls": row[0], "success_count": row[1], "success_rate": row[1] / row[0], "avg_execution_time": row[2] or 0.0}
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return {"total_calls": 0, "success_count": 0, "success_rate": 0.0, "avg_execution_time": 0.0}
 
 
@@ -548,9 +548,9 @@ def register_builtin_tools():
                 _register_user_tool(ut["name"])
                 registered_count += 1
             except Exception as e:
-                logger.debug(f"用户工具注册跳过 {ut['name']}: {e}")
+                logger.warning(f"用户工具注册跳过 {ut['name']}: {e}")
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     logger.info(f"工具注册完成: {tool_registry.tool_count}个工具")
 

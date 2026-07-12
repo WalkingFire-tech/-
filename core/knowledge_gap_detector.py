@@ -196,7 +196,7 @@ class KnowledgeGapDetector:
                 if any(kw in query for kw in keywords):
                     return True
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         return False
     
@@ -232,7 +232,7 @@ class KnowledgeGapDetector:
                 if result.get("has_error"):
                     return True, result.get("reason", "LLM检测到错误")
         except Exception as e:
-            logger.debug(f"LLM验证失败: {e}")
+            logger.error(f"LLM验证失败: {e}")
         
         return False, ""
     
@@ -248,7 +248,7 @@ class KnowledgeGapDetector:
                 if re.search(pattern, response):
                     return True, f"匹配错误模式({pattern_type})，应修正为: {correction}"
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         return False, ""
     
@@ -311,7 +311,7 @@ class KnowledgeGapDetector:
                 commit=True
             )
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
 
 gap_detector = KnowledgeGapDetector()

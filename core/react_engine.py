@@ -275,7 +275,7 @@ class ReActEngine:
                     if fit:
                         observed_quality = fit.final_score
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
 
             improved = observed_quality > current_quality + self.MIN_IMPROVEMENT
 
@@ -503,7 +503,13 @@ class ReActEngine:
                             "quality": 60,
                         }
                 except Exception as e:
-                    logger.debug(f"能力创造回路执行失败: {e}")
+                    logger.error(f"能力创造回路执行失败: {e}")
+                    try:
+                        from core.cognition.failure_classifier import FailureClassifier, FailureCategory
+                        FailureClassifier.record_failure(FailureCategory.TOOL_NOT_FOUND, query,
+                                                          {"intent_type": intent_type, "error": str(e)[:100]})
+                    except Exception:
+                        pass
 
                 return None
 
@@ -535,7 +541,7 @@ class ReActEngine:
             return {"candidates": candidates, "response": best_resp, "quality": best_q}
 
         except Exception as e:
-            logger.debug(f"ReAct tool_first策略失败: {e}")
+            logger.error(f"ReAct tool_first策略失败: {e}")
             return None
 
     async def _strategy_model_switch(
@@ -562,7 +568,7 @@ class ReActEngine:
                         best_resp = ext["response"]
                         best_q = ext.get("quality", 0)
             except Exception as e:
-                logger.debug(f"ReAct 外部模型切换失败: {e}")
+                logger.error(f"ReAct 外部模型切换失败: {e}")
 
         if fetch_ollama_fn and not any("Ollama" in s for s in sources_tried):
             try:
@@ -581,7 +587,7 @@ class ReActEngine:
                             best_resp = oll["response"]
                             best_q = oll.get("quality", 0)
             except Exception as e:
-                logger.debug(f"ReAct 本地模型切换失败: {e}")
+                logger.error(f"ReAct 本地模型切换失败: {e}")
 
         if not new_candidates:
             if fetch_ollama_fn:
@@ -601,7 +607,7 @@ class ReActEngine:
                                 best_resp = oll["response"]
                                 best_q = oll.get("quality", 0)
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
 
         if new_candidates:
             return {"candidates": new_candidates, "response": best_resp, "quality": best_q}
@@ -639,7 +645,7 @@ class ReActEngine:
                         best_resp = result["response"]
                         best_q = result.get("quality", 0)
             except Exception as e:
-                logger.debug(f"ReAct 交叉验证-{name}失败: {e}")
+                logger.error(f"ReAct 交叉验证-{name}失败: {e}")
 
         if len(new_candidates) >= 2 and best_resp:
             responses = [c.get("response", "") for c in new_candidates if c.get("response")]
@@ -685,7 +691,7 @@ class ReActEngine:
                     "quality": quality,
                 }
         except Exception as e:
-            logger.debug(f"ReAct 深度推理失败: {e}")
+            logger.error(f"ReAct 深度推理失败: {e}")
 
         return None
 
@@ -764,9 +770,9 @@ class ReActEngine:
                 generation=1,
                 source="react_engine",
             )
-            logger.debug(f"ReAct轨迹已记录: {result.total_iterations}次迭代, 改善={result.improved}")
+            logger.warning(f"ReAct轨迹已记录: {result.total_iterations}次迭代, 改善={result.improved}")
         except Exception as e:
-            logger.debug(f"ReAct轨迹记录跳过: {e}")
+            logger.warning(f"ReAct轨迹记录跳过: {e}")
 
 
 react_engine = ReActEngine()

@@ -91,7 +91,7 @@ class KnowledgeInjector:
                     result['actions_taken'].append('external_learning_triggered')
                     logger.info(f"  ✅ 外部学习已触发: {len(injected_knowledge)}条知识")
         except Exception as e:
-            logger.debug(f"  外部学习不可用: {e}")
+            logger.warning(f"  外部学习不可用: {e}")
         
         # 动作3: 发布学习事件
         try:
@@ -108,7 +108,7 @@ class KnowledgeInjector:
             result['actions_taken'].append('event_published')
             logger.info(f"  ✅ 学习事件已发布")
         except Exception as e:
-            logger.debug(f"  事件总线不可用: {e}")
+            logger.warning(f"  事件总线不可用: {e}")
         
         # 动作4: 验证注入效果
         if self.enable_verification and injected_knowledge:
@@ -140,7 +140,7 @@ class KnowledgeInjector:
                     logger.warning(f"  ⚠️ 注入验证未通过，需要修正")
                     result['needs_correction'] = True
             except Exception as e:
-                logger.debug(f"  验证器不可用: {e}")
+                logger.warning(f"  验证器不可用: {e}")
         
         # 动作5: 更新统计
         result['total_actions'] = len(result['actions_taken'])

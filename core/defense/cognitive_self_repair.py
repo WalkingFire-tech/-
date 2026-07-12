@@ -48,7 +48,7 @@ class CognitiveSelfRepair:
                             "rules": [{"id": r[0], "action": r[2], "confidence": r[3]} for r in rule_list],
                         })
         except Exception as e:
-            logger.debug(f"规则诊断失败: {e}")
+            logger.error(f"规则诊断失败: {e}")
 
         try:
             db = DatabaseManager.get("data/essence_reasoning.db")
@@ -58,7 +58,7 @@ class CognitiveSelfRepair:
                     "id": row[0], "query": row[1][:50], "consistency": row[2],
                 })
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         return diagnosis
 

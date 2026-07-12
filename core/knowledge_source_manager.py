@@ -129,7 +129,7 @@ class KnowledgeSourceManager:
         
         cached = self._get_cached(query_hash)
         if cached:
-            logger.debug(f"命中缓存: {question[:30]}...")
+            logger.warning(f"命中缓存: {question[:30]}...")
             return cached
         
         if source_type == "auto":
@@ -162,7 +162,7 @@ class KnowledgeSourceManager:
                         }
                     }
             except Exception as e:
-                logger.debug(f"查询 {source_name} 失败: {e}")
+                logger.error(f"查询 {source_name} 失败: {e}")
                 continue
         
         return {
@@ -238,7 +238,7 @@ class KnowledgeSourceManager:
         
         api_key = os.getenv(config.get("api_key_env", ""), "")
         if not api_key:
-            logger.debug(f"{source_name} API密钥未配置")
+            logger.warning(f"{source_name} API密钥未配置")
             return {"success": False, "error": "API密钥未配置"}
         
         try:
@@ -462,7 +462,7 @@ class KnowledgeSourceManager:
             
             return result
         except Exception as e:
-            logger.debug(f"学术库查询失败: {e}")
+            logger.error(f"学术库查询失败: {e}")
             return {"success": False, "error": str(e)}
     
     def _query_local_academic(self, source_name: str, config: Dict, question: str) -> Dict:
@@ -493,7 +493,7 @@ class KnowledgeSourceManager:
             
             return {"success": False, "error": "本地学术库未找到相关文档"}
         except Exception as e:
-            logger.debug(f"本地学术库查询失败: {e}")
+            logger.error(f"本地学术库查询失败: {e}")
             return {"success": False, "error": str(e)}
     
     def _query_local_kb(self, source_name: str, config: Dict, question: str) -> Dict:
@@ -524,7 +524,7 @@ class KnowledgeSourceManager:
             
             return {"success": False, "error": "本地知识库未找到相关条目"}
         except Exception as e:
-            logger.debug(f"本地知识库查询失败: {e}")
+            logger.error(f"本地知识库查询失败: {e}")
             return {"success": False, "error": str(e)}
     
     def _check_rate_limit(self, source_name: str) -> bool:
@@ -541,7 +541,7 @@ class KnowledgeSourceManager:
         ]
         
         if len(recent_requests) >= max_per_minute:
-            logger.debug(f"{source_name} 达到速率限制")
+            logger.warning(f"{source_name} 达到速率限制")
             return False
         
         self._request_history.append({"source": source_name, "time": now})
@@ -569,7 +569,7 @@ class KnowledgeSourceManager:
                     "from_cache": True
                 }
         except Exception as e:
-            logger.debug(f"读取缓存失败: {e}")
+            logger.error(f"读取缓存失败: {e}")
         
         return None
     
@@ -593,7 +593,7 @@ class KnowledgeSourceManager:
                 expires_at.isoformat()
             ), commit=True)
         except Exception as e:
-            logger.debug(f"缓存结果失败: {e}")
+            logger.error(f"缓存结果失败: {e}")
     
     def _generate_fallback_response(self, question: str) -> str:
         """生成降级响应"""

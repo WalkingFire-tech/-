@@ -150,7 +150,7 @@ class ReflectionPipeline:
             # 1. 写入营火日志（同步，快速）
             await self._write_campfire_log(context)
             actions_taken.append("campfire_log")
-            logger.debug(f"✓ 反思日志写入: {reflection_id}")
+            logger.warning(f"✓ 反思日志写入: {reflection_id}")
             
             if self.enable_induction:
                 try:
@@ -159,7 +159,7 @@ class ReflectionPipeline:
                         timeout=self.induction_timeout
                     )
                     actions_taken.append("meta_induction")
-                    logger.debug(f"✓ 元归纳触发: {reflection_id}")
+                    logger.warning(f"✓ 元归纳触发: {reflection_id}")
                 except asyncio.TimeoutError:
                     logger.warning(f"⏱️ 元归纳超时 ({self.induction_timeout}秒)")
                 except Exception as e:
@@ -168,14 +168,14 @@ class ReflectionPipeline:
             if self.enable_jsonl and self._should_sample_jsonl(context):
                 await self._append_jsonl(context)
                 actions_taken.append("jsonl_sample")
-                logger.debug(f"✓ JSONL样本生成: {reflection_id}")
+                logger.warning(f"✓ JSONL样本生成: {reflection_id}")
             
             # P1-7: 反思教训回流到spirit_lessons.db
             try:
                 await self._write_lesson_to_spirit(context)
                 actions_taken.append("spirit_lesson")
             except Exception as e:
-                logger.debug(f"反思教训写入跳过: {e}")
+                logger.warning(f"反思教训写入跳过: {e}")
             
             return {
                 "success": True,
@@ -314,7 +314,7 @@ class ReflectionPipeline:
                     commit=True
                 )
         except Exception as e:
-            logger.debug(f"教训写入失败: {e}")
+            logger.error(f"教训写入失败: {e}")
     
     def _enrich_context(self, raw: Dict[str, Any]) -> Dict[str, Any]:
         """补充元数据，生成唯一ID和时间戳"""
@@ -414,7 +414,7 @@ class ReflectionPipeline:
                     lambda: run_induction(days=1)
                 )
             
-            logger.debug(f"✅ 元归纳执行完成: {result}")
+            logger.warning(f"✅ 元归纳执行完成: {result}")
             
         except Exception as e:
             logger.error(f"触发归纳时出错: {e}")

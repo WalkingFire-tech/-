@@ -203,7 +203,7 @@ class KnowledgeEvolutionEngine:
                 
                 self._update_conflict_pattern(db, conflict_type)
         
-        logger.debug(f"知识验证: {knowledge_id} -> {status} (质量={quality_score:.2f})")
+        logger.warning(f"知识验证: {knowledge_id} -> {status} (质量={quality_score:.2f})")
         return verification
     
     def _get_all_knowledge(self) -> List[Dict]:
@@ -221,7 +221,7 @@ class KnowledgeEvolutionEngine:
             
             return [dict(row) for row in db.query("SELECT id, question, answer FROM knowledge_items")]
         except Exception as e:
-            logger.debug(f"获取知识失败: {e}")
+            logger.error(f"获取知识失败: {e}")
             return []
     
     def _detect_conflicts(self, knowledge_id: str, content: str, 

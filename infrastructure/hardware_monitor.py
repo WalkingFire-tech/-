@@ -44,7 +44,7 @@ def _init_gpu():
             logger.info(f"GPU监控已启用: {_GPU_DEVICE.adapterName}")
             return True
     except Exception as e:
-        logger.debug(f"GPU监控不可用: {e}")
+        logger.warning(f"GPU监控不可用: {e}")
     return False
 
 
@@ -71,7 +71,7 @@ def get_gpu_stats() -> Dict:
         stats["name"] = _GPU_DEVICE.adapterName.decode() if isinstance(_GPU_DEVICE.adapterName, bytes) else str(_GPU_DEVICE.adapterName)
         return stats
     except Exception as e:
-        logger.debug(f"GPU读取失败: {e}")
+        logger.error(f"GPU读取失败: {e}")
         return {"available": False, "error": str(e)}
 
 
@@ -133,7 +133,7 @@ def get_disk_stats() -> Dict:
                     "percent": usage.percent,
                 })
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         return {"available": True, "disks": disks}
     except Exception as e:
         return {"available": False, "error": str(e)}
@@ -145,7 +145,8 @@ def get_acpi_thermal() -> Dict:
         r = subprocess.run(
             ['powershell', '-Command',
              'Get-WmiObject MSAcpi_ThermalZoneTemperature -Namespace root/wmi -ErrorAction SilentlyContinue | Select-Object CurrentTemperature,InstanceName | ConvertTo-Json'],
-            capture_output=True, text=True, timeout=5
+            capture_output=True, text=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         if r.stdout and r.stdout.strip():
             data = json.loads(r.stdout)
@@ -161,7 +162,7 @@ def get_acpi_thermal() -> Dict:
                 })
             return {"available": True, "zones": zones}
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     return {"available": False}
 
 
@@ -178,7 +179,7 @@ def get_process_stats() -> Dict:
                         "memory_mb": round(mem_mb, 0),
                     })
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         procs.sort(key=lambda x: -x['memory_mb'])
         return {"available": True, "top_processes": procs[:10]}
     except Exception as e:
@@ -238,7 +239,7 @@ def log_hardware_stats(force: bool = False):
         mem_pct = mem.get("percent", "?") if mem.get("available") else "N/A"
         hw.info(f"GPU={gpu_temp}C/{gpu_usage}% | CPU={cpu_usage}% | MEM={mem_pct}%")
     except Exception as e:
-        logger.debug(f"硬件日志写入失败: {e}")
+        logger.error(f"硬件日志写入失败: {e}")
 
 
 GPU_TEMP_SAFE = 70

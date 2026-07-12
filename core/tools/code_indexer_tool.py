@@ -248,7 +248,7 @@ class CodeIndexerTool(ToolInterface):
                     if name:
                         results.append((kind, name, rel, node.lineno))
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
 
         if not results:
             return f"未找到符号: {symbol}"

@@ -66,7 +66,7 @@ class CognitivePlanner:
                 if hasattr(self.planner, 'adapters') and self.planner.adapters:
                     self.llm_adapter = next(iter(self.planner.adapters.values()))
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         try:
             from core.config.unified_config import get_config
@@ -320,7 +320,7 @@ class CognitivePlanner:
             self._executor.shutdown(wait=True, cancel_futures=False)
             logger.info("线程池已关闭")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
     
     def process(self, user_input: str, context: Dict = None) -> CognitiveCycleResult:
         """
@@ -341,13 +341,13 @@ class CognitivePlanner:
             try:
                 self.sleep_engine.notify_interaction()
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         if self.proactivity:
             try:
                 self.proactivity._last_user_interaction = datetime.now()
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         try:
             perception = self._perceive(user_input, context)
@@ -595,7 +595,7 @@ class CognitivePlanner:
                 if self.goal_engine and hasattr(self.goal_engine, 'get_top_priorities'):
                     goals = self.goal_engine.get_top_priorities(3)
                     for goal in goals:
-                        logger.debug(f"🎯 进化目标: {goal.get('dimension')} (优先级: {goal.get('priority')})")
+                        logger.warning(f"🎯 进化目标: {goal.get('dimension')} (优先级: {goal.get('priority')})")
                 
                 if self.l5 and hasattr(self.l5, 'record_experience'):
                     experience = {
@@ -608,7 +608,7 @@ class CognitivePlanner:
                     self.l5.record_experience(experience)
             
             except Exception as e:
-                logger.debug(f"异步进化失败: {e}")
+                logger.error(f"异步进化失败: {e}")
         
         self._executor.submit(evolution_task)
     
@@ -618,7 +618,7 @@ class CognitivePlanner:
             try:
                 return self.l6.generate_report()
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         return {}
     
     def _save_memory(self, user_input: str, response: str,
@@ -648,7 +648,7 @@ class CognitivePlanner:
                 )
                 self.stereo_store.save(memory)
             except Exception as e:
-                logger.debug(f"保存立体记忆失败: {e}")
+                logger.error(f"保存立体记忆失败: {e}")
     
     def _update_relationship(self, user_input: str, response: str,
                              perception: Dict, validation: Dict):
@@ -664,7 +664,7 @@ class CognitivePlanner:
                     "conversation_id": self._current_conversation_id
                 })
             except Exception as e:
-                logger.debug(f"更新关系模型失败: {e}")
+                logger.error(f"更新关系模型失败: {e}")
     
     def _submit_signals(self, perception: Dict, validation: Dict):
         """提交信号到间隙生长引擎"""
@@ -686,7 +686,7 @@ class CognitivePlanner:
                         priority="high"
                     )
             except Exception as e:
-                logger.debug(f"提交信号失败: {e}")
+                logger.error(f"提交信号失败: {e}")
     
     def _trigger_async_review(self, conversation_id: str, user_input: str,
                               response: str, perception: Dict, validation: Dict):
@@ -704,7 +704,7 @@ class CognitivePlanner:
                     }
                     self.review_engine.review(conversation)
                 except Exception as e:
-                    logger.debug(f"自我评估失败: {e}")
+                    logger.error(f"自我评估失败: {e}")
             
             self._executor.submit(review_task)
     
@@ -731,7 +731,7 @@ class CognitivePlanner:
             try:
                 return self.self_perception.get_current_perception() or {}
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         return {}
     
     def get_system_status(self) -> Dict:
@@ -771,13 +771,13 @@ class CognitivePlanner:
             try:
                 status["goals"] = self.goal_engine.get_top_priorities(3)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         if self.l6 and hasattr(self.l6, 'get_introspection_status'):
             try:
                 status["health"] = self.l6.get_introspection_status()
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         return status
     
@@ -789,37 +789,37 @@ class CognitivePlanner:
             try:
                 self.existence.stop()
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         if self.self_perception and hasattr(self.self_perception, 'stop'):
             try:
                 self.self_perception.stop()
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         if self.gap_growth and hasattr(self.gap_growth, 'stop'):
             try:
                 self.gap_growth.stop()
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         if self.sleep_engine and hasattr(self.sleep_engine, 'stop'):
             try:
                 self.sleep_engine.stop()
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         if self.proactivity and hasattr(self.proactivity, 'stop'):
             try:
                 self.proactivity.stop()
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         if self.heartbeat and hasattr(self.heartbeat, 'stop'):
             try:
                 self.heartbeat.stop()
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         self._cleanup_executor()
         

@@ -167,7 +167,7 @@ class TrajectoryStore:
                     self.recombine(traj_id, sibling_id, query, strategy="best_of")
                     logger.info(f"🧬 自动重组: 轨迹#{traj_id}+#{sibling_id}")
         except Exception as e:
-            logger.debug(f"自动进化跳过: {e}")
+            logger.warning(f"自动进化跳过: {e}")
 
     def get_trajectory(self, traj_id: int) -> Optional[Dict]:
         db = DatabaseManager.get(self.db_path)

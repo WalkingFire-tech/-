@@ -161,7 +161,7 @@ class SemanticMatcher:
             from sentence_transformers import SentenceTransformer
             self.model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
     
     def calculate_similarity(self, text1: str, text2: str) -> float:
         """计算语义相似度"""
@@ -172,7 +172,7 @@ class SemanticMatcher:
                 similarity = cosine_similarity([embeddings[0]], [embeddings[1]])[0][0]
                 return float(similarity)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         # 降级：关键词匹配
         return self._keyword_similarity(text1, text2)
@@ -215,7 +215,7 @@ class PersistentEvolutionStorage:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         return default
     
     def _save_json(self, file_path: Path, data):
@@ -451,7 +451,7 @@ class OptimizedCognitiveArchitecture:
                         'source': 'Google搜索'
                     }
         except Exception as e:
-            pass
+            logger.warning(f"操作降级跳过: {e}")
         
         # 尝试调用外脑API
         try:
@@ -466,7 +466,7 @@ class OptimizedCognitiveArchitecture:
                     'note': '需要配置API密钥'
                 }
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         # 用户询问模式
         return {

@@ -106,13 +106,13 @@ class PDFExtractor(ContentExtractor):
             try:
                 result = method(file_path)
                 if result and result.strip():
-                    logger.debug(f"PDF提取成功: {name}")
+                    logger.warning(f"PDF提取成功: {name}")
                     return result
                 elif result == '':
                     return ''
             except Exception as e:
                 error_msg = f"{name}: {str(e)[:100]}"
-                logger.debug(f"PDF {name} 提取失败: {error_msg}")
+                logger.error(f"PDF {name} 提取失败: {error_msg}")
                 errors.append(error_msg)
                 continue
         
@@ -178,7 +178,7 @@ class PDFExtractor(ContentExtractor):
                 
                 return '\n\n'.join(text_parts) if text_parts else ''
         except Exception as e:
-            logger.debug(f"pdfplumber 失败: {e}")
+            logger.error(f"pdfplumber 失败: {e}")
             raise
     
     def _extract_with_fitz(self, file_path: Path) -> Optional[str]:
@@ -197,7 +197,7 @@ class PDFExtractor(ContentExtractor):
             doc.close()
             return '\n\n'.join(text_parts) if text_parts else ''
         except Exception as e:
-            logger.debug(f"fitz 失败: {e}")
+            logger.error(f"fitz 失败: {e}")
             raise
     
     def _extract_with_ocr(self, file_path: Path) -> Optional[str]:
@@ -228,7 +228,7 @@ class PDFExtractor(ContentExtractor):
             return '\n\n'.join(text_parts) if text_parts else ''
             
         except Exception as e:
-            logger.debug(f"OCR 失败: {e}")
+            logger.error(f"OCR 失败: {e}")
             raise
 
     def get_supported_extensions(self) -> List[str]:

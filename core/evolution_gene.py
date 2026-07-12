@@ -142,7 +142,7 @@ class EvolutionGene:
                     'thinking': f"我之前遇到过类似问题，置信度{similar.get('confidence', 0):.2f}"
                 }
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         return {
             'stage': '经验检索',

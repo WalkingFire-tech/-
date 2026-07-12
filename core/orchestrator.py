@@ -292,7 +292,7 @@ class SystemOrchestrator:
             try:
                 self.mechanisms["heartbeat"].stop()
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         if self._orchestration_thread:
             self._orchestration_thread.join(timeout=5.0)
@@ -331,7 +331,7 @@ class SystemOrchestrator:
             self.metrics.memory_usage_mb = process.memory_info().rss / 1024 / 1024
             self.metrics.cpu_usage_percent = process.cpu_percent(interval=0.1)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         if "state_collector" in self.mechanisms:
             try:
@@ -342,7 +342,7 @@ class SystemOrchestrator:
                         if layer_name in self.layer_status:
                             self.layer_status[layer_name].metrics = state
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
     
     def _save_state(self):
         """保存系统状态"""
@@ -448,7 +448,7 @@ class SystemOrchestrator:
                 try:
                     self.mechanisms["error_alchemy"].transform_error(e, context=input_data)
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
         
         return result
     
@@ -548,7 +548,7 @@ class SystemOrchestrator:
             try:
                 self.mechanisms["rhythm_controller"].enter_phase("resting")
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         if "existence" in self.layers:
             try:
@@ -556,7 +556,7 @@ class SystemOrchestrator:
                     from core.presence.existence_layer import PresenceState
                     self.layers["existence"].enter_state(PresenceState.RESTING)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
     
     def exit_low_power_mode(self):
         """退出低功耗模式"""
@@ -567,7 +567,7 @@ class SystemOrchestrator:
             try:
                 self.mechanisms["rhythm_controller"].enter_phase("exploration")
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         if "existence" in self.layers:
             try:
@@ -575,7 +575,7 @@ class SystemOrchestrator:
                     from core.presence.existence_layer import PresenceState
                     self.layers["existence"].enter_state(PresenceState.AWAKE)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
     
     def register_event_handler(self, event_type: str, handler: Callable):
         """注册事件处理器"""

@@ -12,7 +12,7 @@ from enum import Enum
 from dataclasses import dataclass, field
 import json
 import threading
-import sqlite3
+
 from pathlib import Path
 
 try:

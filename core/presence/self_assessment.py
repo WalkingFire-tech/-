@@ -195,7 +195,7 @@ class ContinuousSelfAssessment:
                 )
                 self.history.results.insert(0, result)
             
-            logger.debug(f"从数据库加载了 {len(self.history.results)} 条历史评估")
+            logger.warning(f"从数据库加载了 {len(self.history.results)} 条历史评估")
         except Exception as e:
             logger.warning(f"加载历史评估失败: {e}")
     
@@ -218,7 +218,7 @@ class ContinuousSelfAssessment:
                 json.dumps(result.self_criticism),
                 json.dumps(result.learning_points)
             ), commit=True)
-            logger.debug(f"评估结果已保存: {result.conversation_id}")
+            logger.warning(f"评估结果已保存: {result.conversation_id}")
         except Exception as e:
             logger.warning(f"保存评估结果失败: {e}")
     
@@ -598,7 +598,7 @@ class ContinuousSelfAssessment:
         except ImportError:
             logger.debug("立体记忆模块未安装，跳过保存")
         except Exception as e:
-            logger.debug(f"保存到立体记忆失败: {e}")
+            logger.error(f"保存到立体记忆失败: {e}")
     
     def _trigger_evolution(self, result: AssessmentResult):
         """
@@ -624,7 +624,7 @@ class ContinuousSelfAssessment:
         except ImportError:
             logger.debug("L5进化层未安装，跳过触发")
         except Exception as e:
-            logger.debug(f"触发L5进化失败: {e}")
+            logger.error(f"触发L5进化失败: {e}")
     
     def get_current_assessment(self) -> Optional[Dict[str, Any]]:
         """获取当前评估"""

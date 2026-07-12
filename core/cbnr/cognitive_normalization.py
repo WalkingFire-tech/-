@@ -161,7 +161,7 @@ class CognitiveNormalization:
                     "confidence": 0.6,
                 })
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         try:
             from infrastructure.database_manager import DatabaseManager
@@ -177,7 +177,7 @@ class CognitiveNormalization:
                 })
 
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         return predictions
 

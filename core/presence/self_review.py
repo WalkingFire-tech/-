@@ -167,7 +167,7 @@ class SelfReviewEngine:
         self._execute_after_review(result)
         self._save_history()
 
-        logger.debug(f"📝 自我评估完成: {outcome.value} (总分: {overall_score:.2f})")
+        logger.warning(f"📝 自我评估完成: {outcome.value} (总分: {overall_score:.2f})")
 
         return result
 
@@ -398,7 +398,7 @@ class SelfReviewEngine:
                     self._review_history = []
                     for item in data:
                         self._review_history.append(ReviewResult.from_dict(item))
-                    logger.debug(f"📝 加载了 {len(self._review_history)} 条评估历史")
+                    logger.warning(f"📝 加载了 {len(self._review_history)} 条评估历史")
             except Exception as e:
                 logger.warning(f"加载自我评估历史失败: {e}")
 
@@ -440,7 +440,7 @@ class SelfReviewEngine:
                         priority="high"
                     )
         except Exception as e:
-            logger.debug(f"提交信号失败: {e}")
+            logger.error(f"提交信号失败: {e}")
 
     def _skip_review(self, conversation: Dict) -> ReviewResult:
         return ReviewResult(

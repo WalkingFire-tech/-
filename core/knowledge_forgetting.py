@@ -181,7 +181,7 @@ class KnowledgeForgetting:
                 days_ago = (datetime.now() - dt).days
                 recency = max(0, 1.0 - days_ago / 90)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
 
         tagged = 0.2 if intent_type and intent_type.strip() else 0.0
 
@@ -233,7 +233,7 @@ class KnowledgeForgetting:
                         if cr and cr[0]:
                             days_old = (datetime.now() - datetime.fromisoformat(cr[0])).days
                     except Exception:
-                        pass
+                        logger.warning("操作降级跳过")
                     if days_old > self.DORMANT_DAYS:
                         if not dry_run:
                             db.execute("UPDATE learning_rules SET status='dormant' WHERE id=?", (rid,), commit=True)

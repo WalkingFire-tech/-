@@ -89,6 +89,10 @@ class StateCollector:
         
         db = DatabaseManager.get(str(self._db_path))
         
+        existing_cols = [row[1] for row in db.execute("PRAGMA table_info(state_reports)").fetchall()] if db.query_one("SELECT name FROM sqlite_master WHERE type='table' AND name='state_reports'") else []
+        if existing_cols and 'layer' not in existing_cols:
+            db.execute("DROP TABLE IF EXISTS state_reports", commit=True)
+        
         db.executescript('''
             CREATE TABLE IF NOT EXISTS state_reports (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

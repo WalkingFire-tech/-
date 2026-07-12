@@ -378,7 +378,7 @@ class SemanticRouter:
                 record["timestamp"]
             ), commit=True)
         except Exception as e:
-            logger.debug(f"记录路由历史失败: {e}")
+            logger.error(f"记录路由历史失败: {e}")
     
     def _load_routing_history(self):
         """加载路由历史"""
@@ -402,7 +402,7 @@ class SemanticRouter:
             
             logger.info(f"加载{len(self.routing_history)}条路由历史")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
     
     def _save_evolved_vectors(self):
         """保存进化后的向量"""

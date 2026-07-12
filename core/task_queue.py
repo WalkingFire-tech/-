@@ -161,12 +161,12 @@ class GenePool:
                 new = min_val
                 if old > min_val:
                     self._record_safety_violation(key, old + delta, "lower_bound", min_val, trigger)
-                    logger.debug(f"🧬 基因安全基线触发: {key} 降至下限 {min_val}")
+                    logger.warning(f"🧬 基因安全基线触发: {key} 降至下限 {min_val}")
             elif new > max_val:
                 new = max_val
                 if old < max_val:
                     self._record_safety_violation(key, old + delta, "upper_bound", max_val, trigger)
-                    logger.debug(f"🧬 基因安全基线触发: {key} 升至上限 {max_val}")
+                    logger.warning(f"🧬 基因安全基线触发: {key} 升至上限 {max_val}")
 
         self._genes[key] = new
 
@@ -179,7 +179,7 @@ class GenePool:
         try:
             self._write_op(_do)
         except Exception as e:
-            logger.debug(f"基因突变记录失败: {e}")
+            logger.error(f"基因突变记录失败: {e}")
 
         logger.info(f"🧬 基因突变: {key} {old:.3f}→{new:.3f} (Δ{delta:+.3f}, 触发={trigger})")
 
@@ -220,7 +220,7 @@ class GenePool:
         try:
             self._write_op(_do)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         logger.warning(f"🧬 基因安全违规 #{self._safety_violations}: {gene_key} 尝试={attempted_value:.3f} {bound_type}={bound_value:.3f}")
 
     def get_safety_violations(self) -> dict:
@@ -439,7 +439,7 @@ class PersistentTaskQueue:
                 commit=True
             )
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     async def _do_deep_thinking(self, payload: dict) -> str:
         query = payload.get("query", "")
@@ -451,7 +451,7 @@ class PersistentTaskQueue:
                 logger.info(f"深度思考节流: {throttle['message']}，等待{throttle['delay_seconds']}秒")
                 await asyncio.sleep(throttle["delay_seconds"])
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         try:
             from core.metacognitive_executor import MetacognitiveExecutor
             executor = MetacognitiveExecutor()
@@ -476,7 +476,7 @@ class PersistentTaskQueue:
                 logger.info(f"后台Ollama节流: {throttle['message']}，等待{throttle['delay_seconds']}秒")
                 await asyncio.sleep(throttle["delay_seconds"])
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         try:
             loop = asyncio.get_event_loop()
             result = await asyncio.wait_for(
@@ -530,7 +530,7 @@ class PersistentTaskQueue:
                 logger.info(f"模型评估节流: {throttle['message']}，等待{throttle['delay_seconds']}秒")
                 await asyncio.sleep(throttle["delay_seconds"])
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         try:
             review_prompt = f"评估以下问答质量(1-10分)，只输出数字:\n问题:{query}\n回答:{response_text[:300]}"
             loop = asyncio.get_event_loop()
@@ -598,7 +598,7 @@ class PersistentTaskQueue:
                 commit=True
             )
         except Exception as e:
-            logger.debug(f"经验存储失败: {e}")
+            logger.error(f"经验存储失败: {e}")
 
     async def start_worker(self, interval: float = 5.0):
         if self._running:
@@ -612,7 +612,7 @@ class PersistentTaskQueue:
                 tasks = self._get_pending_tasks(limit=3)
                 for task in tasks:
                     if task.get("priority", 5) < 5 and not self._is_idle():
-                        logger.debug(f"⏳ 任务#{task['id']}等待空闲...")
+                        logger.warning(f"⏳ 任务#{task['id']}等待空闲...")
                         continue
                     await self._execute_task(task)
 
@@ -642,7 +642,7 @@ class PersistentTaskQueue:
             if timeout_wisdom > 3:
                 gene_pool.mutate("depth_preference", -0.01, "idle_consolidation_too_many_timeouts")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     def stop_worker(self):
         self._running = False
@@ -687,7 +687,7 @@ class PersistentTaskQueue:
             cur = db2.execute("UPDATE experiences SET quality_score = MIN(quality_score + 5, 95) WHERE quality_score >= 70 AND quality_score < 95", commit=True)
             stats["exp_promoted"] = cur.rowcount
         except Exception as e:
-            logger.debug(f"经验池代谢失败: {e}")
+            logger.error(f"经验池代谢失败: {e}")
 
         try:
             db2 = DatabaseManager.get("data/knowledge_store.db")
@@ -697,7 +697,7 @@ class PersistentTaskQueue:
                 db2.execute("DELETE FROM knowledge WHERE quality < 30 AND created_at < datetime('now', '-30 days')", commit=True)
                 stats["know_purged"] = purge_count
         except Exception as e:
-            logger.debug(f"知识库代谢失败: {e}")
+            logger.error(f"知识库代谢失败: {e}")
 
         result = f"认知代谢完成: 经验池清除{stats['exp_purged']}条/提升{stats['exp_promoted']}条, 知识库清除{stats['know_purged']}条"
         logger.info(f"🧹 {result}")

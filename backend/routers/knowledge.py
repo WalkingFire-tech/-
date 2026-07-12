@@ -72,19 +72,19 @@ async def get_knowledge_health():
             row = db.query_one("SELECT COUNT(*) FROM knowledge")
             knowledge_total = row[0]
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         try:
             db = DatabaseManager.get("data/skills.db")
             row = db.query_one("SELECT COUNT(*) FROM skills")
             skills_total = row[0]
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         try:
             db = DatabaseManager.get("data/learning_rules.db")
             row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
             rules_active = row[0]
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         total = knowledge_total + skills_total + rules_active
         score = min(100, total // 3)
         coverage = min(100, knowledge_total * 2)
@@ -153,7 +153,7 @@ async def run_induction(request: dict):
             recent = row[0]
             patterns = min(recent // 10, 5)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         try:
             db = DatabaseManager.get("data/learning_rules.db")
             row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
@@ -164,7 +164,7 @@ async def run_induction(request: dict):
             promoted = cursor2.rowcount
             rules = activated + promoted
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return {
             "success": True,
             "patterns": patterns,
@@ -207,7 +207,7 @@ async def get_recent_learning():
                     time_str = ""
                 items.append({"content": f"[{intent}] {query}", "time": time_str})
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         try:
             db = DatabaseManager.get("data/essence_reasoning.db")
             rows = db.query("SELECT query, final_verdict, timestamp FROM reasoning_chains ORDER BY timestamp DESC LIMIT 3")
@@ -224,7 +224,7 @@ async def get_recent_learning():
                     time_str = ""
                 items.append({"content": f"推理: {query}", "time": time_str})
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         items.sort(key=lambda x: x.get("time", ""), reverse=True)
         try:
             from core.self.model import get_self_model
@@ -233,7 +233,7 @@ async def get_recent_learning():
             for item in snap.get("recent_learning", [])[:3]:
                 items.append({"content": f"认知: {item.get('summary', '')[:30]}", "time": item.get("timestamp", "")[:10]})
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return {"items": items[:8]}
     except Exception as e:
         return {"items": []}
@@ -533,3 +533,16 @@ async def learn_from_folder(request: dict):
     except Exception as e:
         logger.error(f"文件夹学习失败: {e}")
         return {"success": False, "error": str(e)}
+
+
+@router.get("/failure-patterns")
+async def get_failure_patterns():
+    try:
+        from core.cognition.failure_classifier import FailureClassifier
+        patterns = FailureClassifier.get_failure_patterns()
+        severity = FailureClassifier.get_severity_summary()
+        recent = FailureClassifier.get_recent_failures(5)
+        return {"patterns": patterns, "severity_summary": severity, "recent": recent}
+    except Exception as e:
+        logger.error(f"失败模式查询失败: {e}")
+        return {"patterns": [], "severity_summary": {}, "recent": []}

@@ -307,7 +307,7 @@ class ExistenceLayer:
                     data = json.load(f)
                     self.dynamic_boundaries = data.get('boundaries', [])
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
     
     def _save_dynamic_boundaries(self):
         """保存动态边界"""
@@ -317,7 +317,7 @@ class ExistenceLayer:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump({'boundaries': self.dynamic_boundaries}, f, ensure_ascii=False)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
 
 # ==================== 第1层：感知层 ====================
@@ -383,7 +383,7 @@ class PerceptionLayer:
                 domain_weight = self.domain_weights.get(domain, 1.0)
                 return min(base_confidence * domain_weight, 1.0)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         # 基于领域复杂度的默认置信度
         domain_complexity = {
@@ -426,7 +426,7 @@ class PerceptionLayer:
                 with open(path, 'r', encoding='utf-8') as f:
                     self.knowledge_timestamps = json.load(f)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
     
     def _save_knowledge_timestamps(self):
         """保存知识时间戳"""
@@ -436,7 +436,7 @@ class PerceptionLayer:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(self.knowledge_timestamps, f, ensure_ascii=False)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
 
 # ==================== 第2层：学习层 ====================
@@ -503,7 +503,7 @@ class LearningLayer:
                     'source': '知识库'
                 }
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         return {'found': False, 'source': '知识库'}
     
@@ -525,7 +525,7 @@ class LearningLayer:
                     'source': '外部搜索'
                 }
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         return {'found': False, 'source': '外部搜索'}
     
@@ -1208,7 +1208,7 @@ class EvolutionLayer:
                 with open(path_errors, 'r', encoding='utf-8') as f:
                     self.error_archive = json.load(f)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         # 加载行为模式
         path_patterns = os.path.join(self.persistent_dir, "behavior_patterns.json")
@@ -1217,7 +1217,7 @@ class EvolutionLayer:
                 with open(path_patterns, 'r', encoding='utf-8') as f:
                     self.behavior_patterns = json.load(f)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         # 加载基因参数
         path_genes = os.path.join(self.persistent_dir, "gene_parameters.json")
@@ -1226,7 +1226,7 @@ class EvolutionLayer:
                 with open(path_genes, 'r', encoding='utf-8') as f:
                     self.gene_parameters = json.load(f)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
     
     def _save_state(self):
         """保存持久化状态"""
@@ -1237,7 +1237,7 @@ class EvolutionLayer:
             with open(path_errors, 'w', encoding='utf-8') as f:
                 json.dump(self.error_archive, f, ensure_ascii=False, indent=2)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         # 保存行为模式
         path_patterns = os.path.join(self.persistent_dir, "behavior_patterns.json")
@@ -1245,7 +1245,7 @@ class EvolutionLayer:
             with open(path_patterns, 'w', encoding='utf-8') as f:
                 json.dump(self.behavior_patterns, f, ensure_ascii=False, indent=2)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         # 保存基因参数
         path_genes = os.path.join(self.persistent_dir, "gene_parameters.json")
@@ -1253,7 +1253,7 @@ class EvolutionLayer:
             with open(path_genes, 'w', encoding='utf-8') as f:
                 json.dump(self.gene_parameters, f, ensure_ascii=False, indent=2)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
     
     def get_stats(self) -> Dict[str, Any]:
         """获取进化统计"""

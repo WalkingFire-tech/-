@@ -102,7 +102,7 @@ class RatchetGate:
                 if row and row[0] is not None:
                     return row[0]
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             from pathlib import Path
@@ -113,7 +113,7 @@ class RatchetGate:
                 if row and row[0] is not None:
                     return min(1.0, row[0])
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         return 0.5
 

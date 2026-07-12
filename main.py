@@ -39,7 +39,7 @@ try:
     vector_retriever.load_index()
     logger.info("向量索引已加载")
 except Exception as e:
-    logger.debug(f"向量索引加载失败(首次运行): {e}")
+    logger.error(f"向量索引加载失败(首次运行): {e}")
 
 campfire = CampfireLogger()
 adapters = {}
@@ -225,7 +225,7 @@ def shutdown():
         vector_retriever.save_index()
         logger.info("向量索引已保存")
     except Exception as e:
-        logger.debug(f"向量索引保存失败: {e}")
+        logger.error(f"向量索引保存失败: {e}")
     
     try:
         from infrastructure.config_watcher import config_watcher
@@ -245,7 +245,7 @@ def shutdown():
         from infrastructure.db_pool import close_all_pools
         close_all_pools()
     except Exception as e:
-        logger.debug(f"关闭连接池失败: {e}")
+        logger.error(f"关闭连接池失败: {e}")
     
     logger.info("系统已安全关闭")
 

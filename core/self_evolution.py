@@ -213,7 +213,8 @@ class SelfEvolutionEngine:
                 ["ollama", "create", model_name, "-f", str(modelfile_path)],
                 capture_output=True,
                 text=True,
-                timeout=600  # 10分钟超时
+                timeout=600,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             
             training_end = datetime.now()

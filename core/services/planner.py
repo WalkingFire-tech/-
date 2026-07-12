@@ -29,7 +29,7 @@ try:
     VECTOR_AVAILABLE = True
 except Exception as e:
     VECTOR_AVAILABLE = False
-    logger.debug(f"向量检索器加载失败: {e}")
+    logger.error(f"向量检索器加载失败: {e}")
 
 try:
     from meta.induction import induction_scheduler
@@ -521,7 +521,7 @@ class DataDrivenPlanner:
                     return self.adapters[model_name]
         
         except Exception as e:
-            logger.debug(f"语义路由失败，降级到数据驱动: {e}")
+            logger.error(f"语义路由失败，降级到数据驱动: {e}")
         
         # 2. 降级到数据驱动路由
         return self._data_driven_select(intent)
@@ -774,7 +774,7 @@ class DataDrivenPlanner:
                     context_list = [f"[历史摘要] {summary[:200]}"] + context_list[-8:]
                     logger.info(f"会话压缩: {result.get('original_length')} → {len(context_list)}")
             except Exception as e:
-                logger.debug(f"会话压缩失败: {e}")
+                logger.error(f"会话压缩失败: {e}")
         
         recent = context_list[-rounds*2:] if len(context_list) >= rounds*2 else context_list
         
@@ -1523,7 +1523,7 @@ _感谢您的质疑，这帮助我发现了错误。_
             return None
             
         except Exception as e:
-            logger.debug(f"工具调用失败: {e}")
+            logger.error(f"工具调用失败: {e}")
             return None
     
     def _try_knowledge_retrieval(self, intent: Intent) -> Optional[str]:
@@ -1558,7 +1558,7 @@ _感谢您的质疑，这帮助我发现了错误。_
             return None
             
         except Exception as e:
-            logger.debug(f"知识检索失败: {e}")
+            logger.error(f"知识检索失败: {e}")
             return None
     
     def _expert_collaboration(self, intent: Intent, confidence: float) -> str:
@@ -1618,7 +1618,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                 time.time()
             ))
             conn.commit()
-            logger.debug(f"已存储专家分析 (置信度: {confidence:.2f})")
+            logger.warning(f"已存储专家分析 (置信度: {confidence:.2f})")
         except Exception as e:
             logger.warning(f"存储专家分析失败: {e}")
     
@@ -1752,7 +1752,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                 import psutil
                 reflex_context["memory_percent"] = psutil.virtual_memory().percent
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
             
             reflex_result = reflex_engine.check(reflex_context)
             if reflex_result:
@@ -1760,7 +1760,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                 return reflex_result
                 
         except Exception as e:
-            logger.debug(f"反射检查失败: {e}")
+            logger.error(f"反射检查失败: {e}")
         
         return None
     
@@ -1784,11 +1784,11 @@ _感谢您的质疑，这帮助我发现了错误。_
                     "should_simplify": emotion_result.intensity > 0.7
                 }
                 
-                logger.debug(f"情绪感知: {result['emotion']} (强度: {result['intensity']:.2f}, 置信度: {result['confidence']:.2f})")
+                logger.warning(f"情绪感知: {result['emotion']} (强度: {result['intensity']:.2f}, 置信度: {result['confidence']:.2f})")
                 return result
                 
             except Exception as e:
-                logger.debug(f"第二阶段情绪感知失败: {e}")
+                logger.error(f"第二阶段情绪感知失败: {e}")
         
         # 降级到原有情绪推断
         try:
@@ -1805,7 +1805,7 @@ _感谢您的质疑，这帮助我发现了错误。_
             return emotion_result
             
         except Exception as e:
-            logger.debug(f"情绪推断失败: {e}")
+            logger.error(f"情绪推断失败: {e}")
             return {"emotion": "neutral", "patience": 1.0}
     
     def _check_system_state(self) -> Optional[str]:
@@ -1823,7 +1823,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                 logger.warning(f"系统健康度严重不足，当前模式: {mode}")
                 return "系统状态不佳，正在自我修复中。部分功能可能受限。"
         except Exception as e:
-            logger.debug(f"健康度检查失败: {e}")
+            logger.error(f"健康度检查失败: {e}")
         
         # 资源检查（放宽限制，只在极端情况下拦截）
         try:
@@ -1836,7 +1836,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                 logger.warning(f"多个资源超限: {violations}")
                 return "系统资源紧张，已暂缓处理。请稍后重试。"
         except Exception as e:
-            logger.debug(f"资源检查失败: {e}")
+            logger.error(f"资源检查失败: {e}")
         
         return None
     
@@ -1975,7 +1975,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                 search_source = "Bing"
                 logger.info(f"✅ Bing搜索成功: {len(search_results)}条")
         except Exception as e:
-            logger.debug(f"Bing搜索失败: {e}")
+            logger.error(f"Bing搜索失败: {e}")
         
         # 搜索源2: DDGS（备用）
         if not search_results:
@@ -1989,7 +1989,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                         with DDGS() as ddgs:
                             search_results = list(ddgs.text(intent.raw_text, max_results=5))
                     except Exception:
-                        pass
+                        logger.warning("操作降级跳过")
                 
                 thread = threading.Thread(target=search_task, daemon=True)
                 thread.start()
@@ -1999,7 +1999,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                     search_source = "DDGS"
                     logger.info(f"✅ DDGS搜索成功: {len(search_results)}条")
             except Exception as e:
-                logger.debug(f"DDGS搜索失败: {e}")
+                logger.error(f"DDGS搜索失败: {e}")
         
         # 搜索源3: Wikipedia（备用）
         if not search_results:
@@ -2009,7 +2009,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                     search_source = "Wikipedia"
                     logger.info(f"✅ Wikipedia搜索成功: {len(search_results)}条")
             except Exception as e:
-                logger.debug(f"Wikipedia搜索失败: {e}")
+                logger.error(f"Wikipedia搜索失败: {e}")
         
         # 无搜索结果
         if not search_results:
@@ -2048,7 +2048,7 @@ _感谢您的质疑，这帮助我发现了错误。_
             return response
             
         except Exception as e:
-            logger.debug(f"模型组织失败: {e}")
+            logger.error(f"模型组织失败: {e}")
             
             # 降级：纯搜索模式
             if search_results:
@@ -2103,7 +2103,7 @@ _感谢您的质疑，这帮助我发现了错误。_
             return results if results else None
             
         except Exception as e:
-            logger.debug(f"Bing搜索异常: {e}")
+            logger.error(f"Bing搜索异常: {e}")
             return None
     
     def _search_wikipedia(self, query: str, max_results: int = 5) -> Optional[List[Dict]]:
@@ -2129,7 +2129,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                     "system_response": response
                 })
             except Exception as e:
-                logger.debug(f"关系模型更新失败: {e}")
+                logger.error(f"关系模型更新失败: {e}")
         
         # 2. 存储到立体记忆
         if hasattr(self, 'stereo_memory') and self.stereo_memory:
@@ -2142,7 +2142,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                     "metadata": {"response": response[:200]}
                 })
             except Exception as e:
-                logger.debug(f"立体记忆存储失败: {e}")
+                logger.error(f"立体记忆存储失败: {e}")
         
         # 3. 自我评估
         if hasattr(self, 'self_review_engine') and self.self_review_engine:
@@ -2155,7 +2155,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                     "validation_result": {"status": "pass"}
                 })
             except Exception as e:
-                logger.debug(f"自我评估失败: {e}")
+                logger.error(f"自我评估失败: {e}")
     
     def _try_expert_collaboration(self, intent: Intent) -> Optional[str]:
         """尝试外脑协作（仅当置信度极低时）"""
@@ -2224,7 +2224,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                     bus.publish("plan_executed", response)
                     return response
         except (KeyError, TypeError) as e:
-            logger.debug(f"向量检索数据格式错误: {e}")
+            logger.warning(f"向量检索数据格式错误: {e}")
         except Exception as e:
             logger.error(f"向量检索未知错误: {type(e).__name__}: {e}")
         
@@ -2291,7 +2291,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                     response=response
                 )
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         
         # 3. 检查是否需要学习 - 即使成功也要检查！
         try:
@@ -2311,7 +2311,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                     logger.info(f"📚 质量不足({quality}分)，触发学习: 获得{learning_result['knowledge_gained']}条知识")
                     
         except Exception as e:
-            logger.debug(f"学习检查失败: {e}")
+            logger.error(f"学习检查失败: {e}")
         
         # 4. 统计记录
         try:
@@ -2327,7 +2327,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                 output_tokens=output_tokens
             )
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         # 4. 反事实模拟（异步）
         try:
@@ -2345,19 +2345,19 @@ _感谢您的质疑，这帮助我发现了错误。_
                         adapters=self.adapters
                     )
                 except Exception as e:
-                    logger.debug(f"反事实模拟失败: {e}")
+                    logger.error(f"反事实模拟失败: {e}")
             
             import asyncio
             if asyncio.get_event_loop().is_running():
                 asyncio.create_task(run_simulation())
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         # 5. 更新能力矩阵
         try:
             self._update_capability_from_result(model.model_name, intent.type, quality / 100.0, success=True)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         # 6. 更新上下文缓冲区
         self.context_buffer.append(f"用户: {intent.raw_text}")
@@ -2430,7 +2430,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                     if new_tool:
                         logger.info(f"生成新工具: {new_tool.name}")
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
             
             # 尝试 fallback 模型
             fallback_response = self._try_fallback_models(intent, full_prompt)
@@ -2541,7 +2541,7 @@ _感谢您的质疑，这帮助我发现了错误。_
             return help_msg
             
         except Exception as e:
-            logger.debug(f"求助消息生成失败: {e}")
+            logger.error(f"求助消息生成失败: {e}")
             return None
     
     def _trigger_failure_learning(self, intent: Intent, error: str):
@@ -2607,26 +2607,26 @@ _感谢您的质疑，这帮助我发现了错误。_
                     induction_scheduler.run_induction()
                     logger.info("失败后触发归纳总结")
             except Exception as induction_error:
-                logger.debug(f"归纳总结触发失败: {induction_error}")
+                logger.error(f"归纳总结触发失败: {induction_error}")
             
             # 4. 触发主动学习器
             try:
                 from core.active_scheduler import active_scheduler
                 active_scheduler._run_optimization_tasks()
             except Exception as al_error:
-                logger.debug(f"主动学习器触发失败: {al_error}")
+                logger.error(f"主动学习器触发失败: {al_error}")
             
             # 5. 自动工具生成
             try:
                 if self.tool_generator:
                     self.tool_generator.auto_generate_tools()
             except Exception as tool_error:
-                logger.debug(f"自动工具生成失败: {tool_error}")
+                logger.error(f"自动工具生成失败: {tool_error}")
             
             logger.info(f"【第5层防御】学习机制已触发")
             
         except Exception as e:
-            logger.debug(f"失败学习触发失败: {e}")
+            logger.error(f"失败学习触发失败: {e}")
     
     def _try_fallback_models(self, intent: Intent, full_prompt: str) -> Optional[str]:
         """尝试fallback模型"""
@@ -2721,7 +2721,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                 cond = rule["condition"]
                 if matcher.evaluate_condition(cond, context):
                     if rule.get("status") == "active":
-                        logger.debug(f"规则匹配成功: {cond}")
+                        logger.warning(f"规则匹配成功: {cond}")
                         matched_active = rule
                     elif rule.get("status") == "trial":
                         self._record_trial_match(rule["id"])
@@ -2729,7 +2729,7 @@ _感谢您的质疑，这帮助我发现了错误。_
             return matched_active
         
         except Exception as e:
-            logger.debug(f"规则匹配失败: {e}")
+            logger.error(f"规则匹配失败: {e}")
             return None
     
     def _record_trial_match(self, rule_id: int):
@@ -2743,7 +2743,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                 WHERE id = ? AND status = 'trial'
             ''', (time.time(), rule_id))
         except Exception as e:
-            logger.debug(f"记录trial匹配失败: {e}")
+            logger.error(f"记录trial匹配失败: {e}")
     
     def _update_rule_stats(self, rule_id: int, success: bool = True):
         """更新规则应用统计"""
@@ -2758,7 +2758,7 @@ _感谢您的质疑，这帮助我发现了错误。_
             ''', (1 if success else 0, time.time(), rule_id))
         
         except Exception as e:
-            logger.debug(f"更新规则统计失败: {e}")
+            logger.error(f"更新规则统计失败: {e}")
     
     def _parse_action(self, action: str) -> Dict:
         """解析动作字符串"""

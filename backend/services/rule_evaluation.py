@@ -40,7 +40,7 @@ def evaluate_rules(user_input: str, intent_type: str, model_name: str = "unknown
                     )
                     rule_actions.append(row["action"])
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
     except Exception as e:
         logger.warning(f"规则匹配统计失败: {e}")
     return rule_actions

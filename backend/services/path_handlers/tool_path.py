@@ -50,7 +50,7 @@ async def fetch_tool_results(query: str, intent_type: str = "", methodology: dic
                     r.source, query, r.success, r.quality, r.duration_ms
                 )
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         logger.debug(f"[TOOL_DIAG] 最终candidates: {len(candidates)}个, sources={[c['source'] for c in candidates]}")
         return candidates if candidates else None
     except Exception as e:
@@ -92,7 +92,7 @@ def extract_tool_params(query: str, intent_type: str = "", methodology: dict = N
         from core.evolution.pattern_migrator import PatternMigrator
         query = PatternMigrator.apply_migration(query)
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     params = {"query": query}
 

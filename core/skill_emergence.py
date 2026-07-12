@@ -56,18 +56,18 @@ class SkillEmergence:
             try:
                 db.execute("ALTER TABLE skills ADD COLUMN automation_level TEXT DEFAULT 'manual'", commit=True)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
             try:
                 db.execute("ALTER TABLE skills ADD COLUMN skeleton TEXT DEFAULT ''", commit=True)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
             try:
                 db.execute("ALTER TABLE skills ADD COLUMN confidence REAL DEFAULT 0.5", commit=True)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
 
         except Exception as e:
-            logger.debug(f"技能库初始化失败: {e}")
+            logger.error(f"技能库初始化失败: {e}")
 
     def reflex_query(self, query: str) -> Optional[Dict]:
         """
@@ -104,7 +104,7 @@ class SkillEmergence:
                         "is_reflex": row[6] == "reflex"
                     }
         except Exception as e:
-            logger.debug(f"本能查询失败: {e}")
+            logger.error(f"本能查询失败: {e}")
         return None
 
     def _extract_skeleton(self, query: str, success_path: list) -> str:
@@ -255,7 +255,7 @@ class SkillEmergence:
                         "success_rate": row[6],
                     }
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return None
 
     def _update_skill(self, skill: dict, was_successful: bool, elapsed: float):
@@ -293,7 +293,7 @@ class SkillEmergence:
             if new_level == "reflex" and skill.get("automation_level") != "reflex":
                 logger.info(f"⚡ 本能固化: {skill['skill_name']} 已升级为REFLEX (置信度{new_confidence:.2f})")
         except Exception as e:
-            logger.debug(f"技能更新失败: {e}")
+            logger.error(f"技能更新失败: {e}")
 
     def _create_skill(self, skill_name: str, skill_type: str, trigger: str, solution_path: str, skeleton: str = ""):
         """创建新技能"""
@@ -307,7 +307,7 @@ class SkillEmergence:
 
             logger.info(f"✨ 新技能涌现: {skill_name} (类型={skill_type}, 触发={trigger}, 骨架={skeleton})")
         except Exception as e:
-            logger.debug(f"技能创建失败: {e}")
+            logger.error(f"技能创建失败: {e}")
 
     def _generate_skill_name(self, skill_type: str, trigger: str) -> str:
         names = {
@@ -349,7 +349,7 @@ class SkillEmergence:
                     logger.info(f"技能退化: {skill_name} 成功率{new_rate:.0%}<{30}%，已标记为休眠")
 
         except Exception as e:
-            logger.debug(f"技能失败记录异常: {e}")
+            logger.error(f"技能失败记录异常: {e}")
 
     def get_applicable_skills(self, query: str) -> List[dict]:
         """获取适用于当前问题的技能（按成功率排序）"""
@@ -436,7 +436,7 @@ class SkillEmergence:
             logger.info(f"🔍 从失败中涌现学习需求: {skill_name} (类型: {gap_type})")
             return skill_name
         except Exception as e:
-            logger.debug(f"从失败中涌现技能异常: {e}")
+            logger.error(f"从失败中涌现技能异常: {e}")
             return None
 
     def _register_mature_skill(self, skill: dict):
@@ -482,8 +482,11 @@ class SkillEmergence:
 
             tool_registry.register(SkillToolWrapper())
             logger.info(f"✅ 成熟技能已注册为工具: {tool_name}")
+            verify = tool_registry.get(tool_name)
+            if not verify:
+                logger.warning(f"自检失败: {tool_name} 注册后无法被get()发现")
         except Exception as e:
-            logger.debug(f"成熟技能注册失败: {e}")
+            logger.error(f"成熟技能注册失败: {e}")
 
 
 skill_emergence = SkillEmergence()

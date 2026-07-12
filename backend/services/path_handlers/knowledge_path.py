@@ -28,12 +28,12 @@ async def fetch_knowledge(query: str) -> dict:
                                 "source": "知识库(向量)", "content": text[:300],
                             })
                     except Exception:
-                        pass
+                        logger.warning("操作降级跳过")
                     return result
         except asyncio.TimeoutError:
             logger.warning("知识库向量检索超时(10秒)")
         except Exception as e:
-            logger.debug(f"知识库向量检索降级: {e}")
+            logger.warning(f"知识库向量检索降级: {e}")
     
     try:
         loop = asyncio.get_running_loop()
@@ -47,5 +47,5 @@ async def fetch_knowledge(query: str) -> dict:
         if row and len(row[0]) > 30:
             return {"source": "知识库", "response": row[0], "quality": 60}
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
     return None

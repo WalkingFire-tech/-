@@ -166,7 +166,8 @@ class CodeExecutor:
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                env={'PYTHONDONTWRITEBYTECODE': '1'}
+                env={'PYTHONDONTWRITEBYTECODE': '1'},
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             
             return {
@@ -184,7 +185,7 @@ class CodeExecutor:
             try:
                 os.unlink(tmp)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
     
     @staticmethod
     def execute(code: str, timeout: int = EXECUTION_TIMEOUT, method: str = "auto") -> dict:

@@ -130,6 +130,8 @@ class UnifiedReader:
                 rows = db.query(query)
                 content = str(rows)
             elif table:
+                if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table):
+                    return {"type": "error", "content": f"无效表名: {table}"}
                 rows = db.query(f"SELECT * FROM {table} LIMIT 100")
                 content = str(rows)
             else:

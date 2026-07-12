@@ -266,7 +266,7 @@ class AdaptiveEvolutionGoal:
                     trend=row[5] or "stable"
                 )
             
-            logger.debug(f"从数据库加载了 {len(self.goals)} 个目标, {len(self.value_inferences)} 个推断")
+            logger.warning(f"从数据库加载了 {len(self.goals)} 个目标, {len(self.value_inferences)} 个推断")
         except Exception as e:
             logger.warning(f"从数据库加载失败: {e}")
     
@@ -290,7 +290,7 @@ class AdaptiveEvolutionGoal:
                 json.dumps(goal.progress_history[-100:])
             ), commit=True)
         except Exception as e:
-            logger.debug(f"保存目标失败: {e}")
+            logger.error(f"保存目标失败: {e}")
     
     def _save_inference_to_db(self, inference: ValueInference):
         """保存推断到数据库"""
@@ -311,7 +311,7 @@ class AdaptiveEvolutionGoal:
                 datetime.now().isoformat()
             ), commit=True)
         except Exception as e:
-            logger.debug(f"保存推断失败: {e}")
+            logger.error(f"保存推断失败: {e}")
     
     def _init_default_goals(self):
         """初始化默认目标"""
@@ -617,7 +617,7 @@ class AdaptiveEvolutionGoal:
                 fb.get("raw_feedback", "")
             ), commit=True)
         except Exception as e:
-            logger.debug(f"保存反馈失败: {e}")
+            logger.error(f"保存反馈失败: {e}")
     
     def update_progress(
         self,
@@ -688,7 +688,7 @@ class AdaptiveEvolutionGoal:
         except ImportError:
             logger.debug("L5进化层未安装，跳过触发")
         except Exception as e:
-            logger.debug(f"触发L5进化失败: {e}")
+            logger.error(f"触发L5进化失败: {e}")
     
     def get_priority_goals(self, limit: int = 3) -> List[EvolutionGoal]:
         """获取优先目标"""

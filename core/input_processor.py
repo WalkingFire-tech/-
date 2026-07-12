@@ -565,7 +565,7 @@ class InputProcessor:
         except ImportError:
             pass
         except Exception as e:
-            logger.debug(f"知识连接查找失败: {e}")
+            logger.error(f"知识连接查找失败: {e}")
 
         return connections[:8]
 
@@ -612,7 +612,7 @@ class InputProcessor:
         except ImportError:
             pass
         except Exception as e:
-            logger.debug(f"冲突检测失败: {e}")
+            logger.error(f"冲突检测失败: {e}")
 
         return conflicts[:5]
 

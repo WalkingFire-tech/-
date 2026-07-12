@@ -161,7 +161,6 @@ class ClosedLoopOrchestrator:
 
     async def _phase_metacognition(self, ctx: LoopContext, emit_func):
         """模块1：元认知启动器"""
-        ctx.state = LoopState.METACOGNITION
         if emit_func:
             emit_func("step", {"phase": "元认知启动", "status": "running", "detail": "判断问题类型、复杂度、自身认知状态..."})
 
@@ -175,20 +174,23 @@ class ClosedLoopOrchestrator:
             ctx.confidence = result.get("confidence", 0.5)
             ctx.route = result.get("route", "fast")
 
-
             if emit_func:
                 emit_func("step", {"phase": "元认知启动", "status": "done",
                     "detail": f"意图:{ctx.intent_type} 复杂度:{ctx.complexity:.0%} 置信度:{ctx.confidence:.0%} 路由:{ctx.route}"})
         except Exception as e:
-            logger.debug(f"元认知启动异常: {e}")
+            logger.error(f"元认知启动异常: {e}")
             if emit_func:
                 emit_func("step", {"phase": "元认知启动", "status": "done", "detail": f"降级: {str(e)[:50]}"})
-            ctx.state = LoopState.METACOGNITION
+            ctx.intent_type = "chat"
+            ctx.complexity = 0.5
+            ctx.confidence = 0.3
+            ctx.route = "fast"
+
+        ctx.state = LoopState.METACOGNITION
 
 
     async def _phase_decomposition(self, ctx: LoopContext, emit_func):
         """模块2：问题拆解与任务调度"""
-        ctx.state = LoopState.DECOMPOSITION
         if emit_func:
             emit_func("step", {"phase": "问题拆解", "status": "running", "detail": "将问题分解为可执行原子任务..."})
 
@@ -212,10 +214,11 @@ class ClosedLoopOrchestrator:
             emit_func("step", {"phase": "问题拆解", "status": "done",
                 "detail": f"{len(ctx.tasks)}个任务: {' → '.join(t['id'] for t in ctx.tasks)}"})
 
+        ctx.state = LoopState.DECOMPOSITION
+
 
     async def _phase_execution(self, ctx: LoopContext, emit_func):
         """模块3：工具调用与执行引擎"""
-        ctx.state = LoopState.EXECUTION
         if emit_func:
             emit_func("step", {"phase": "闭环执行", "status": "running",
                 "detail": f"迭代{ctx.iteration + 1}/{ctx.max_iterations}: 执行任务..."})
@@ -240,6 +243,8 @@ class ClosedLoopOrchestrator:
             emit_func("step", {"phase": "闭环执行", "status": "done",
                 "detail": f"获取{len(ctx.candidates)}个候选结果"})
 
+        ctx.state = LoopState.EXECUTION
+
 
     async def _execute_task(self, ctx: LoopContext, task: Dict, emit_func) -> Optional[Dict]:
         """执行单个任务"""
@@ -253,7 +258,7 @@ class ClosedLoopOrchestrator:
             elif task_type in ("reasoning", "synthesize", "decompose"):
                 return await self._execute_reasoning(ctx, emit_func)
         except Exception as e:
-            logger.debug(f"任务执行异常 {task['id']}: {e}")
+            logger.error(f"任务执行异常 {task['id']}: {e}")
             return None
 
     async def _execute_direct_reply(self, ctx: LoopContext, emit_func) -> Optional[Dict]:
@@ -270,7 +275,7 @@ class ClosedLoopOrchestrator:
                     "quality": 70,
                 }
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         return await self._execute_reasoning(ctx, emit_func)
 
@@ -284,7 +289,7 @@ class ClosedLoopOrchestrator:
             if exp and exp.get("response"):
                 responses.append({"source": "经验池", "response": exp["response"], "quality": 65})
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             from backend.chat_stream import _fetch_knowledge
@@ -292,7 +297,7 @@ class ClosedLoopOrchestrator:
             if know and know.get("response"):
                 responses.append({"source": "知识库", "response": know["response"], "quality": 70})
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             from infrastructure.fact_store import fact_store
@@ -301,7 +306,7 @@ class ClosedLoopOrchestrator:
                 fact_text = "\n".join(f"- {f['subject']} {f['predicate']} {f['object']}" for f in facts)
                 responses.append({"source": "事实锚点", "response": fact_text, "quality": 75})
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         if responses:
             return max(responses, key=lambda r: r["quality"])
@@ -329,12 +334,11 @@ class ClosedLoopOrchestrator:
                     "quality": 75,
                 }
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         return None
 
     async def _phase_evaluation(self, ctx: LoopContext, emit_func):
         """模块4：评估与置信度模块"""
-        ctx.state = LoopState.EVALUATION
         if emit_func:
             emit_func("step", {"phase": "闭环评估", "status": "running",
                 "detail": f"迭代{ctx.iteration + 1}: 评估结果质量..."})
@@ -380,6 +384,8 @@ class ClosedLoopOrchestrator:
                 emit_func("step", {"phase": "闭环评估", "status": "done",
                     "detail": f"⚠️ 评估未通过: {'; '.join(ctx.evaluation_issues[:2])}"})
 
+        ctx.state = LoopState.EVALUATION
+
 
     async def _phase_reiterate(self, ctx: LoopContext, emit_func):
         """评估未通过→回退迭代"""
@@ -424,14 +430,14 @@ class ClosedLoopOrchestrator:
                   int((time.time() - ctx.start_time) * 1000)),
             commit=True)
         except Exception as e:
-            logger.debug(f"闭环沉淀异常: {e}")
+            logger.error(f"闭环沉淀异常: {e}")
 
         try:
             from infrastructure.fact_store import fact_store
             if ctx.evaluation_passed and ctx.final_response and len(ctx.final_response) > 50:
                 fact_store.extract_and_store(ctx.query, ctx.final_response, source="closed_loop")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         if emit_func:
             emit_func("step", {"phase": "闭环沉淀", "status": "done",
@@ -466,7 +472,7 @@ class ClosedLoopOrchestrator:
             if result and result.get("response") and len(result["response"]) > 20:
                 return result["response"]
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             from backend.chat_stream import _fetch_experience
@@ -474,7 +480,7 @@ class ClosedLoopOrchestrator:
             if exp and exp.get("response"):
                 return exp["response"]
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         try:
             from backend.chat_stream import _fetch_knowledge
@@ -482,7 +488,7 @@ class ClosedLoopOrchestrator:
             if know and know.get("response"):
                 return know["response"]
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         return f"关于「{ctx.query}」，我暂时无法给出满意的回答。请尝试换个方式描述你的问题，或者提供更多背景信息。"
 

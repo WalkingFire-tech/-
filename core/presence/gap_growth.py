@@ -396,7 +396,7 @@ class GapGrowthEngine:
             }, priority=5, delay_seconds=30)
             logger.info(f"🌱 知识缺口已入队待学习: {gap[:50]}")
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
         
         return {
             "digested": True,
