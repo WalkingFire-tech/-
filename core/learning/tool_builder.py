@@ -378,6 +378,9 @@ def {name}(input_data):
     def _synthesize_tool_code(self, func_name: str, description: str) -> Optional[str]:
         try:
             from adapters.llm.ollama_adapter import ollama_chat_request
+            from infrastructure.config_manager import config_manager
+            base_url = config_manager.get("ollama.base_url", "http://localhost:11434")
+            model = config_manager.get("ollama.model", "qwen2.5-coder:7b")
             prompt = f"""你需要生成一个Python函数来解决以下问题。只输出函数代码，不要解释。
 
 要求：
@@ -397,9 +400,9 @@ def {func_name}(params: dict) -> dict:
 
 问题: {description}
 """
-            result = ollama_chat_request(prompt, model_name="qwen2.5-coder:7b", timeout=30)
-            if result and result.get("response"):
-                code = result["response"]
+            result = ollama_chat_request(base_url, model, prompt, timeout=30)
+            if result and result.get("content"):
+                code = result["content"]
                 code = re.sub(r'^```python\s*', '', code)
                 code = re.sub(r'^```\s*', '', code)
                 code = re.sub(r'\s*```$', '', code)

@@ -67,6 +67,11 @@ from .meta_learning import (
     StrategyEvaluation,
     StrategyRecommendation,
 )
+from .auto_execution_loop import (
+    AutoExecutionLoop,
+    ExecutionResult,
+    auto_execution_loop,
+)
 
 try:
     from core.external_learner import ExternalLearner
@@ -124,4 +129,8 @@ __all__ = [
     'StrategyRecommendation',
     # 增强学习器
     'enhanced_learner',
+    # 自主执行回路
+    'AutoExecutionLoop',
+    'ExecutionResult',
+    'auto_execution_loop',
 ]

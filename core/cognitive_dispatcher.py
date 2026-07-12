@@ -161,10 +161,12 @@ class CognitiveDispatcher:
             "hardware": [
                 "串口", "com口", "serial", "波特率", "baudrate",
                 "gps数据", "nmea", "gnss", "gpgga", "gprmc",
+                "gps", "GPS", "经纬度", "坐标", "定位", "导航",
                 "硬件", "设备", "端口", "com8", "com3", "com5",
                 "读取数据", "获取数据", "传感器", "usb设备",
                 "ch340", "cp210", "ft232", "arduino", "stm32", "esp32", "单片机",
-                "运行命令", "执行命令", "cmd", "powershell", "bash", "shell"
+                "运行命令", "执行命令", "cmd", "powershell", "bash", "shell",
+                "地图", "标记", "渲染", "folium", "地图标记"
             ],
             "simple_query": [
                 "是什么", "什么是", "怎么读", "多少", "什么时候",
@@ -391,6 +393,10 @@ class CognitiveDispatcher:
                 if pattern in query_clean_all or query_clean_all in pattern:
                     return "challenge", 0.9
         
+        # 正则模式优先匹配：COM端口模式（COM1/COM3等）→ hardware
+        if re.search(r'COM\d+', query, re.IGNORECASE):
+            return "hardware", 0.9
+
         # 匹配优先级：hardware > challenge > complex > simple > 其他
         # hardware优先于challenge：当用户说"时间不对"时更可能是要求重新执行硬件操作
         match_order = ["hardware", "challenge", "complex_query", "learning_trigger", "simple_query", "history_query", "greeting", "confirmation"]
