@@ -195,7 +195,7 @@ class KnowledgeGapDetector:
                 keywords = json.loads(row[0])
                 if any(kw in query for kw in keywords):
                     return True
-        except:
+        except Exception:
             pass
         
         return False
@@ -247,7 +247,7 @@ class KnowledgeGapDetector:
                 pattern_type, pattern, correction = row[0], row[1], row[2]
                 if re.search(pattern, response):
                     return True, f"匹配错误模式({pattern_type})，应修正为: {correction}"
-        except:
+        except Exception:
             pass
         
         return False, ""
@@ -310,7 +310,7 @@ class KnowledgeGapDetector:
                 (query_hash, int(has_gap), reason, confidence, datetime.now().isoformat()),
                 commit=True
             )
-        except:
+        except Exception:
             pass
 
 

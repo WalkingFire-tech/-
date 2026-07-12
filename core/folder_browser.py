@@ -36,7 +36,7 @@ class FolderBrowser:
                             "used": usage.get("used", 0),
                             "free": usage.get("free", 0)
                         })
-                    except:
+                    except Exception:
                         drives.append({
                             "name": f"本地磁盘 ({letter}:)",
                             "path": drive,
@@ -61,7 +61,7 @@ class FolderBrowser:
                 "used": used,
                 "free": free
             }
-        except:
+        except Exception:
             return {}
     
     def browse(self, path: str) -> Dict:

@@ -61,7 +61,7 @@ class SQLiteConnectionPool:
             if conn:
                 try:
                     self._pool.put(conn, timeout=1)
-                except:
+                except Exception:
                     conn.close()
                     with self._lock:
                         self._size -= 1
@@ -74,7 +74,7 @@ class SQLiteConnectionPool:
                 conn.close()
                 with self._lock:
                     self._size -= 1
-            except:
+            except Exception:
                 pass
         
         logger.info("数据库连接池已关闭")

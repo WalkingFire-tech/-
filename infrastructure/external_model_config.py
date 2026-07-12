@@ -90,7 +90,7 @@ class ExternalModelConfig:
         if self.cipher and encrypted:
             try:
                 return self.cipher.decrypt(encrypted.encode()).decode()
-            except:
+            except Exception:
                 return encrypted
         return encrypted
     

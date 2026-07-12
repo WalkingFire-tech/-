@@ -64,7 +64,7 @@ class AutoRollback:
             db = DatabaseManager.get(self.db_path)
             db.execute("INSERT INTO snapshots (target, data, created_at) VALUES (?, ?, ?)",
                          (target, json.dumps(data, default=str, ensure_ascii=False)[:10000], datetime.now().isoformat()), commit=True)
-        except:
+        except Exception:
             pass
         return snapshot_id
 
@@ -87,7 +87,7 @@ class AutoRollback:
             db = DatabaseManager.get(self.db_path)
             db.execute("INSERT INTO rollback_log (target, reason, entropy_before, entropy_after, created_at) VALUES (?, ?, ?, ?, ?)",
                          (target, reason, entropy, 0.0, datetime.now().isoformat()), commit=True)
-        except:
+        except Exception:
             pass
         logger.info(f"⏪ 自动回滚: {target} (原因: {reason}, 熵值: {entropy:.2f})")
         return snapshot["data"]

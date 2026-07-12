@@ -213,7 +213,7 @@ class EnhancedLearner:
                 (f'%{user_input[:20]}%',)
             )
             knowledge_count = row[0] if row else 0
-        except:
+        except Exception:
             pass
         
         should_trigger, reason = should_trigger_external_learning(
@@ -246,7 +246,7 @@ class EnhancedLearner:
         try:
             rows = db.query('SELECT question FROM knowledge_items WHERE knowledge_type = "qa"')
             questions = [row['question'] for row in rows]
-        except:
+        except Exception:
             questions = []
         
         keyword_count = Counter()
@@ -276,7 +276,7 @@ class EnhancedLearner:
                             datetime.now().isoformat()
                         ), commit=True)
                         rules_created += 1
-                except:
+                except Exception:
                     continue
         
         if rules_created > 0:
@@ -510,7 +510,7 @@ class EnhancedLearner:
                     metadata = json.loads(row['metadata'])
                     if 'code' in metadata:
                         snippets.append(metadata['code'])
-                except:
+                except Exception:
                     continue
             
             snippet_counter = Counter(snippets)
@@ -533,10 +533,10 @@ class EnhancedLearner:
                                 datetime.now().isoformat()
                             ), commit=True)
                             tools_created += 1
-                    except:
+                    except Exception:
                         continue
             
-        except:
+        except Exception:
             pass
         
         if tools_created > 0:

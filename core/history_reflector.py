@@ -165,7 +165,7 @@ class HistoryReflector:
                 })
             
             return history
-        except:
+        except Exception:
             return []
     
     def _detect_knowledge_gaps(self, history: List[Dict]) -> List[Dict]:

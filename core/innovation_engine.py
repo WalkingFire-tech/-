@@ -202,7 +202,7 @@ class InnovationEngine:
                 if similar_exp:
                     avg_quality = sum(e.get('quality', 50) for e in similar_exp) / len(similar_exp)
                     return avg_quality / 100.0
-            except:
+            except Exception:
                 pass
         
         if content_length < 20:

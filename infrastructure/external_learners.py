@@ -217,7 +217,7 @@ class WikipediaLearner(ExternalLearnerBase):
                 timeout=3
             )
             self._available = response.status_code < 500
-        except:
+        except Exception:
             self._available = False
         
         return self._available
@@ -322,7 +322,7 @@ class DDGSearchLearner(ExternalLearnerBase):
             with _DDGS() as ddgs:
                 results = list(ddgs.text("test", max_results=1))
             self._available = True
-        except:
+        except Exception:
             self._available = False
         
         return self._available
@@ -406,7 +406,7 @@ class ArxivLearner(ExternalLearnerBase):
             import requests
             r = requests.get("http://export.arxiv.org/api/query?search_query=all:test&max_results=1", timeout=5)
             self._available = r.status_code == 200
-        except:
+        except Exception:
             self._available = False
         return self._available
     
@@ -445,7 +445,7 @@ class MultiSourceSearchLearner(ExternalLearnerBase):
         try:
             if _DDGS is None:
                 return results
-        except:
+        except Exception:
             return results
         
         site_groups = self._select_site_groups(query)
@@ -530,7 +530,7 @@ class MultiSourceSearchLearner(ExternalLearnerBase):
         try:
             from urllib.parse import urlparse
             return urlparse(url).netloc.split(".")[-2] if url else "web"
-        except:
+        except Exception:
             return "web"
     
     def _deep_fetch(self, url: str) -> Optional[str]:
@@ -567,7 +567,7 @@ class MultiSourceSearchLearner(ExternalLearnerBase):
             if summary is not None and summary.text:
                 t = title.text.strip() if title is not None else ""
                 return f"[arXiv深度] {t}: {summary.text.strip()[:500]}"
-        except:
+        except Exception:
             pass
         return None
     

@@ -58,20 +58,20 @@ class CognitivePlanner:
             try:
                 from core.services.planner import planner as global_planner
                 self.planner = global_planner
-            except:
+            except Exception:
                 logger.warning("未找到全局planner，将使用降级响应")
         
         if self.llm_adapter is None and self.planner:
             try:
                 if hasattr(self.planner, 'adapters') and self.planner.adapters:
                     self.llm_adapter = next(iter(self.planner.adapters.values()))
-            except:
+            except Exception:
                 pass
         
         try:
             from core.config.unified_config import get_config
             self.config = get_config()
-        except:
+        except Exception:
             self.config = None
         
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cognitive")
@@ -319,7 +319,7 @@ class CognitivePlanner:
         try:
             self._executor.shutdown(wait=True, cancel_futures=False)
             logger.info("线程池已关闭")
-        except:
+        except Exception:
             pass
     
     def process(self, user_input: str, context: Dict = None) -> CognitiveCycleResult:
@@ -340,13 +340,13 @@ class CognitivePlanner:
         if self.sleep_engine and hasattr(self.sleep_engine, 'notify_interaction'):
             try:
                 self.sleep_engine.notify_interaction()
-            except:
+            except Exception:
                 pass
         
         if self.proactivity:
             try:
                 self.proactivity._last_user_interaction = datetime.now()
-            except:
+            except Exception:
                 pass
         
         try:
@@ -419,7 +419,7 @@ class CognitivePlanner:
                 emotion_result = self.emotion_detector.detect(user_input)
                 emotion = emotion_result.get("emotion", "neutral")
                 emotion_intensity = emotion_result.get("intensity", 0.3)
-            except:
+            except Exception:
                 emotion = "neutral"
                 emotion_intensity = 0.3
         else:
@@ -617,7 +617,7 @@ class CognitivePlanner:
         if self.l6 and hasattr(self.l6, 'generate_report'):
             try:
                 return self.l6.generate_report()
-            except:
+            except Exception:
                 pass
         return {}
     
@@ -730,7 +730,7 @@ class CognitivePlanner:
         if self.self_perception and hasattr(self.self_perception, 'get_current_perception'):
             try:
                 return self.self_perception.get_current_perception() or {}
-            except:
+            except Exception:
                 pass
         return {}
     
@@ -764,19 +764,19 @@ class CognitivePlanner:
         if self.relationship_model and hasattr(self.relationship_model, 'get_metrics'):
             try:
                 status["relationship"] = self.relationship_model.get_metrics()
-            except:
+            except Exception:
                 status["relationship"] = {"trust": 0.5, "intimacy": 0.0}
         
         if self.goal_engine and hasattr(self.goal_engine, 'get_top_priorities'):
             try:
                 status["goals"] = self.goal_engine.get_top_priorities(3)
-            except:
+            except Exception:
                 pass
         
         if self.l6 and hasattr(self.l6, 'get_introspection_status'):
             try:
                 status["health"] = self.l6.get_introspection_status()
-            except:
+            except Exception:
                 pass
         
         return status
@@ -788,37 +788,37 @@ class CognitivePlanner:
         if self.existence and hasattr(self.existence, 'stop'):
             try:
                 self.existence.stop()
-            except:
+            except Exception:
                 pass
         
         if self.self_perception and hasattr(self.self_perception, 'stop'):
             try:
                 self.self_perception.stop()
-            except:
+            except Exception:
                 pass
         
         if self.gap_growth and hasattr(self.gap_growth, 'stop'):
             try:
                 self.gap_growth.stop()
-            except:
+            except Exception:
                 pass
         
         if self.sleep_engine and hasattr(self.sleep_engine, 'stop'):
             try:
                 self.sleep_engine.stop()
-            except:
+            except Exception:
                 pass
         
         if self.proactivity and hasattr(self.proactivity, 'stop'):
             try:
                 self.proactivity.stop()
-            except:
+            except Exception:
                 pass
         
         if self.heartbeat and hasattr(self.heartbeat, 'stop'):
             try:
                 self.heartbeat.stop()
-            except:
+            except Exception:
                 pass
         
         self._cleanup_executor()

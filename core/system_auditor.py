@@ -120,7 +120,7 @@ class SystemAuditor:
             if os.path.exists(chat_stream_path):
                 with open(chat_stream_path, 'r', encoding='utf-8') as f:
                     chat_stream_content = f.read()
-        except:
+        except Exception:
             pass
 
         for name, path in dormant_modules:
@@ -159,7 +159,7 @@ class SystemAuditor:
                     "severity": "high",
                     "description": f"经验池success率仅{success_rate:.0%}，学习闭环可能失效",
                 })
-        except:
+        except Exception:
             pass
 
         try:
@@ -172,7 +172,7 @@ class SystemAuditor:
                     "severity": "medium",
                     "description": f"活跃规则平均置信度{avg_conf:.2f}，未分化（大部分=0.5）",
                 })
-        except:
+        except Exception:
             pass
 
         return result
@@ -190,7 +190,7 @@ class SystemAuditor:
                 v = re.search(r'version["\s:=]+["\']?(\d+\.\d+\.\d+)', content)
                 if v:
                     versions.add(("main_fast.py", v.group(1)))
-        except:
+        except Exception:
             pass
 
         if len(versions) > 1:
@@ -213,7 +213,7 @@ class SystemAuditor:
                     content = f.read()
                 genes = re.findall(r'"(\w+)":\s*[\d.]+', content[:3000])
                 result["gene_sources"]["task_queue"] = genes[:15]
-        except:
+        except Exception:
             pass
 
         return result

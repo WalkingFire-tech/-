@@ -266,7 +266,7 @@ class AutoFurnace:
         try:
             import torch
             has_gpu = torch.cuda.is_available()
-        except:
+        except Exception:
             has_gpu = False
         
         if not has_gpu:

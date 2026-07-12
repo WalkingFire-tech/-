@@ -136,7 +136,7 @@ class VectorStore:
         
         try:
             return self.collection.count()
-        except:
+        except Exception:
             return 0
     
     def clear(self):

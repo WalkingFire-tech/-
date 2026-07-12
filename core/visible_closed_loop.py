@@ -187,7 +187,7 @@ class VisibleClosedLoop:
             questions = json.loads(response)
             if isinstance(questions, list):
                 return questions
-        except:
+        except Exception:
             pass
         
         # 降级：生成默认追问
@@ -216,7 +216,7 @@ class VisibleClosedLoop:
             tasks = json.loads(response)
             if isinstance(tasks, list):
                 return tasks
-        except:
+        except Exception:
             pass
         
         # 默认拆解
@@ -349,7 +349,7 @@ class VisibleClosedLoop:
                 results.get("evaluation", {}).get("avg_confidence", 0.5) * 100,
                 json.dumps(results, ensure_ascii=False)[:500]
             ), commit=True)
-        except:
+        except Exception:
             pass
         
         return "经验已记录，策略已更新"

@@ -155,7 +155,7 @@ class KnowledgeIndex:
                         "location": location,
                         "relevance": "topic_match"
                     })
-            except:
+            except Exception:
                 pass
         
         rows = db.query('''

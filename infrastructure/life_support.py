@@ -39,7 +39,7 @@ class CarrierInterface:
             if battery:
                 return battery.percent / 100.0
             return 1.0  # 桌面设备，无限能量
-        except:
+        except Exception:
             return 1.0
     
     def get_compute_capacity(self) -> float:
@@ -50,7 +50,7 @@ class CarrierInterface:
         try:
             cpu_percent = psutil.cpu_percent(interval=0.1)
             return max(0, 1 - cpu_percent / 100.0)
-        except:
+        except Exception:
             return 0.5
     
     def get_storage_free(self) -> int:
@@ -61,7 +61,7 @@ class CarrierInterface:
         try:
             disk = psutil.disk_usage('/')
             return disk.free
-        except:
+        except Exception:
             return 10 * 1024 * 1024 * 1024  # 默认10GB
     
     def get_temperature(self) -> float:
@@ -77,7 +77,7 @@ class CarrierInterface:
                         if entry.current:
                             return entry.current
             return 45.0  # 默认温度
-        except:
+        except Exception:
             return 45.0
     
     def get_memory_available(self) -> float:
@@ -88,7 +88,7 @@ class CarrierInterface:
         try:
             mem = psutil.virtual_memory()
             return mem.available / mem.total
-        except:
+        except Exception:
             return 0.5
     
     def sleep(self, seconds: int):

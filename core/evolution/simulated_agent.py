@@ -305,7 +305,7 @@ class SimulatedAgent:
             if hasattr(self, 'temp_db') and self.temp_db:
                 try:
                     self.temp_db.close()
-                except:
+                except Exception:
                     pass
             
             # 删除临时文件

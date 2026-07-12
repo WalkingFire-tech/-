@@ -68,5 +68,5 @@ def similarity(text1, text2):
         emb1, emb2 = embeddings[0], embeddings[1]
         cos_sim = np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2))
         return float(cos_sim)
-    except:
+    except Exception:
         return 0.0

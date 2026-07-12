@@ -193,7 +193,7 @@ class IntentRouter:
         """获取学习统计"""
         try:
             return self.smart_parser.get_statistics()
-        except:
+        except Exception:
             return {"total_corrections": 0, "learned_rules_count": 0}
 
 

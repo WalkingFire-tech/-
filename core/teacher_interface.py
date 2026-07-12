@@ -199,7 +199,7 @@ class TeacherInterface:
                 json_str = content
             
             feedback = json.loads(json_str)
-        except:
+        except Exception:
             # 如果解析失败，返回基本结构
             feedback = {
                 "problem_decomposition": 7,

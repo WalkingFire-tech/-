@@ -201,7 +201,7 @@ class FileInputAdapter:
                     content = f.read()
                 metadata["lines"] = content.count('\n') + 1
                 return content, metadata
-            except:
+            except Exception:
                 metadata["is_binary"] = True
                 return f"[未知类型文件: {path.name}]", metadata
     

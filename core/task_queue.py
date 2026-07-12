@@ -586,7 +586,7 @@ class PersistentTaskQueue:
                     if m in a or a.startswith(m.split(":")[0]):
                         return a
             return models[0] if models else ""
-        except:
+        except Exception:
             return ""
 
     def _save_experience(self, query: str, response: str):
@@ -721,9 +721,9 @@ class PersistentTaskQueue:
             try:
                 requests.get("http://localhost:11434/api/tags", timeout=2)
                 tests.append(("Ollama可用性", True, f"{time.time()-start:.1f}s"))
-            except:
+            except Exception:
                 tests.append(("Ollama可用性", False, "不可用"))
-        except:
+        except Exception:
             tests.append(("Ollama可用性", False, "测试失败"))
 
         # 测试2：模拟外部API不可用
@@ -738,7 +738,7 @@ class PersistentTaskQueue:
                 tests.append(("外部API配置", has_key, "已配置" if has_key else "未配置"))
             else:
                 tests.append(("外部API配置", False, "无配置文件"))
-        except:
+        except Exception:
             tests.append(("外部API配置", False, "检测失败"))
 
         # 测试3：基因安全基线检查

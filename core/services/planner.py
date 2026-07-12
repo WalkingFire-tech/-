@@ -107,14 +107,14 @@ class DataDrivenPlanner:
         try:
             from infrastructure.decision_logger import decision_logger
             self.decision_logger = decision_logger
-        except:
+        except Exception:
             self.decision_logger = None
         
         # 模型健康检查器
         try:
             from infrastructure.model_health_checker import model_health_checker
             self.health_checker = model_health_checker
-        except:
+        except Exception:
             self.health_checker = None
         
         try:
@@ -1454,7 +1454,7 @@ _感谢您的质疑，这帮助我发现了错误。_
             
             similar = cursor.fetchall()
             success_rate = sum(1 for row in similar if row[0]) / max(len(similar), 1)
-        except:
+        except Exception:
             success_rate = 0.5
         
         # 3. 任务复杂度
@@ -1751,7 +1751,7 @@ _感谢您的质疑，这帮助我发现了错误。_
             try:
                 import psutil
                 reflex_context["memory_percent"] = psutil.virtual_memory().percent
-            except:
+            except Exception:
                 pass
             
             reflex_result = reflex_engine.check(reflex_context)
@@ -1988,7 +1988,7 @@ _感谢您的质疑，这帮助我发现了错误。_
                     try:
                         with DDGS() as ddgs:
                             search_results = list(ddgs.text(intent.raw_text, max_results=5))
-                    except:
+                    except Exception:
                         pass
                 
                 thread = threading.Thread(target=search_task, daemon=True)

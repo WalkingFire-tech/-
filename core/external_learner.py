@@ -193,7 +193,7 @@ class ExternalLearner:
                         return a
             if available:
                 return available[0]
-        except:
+        except Exception:
             pass
         return ""
     
@@ -229,7 +229,7 @@ class ExternalLearner:
         try:
             result = json.loads(response)
             return result
-        except:
+        except Exception:
             return {
                 "intent": "解析失败",
                 "hidden_needs": [],
@@ -259,7 +259,7 @@ class ExternalLearner:
         
         try:
             return json.loads(response)
-        except:
+        except Exception:
             return {
                 "question": question,
                 "analysis": response,

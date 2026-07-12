@@ -230,7 +230,7 @@ class LowPowerManager:
             if hasattr(mechanism, 'set_active'):
                 try:
                     mechanism.set_active(should_be_active)
-                except:
+                except Exception:
                     pass
     
     def _estimate_power_usage(self):
@@ -265,7 +265,7 @@ class LowPowerManager:
         for callback in self.activity_callbacks:
             try:
                 callback(activity_type)
-            except:
+            except Exception:
                 pass
     
     def force_power_level(self, level: PowerLevel):

@@ -117,7 +117,7 @@ class LocalAcademicLibrary:
                 try:
                     embedding_vec = self._embedding_model.encode(content[:1000])
                     embedding = json.dumps(embedding_vec.tolist())
-                except:
+                except Exception:
                     pass
             
             db = DatabaseManager.get(self.db_path)

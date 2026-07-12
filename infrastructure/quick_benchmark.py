@@ -149,7 +149,7 @@ class QuickBenchmark:
             else:
                 return 0.3
         
-        except:
+        except Exception:
             return 0.5
     
     async def benchmark_all_models(self, adapters: Dict) -> Dict[str, Dict[str, float]]:

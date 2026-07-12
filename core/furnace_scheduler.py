@@ -57,7 +57,7 @@ class FurnaceScheduler:
         try:
             signal.signal(signal.SIGINT, self._shutdown)
             signal.signal(signal.SIGTERM, self._shutdown)
-        except:
+        except Exception:
             pass  # Windows可能不支持
         
         logger.info("🎛️ 炼丹炉调度器已初始化")

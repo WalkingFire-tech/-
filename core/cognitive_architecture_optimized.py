@@ -160,7 +160,7 @@ class SemanticMatcher:
             os.environ['TRANSFORMERS_OFFLINE'] = '1'
             from sentence_transformers import SentenceTransformer
             self.model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-        except:
+        except Exception:
             pass
     
     def calculate_similarity(self, text1: str, text2: str) -> float:
@@ -171,7 +171,7 @@ class SemanticMatcher:
                 from sklearn.metrics.pairwise import cosine_similarity
                 similarity = cosine_similarity([embeddings[0]], [embeddings[1]])[0][0]
                 return float(similarity)
-            except:
+            except Exception:
                 pass
         
         # 降级：关键词匹配
@@ -214,7 +214,7 @@ class PersistentEvolutionStorage:
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            except:
+            except Exception:
                 pass
         return default
     
@@ -419,7 +419,7 @@ class OptimizedCognitiveArchitecture:
             from core.learning import enhanced_learner
             result = enhanced_learner.retrieve_knowledge(problem)
             return {'found': result is not None, 'result': result}
-        except:
+        except Exception:
             return {'found': False}
     
     def _external_search_real(self, problem: str, domain: str) -> Dict:
@@ -465,7 +465,7 @@ class OptimizedCognitiveArchitecture:
                     'source': '外脑API',
                     'note': '需要配置API密钥'
                 }
-        except:
+        except Exception:
             pass
         
         # 用户询问模式

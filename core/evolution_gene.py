@@ -141,7 +141,7 @@ class EvolutionGene:
                     'similar_cases': similar,
                     'thinking': f"我之前遇到过类似问题，置信度{similar.get('confidence', 0):.2f}"
                 }
-        except:
+        except Exception:
             pass
         
         return {
@@ -166,7 +166,7 @@ class EvolutionGene:
                     'has_knowledge': result is not None,
                     'confidence': result.get('confidence', 0) if result else 0
                 }
-            except:
+            except Exception:
                 knowledge_status[area] = {'has_knowledge': False, 'confidence': 0}
         
         # 综合评估
@@ -270,7 +270,7 @@ class EvolutionGene:
                 'issues': issues,
                 'thinking': f"验证{'通过' if is_valid else '失败'}"
             }
-        except:
+        except Exception:
             return {
                 'stage': '结果验证',
                 'is_valid': True,

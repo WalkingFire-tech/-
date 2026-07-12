@@ -88,7 +88,7 @@ class LearningLoop:
                     "severity": 0.5,
                     "learning_priority": "medium"
                 })
-        except:
+        except Exception:
             pass
         
         return result
