@@ -306,7 +306,7 @@ class ExistenceLayer:
                 with open(path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     self.dynamic_boundaries = data.get('boundaries', [])
-            except:
+            except Exception:
                 pass
     
     def _save_dynamic_boundaries(self):
@@ -316,7 +316,7 @@ class ExistenceLayer:
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump({'boundaries': self.dynamic_boundaries}, f, ensure_ascii=False)
-        except:
+        except Exception:
             pass
 
 
@@ -382,7 +382,7 @@ class PerceptionLayer:
                 base_confidence = result.get('confidence', 0.5)
                 domain_weight = self.domain_weights.get(domain, 1.0)
                 return min(base_confidence * domain_weight, 1.0)
-        except:
+        except Exception:
             pass
         
         # 基于领域复杂度的默认置信度
@@ -425,7 +425,7 @@ class PerceptionLayer:
             try:
                 with open(path, 'r', encoding='utf-8') as f:
                     self.knowledge_timestamps = json.load(f)
-            except:
+            except Exception:
                 pass
     
     def _save_knowledge_timestamps(self):
@@ -435,7 +435,7 @@ class PerceptionLayer:
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(self.knowledge_timestamps, f, ensure_ascii=False)
-        except:
+        except Exception:
             pass
 
 
@@ -502,7 +502,7 @@ class LearningLayer:
                     'confidence': result.get('confidence', 0.5),
                     'source': '知识库'
                 }
-        except:
+        except Exception:
             pass
         
         return {'found': False, 'source': '知识库'}
@@ -524,7 +524,7 @@ class LearningLayer:
                     'knowledge': result.get('knowledge', []),
                     'source': '外部搜索'
                 }
-        except:
+        except Exception:
             pass
         
         return {'found': False, 'source': '外部搜索'}
@@ -711,7 +711,7 @@ class VerificationLayer:
             try:
                 from core.shared_embedding import get_embedding_model
                 self.embed_model = get_embedding_model()
-            except:
+            except Exception:
                 self.embed_model = None
     
     def verify(self, problem: str, solution: str) -> VerificationResult:
@@ -757,7 +757,7 @@ class VerificationLayer:
                 semantic_score = float(cosine_similarity(
                     [problem_emb], [solution_emb]
                 )[0][0])
-            except:
+            except Exception:
                 semantic_score = 0.5
         
         # 3. 需求-功能匹配
@@ -1207,7 +1207,7 @@ class EvolutionLayer:
             try:
                 with open(path_errors, 'r', encoding='utf-8') as f:
                     self.error_archive = json.load(f)
-            except:
+            except Exception:
                 pass
         
         # 加载行为模式
@@ -1216,7 +1216,7 @@ class EvolutionLayer:
             try:
                 with open(path_patterns, 'r', encoding='utf-8') as f:
                     self.behavior_patterns = json.load(f)
-            except:
+            except Exception:
                 pass
         
         # 加载基因参数
@@ -1225,7 +1225,7 @@ class EvolutionLayer:
             try:
                 with open(path_genes, 'r', encoding='utf-8') as f:
                     self.gene_parameters = json.load(f)
-            except:
+            except Exception:
                 pass
     
     def _save_state(self):
@@ -1236,7 +1236,7 @@ class EvolutionLayer:
         try:
             with open(path_errors, 'w', encoding='utf-8') as f:
                 json.dump(self.error_archive, f, ensure_ascii=False, indent=2)
-        except:
+        except Exception:
             pass
         
         # 保存行为模式
@@ -1244,7 +1244,7 @@ class EvolutionLayer:
         try:
             with open(path_patterns, 'w', encoding='utf-8') as f:
                 json.dump(self.behavior_patterns, f, ensure_ascii=False, indent=2)
-        except:
+        except Exception:
             pass
         
         # 保存基因参数
@@ -1252,7 +1252,7 @@ class EvolutionLayer:
         try:
             with open(path_genes, 'w', encoding='utf-8') as f:
                 json.dump(self.gene_parameters, f, ensure_ascii=False, indent=2)
-        except:
+        except Exception:
             pass
     
     def get_stats(self) -> Dict[str, Any]:

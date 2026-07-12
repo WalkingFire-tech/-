@@ -85,7 +85,7 @@ class SafeLearningLayer:
             db = DatabaseManager.get(str(self.db_path))
             rows = db.query("SELECT key, value FROM learning_stats")
             self._stats = {row[0]: json.loads(row[1]) for row in rows}
-        except:
+        except Exception:
             self._stats = {
                 "total_attempts": 0,
                 "accepted": 0,
@@ -147,7 +147,7 @@ class SafeLearningLayer:
                     quality_score=alignment.score,
                     alignment_status=alignment.status.value
                 )
-            except:
+            except Exception:
                 pass
             
             return {

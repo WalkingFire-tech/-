@@ -116,7 +116,7 @@ class PerceptionLayer:
             result = enhanced_learner.retrieve_knowledge(problem)
             if result:
                 return result.get('confidence', 0.5)
-        except:
+        except Exception:
             pass
         
         # 默认置信度
@@ -172,7 +172,7 @@ class LearningLayer:
             from core.learning import enhanced_learner
             result = enhanced_learner.retrieve_knowledge(problem)
             return {'found': result is not None, 'result': result}
-        except:
+        except Exception:
             return {'found': False}
     
     def _external_search(self, problem: str) -> dict:
@@ -185,7 +185,7 @@ class LearningLayer:
                 trigger_reason="感知层触发学习"
             )
             return {'found': True, 'result': result}
-        except:
+        except Exception:
             return {'found': False}
     
     def _cross_validate(self, results: list) -> dict:
@@ -288,7 +288,7 @@ class VerificationLayer:
             )
             
             return 0.9 if is_valid else 0.5
-        except:
+        except Exception:
             return 0.7
     
     def _generate_doubts(self, problem: str, solution: str) -> list:

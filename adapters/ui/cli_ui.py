@@ -23,7 +23,7 @@ class EnhancedCliUI(UIPort):
         try:
             from adapters.input.file_adapter import file_adapter
             self.file_adapter = file_adapter
-        except:
+        except Exception:
             self.file_adapter = None
     
     def start(self):

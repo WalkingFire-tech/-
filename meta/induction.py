@@ -91,7 +91,7 @@ class PatternMiner:
                         age_days = (now - exp_time).days
                         # 指数衰减：最近的经验权重更高
                         exp['weight'] = math.exp(-age_days / (days / 2))
-                    except:
+                    except Exception:
                         exp['weight'] = 0.5  # 默认权重
                 else:
                     exp['weight'] = 0.5

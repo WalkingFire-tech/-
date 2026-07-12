@@ -62,7 +62,7 @@ class HealthMetricsCollector:
             db = DatabaseManager.get(self.db_path)
             db.execute("INSERT INTO metrics (metric_name, value, timestamp) VALUES (?, ?, ?)",
                          (metric_name, value, datetime.now().isoformat()), commit=True)
-        except:
+        except Exception:
             pass
 
     def _check_threshold(self, metric_name: str, value: float):
@@ -83,7 +83,7 @@ class HealthMetricsCollector:
                 db = DatabaseManager.get(self.db_path)
                 db.execute("INSERT INTO alerts (metric_name, value, threshold, message, timestamp) VALUES (?, ?, ?, ?, ?)",
                              (metric_name, value, threshold, alert["message"], alert["timestamp"]), commit=True)
-            except:
+            except Exception:
                 pass
 
     def get_current(self, metric_name: str) -> Optional[float]:

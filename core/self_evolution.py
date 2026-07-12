@@ -84,7 +84,7 @@ class SelfEvolutionEngine:
         try:
             response = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
             return response.status_code == 200
-        except:
+        except Exception:
             return False
     
     def check_data_accumulation(self) -> Dict:

@@ -180,7 +180,7 @@ class MemoryValueAssessor:
         if isinstance(created_at, str):
             try:
                 created_at = datetime.fromisoformat(created_at)
-            except:
+            except Exception:
                 return 0.5
         
         days_old = (datetime.now() - created_at).days

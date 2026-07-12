@@ -130,7 +130,7 @@ class PDFExtractor(ContentExtractor):
             if reader.is_encrypted:
                 try:
                     reader.decrypt('')
-                except:
+                except Exception:
                     raise ValueError("PDF已加密，需要密码")
             
             text_parts = []
@@ -151,7 +151,7 @@ class PDFExtractor(ContentExtractor):
                 if reader.is_encrypted:
                     try:
                         reader.decrypt('')
-                    except:
+                    except Exception:
                         raise ValueError("PDF已加密，需要密码")
                 
                 text_parts = []

@@ -278,7 +278,7 @@ class RecommendationValidator:
                 (query_hash, recommendation[:200], int(is_valid) if is_valid is not None else -1, json.dumps(issues, ensure_ascii=False), datetime.now().isoformat()),
                 commit=True
             )
-        except:
+        except Exception:
             pass
     
     def add_product(self, product_id: str, name: str, category: str,
@@ -340,7 +340,7 @@ class RecommendationValidator:
         try:
             prompt = f"根据需求推荐合适的产品：{query}"
             return llm_adapter.generate(prompt, task_type="recommendation")
-        except:
+        except Exception:
             return "无法生成推荐"
 
 

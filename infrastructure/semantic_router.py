@@ -13,7 +13,7 @@ from infrastructure.database_manager import DatabaseManager
 try:
     from sentence_transformers import SentenceTransformer
     EMBEDDING_AVAILABLE = True
-except:
+except Exception:
     EMBEDDING_AVAILABLE = False
     logger.warning("SentenceTransformer不可用，使用降级模式")
 
@@ -31,7 +31,7 @@ class SemanticRouter:
                 os.environ['TRANSFORMERS_OFFLINE'] = '1'
                 self.encoder = SentenceTransformer('all-MiniLM-L6-v2')
                 logger.info("✅ 语义路由器初始化: all-MiniLM-L6-v2")
-            except:
+            except Exception:
                 self.encoder = None
                 logger.warning("嵌入模型加载失败，使用关键词匹配")
         else:
@@ -401,7 +401,7 @@ class SemanticRouter:
                 })
             
             logger.info(f"加载{len(self.routing_history)}条路由历史")
-        except:
+        except Exception:
             pass
     
     def _save_evolved_vectors(self):

@@ -60,7 +60,7 @@ class ModuleHealthMonitor:
             db.execute("INSERT INTO health_events (module_name, event_type, detail, timestamp) VALUES (?, 'success', '', ?)",
                       (module_name, datetime.now().isoformat()), commit=True)
 
-        except:
+        except Exception:
             pass
 
     def record_failure(self, module_name: str, detail: str = ""):
@@ -88,7 +88,7 @@ class ModuleHealthMonitor:
                     db.execute("UPDATE module_health SET status='degraded' WHERE module_name=?", (module_name,), commit=True)
                     logger.warning(f"⚠️ 模块{module_name}降级: 错误率{error_rate:.0%}")
 
-        except:
+        except Exception:
             pass
 
     def is_module_available(self, module_name: str) -> bool:
@@ -105,10 +105,10 @@ class ModuleHealthMonitor:
                     isolated_time = datetime.fromisoformat(isolated_at)
                     if (datetime.now() - isolated_time).total_seconds() > self.ISOLATION_DURATION:
                         return True
-                except:
+                except Exception:
                     pass
             return status != "isolated"
-        except:
+        except Exception:
             return True
 
     def get_health_report(self) -> dict:
@@ -124,7 +124,7 @@ class ModuleHealthMonitor:
                 else:
                     report["unknown"].append(entry)
 
-        except:
+        except Exception:
             pass
         return report
 
@@ -137,7 +137,7 @@ class ModuleHealthMonitor:
                       (module_name, datetime.now().isoformat()), commit=True)
 
             logger.info(f"🧹 模块{module_name}异常已清除")
-        except:
+        except Exception:
             pass
 
 

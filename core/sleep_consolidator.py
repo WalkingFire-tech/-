@@ -208,7 +208,7 @@ class SleepConsolidator:
                 prompt = f"请用一句话总结以下回答的核心要点：\n\n{answer}"
                 summary = self.llm.generate(prompt)
                 return summary[:200]
-            except:
+            except Exception:
                 pass
         
         # 降级：直接截取

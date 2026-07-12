@@ -53,7 +53,7 @@ class SemanticGapDetector:
             try:
                 with open(config_file, 'r', encoding='utf-8') as f:
                     return {**default_config, **json.load(f)}
-            except:
+            except Exception:
                 return default_config
 
         config_file.parent.mkdir(exist_ok=True)
@@ -140,7 +140,7 @@ class SemanticGapDetector:
             try:
                 with open(word_file, 'r', encoding='utf-8') as f:
                     words = json.load(f)
-            except:
+            except Exception:
                 words = default_words
         else:
             word_file.parent.mkdir(exist_ok=True)
@@ -162,7 +162,7 @@ class SemanticGapDetector:
             db = DatabaseManager.get(self.db_path)
             rows = db.query("SELECT word FROM uncertainty_words")
             return [row[0] for row in rows]
-        except:
+        except Exception:
             return []
 
     def _contains_uncertainty_semantic(self, response: str) -> bool:
@@ -261,7 +261,7 @@ class SemanticGapDetector:
                 for kw in keywords:
                     if kw in query:
                         return domain, 0.7
-        except:
+        except Exception:
             pass
         return None, 0.0
 
@@ -280,7 +280,7 @@ class SemanticGapDetector:
                     self._domain_embeddings[domain] = np.array(
                         json.loads(embedding_json)
                     )
-        except:
+        except Exception:
             pass
 
         return self._domain_embeddings
@@ -299,7 +299,7 @@ class SemanticGapDetector:
                         for kv in domain_knowledge
                     )
                     return min(1.0, max_sim * 2)
-            except:
+            except Exception:
                 pass
 
         return self._get_domain_coverage_count(domain)
@@ -314,7 +314,7 @@ class SemanticGapDetector:
             )
             count = row[0]
             return min(1.0, count / 5)
-        except:
+        except Exception:
             return 0.0
 
     def _get_domain_knowledge_vectors(self, domain: str) -> List[np.ndarray]:
@@ -326,7 +326,7 @@ class SemanticGapDetector:
                 (domain,)
             )
             return [np.array(json.loads(row[0])) for row in rows]
-        except:
+        except Exception:
             return []
 
     def learn_domain(self, domain: str, keywords: List[str], description: str = ""):
@@ -340,7 +340,7 @@ class SemanticGapDetector:
             try:
                 embedding = self._embedding_model.encode(text_for_embedding)
                 embedding_json = json.dumps(embedding.tolist())
-            except:
+            except Exception:
                 pass
 
         db = DatabaseManager.get(self.db_path)
@@ -362,7 +362,7 @@ class SemanticGapDetector:
             try:
                 embedding = self._embedding_model.encode(question)
                 embedding_json = json.dumps(embedding.tolist())
-            except:
+            except Exception:
                 pass
 
         db = DatabaseManager.get(self.db_path)

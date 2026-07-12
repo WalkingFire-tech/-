@@ -172,7 +172,7 @@ class PerceptionLayer:
                 # 权威性调整
                 
                 return min(base_confidence * domain_weight, 1.0)
-        except:
+        except Exception:
             pass
         
         # 默认置信度（未知领域）
@@ -251,7 +251,7 @@ class LearningLayer:
                 'result': result,
                 'source': '知识库'
             }
-        except:
+        except Exception:
             return {'found': False, 'source': '知识库'}
     
     def _external_search(self, problem: str, domain: str) -> dict:
@@ -270,7 +270,7 @@ class LearningLayer:
                 'result': result,
                 'source': '外部搜索'
             }
-        except:
+        except Exception:
             return {'found': False, 'source': '外部搜索'}
     
     def _query_knowledge_graph(self, problem: str, domain: str) -> dict:

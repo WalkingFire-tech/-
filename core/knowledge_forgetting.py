@@ -136,7 +136,7 @@ class KnowledgeForgetting:
                 last_dt = datetime.fromisoformat(last_applied)
                 days_ago = (datetime.now() - last_dt).days
                 recency = max(0, 1.0 - days_ago / self.LONG_UNUSED_DAYS)
-            except:
+            except Exception:
                 recency = 0.3
         elif created_at:
             try:
@@ -148,7 +148,7 @@ class KnowledgeForgetting:
                     recency = 0.3
                 else:
                     recency = 0.1
-            except:
+            except Exception:
                 recency = 0.2
         else:
             recency = 0.2
@@ -180,7 +180,7 @@ class KnowledgeForgetting:
                 dt = datetime.fromisoformat(timestamp)
                 days_ago = (datetime.now() - dt).days
                 recency = max(0, 1.0 - days_ago / 90)
-            except:
+            except Exception:
                 pass
 
         tagged = 0.2 if intent_type and intent_type.strip() else 0.0
@@ -232,7 +232,7 @@ class KnowledgeForgetting:
                         cr = db.query_one("SELECT created_at FROM learning_rules WHERE id=?", (rid,))
                         if cr and cr[0]:
                             days_old = (datetime.now() - datetime.fromisoformat(cr[0])).days
-                    except:
+                    except Exception:
                         pass
                     if days_old > self.DORMANT_DAYS:
                         if not dry_run:

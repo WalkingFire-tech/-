@@ -183,7 +183,7 @@ class CodeExecutor:
         finally:
             try:
                 os.unlink(tmp)
-            except:
+            except Exception:
                 pass
     
     @staticmethod

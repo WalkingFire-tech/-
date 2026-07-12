@@ -184,20 +184,20 @@ class MathCalculator:
             try:
                 result = ne.evaluate(expression, local_dict=safe_dict)
                 return self._format_result(result)
-            except:
+            except Exception:
                 pass
         
         try:
             result = eval(expression, {"__builtins__": {}}, safe_dict)
             return self._format_result(result)
-        except:
+        except Exception:
             pass
         
         if MPMATH_AVAILABLE:
             try:
                 result = mpmath.mpf(expression)
                 return self._format_result(result)
-            except:
+            except Exception:
                 pass
         
         raise ValueError(f"无法计算表达式: {expression}")

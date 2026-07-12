@@ -291,7 +291,7 @@ class SystemOrchestrator:
         if "heartbeat" in self.mechanisms:
             try:
                 self.mechanisms["heartbeat"].stop()
-            except:
+            except Exception:
                 pass
         
         if self._orchestration_thread:
@@ -330,7 +330,7 @@ class SystemOrchestrator:
             process = psutil.Process()
             self.metrics.memory_usage_mb = process.memory_info().rss / 1024 / 1024
             self.metrics.cpu_usage_percent = process.cpu_percent(interval=0.1)
-        except:
+        except Exception:
             pass
         
         if "state_collector" in self.mechanisms:
@@ -341,7 +341,7 @@ class SystemOrchestrator:
                     for layer_name, state in states.items():
                         if layer_name in self.layer_status:
                             self.layer_status[layer_name].metrics = state
-            except:
+            except Exception:
                 pass
     
     def _save_state(self):
@@ -447,7 +447,7 @@ class SystemOrchestrator:
             if "error_alchemy" in self.mechanisms:
                 try:
                     self.mechanisms["error_alchemy"].transform_error(e, context=input_data)
-                except:
+                except Exception:
                     pass
         
         return result
@@ -547,7 +547,7 @@ class SystemOrchestrator:
         if "rhythm_controller" in self.mechanisms:
             try:
                 self.mechanisms["rhythm_controller"].enter_phase("resting")
-            except:
+            except Exception:
                 pass
         
         if "existence" in self.layers:
@@ -555,7 +555,7 @@ class SystemOrchestrator:
                 if hasattr(self.layers["existence"], 'enter_state'):
                     from core.presence.existence_layer import PresenceState
                     self.layers["existence"].enter_state(PresenceState.RESTING)
-            except:
+            except Exception:
                 pass
     
     def exit_low_power_mode(self):
@@ -566,7 +566,7 @@ class SystemOrchestrator:
         if "rhythm_controller" in self.mechanisms:
             try:
                 self.mechanisms["rhythm_controller"].enter_phase("exploration")
-            except:
+            except Exception:
                 pass
         
         if "existence" in self.layers:
@@ -574,7 +574,7 @@ class SystemOrchestrator:
                 if hasattr(self.layers["existence"], 'enter_state'):
                     from core.presence.existence_layer import PresenceState
                     self.layers["existence"].enter_state(PresenceState.AWAKE)
-            except:
+            except Exception:
                 pass
     
     def register_event_handler(self, event_type: str, handler: Callable):

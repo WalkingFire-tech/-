@@ -230,7 +230,7 @@ class ParallelScheduler:
                 try:
                     from infrastructure.model_health_checker import model_health_checker
                     model_health_checker.record_success(model_name, duration)
-                except:
+                except Exception:
                     pass
                 
                 return {
@@ -250,7 +250,7 @@ class ParallelScheduler:
                 try:
                     from infrastructure.model_health_checker import model_health_checker
                     model_health_checker.record_failure(model_name, "permanent_error", str(e))
-                except:
+                except Exception:
                     pass
                 
                 break
@@ -273,7 +273,7 @@ class ParallelScheduler:
         try:
             from infrastructure.model_health_checker import model_health_checker
             model_health_checker.record_failure(model_name, "call_failed", last_error)
-        except:
+        except Exception:
             pass
         
         return {

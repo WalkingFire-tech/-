@@ -161,7 +161,7 @@ class SelfAssessment:
             result["metrics"]["recent_experiences_7d"] = recent_exp
             result["metrics"]["experience_total"] = total_exp
             result["metrics"]["experience_activity"] = recent_exp / max(total_exp, 1)
-        except:
+        except Exception:
             pass
 
         try:
@@ -178,7 +178,7 @@ class SelfAssessment:
             result["metrics"]["avg_rule_apply"] = round(avg_apply, 1)
             dormant = active_rules - used_rules
             result["dormant_count"] = dormant
-        except:
+        except Exception:
             pass
 
         try:
@@ -190,7 +190,7 @@ class SelfAssessment:
             result["metrics"]["mature_skills"] = mature
             result["metrics"]["dormant_skills"] = dormant_skills
             result["dormant_count"] += dormant_skills
-        except:
+        except Exception:
             pass
 
         usage_rate = result["metrics"].get("rule_usage_rate", 0)
@@ -210,7 +210,7 @@ class SelfAssessment:
             result["metrics"]["success_count"] = success
             result["metrics"]["failure_count"] = failure
             result["metrics"]["success_rate"] = success / max(total, 1)
-        except:
+        except Exception:
             pass
 
         try:
@@ -223,7 +223,7 @@ class SelfAssessment:
             result["metrics"]["pending_rules"] = pending
             result["metrics"]["active_rules"] = active
             result["metrics"]["rule_conversion_rate"] = round(conversion, 3)
-        except:
+        except Exception:
             pass
 
         try:
@@ -233,7 +233,7 @@ class SelfAssessment:
             row = db.query_one("SELECT COUNT(*) FROM skills")
             total_skills = row[0] if row else 0
             result["metrics"]["skill_maturation_rate"] = mature / max(total_skills, 1)
-        except:
+        except Exception:
             pass
 
         success_rate = result["metrics"].get("success_rate", 0.5)
@@ -259,7 +259,7 @@ class SelfAssessment:
                     "threshold": 0.15,
                     "description": f"错误率{error_rate:.0%}超过15%阈值",
                 })
-        except:
+        except Exception:
             pass
 
         try:
@@ -274,7 +274,7 @@ class SelfAssessment:
                     "threshold": 0.4,
                     "description": f"规则平均置信度{avg_conf:.2f}低于0.4",
                 })
-        except:
+        except Exception:
             pass
 
         try:
@@ -291,7 +291,7 @@ class SelfAssessment:
                     "threshold": 0,
                     "description": f"{isolated}个模块被隔离",
                 })
-        except:
+        except Exception:
             pass
 
         deviation_penalty = len(result["deviations"]) * 0.2
@@ -310,7 +310,7 @@ class SelfAssessment:
             weekly_exp = row[0] if row else 0
             result["metrics"]["daily_experiences"] = daily_exp
             result["metrics"]["weekly_experiences"] = weekly_exp
-        except:
+        except Exception:
             pass
 
         try:
@@ -319,7 +319,7 @@ class SelfAssessment:
             row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE created_at >= ?", (week_ago,))
             new_rules = row[0] if row else 0
             result["metrics"]["new_rules_7d"] = new_rules
-        except:
+        except Exception:
             pass
 
         try:
@@ -328,7 +328,7 @@ class SelfAssessment:
             row = db.query_one("SELECT COUNT(*) FROM skills WHERE created_at >= ?", (week_ago,))
             new_skills = row[0] if row else 0
             result["metrics"]["new_skills_7d"] = new_skills
-        except:
+        except Exception:
             pass
 
         daily = result["metrics"].get("daily_experiences", 0)

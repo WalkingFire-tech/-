@@ -79,7 +79,7 @@ class SystemGuardian:
                 error_rate = failures / total
                 health_metrics.record("error_rate", error_rate)
                 anomaly_detector.check("error_rate", error_rate)
-        except:
+        except Exception:
             pass
 
     def _check_circuit_breakers(self):

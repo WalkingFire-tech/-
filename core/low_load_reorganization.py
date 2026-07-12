@@ -108,7 +108,7 @@ class LowLoadReorganization:
                         try:
                             db.execute("UPDATE learning_rules SET status='superseded' WHERE id=?", (rule[0],), commit=True)
                             result["merged"] += 1
-                        except:
+                        except Exception:
                             pass
         except Exception as e:
             logger.error(f"规则合并失败: {e}")

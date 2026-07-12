@@ -459,7 +459,7 @@ class ClosedLoopEngine:
                     'content': response,
                     'confidence': sum(self.question_tree[sid].confidence for sid in node.sub_questions) / len(node.sub_questions)
                 }
-            except:
+            except Exception:
                 pass
         
         return {

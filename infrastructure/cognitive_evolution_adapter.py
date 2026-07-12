@@ -141,7 +141,7 @@ class CognitiveEvolutionAdapter:
             stats = cognitive_architecture.get_evolution_stats()
             stats['enabled'] = True
             return stats
-        except:
+        except Exception:
             return {'enabled': False, 'error': '获取统计失败'}
     
     def get_diagnosis(self) -> Dict[str, Any]:
@@ -152,7 +152,7 @@ class CognitiveEvolutionAdapter:
         
         try:
             return cognitive_architecture.get_diagnosis()
-        except:
+        except Exception:
             return {'status': 'error', 'message': '诊断失败'}
     
     def should_use_evolution(self, text: str) -> bool:

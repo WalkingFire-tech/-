@@ -75,7 +75,7 @@ def extract_text_from_file(file_path: str) -> str:
                     if '\x00' in content or len(content) == 0:
                         return ""
                     return content
-            except:
+            except Exception:
                 return ""
     
     except Exception as e:

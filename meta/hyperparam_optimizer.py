@@ -87,7 +87,7 @@ class HyperparamOptimizer:
             db = DatabaseManager.get(str(stats_db))
             row = db.query_one('SELECT COUNT(*) FROM model_performance')
             return row[0]
-        except:
+        except Exception:
             return 0
     
     def optimize(self, dry_run: bool = False) -> Optional[Dict]:

@@ -221,7 +221,7 @@ class ModelCapability:
             try:
                 from infrastructure.model_health_checker import model_health_checker
                 models = [m for m in models if model_health_checker.is_available(m)]
-            except:
+            except Exception:
                 pass
         
         ranked = []

@@ -1037,7 +1037,7 @@ class ReflectiveModelFreeEvolution:
             resolved = db.query_one("SELECT COUNT(*) FROM error_cases WHERE resolution_status='resolved'")[0]
             
             return total_errors / max(resolved + 1, 1) * 0.1
-        except:
+        except Exception:
             return 0.1
     
     def _calculate_learning_efficiency(self) -> float:
@@ -1046,7 +1046,7 @@ class ReflectiveModelFreeEvolution:
             db = DatabaseManager.get("data/knowledge_store.db")
             result = db.query_one("SELECT AVG(quality_score) FROM knowledge_items")[0]
             return result if result else 0.5
-        except:
+        except Exception:
             return 0.5
     
     def _calculate_confidence_trend(self) -> float:
@@ -1064,7 +1064,7 @@ class ReflectiveModelFreeEvolution:
             if len(values) >= 2:
                 return values[-1] - values[0]
             return 0.0
-        except:
+        except Exception:
             return 0.0
     
     def _calculate_adaptation_speed(self) -> float:
@@ -1076,7 +1076,7 @@ class ReflectiveModelFreeEvolution:
                 WHERE timestamp > datetime('now', '-1 day')
             ''')[0]
             return min(1.0, adjustments / 10)
-        except:
+        except Exception:
             return 0.1
     
     def _apply_evolution_to_main_system(self, changes: Dict):
@@ -1094,7 +1094,7 @@ class ReflectiveModelFreeEvolution:
                     l4 = get_l4_validation()
                     if hasattr(l4, 'thresholds'):
                         l4.thresholds['pass'] = 0.7 + (changes['verification_strictness'] - 0.7) * 0.2
-                except:
+                except Exception:
                     pass
             
             logger.info(f"✅ 进化参数已应用: {changes}")

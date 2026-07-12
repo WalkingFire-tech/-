@@ -337,7 +337,7 @@ class CognitiveHighway:
                         )
                         result["output"] = tool_result
                         result["status"] = "success"
-                    except:
+                    except Exception:
                         llm_result = await self._call_llm(query)
                         result["output"] = llm_result
                         result["status"] = "fallback"
@@ -405,7 +405,7 @@ class CognitiveHighway:
         try:
             final = await self._call_llm(prompt)
             return final
-        except:
+        except Exception:
             # 降级：拼接所有结果
             return "\n\n".join([r["output"] for r in successful_results if r.get("output")])
     
@@ -429,7 +429,7 @@ class CognitiveHighway:
         """直接回答（快路径）"""
         try:
             return await self._call_llm(query)
-        except:
+        except Exception:
             return "你好！有什么可以帮你的吗？"
     
     def _emergency_plan(self, query: str, tools: List[str]) -> Dict:

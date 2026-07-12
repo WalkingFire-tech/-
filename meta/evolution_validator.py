@@ -113,7 +113,7 @@ class EvolutionValidator:
             try:
                 row = db.query_one(f"SELECT SUM(trigger_count) FROM {table_name}")
                 total_triggers = row[0] or 0
-            except:
+            except Exception:
                 total_triggers = 0
             
             return {
@@ -174,7 +174,7 @@ class EvolutionValidator:
                 
                 row = db.query_one(f"SELECT COUNT(*) FROM {table_name} WHERE feedback > 0")
                 positive_feedback = row[0]
-            except:
+            except Exception:
                 negative_feedback = 0
                 positive_feedback = 0
             

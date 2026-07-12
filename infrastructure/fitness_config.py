@@ -109,7 +109,7 @@ class ShadowModeLogger:
             for line in f:
                 try:
                     records.append(json.loads(line))
-                except:
+                except Exception:
                     pass
         
         if not records:

@@ -57,7 +57,7 @@ class CognitiveSelfRepair:
                 diagnosis["broken_chains"].append({
                     "id": row[0], "query": row[1][:50], "consistency": row[2],
                 })
-        except:
+        except Exception:
             pass
 
         return diagnosis

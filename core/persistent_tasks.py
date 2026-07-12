@@ -209,7 +209,7 @@ class PersistentTaskSystem:
             content = result.get("content", "")
             if content and len(content) > 20:
                 return {"success": True, "answer": content}
-        except:
+        except Exception:
             pass
         return {"success": False, "error": "直接模型调用失败"}
     
@@ -238,9 +238,9 @@ class PersistentTaskSystem:
                         content = result.get("content", "")
                         if content and len(content) > 20:
                             return {"success": True, "answer": content}
-                    except:
+                    except Exception:
                         continue
-        except:
+        except Exception:
             pass
         return {"success": False, "error": "备选模型调用失败"}
     
@@ -277,7 +277,7 @@ class PersistentTaskSystem:
             )
             if row:
                 return {"success": True, "answer": row[0]}
-        except:
+        except Exception:
             pass
         return {"success": False, "error": "知识检索失败"}
     
@@ -310,7 +310,7 @@ class PersistentTaskSystem:
             )
             if row and row['response']:
                 return {"success": True, "answer": row['response']}
-        except:
+        except Exception:
             pass
         return {"success": False, "error": "RAG检索失败"}
     
@@ -383,7 +383,7 @@ if __name__ == "__main__":
                     "strategies_tried": json.loads(row['strategies_tried']),
                     "partial_results": json.loads(row['partial_results'])
                 }
-        except:
+        except Exception:
             pass
         return None
     

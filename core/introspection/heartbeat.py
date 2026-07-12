@@ -188,7 +188,7 @@ class HeartbeatManager:
                 neighbor: self.get_layer_status(neighbor)
                 for neighbor in neighbors
             }
-        except:
+        except Exception:
             return {}
     
     def is_layer_alive(self, layer_name: str) -> bool:
@@ -246,7 +246,7 @@ class HeartbeatManager:
             if report:
                 return report.metrics.get('load', 0.5)
             return 0.5
-        except:
+        except Exception:
             return 0.5
     
     def _get_last_operation(self, layer_name: str) -> str:
@@ -259,7 +259,7 @@ class HeartbeatManager:
             if report and report.last_operation:
                 return report.last_operation
             return "idle"
-        except:
+        except Exception:
             return "idle"
 
 

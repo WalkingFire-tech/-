@@ -315,7 +315,7 @@ class CharterExecutor:
                 'success_rate': stats.get('success_rate', 0.5),
                 'avg_duration': stats.get('avg_duration', 5.0)
             }
-        except:
+        except Exception:
             return {'success_rate': 0.5, 'avg_duration': 5.0}
     
     def _mark_strategy_failed(self, backup_id: str):
