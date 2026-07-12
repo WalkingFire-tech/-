@@ -1,4 +1,4 @@
-# 架构健康度评分
+﻿# 架构健康度评分
 > 基线版本: 2026-07-11 | HEAD: b979b8f (docs: 行动指南更新——新增3次提交记录+待办完成标记)
 > 巡检#61: 2026-07-11 | **→ 89 持平（天花板效应持续30轮🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥）。3个新commit（e220682+f823011+b979b8f）——SelfModel能力画像聚合（model.py +125/-15，skill_emergence.py _get_conn()残留修复✅）+ CognitivePlanner Phase2信号融合（chat_orchestrator +144/-148，net -4，旁路提前到L1+结果优先+副作用去重，完全降级安全✅）+ docs更新（行动指南+3次提交记录）。**所有跟踪指标维持满分**：chat_stream 40行/main_fast 182行双满分✅、裸except跟踪0✅、DB零硬编码✅。异常96/模块耦合82/测试14不变。chat_orchestrator 2343行（net -1，首次净缩减→积极信号📉）。⚠️ 天花板效应持续30轮🔴——新评分维度仍未引入（连续30轮提醒🔔）。score_trend: stable。**
 > 巡检#59: 2026-07-11 | **→ 89 持平（天花板效应持续28轮🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥）。1个新commit（e97bd81）——CognitivePlanner渐进式接入Phase1：chat_orchestrator阶段7新增认知增强旁路（+40行，0裸except✅/0 sqlite3.connect✅）。旁路异步运行cp.process()做完整L1-L6认知循环（15秒超时），结果与主管道信号交叉验证（高紧迫度补充、校验失败检测、情绪信号补充），内省报告融合到L6层。完全降级安全：process()失败不影响任何现有逻辑。这是S-3三阶段渐进式接入的第一步。所有跟踪指标维持满分：chat_stream 40行/main_fast 182行双满分✅、裸except跟踪0✅、DB零硬编码✅。异常96/模块耦合82/测试14不变。⚠️ chat_orchestrator 2344行（↑+35）逆拆分趋势持续。⚠️ core/~150处裸except未纳入跟踪集。⚠️ 测试覆盖14/100。⚠️ 天花板效应持续28轮🔴。score_trend: stable。**
@@ -29,7 +29,7 @@
   61-80 🟢 良好    81-100 🟢 优秀
 ```
 
-**变化**: **→ 89 持平（天花板效应持续30轮🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥）。3个新commit（e220682+f823011+b979b8f）：SelfModel能力画像聚合（model.py +125/-15，skill_emergence.py _get_conn()残留修复✅）+ CognitivePlanner Phase2（chat_orchestrator +144/-148 net -4，旁路提前+结果优先+副作用去重✅）+ docs更新。所有跟踪指标维持满分。⚠️ chat_orchestrator 2343行（net -1首次净缩减📉）。⚠️ 天花板效应持续30轮🔴——新评分维度仍未引入（连续30轮提醒🔔）。score_trend: stable。**
+**变化**: **→ 89 持平（天花板效应持续43轮🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥）。无新commit（HEAD仍afc344d）。工作区174源文件变更（+2916/-994），logger信号升级持续深化。chat_stream 40行/main_fast 182行（双满分✅）、裸except全0✅、DB零硬编码✅。异常处理99/模块耦合81/测试14不变。🟢 chat_orchestrator 2410行（↓-190 较上轮2600显著缩减——正向信号）。core/instinct/metabolism.py 268行持续集成。score_trend: stable（天花板效应持续43轮🔴）。**
 
 ---
 
@@ -156,6 +156,7 @@
 | **2026-07-11 21:50 (巡检#57)** | **89** | **→ 持平（天花板效应26轮🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥）。无新commit（HEAD仍7d92c0e）。工作区重大架构改善：infrastructure/ 31文件 _get_conn()→db.* API全域迁移（+397/-806=-409行）🔥。0新增裸except✅/0新增sqlite3.connect✅。docs/sessions更新TODO→全部已完成。knowledge_base追加Bug记录#27。核心指标全部维持满分：chat_stream 40行/main_fast 182行双满分✅、裸except跟踪0✅、DB零硬编码✅。异常96/模块耦合82/测试14不变。score_trend: stable（天花板效应持续26轮🔴🔥🔥🔥🔥🔥🔥）。** |
 | **2026-07-11 (巡检#59)** | **89** | **→ 持平（天花板效应28轮🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥）。1个新commit（e97bd81）——CognitivePlanner渐进式接入Phase1：chat_orchestrator阶段7新增认知增强旁路（+40行，0裸except✅/0 sqlite3.connect✅）。旁路异步运行cp.process()做完整L1-L6认知循环（15秒超时），结果与主管道信号交叉验证（高紧迫度补充、校验失败检测、情绪信号补充），内省报告融合到L6层。完全降级安全：process()失败不影响任何现有逻辑。所有跟踪指标维持满分：chat_stream 40行/main_fast 182行双满分✅、裸except跟踪0✅、DB零硬编码✅。异常96/模块耦合82/测试14不变。⚠️ chat_orchestrator 2344行（↑+35）逆拆分趋势持续。⚠️ core/~150处裸except未纳入跟踪集。⚠️ 测试覆盖14/100。score_trend: stable（天花板效应持续28轮🔴🔥🔥🔥🔥🔥🔥🔥）。** |
 | **2026-07-11 (巡检#60) 🆕** | **89** | **→ 持平（天花板效应持续29轮🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥）。1个新commit（4053621）——docs: 行动指南+知识库更新（v4.0.0-action-guide.md +94/-23，知识库Bug记录#28-#30 +36/-1）。纯文档更新，无源代码变更。所有跟踪指标维持巡检#59数值不变。⚠️ chat_orchestrator 2344行逆拆分趋势。⚠️ 天花板效应持续29轮🔴——新评分维度仍未引入（连续29轮提醒🔔）。score_trend: stable。** |\n| **2026-07-11 (巡检#61) 🆕** | **89** | **→ 持平（天花板效应持续30轮🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥）。3个新commit（e220682+f823011+b979b8f）：SelfModel能力画像聚合（model.py +125/-15，skill_emergence _get_conn()修复✅）+ Phase2信号融合（chat_orchestrator +144/-148 net -4✅）+ docs更新。所有跟踪指标维持满分。chat_orchestrator 2343行（net -1首次净缩减📉）。⚠️ 天花板持续30轮🔴——扩围跟踪集仍未落地（连续30轮提醒🔔）。score_trend: stable。** |
+| **2026-07-12 15:40 (巡检#74)** | **89** | **→ 持平（天花板效应持续43轮🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥）。无新commit（HEAD仍afc344d）。工作区174源文件变更（+2916/-994），chat_orchestrator 2410行（↓-190较上轮2600显著缩减🟢）。所有核心指标维持满分：chat_stream 40/main_fast 182双满分✅、裸except 0✅、DB零硬编码✅。异常99/模块耦合81/测试14不变。score_trend: stable（天花板效应持续43轮🔴）。**
 
 ---
 
