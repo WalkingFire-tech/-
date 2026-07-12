@@ -281,6 +281,16 @@ class MetabolismOrchestrator:
     def _count_dependents(self, db, text: str, exclude_id: int, table: str) -> int:
         if not text or len(text) < 5:
             return 0
+
+        keyword_deps = self._keyword_dependents(db, text, exclude_id, table)
+        semantic_deps = self._semantic_dependents(db, text, exclude_id, table)
+
+        total = keyword_deps + semantic_deps
+        if total > 0 and semantic_deps > 0:
+            logger.debug(f"依赖检测: 关键词{keyword_deps}+语义{semantic_deps}")
+        return total
+
+    def _keyword_dependents(self, db, text: str, exclude_id: int, table: str) -> int:
         try:
             search_term = text[:30].replace('%', '').replace('_', '')
             if table == "knowledge_items":
@@ -297,6 +307,41 @@ class MetabolismOrchestrator:
                 )
             return dependents[0]["cnt"] if dependents else 0
         except Exception:
+            return 0
+
+    def _semantic_dependents(self, db, text: str, exclude_id: int, table: str) -> int:
+        try:
+            from core.shared_embedding import compute_embedding, similarity
+            query_emb = compute_embedding(text[:200])
+            if not query_emb:
+                return 0
+
+            if table == "knowledge_items":
+                rows = db.query(
+                    "SELECT id, question, answer FROM knowledge_items "
+                    "WHERE id != ? AND updated_at > datetime('now', '-60 days') LIMIT 50",
+                    (exclude_id,),
+                )
+                candidates = [(r["id"], (r.get("question", "") or "") + " " + (r.get("answer", "") or "")) for r in rows]
+            else:
+                rows = db.query(
+                    "SELECT id, raw_input FROM experiences "
+                    "WHERE id != ? AND timestamp > datetime('now', '-60 days') LIMIT 50",
+                    (exclude_id,),
+                )
+                candidates = [(r["id"], r.get("raw_input", "") or "") for r in rows]
+
+            dep_count = 0
+            for cid, ctext in candidates:
+                if not ctext or len(ctext) < 10:
+                    continue
+                c_emb = compute_embedding(ctext[:200])
+                if c_emb and similarity(query_emb, c_emb) > 0.75:
+                    dep_count += 1
+
+            return dep_count
+        except Exception as e:
+            logger.debug(f"语义依赖检测降级: {e}")
             return 0
 
     def get_status(self) -> Dict[str, Any]:
