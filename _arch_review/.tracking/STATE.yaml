@@ -1,13 +1,13 @@
 # 架构巡检状态
-# 更新: 2026-07-12 (巡检#74)
+# 更新: 2026-07-12 (巡检#80)
 
-last_check_time: "2026-07-12 15:40 (巡检#74)"
-last_commit_hash: "afc344d"
-last_commit_message: "fix: 全局审查P1修复——Path→str+死代码+内置覆盖+日期计算+变量覆盖+commit缺失+old_phase时机"
-uncommitted_changes: 174
-untracked_files: 8
-total_checks: 74
+last_check_time: "2026-07-12 (巡检#80)"
+last_commit_hash: "d1dc59e"
+last_commit_message: "docs: 行动指南更新——闭环联动+线程安全确认+待办更新"
+uncommitted_changes: 8
+untracked_files: 3
+total_checks: 80
 total_score: 89
 score_trend: stable
 new_messages: 0
-inspector_notes: "→ 89持平（天花板效应持续43轮🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥）。无新commit（HEAD仍afc344d）。工作区174源文件变更（+2916/-994），logger信号升级持续深化。chat_stream 40行/main_fast 182行（双满分✅）、裸except全0✅、DB零硬编码✅。异常99/模块耦合81/测试14不变。🟢 chat_orchestrator 2410行（↓-190较上轮2600显著缩减——正向信号）。core/instinct/metabolism.py 268行持续集成。score_trend: stable（天花板效应持续43轮🔴）。"
+inspector_notes: "→ 89持平（天花板效应持续49轮🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥）。HEAD d1dc59e — 0新commit（连续3轮无新提交）。全部跟踪指标维持满分✅。工作区8文件变更+3 untracked（与巡检#79完全一致）。chat_stream 40行/main_fast 182行双满分✅、裸except跟踪0✅、DB零硬编码✅。chat_orchestrator 2410行稳定。closed_loop_orchestrator 457行稳定。异常99/模块耦合82/测试14不变。天花板效应持续49轮🔴——新评分维度仍未引入，刷新最久天花板纪录。连续3轮无新commit，工作区变更全部为tracking文件维护。"

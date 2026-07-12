@@ -4438,3 +4438,74 @@ TypedDict 契约必须先做，否则 `is_new_topic` 判断和 `chat_orchestrato
 chat_orchestrator 当前工作区 **2600 行**（较之前 +53），继续延续膨胀趋势。建议在 M2 消费端实施时，考虑将 `is_new_topic` 判断逻辑放在独立的感知服务模块中，而非直接堆入 chat_orchestrator。这样既实现 M2 的 P1 目标，也抑制 chat_orchestrator 的再膨胀。
 
 **[巡检#73 · 架构巡检员 | 2026-07-12]**
+
+---
+
+## [巡检] 2026-07-12 — 回复 @问题「S-3 风险高在哪里」
+
+### 🔴 S-3 CognitivePlanner Phase 3 的风险拆解
+
+Phase 3 的目标是将 chat_orchestrator 中剩余的**全部手动调用**替换为 CognitivePlanner 认知循环——L2/L3 learning/integration、L4 validation、L5 evolution、L6 introspection 全部由 cp.process() 接管。
+
+风险来自三个层面：
+
+#### 风险 1：chat_orchestrator 耦合陷阱（核心风险）
+
+```
+当前 chat_orchestrator 对 CognitivePlanner 的引用：
+  Phase 1 (e97bd81): 阶段7后异步旁路，完全降级安全，+40行
+  Phase 2 (f823011): 旁路提前到L1，8秒结果优先，net -4行
+  Phase 3 (计划中): 手动调用→cp.process() 替换
+
+问题：前两阶段是"加旁路"，本质是叠加代码。Phase 3 是"替换"，本质是删除代码。
+```
+
+chat_orchestrator 已 **2600 行**。Phase 3 需要辨识哪些手动调用可以被替换、哪些不可以、哪些是旁路自身的降级回退。在一个 2600 行的文件中做"选择性替换"——每一步都是 bug 隐患。
+
+#### 风险 2：循环依赖 — 旁路离不开手动，手动离不开旁路
+
+Phase 2 的设计中有这一段：
+
+```python
+# Phase 2 降级安全:
+# 每个阶段都有 fallback 到手动调用
+```
+
+这个 "fallback 到手动" 在 Phase 3 需要被切断——否则 Phase 3 做了等于没做（旁路失败时依然走手动，系统行为不变）。
+
+但**切断 fallback 等于移除系统的安全网**。如果 CognitivePlanner 本身出了 bug（比如 L4 validation 循环不终止），系统就失去了"回到手动"的逃生路径。这比"不做 Phase 3"风险更大——不做 Phase 3，至少还有手动保底。
+
+#### 风险 3：行为回归风险
+
+Phase 1+2 能被安全实施是因为它们是**叠加的**——旁路成功用旁路，旁路失败走手动，用户无感知。
+
+Phase 3 是**替换的**——上线前必须证明 cp.process() 在所有场景下与手动调用**行为等价**。但当前测试覆盖仅 14/100，等价性验证全靠手动测试或生产暴雷。一旦某条路径没覆盖到（比如 L5 evolution 的结果格式与手动调用不兼容），用户看到的就是"回复变了"或"功能异常"。
+
+#### 📊 量化风险评估
+
+| 风险维度 | 严重度 | 概率 | 可控性 |
+|:---|:---:|:---:|:---:|
+| 替换漏掉关键手动路径 | 🔴 高 | 中 | 低（2600行文件难穷举） |
+| fallback 切断后无逃生 | 🔴 高 | 低 | 高（可以保留降级开关） |
+| cp.process() 行为不等价 | 🟡 中 | 中-高 | 低（测试覆盖14%） |
+| chat_orchestrator 再膨胀 | 🟡 中 | 高 | 中（拆分可控制） |
+
+#### ✅ 建议降级路径
+
+S-3 不需要全有或全无。可以拆为三个独立可验证的子步骤：
+
+```
+S-3a（低风险，可立即做）：
+  将 chat_orchestrator 中 cp.process() 的手动调用提取为独立服务模块
+  目标：降低 chat_orchestrator 行数，不是替换行为
+
+S-3b（中等风险，需 S-3a 前置）：
+  新增 Feature Flag：USE_COGNITIVE_PLANNER_FOR_L2L3 / _L4 / _L5L6
+  逐个 Stage 切换，每个 Flag 可独立回退
+
+S-3c（高风险，需测试覆盖≥40%）：
+  完全替代 + 移除 fallback
+  前置条件：等价性测试通过 + 灰度观察期
+```
+
+**一句话**：S-3 的风险不在于"功能做不做得到"，而在于"在一个 2600 行的文件里替换安全网，且只有 14% 的测试覆盖兜底"。
