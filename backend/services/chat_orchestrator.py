@@ -1112,9 +1112,11 @@ async def chat_stream(user_input: str, context: dict):
                     from core.cognition.failure_classifier import FailureClassifier
                     from core.cognition.audit_logger import AuditLogger
                     reflection = {"status": "mismatch", "reason": _mismatch_reason}
-                    category = FailureClassifier.classify(reflection)
-                    FailureClassifier.record_failure(category, user_input, {"intent_type": intent_type})
+                    fix_result = await FailureClassifier.classify_and_fix(
+                        reflection, user_input, {"intent_type": intent_type})
                     AuditLogger.log(user_input, {"intent_type": intent_type}, final_response[:200], reflection)
+                    if fix_result.get("auto_fix_result", {}).get("methodology_patch"):
+                        methodology.update(fix_result["auto_fix_result"]["methodology_patch"])
                 except Exception:
                     logger.warning("操作降级跳过")
             else:
@@ -2353,8 +2355,9 @@ def _never_give_up_response(user_input: str, attempts: list) -> str:
         from core.cognition.failure_classifier import FailureClassifier, FailureCategory
         failed_methods = [a[0] for a in attempts if isinstance(a, tuple) and len(a) >= 2 and not a[1]]
         if failed_methods:
-            FailureClassifier.record_failure(FailureCategory.KNOWLEDGE_GAP, user_input,
-                                              {"failed_methods": failed_methods[:5], "total_attempts": len(attempts)})
+            FailureClassifier.classify_and_fix_sync(
+                {"status": "knowledge_gap"}, user_input,
+                {"failed_methods": failed_methods[:5], "total_attempts": len(attempts)})
     except Exception:
         pass
     try:
@@ -2438,7 +2441,8 @@ def _is_goal_achieved(user_input: str, response: str, intent_type: str, attempts
             logger.info(f"🔄 目标未达成: 检测到LLM伪造的硬件数据，非真实读取结果")
             try:
                 from core.cognition.failure_classifier import FailureClassifier, FailureCategory
-                FailureClassifier.record_failure(FailureCategory.LLM_HALLUCINATION, user_input, {"fabricated": True})
+                FailureClassifier.classify_and_fix_sync(
+                    {"status": "hallucination"}, user_input, {"fabricated": True})
             except Exception:
                 pass
             return False

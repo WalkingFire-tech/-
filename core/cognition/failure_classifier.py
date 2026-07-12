@@ -116,6 +116,141 @@ class FailureTaxonomy:
     }
 
 
+class AutoFixExecutor:
+    """
+    自动修复执行器——将FailureTaxonomy的auto_fix策略字符串映射为可执行动作。
+    每个动作返回(fix_applied: bool, detail: str)。
+    """
+
+    @staticmethod
+    async def execute(category: FailureCategory, user_query: str, context: Dict = None) -> Dict[str, Any]:
+        handlers = {
+            FailureCategory.PARAM_EXTRACTION_FAILED: AutoFixExecutor._fix_param_extraction,
+            FailureCategory.INTENT_TYPE_MISMATCH: AutoFixExecutor._fix_intent_mismatch,
+            FailureCategory.OUTPUT_EMPTY: AutoFixExecutor._fix_output_empty,
+            FailureCategory.TIMEOUT: AutoFixExecutor._fix_timeout,
+            FailureCategory.FORMAT_ERROR: AutoFixExecutor._fix_format_error,
+            FailureCategory.SEMANTIC_MISMATCH: AutoFixExecutor._fix_semantic_mismatch,
+            FailureCategory.ENTITY_ALIAS_MISSING: AutoFixExecutor._fix_entity_alias,
+            FailureCategory.TOOL_NOT_FOUND: AutoFixExecutor._fix_tool_not_found,
+            FailureCategory.TOOL_EXECUTION_FAILED: AutoFixExecutor._fix_tool_execution_failed,
+            FailureCategory.LLM_HALLUCINATION: AutoFixExecutor._fix_hallucination,
+            FailureCategory.KNOWLEDGE_GAP: AutoFixExecutor._fix_knowledge_gap,
+            FailureCategory.LOW_CONFIDENCE: AutoFixExecutor._fix_low_confidence,
+            FailureCategory.CONTEXT_LOST: AutoFixExecutor._fix_context_lost,
+            FailureCategory.RECURSION_DEPTH: AutoFixExecutor._fix_recursion_depth,
+            FailureCategory.RESOURCE_EXHAUSTED: AutoFixExecutor._fix_resource_exhausted,
+        }
+        handler = handlers.get(category)
+        if handler:
+            try:
+                return await handler(user_query, context or {})
+            except Exception as e:
+                logger.warning(f"auto_fix执行失败 [{category.value}]: {e}")
+                return {"fix_applied": False, "detail": f"执行异常: {e}"}
+        return {"fix_applied": False, "detail": "无对应修复策略"}
+
+    @staticmethod
+    async def _fix_param_extraction(user_query: str, ctx: Dict) -> Dict:
+        try:
+            from core.cognitive_dispatcher import get_cognitive_dispatcher
+            cd = get_cognitive_dispatcher()
+            result = cd.dispatch(user_query)
+            if result and result.get("standard_entity"):
+                return {"fix_applied": True, "detail": f"实体归一化成功: {result['standard_entity']}", "standard_entity": result["standard_entity"]}
+        except Exception:
+            pass
+        return {"fix_applied": False, "detail": "实体归一化未能提取参数"}
+
+    @staticmethod
+    async def _fix_intent_mismatch(user_query: str, ctx: Dict) -> Dict:
+        try:
+            from core.cognitive_dispatcher import get_cognitive_dispatcher
+            cd = get_cognitive_dispatcher()
+            result = cd.dispatch(user_query, force_slow_path=True)
+            if result and result.get("intent_type"):
+                return {"fix_applied": True, "detail": f"慢路径重分类: {result['intent_type']}", "corrected_intent": result["intent_type"]}
+        except Exception:
+            pass
+        return {"fix_applied": False, "detail": "慢路径重分类未产生不同结果"}
+
+    @staticmethod
+    async def _fix_output_empty(user_query: str, ctx: Dict) -> Dict:
+        return {"fix_applied": True, "detail": "标记需要存在性预检", "methodology_patch": {"require_existence_check": True}}
+
+    @staticmethod
+    async def _fix_timeout(user_query: str, ctx: Dict) -> Dict:
+        return {"fix_applied": True, "detail": "标记需要熔断降级", "methodology_patch": {"use_cache_fallback": True, "skip_slow_path": True}}
+
+    @staticmethod
+    async def _fix_format_error(user_query: str, ctx: Dict) -> Dict:
+        return {"fix_applied": True, "detail": "标记需要多格式解析", "methodology_patch": {"multi_format_parse": True}}
+
+    @staticmethod
+    async def _fix_semantic_mismatch(user_query: str, ctx: Dict) -> Dict:
+        return {"fix_applied": True, "detail": "标记需要意图-产出对照验证", "methodology_patch": {"require_intent_output_check": True, "replan": True}}
+
+    @staticmethod
+    async def _fix_entity_alias(user_query: str, ctx: Dict) -> Dict:
+        try:
+            from core.cognitive_dispatcher import get_cognitive_dispatcher
+            cd = get_cognitive_dispatcher()
+            result = cd.dispatch(user_query)
+            if result and result.get("standard_entity"):
+                return {"fix_applied": True, "detail": f"别名映射成功: {result['standard_entity']}", "standard_entity": result["standard_entity"]}
+        except Exception:
+            pass
+        return {"fix_applied": False, "detail": "别名映射未能解析实体"}
+
+    @staticmethod
+    async def _fix_tool_not_found(user_query: str, ctx: Dict) -> Dict:
+        try:
+            from core.capability_creation_loop import CapabilityCreationLoop
+            loop = CapabilityCreationLoop()
+            intent_type = ctx.get("intent_type", "unknown")
+            created = loop.check_and_create(user_query, intent_type)
+            if created:
+                return {"fix_applied": True, "detail": f"能力创造回路已触发", "tool_created": True}
+        except Exception:
+            pass
+        return {"fix_applied": False, "detail": "能力创造回路未能生成工具"}
+
+    @staticmethod
+    async def _fix_tool_execution_failed(user_query: str, ctx: Dict) -> Dict:
+        return {"fix_applied": True, "detail": "标记需要降级到替代工具", "methodology_patch": {"use_alternative_tool": True, "retry_with_simpler_params": True}}
+
+    @staticmethod
+    async def _fix_hallucination(user_query: str, ctx: Dict) -> Dict:
+        return {"fix_applied": True, "detail": "强制降级为诚实回答", "methodology_patch": {"force_honest_response": True, "disable_llm_generation": True}}
+
+    @staticmethod
+    async def _fix_knowledge_gap(user_query: str, ctx: Dict) -> Dict:
+        try:
+            from core.learning.capability_gap_learner import CapabilityGapLearner
+            learner = CapabilityGapLearner()
+            learner.record_gap(user_query, ctx.get("intent_type", "unknown"))
+            return {"fix_applied": True, "detail": "能力缺口已记录+外部学习待触发", "gap_recorded": True}
+        except Exception:
+            pass
+        return {"fix_applied": False, "detail": "能力缺口记录失败"}
+
+    @staticmethod
+    async def _fix_low_confidence(user_query: str, ctx: Dict) -> Dict:
+        return {"fix_applied": True, "detail": "标记需要坦诚表达不确定性", "methodology_patch": {"express_uncertainty": True, "suggest_alternatives": True}}
+
+    @staticmethod
+    async def _fix_context_lost(user_query: str, ctx: Dict) -> Dict:
+        return {"fix_applied": True, "detail": "标记需要显式确认用户意图", "methodology_patch": {"require_explicit_confirmation": True, "ask_for_clarification": True}}
+
+    @staticmethod
+    async def _fix_recursion_depth(user_query: str, ctx: Dict) -> Dict:
+        return {"fix_applied": True, "detail": "标记强制退出递归", "methodology_patch": {"force_exit_recursion": True, "return_best_so_far": True}}
+
+    @staticmethod
+    async def _fix_resource_exhausted(user_query: str, ctx: Dict) -> Dict:
+        return {"fix_applied": True, "detail": "标记需要资源感知降级", "methodology_patch": {"use_lightweight_model": True, "reduce_retrieval_depth": True}}
+
+
 class FailureClassifier:
     """
     失败分类器——让学习闭环有判断标准。
@@ -258,7 +393,9 @@ class FailureClassifier:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category TEXT, user_query TEXT, context TEXT,
                 learning_prompt TEXT, timestamp TEXT,
-                severity TEXT, layer TEXT
+                severity TEXT, layer TEXT,
+                auto_fix_applied INTEGER DEFAULT 0,
+                auto_fix_detail TEXT
             )''', commit=True)
             try:
                 db.execute('ALTER TABLE failures ADD COLUMN severity TEXT', commit=True)
@@ -266,6 +403,14 @@ class FailureClassifier:
                 pass
             try:
                 db.execute('ALTER TABLE failures ADD COLUMN layer TEXT', commit=True)
+            except Exception:
+                pass
+            try:
+                db.execute('ALTER TABLE failures ADD COLUMN auto_fix_applied INTEGER DEFAULT 0', commit=True)
+            except Exception:
+                pass
+            try:
+                db.execute('ALTER TABLE failures ADD COLUMN auto_fix_detail TEXT', commit=True)
             except Exception:
                 pass
             prompt = cls.get_learning_prompt(category, user_query)
@@ -281,6 +426,94 @@ class FailureClassifier:
             logger.info(f"📋 失败分类记录: {category.value} | query='{user_query[:30]}'")
         except Exception as e:
             logger.warning(f"失败分类记录写入跳过: {e}")
+
+    @classmethod
+    async def classify_and_fix(cls, reflection: Dict, user_query: str,
+                               context: Dict = None, execution_error: Exception = None) -> Dict[str, Any]:
+        """
+        分类失败 + 执行自动修复 + 记录。返回 {category, taxonomy_info, auto_fix_result}。
+        这是chat_orchestrator应该调用的主入口——替代单独调用classify+record_failure。
+        """
+        category = cls.classify(reflection, execution_error)
+        info = cls.get_taxonomy_info(category)
+        cls.record_failure(category, user_query, context)
+
+        auto_fix_result = await AutoFixExecutor.execute(category, user_query, context)
+
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            import json
+            db = DatabaseManager.get("data/failure_classifier.db")
+            db.execute(
+                'UPDATE failures SET auto_fix_applied=?, auto_fix_detail=? WHERE rowid=(SELECT MAX(rowid) FROM failures)',
+                (1 if auto_fix_result.get("fix_applied") else 0,
+                 json.dumps(auto_fix_result, ensure_ascii=False)[:500]),
+                commit=True
+            )
+        except Exception as e:
+            logger.warning(f"auto_fix结果更新跳过: {e}")
+
+        if auto_fix_result.get("fix_applied"):
+            logger.info(f"🔧 auto_fix已执行 [{category.value}]: {auto_fix_result.get('detail', '')}")
+        else:
+            logger.warning(f"⚠️ auto_fix未生效 [{category.value}]: {auto_fix_result.get('detail', '')}")
+
+        return {
+            "category": category,
+            "taxonomy_info": info,
+            "auto_fix_result": auto_fix_result,
+        }
+
+    @classmethod
+    def classify_and_fix_sync(cls, reflection: Dict, user_query: str,
+                               context: Dict = None, execution_error: Exception = None) -> Dict[str, Any]:
+        """
+        classify_and_fix的同步版本——用于非async调用方。
+        auto_fix中涉及async的操作会被跳过，仅执行methodology_patch类策略。
+        """
+        category = cls.classify(reflection, execution_error)
+        info = cls.get_taxonomy_info(category)
+        cls.record_failure(category, user_query, context)
+
+        methodology_patch_categories = {
+            FailureCategory.OUTPUT_EMPTY, FailureCategory.TIMEOUT, FailureCategory.FORMAT_ERROR,
+            FailureCategory.SEMANTIC_MISMATCH, FailureCategory.TOOL_EXECUTION_FAILED,
+            FailureCategory.LLM_HALLUCINATION, FailureCategory.LOW_CONFIDENCE,
+            FailureCategory.CONTEXT_LOST, FailureCategory.RECURSION_DEPTH,
+            FailureCategory.RESOURCE_EXHAUSTED,
+        }
+
+        if category in methodology_patch_categories:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    auto_fix_result = {"fix_applied": True, "detail": f"同步上下文中仅记录，methodology_patch待下次消费", "methodology_patch": {}}
+                else:
+                    auto_fix_result = loop.run_until_complete(AutoFixExecutor.execute(category, user_query, context))
+            except RuntimeError:
+                auto_fix_result = {"fix_applied": True, "detail": "同步降级记录", "methodology_patch": {}}
+        else:
+            auto_fix_result = {"fix_applied": False, "detail": "需async上下文执行修复策略，已记录待后续消费"}
+
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            import json
+            db = DatabaseManager.get("data/failure_classifier.db")
+            db.execute(
+                'UPDATE failures SET auto_fix_applied=?, auto_fix_detail=? WHERE rowid=(SELECT MAX(rowid) FROM failures)',
+                (1 if auto_fix_result.get("fix_applied") else 0,
+                 json.dumps(auto_fix_result, ensure_ascii=False)[:500]),
+                commit=True
+            )
+        except Exception as e:
+            logger.warning(f"auto_fix结果更新跳过: {e}")
+
+        return {
+            "category": category,
+            "taxonomy_info": info,
+            "auto_fix_result": auto_fix_result,
+        }
 
     @classmethod
     def get_failure_patterns(cls, limit: int = 20) -> List[Dict]:

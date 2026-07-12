@@ -506,8 +506,9 @@ class ReActEngine:
                     logger.error(f"能力创造回路执行失败: {e}")
                     try:
                         from core.cognition.failure_classifier import FailureClassifier, FailureCategory
-                        FailureClassifier.record_failure(FailureCategory.TOOL_NOT_FOUND, query,
-                                                          {"intent_type": intent_type, "error": str(e)[:100]})
+                        FailureClassifier.classify_and_fix_sync(
+                            {"status": "mismatch", "reason": "tool_not_found"}, query,
+                            {"intent_type": intent_type, "error": str(e)[:100]})
                     except Exception:
                         pass
 

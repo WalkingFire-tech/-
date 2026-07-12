@@ -372,6 +372,29 @@ class SleepConsolidationEngine:
         except Exception as e:
             logger.error(f"读取立体记忆失败: {e}")
         
+        try:
+            from core.cognition.audit_logger import AuditLogger
+            from core.cognition.failure_classifier import FailureClassifier
+            audit_failures = AuditLogger.get_recent_failures(limit=10)
+            if audit_failures:
+                for af in audit_failures:
+                    try:
+                        intent = af.get("detected_intent", "unknown")
+                        reason = af.get("reflection_reason", "")
+                        lesson_type = f"audit_{intent}"
+                        db = DatabaseManager.get("data/spirit_lessons.db")
+                        db.execute(
+                            'INSERT INTO spirit_lessons (lesson_type, lesson_text, severity, context) VALUES (?, ?, ?, ?)',
+                            (lesson_type, f"审计发现: {reason}", "medium", json.dumps(af, ensure_ascii=False, default=str)[:500]),
+                            commit=True
+                        )
+                    except Exception:
+                        pass
+                details['audit_failures_consumed'] = len(audit_failures)
+                logger.info(f"📋 睡眠整合消费审计日志: {len(audit_failures)}条")
+        except Exception as e:
+            logger.warning(f"审计日志消费跳过: {e}")
+        
         impact = 0.2 + consolidated * 0.02 + solidified * 0.05
         
         return ConsolidationResult(
