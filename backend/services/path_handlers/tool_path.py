@@ -102,15 +102,21 @@ def extract_tool_params(query: str, intent_type: str = "", methodology: dict = N
         strategy = methodology.get("strategy", "")
         if domain == "硬件" or "串口" in essence or "serial" in essence.lower():
             params.setdefault("_tool_hint", "serial_port")
-            num_match = re.search(r'(\d+)', query)
-            if num_match and "port" not in params:
-                params["port"] = f"COM{num_match.group(1)}"
+            serial_num_match = re.search(r'串口\s*(\d+)', query)
+            if serial_num_match:
+                params["port"] = f"COM{serial_num_match.group(1)}"
             serial_match = re.search(r'(COM\d+)', query, re.IGNORECASE)
             if serial_match:
                 params["port"] = serial_match.group().upper()
+            if "port" not in params:
+                num_match = re.search(r'(\d+)', query)
+                if num_match:
+                    params["port"] = f"COM{num_match.group(1)}"
             baud_match = re.search(r'(\d{3,6})\s*(?:波特率|baud|bps)?', query)
             if baud_match and int(baud_match.group(1)) >= 300:
                 params["baudrate"] = int(baud_match.group(1))
+            if any(kw in query for kw in ["读取", "获取", "读出", "接收", "数据"]):
+                params.setdefault("action", "read")
             return params
 
     serial_match = re.search(r'(COM\d+)', query, re.IGNORECASE)
@@ -118,9 +124,15 @@ def extract_tool_params(query: str, intent_type: str = "", methodology: dict = N
         params.setdefault("_tool_hint", "serial_port")
         if serial_match:
             params["port"] = serial_match.group().upper()
+        else:
+            serial_num_match = re.search(r'串口\s*(\d+)', query)
+            if serial_num_match:
+                params["port"] = f"COM{serial_num_match.group(1)}"
         baud_match = re.search(r'(\d{3,6})\s*(?:波特率|baud|bps)?', query)
         if baud_match and int(baud_match.group(1)) >= 300:
             params["baudrate"] = int(baud_match.group(1))
+        if any(kw in query for kw in ["读取", "获取", "读出", "接收", "数据"]):
+            params.setdefault("action", "read")
         return params
 
     if any(kw in query.lower() for kw in ["运行命令", "执行命令", "cmd", "powershell", "bash", "运行", "执行"]):
