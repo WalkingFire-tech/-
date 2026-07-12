@@ -84,8 +84,8 @@ class RelationshipManager:
     """
     
     def __init__(self, db_path: str = "data/relationships.db"):
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.db_path = db_path
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         
         self._lock = threading.Lock()
         self._init_database()

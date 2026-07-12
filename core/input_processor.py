@@ -269,7 +269,7 @@ class InputProcessor:
                 adjusted_parts.append((name, content, adjusted))
             parts = adjusted_parts
 
-        total_priority = sum(w for _, _, w in parts if _[1])
+        total_priority = sum(w for _, content, w in parts if content)
         if total_priority == 0:
             return ""
 

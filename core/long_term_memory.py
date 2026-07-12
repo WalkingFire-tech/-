@@ -361,13 +361,13 @@ class LongTermMemory:
                 UPDATE users 
                 SET last_seen = ?, total_conversations = total_conversations + 1
                 WHERE user_id = ?
-            ''', (datetime.now().isoformat(), user_id))
+            ''', (datetime.now().isoformat(), user_id), commit=True)
         else:
             db.execute('''
                 INSERT INTO users 
                 (user_id, first_seen, last_seen, total_conversations)
                 VALUES (?, ?, ?, 1)
-            ''', (user_id, datetime.now().isoformat(), datetime.now().isoformat()))
+            ''', (user_id, datetime.now().isoformat(), datetime.now().isoformat()), commit=True)
         
         db.execute('''
             INSERT INTO conversations 

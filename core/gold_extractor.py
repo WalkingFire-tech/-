@@ -33,7 +33,7 @@ class GoldExtractor:
     def __init__(self, 
                  db_path: str = "data/alliance.db",
                  pending_file: str = "data/pending_training.jsonl"):
-        self.db_path = Path(db_path)
+        self.db_path = db_path
         self.pending_file = Path(pending_file)
         self.pending_file.parent.mkdir(parents=True, exist_ok=True)
         
@@ -189,12 +189,12 @@ class GoldExtractor:
         """从数据库获取最近的交互记录"""
         interactions = []
         
-        if not self.db_path.exists():
+        if not Path(self.db_path).exists():
             logger.warning(f"数据库不存在: {self.db_path}")
             return interactions
         
         try:
-            rows = DatabaseManager.get(str(self.db_path)).query("""
+            rows = DatabaseManager.get(self.db_path).query("""
                 SELECT question, response, feedback, objective_score, timestamp 
                 FROM interactions 
                 WHERE feedback IS NOT NULL 
