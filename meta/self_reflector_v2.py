@@ -33,15 +33,15 @@ class SelfReflector:
     
     def __init__(self, adapters: dict):
         self.adapters = adapters
-        self.db_path = config.get("learning_rules.db_path", "learning_rules.db")
+        self.db_path = config.get("learning_rules.db_path", "data/learning_rules.db")
         self._init_db()
         
         logger.info("自我反思器初始化完成")
     
     def _init_db(self):
         """初始化规则数据库"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.executescript('''
             CREATE TABLE IF NOT EXISTS learning_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 condition TEXT NOT NULL,
@@ -55,11 +55,10 @@ class SelfReflector:
                 confidence REAL DEFAULT 0.5,
                 source TEXT DEFAULT 'reflection',
                 metadata TEXT
-            )
+            );
+            CREATE INDEX IF NOT EXISTS idx_status ON learning_rules(status);
+            CREATE INDEX IF NOT EXISTS idx_priority ON learning_rules(priority);
         ''')
-        
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_status ON learning_rules(status)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_priority ON learning_rules(priority)')
     
     def reflect_on_failures(self, limit: int = 20) -> List[Dict]:
         """分析最近的失败案例,生成改进规则"""
@@ -97,11 +96,11 @@ class SelfReflector:
     
     def _get_recent_failures(self, limit: int) -> List[Dict]:
         """获取最近的失败案例"""
-        exp_db = config.get("stats.db_path", "experience_pool.db")
+        exp_db = config.get("stats.db_path", "data/experience_pool.db")
         
         try:
-            conn = DatabaseManager.get(exp_db)._get_conn()
-            cur = conn.execute('''
+            db = DatabaseManager.get(exp_db)
+            rows = db.query('''
                 SELECT intent_type, raw_input, model_name, quality_score, 
                        user_feedback, duration, timestamp
                 FROM experiences
@@ -109,7 +108,7 @@ class SelfReflector:
                 ORDER BY timestamp DESC LIMIT ?
             ''', (limit,))
             
-            return [dict(row) for row in cur.fetchall()]
+            return [dict(row) for row in rows]
         
         except Exception as e:
             logger.error(f"获取失败案例失败: {e}")
@@ -213,87 +212,86 @@ class SelfReflector:
     
     def _save_rules(self, rules: List[Dict]):
         """保存规则到数据库"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        for rule in rules:
-            conn.execute('''
-                INSERT INTO learning_rules 
-                (condition, action, priority, created_at, status, confidence)
-                VALUES (?, ?, ?, ?, 'pending', 0.5)
-            ''', (
-                rule.get("condition"),
-                rule.get("action"),
-                rule.get("priority", 3),
-                datetime.now().isoformat()
-            ))
+        db = DatabaseManager.get(self.db_path)
+        db.executemany('''
+            INSERT INTO learning_rules 
+            (condition, action, priority, created_at, status, confidence)
+            VALUES (?, ?, ?, ?, 'pending', 0.5)
+        ''', [(
+            rule.get("condition"),
+            rule.get("action"),
+            rule.get("priority", 3),
+            datetime.now().isoformat()
+        ) for rule in rules], commit=True)
         
         logger.info(f"保存{len(rules)}条反思规则")
     
     def get_active_rules(self) -> List[LearningRule]:
         """获取活跃规则"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cur = conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        rows = db.query('''
             SELECT * FROM learning_rules
             WHERE status = 'active'
             ORDER BY priority DESC, confidence DESC
         ''')
         
-        return [LearningRule(**dict(row)) for row in cur.fetchall()]
+        return [LearningRule(**dict(row)) for row in rows]
     
     def apply_rule(self, rule_id: int, success: bool):
         """应用规则后更新统计"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
             UPDATE learning_rules
             SET apply_count = apply_count + 1,
                 success_count = success_count + ?,
                 last_applied = ?,
                 confidence = CAST(success_count + ? AS REAL) / (apply_count + 1)
             WHERE id = ?
-        ''', (1 if success else 0, datetime.now().isoformat(), 1 if success else 0, rule_id))
+        ''', (1 if success else 0, datetime.now().isoformat(), 1 if success else 0, rule_id), commit=True)
     
     def cleanup_rules(self, days: int = 30, min_confidence: float = 0.3):
         """清理过期规则"""
         threshold = datetime.now() - timedelta(days=days)
         
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
             UPDATE learning_rules
             SET status = 'expired'
             WHERE last_applied < ? AND confidence < ?
         ''', (threshold.isoformat(), min_confidence))
         
-        conn.execute('''
+        db.execute('''
             DELETE FROM learning_rules
             WHERE status = 'expired' AND apply_count = 0
-        ''')
+        ''', commit=True)
         
         logger.info(f"清理过期规则(>{days}天,置信度<{min_confidence})")
     
     def activate_pending_rules(self, min_observations: int = 3):
         """激活观察期规则"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        conn.execute('''
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
             UPDATE learning_rules
             SET status = 'active'
             WHERE status = 'pending' AND apply_count >= ?
-        ''', (min_observations,))
+        ''', (min_observations,), commit=True)
         
         logger.info(f"激活观察期规则(>={min_observations}次观察)")
     
     def get_rules_summary(self) -> Dict:
         """获取规则统计摘要"""
-        conn = DatabaseManager.get(self.db_path)._get_conn()
-        cur = conn.execute('SELECT COUNT(*) FROM learning_rules')
-        total = cur.fetchone()[0]
+        db = DatabaseManager.get(self.db_path)
+        row = db.query_one('SELECT COUNT(*) FROM learning_rules')
+        total = row[0]
         
-        cur = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status = 'active'")
-        active = cur.fetchone()[0]
+        row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status = 'active'")
+        active = row[0]
         
-        cur = conn.execute("SELECT COUNT(*) FROM learning_rules WHERE status = 'pending'")
-        pending = cur.fetchone()[0]
+        row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status = 'pending'")
+        pending = row[0]
         
-        cur = conn.execute("SELECT AVG(confidence) FROM learning_rules WHERE status = 'active'")
-        avg_conf = cur.fetchone()[0] or 0
+        row = db.query_one("SELECT AVG(confidence) FROM learning_rules WHERE status = 'active'")
+        avg_conf = row[0] or 0
         
         return {
             "total_rules": total,

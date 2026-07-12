@@ -165,10 +165,22 @@ class GapGrowthEngine:
                 f"{signal_type}{content}{datetime.now().isoformat()}".encode()
             ).hexdigest()[:12]
 
+            try:
+                sig_type = SignalType(signal_type)
+            except ValueError:
+                sig_type = SignalType.KNOWLEDGE_GAP
+                logger.warning(f"未知信号类型: {signal_type}, 降级为KNOWLEDGE_GAP")
+
+            try:
+                sig_priority = SignalPriority[priority.upper()]
+            except KeyError:
+                sig_priority = SignalPriority.MEDIUM
+                logger.warning(f"未知优先级: {priority}, 降级为MEDIUM")
+
             signal = Signal(
                 id=signal_id,
-                type=SignalType(signal_type),
-                priority=SignalPriority[priority.upper()],
+                type=sig_type,
+                priority=sig_priority,
                 content=content,
                 source=source,
                 timestamp=datetime.now().isoformat(),

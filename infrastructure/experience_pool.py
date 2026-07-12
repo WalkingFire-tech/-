@@ -9,7 +9,7 @@ _write_lock = threading.Lock()
 
 
 class ExperiencePool:
-    def __init__(self, db_path: str = "experience_pool.db"):
+    def __init__(self, db_path: str = "data/experience_pool.db"):
         self.db_path = db_path
         self._lock = _write_lock
         self._init_db()

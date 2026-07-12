@@ -272,11 +272,11 @@ class PersistentTaskSystem:
         try:
             db = DatabaseManager.get("data/knowledge_store.db")
             row = db.query_one(
-                "SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1",
+                "SELECT answer FROM knowledge_items WHERE answer LIKE ? LIMIT 1",
                 (f"%{question[:30]}%",)
             )
             if row:
-                return {"success": True, "answer": row['content']}
+                return {"success": True, "answer": row[0]}
         except:
             pass
         return {"success": False, "error": "知识检索失败"}

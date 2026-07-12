@@ -193,13 +193,6 @@ class InnovationEngine:
         """
         content_length = len(thought.content)
         
-        if content_length < 20:
-            return 0.3
-        elif content_length > 500:
-            return 0.5
-        else:
-            return 0.7
-        
         if self.experience_pool:
             try:
                 similar_exp = await self.experience_pool.query_similar(
@@ -212,7 +205,12 @@ class InnovationEngine:
             except:
                 pass
         
-        return 0.6
+        if content_length < 20:
+            return 0.3
+        elif content_length > 500:
+            return 0.5
+        else:
+            return 0.7
     
     async def abductive_reason(self, observation: str) -> List[Thought]:
         """

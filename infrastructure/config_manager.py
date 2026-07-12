@@ -135,9 +135,9 @@ class ConfigManager:
             },
             "memory": {
                 "short_term": {"max_rounds": 5, "file_path": "campfire_log.txt"},
-                "long_term": {"db_path": "experience_pool.db"}
+                "long_term": {"db_path": "data/experience_pool.db"}
             },
-            "stats": {"db_path": "model_stats.db"},
+            "stats": {"db_path": "data/model_stats.db"},
             "audit": {"enabled": True},
             "sandbox": {"enabled": True, "timeout": 15},
             "calculation": {

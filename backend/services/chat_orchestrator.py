@@ -93,10 +93,13 @@ async def chat_stream(user_input: str, context: dict):
 
     start_time = time.time()
     attempts = []
+    failed_steps = []
     final_response = None
     intent_type = "unknown"
     route = "slow"
     confidence = 0.5
+    _rule_actions = []
+    model = "unknown"
     logger.info(f"⏱️ [T+0s] chat_stream开始: {user_input[:50]}")
 
     _chat_session_id = None
@@ -416,14 +419,12 @@ async def chat_stream(user_input: str, context: dict):
             yield _emit("result", {"response": final_response, "attempts": attempts, "intent": intent_type})
             return
         elif _reflex_action.startswith("warn:"):
-            _rule_actions = _rule_actions if '_rule_actions' in dir() else []
             _rule_actions.append(_reflex_action)
         else:
-            _rule_actions = _rule_actions if '_rule_actions' in dir() else []
             _rule_actions.append(_reflex_action)
 
     from backend.services.rule_evaluation import evaluate_rules_async
-    _rule_actions = await evaluate_rules_async(user_input, intent_type, model_name=model if 'model' in dir() else "unknown")
+    _rule_actions = await evaluate_rules_async(user_input, intent_type, model_name=model)
     if _rule_actions:
         yield _emit("step", {"phase": "规则推理", "status": "done", "detail": f"匹配{len(_rule_actions)}条规则动作"})
 
@@ -664,7 +665,7 @@ async def chat_stream(user_input: str, context: dict):
     # ========== 阶段3：多策略并行尝试 ==========
     yield _emit("thinking", {
         "phase": f"我正在用多种策略同时思考你的问题",
-        "confidence": float(confidence) if 'confidence' in dir() else 0.5,
+        "confidence": float(confidence) if 'confidence' in locals() else 0.5,
         "sources": ["经验池", "知识库", "本地模型", "外部API"],
     })
     from backend.services.parallel_router import execute_parallel_paths
@@ -1294,7 +1295,7 @@ async def chat_stream(user_input: str, context: dict):
                 query=user_input,
                 conversation_context=conversation_context,
                 intent_type=intent_type,
-                complexity=complexity if 'complexity' in dir() else 0.5,
+                complexity=complexity if 'complexity' in locals() else 0.5,
                 confidence=confidence,
                 route=route,
                 iteration=0,
@@ -1581,7 +1582,7 @@ async def chat_stream(user_input: str, context: dict):
         _sm = _get_self_model()
         if _sm:
             try:
-                _sm.record_cognitive_cycle(introspection=_cognitive_introspection if '_cognitive_introspection' in dir() else None)
+                _sm.record_cognitive_cycle(introspection=_cognitive_introspection if '_cognitive_introspection' in locals() else None)
                 _sm.sync_from_cognitive_planner(cp)
                 _sm.evaluate_and_act()
             except Exception as e:
@@ -1708,14 +1709,14 @@ async def chat_stream(user_input: str, context: dict):
             logger.debug(f"元学习策略微调跳过: {e}")
 
     # Agent协作触发：复杂查询且质量不达标时，启动多Agent闭环
-    if intent_type in ("complex_query", "code") and isinstance(fitness_score, (int, float)) and fitness_score < 50:
+    if intent_type in ("complex_query", "code") and fitness_score is not None and hasattr(fitness_score, 'final_score') and fitness_score.final_score < 50:
         try:
             from core.agents.coordinator import agent_coordinator
             agent_result = await asyncio.wait_for(
                 agent_coordinator.collaborate(user_input, context={"attempts": [a[0] for a in attempts]}),
                 timeout=60,
             )
-            if agent_result.get("quality", 0) > fitness_score * 100:
+            if agent_result.get("quality", 0) > fitness_score.final_score * 100:
                 final_response = agent_result.get("response", final_response)
                 reflection += f"; Agent协作提升(迭代{agent_result.get('iterations', 0)}次,质量{agent_result.get('quality', 0):.0f})"
                 yield _emit("step", {"phase": "Agent协作", "status": "done", "detail": f"多Agent闭环完成,质量提升至{agent_result.get('quality', 0):.0f}"})
@@ -1778,7 +1779,7 @@ async def chat_stream(user_input: str, context: dict):
             execution_context = {
                 "query": user_input,
                 "plan": str(essence_gate_result) if essence_gate_result else "",
-                "tool_calls": tool_calls_log if 'tool_calls_log' in dir() else [],
+                "tool_calls": tool_calls_log if 'tool_calls_log' in locals() else [],
                 "final_answer": final_response,
                 "confidence": confidence,
                 "model_used": best.get("source", "") if best else "",
@@ -1873,7 +1874,7 @@ async def chat_stream(user_input: str, context: dict):
         if route == "slow" and candidates:
             best_src = comparison[0]["source"] if comparison else ""
             traj_decisions.append({"type": "path_selection", "chosen": best_src, "reason": "highest_score"})
-        if 'path_percentages' in dir() and path_percentages:
+        if 'path_percentages' in locals() and path_percentages:
             traj_decisions.append({"type": "path_contribution", "distribution": path_percentages})
         traj_outcome = {
             "quality_score": int(fitness_score.final_score) if fitness_score else (80 if any(a[1] for a in attempts) else 40),
@@ -1944,7 +1945,7 @@ async def chat_stream(user_input: str, context: dict):
     try:
         if SPIRIT_CORE_AVAILABLE and final_response:
             from core.spirit_core import spirit_core as _spirit_core
-            validation = _spirit_core.validate_response(final_response, context={"query": user_input, "content_understanding": content_understanding if 'content_understanding' in dir() else {}})
+            validation = _spirit_core.validate_response(final_response, context={"query": user_input, "content_understanding": content_understanding if 'content_understanding' in locals() else {}})
             companion_layers = {
                 "L1_paradigm_match": validation.get("checks", {}).get("meaningful", False),
                 "L2_boundary_awareness": validation.get("checks", {}).get("pursue_essence", False),
@@ -1969,7 +1970,7 @@ async def chat_stream(user_input: str, context: dict):
             ps_resp3, ps_attempts3, ps_solved3 = await persistent_solve(
                 user_input, attempts,
                 conversation_context=conversation_context,
-                truth_insights=truth_insights if 'truth_insights' in dir() else "",
+                truth_insights=truth_insights if 'truth_insights' in locals() else "",
                 emit_fn=_ps_emit3,
             )
             for _et3, _ed3 in _ps_events3:
@@ -1998,18 +1999,18 @@ async def chat_stream(user_input: str, context: dict):
         "elapsed": round(elapsed, 1),
         "spirit_compliant": SPIRIT_CORE_AVAILABLE,
         "candidates": comparison if candidates else [],
-        "path_contributions": path_percentages if 'path_percentages' in dir() else {},
+        "path_contributions": path_percentages if 'path_percentages' in locals() else {},
         "token_usage": token_summary,
-        "cbnr": cbnr_context if 'cbnr_context' in dir() else {},
+        "cbnr": cbnr_context if 'cbnr_context' in locals() else {},
         "session_id": _chat_session_id or "",
         "companion_layers": companion_layers,
         "cognitive_layers": {
-            "L1_perception": {k: v for k, v in _cognitive_perception.items() if isinstance(v, (str, int, float, bool, list, dict, type(None)))} if '_cognitive_perception' in dir() and isinstance(_cognitive_perception, dict) else {},
-            "L2_learning": {k: v for k, v in _cognitive_learning.items() if isinstance(v, (str, int, float, bool, list, dict, type(None)))} if '_cognitive_learning' in dir() and isinstance(_cognitive_learning, dict) else {},
-            "L3_integration": {k: v for k, v in _cognitive_integration.items() if isinstance(v, (str, int, float, bool, list, dict, type(None)))} if '_cognitive_integration' in dir() and isinstance(_cognitive_integration, dict) else {},
-            "L4_validation": {k: v for k, v in _cognitive_validation.items() if isinstance(v, (str, int, float, bool, list, dict, type(None)))} if '_cognitive_validation' in dir() and isinstance(_cognitive_validation, dict) else {},
-            "L5_evolution_triggered": cp is not None and '_cognitive_perception' in dir(),
-            "L6_introspection": str(_cognitive_introspection)[:500] if '_cognitive_introspection' in dir() and _cognitive_introspection else {},
+            "L1_perception": {k: v for k, v in _cognitive_perception.items() if isinstance(v, (str, int, float, bool, list, dict, type(None)))} if '_cognitive_perception' in locals() and isinstance(_cognitive_perception, dict) else {},
+            "L2_learning": {k: v for k, v in _cognitive_learning.items() if isinstance(v, (str, int, float, bool, list, dict, type(None)))} if '_cognitive_learning' in locals() and isinstance(_cognitive_learning, dict) else {},
+            "L3_integration": {k: v for k, v in _cognitive_integration.items() if isinstance(v, (str, int, float, bool, list, dict, type(None)))} if '_cognitive_integration' in locals() and isinstance(_cognitive_integration, dict) else {},
+            "L4_validation": {k: v for k, v in _cognitive_validation.items() if isinstance(v, (str, int, float, bool, list, dict, type(None)))} if '_cognitive_validation' in locals() and isinstance(_cognitive_validation, dict) else {},
+            "L5_evolution_triggered": cp is not None and '_cognitive_perception' in locals(),
+            "L6_introspection": str(_cognitive_introspection)[:500] if '_cognitive_introspection' in locals() and _cognitive_introspection else {},
         } if cp else {},
     })
 
@@ -2130,9 +2131,9 @@ async def chat_stream(user_input: str, context: dict):
         injected_items = []
         if gene_result:
             injected_items.append({"type": "gene_solidification", "confidence": 0.9})
-        if fact_count if 'fact_count' in dir() else 0:
-            injected_items.append({"type": "fact_extraction", "confidence": 0.7, "count": fact_count if 'fact_count' in dir() else 0})
-        if has_gap if 'has_gap' in dir() else False:
+        if fact_count if 'fact_count' in locals() else 0:
+            injected_items.append({"type": "fact_extraction", "confidence": 0.7, "count": fact_count if 'fact_count' in locals() else 0})
+        if has_gap if 'has_gap' in locals() else False:
             injected_items.append({"type": "auto_evolution", "confidence": 0.6})
         
         if injected_items:

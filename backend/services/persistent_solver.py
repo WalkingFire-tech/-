@@ -144,7 +144,7 @@ async def execute_method(method_name: str, method_config: Dict) -> Tuple[bool, s
 
     try:
         if method_type == "reasoning":
-            from backend.services.orchestrator_helpers import _run_sync
+            from backend.services.path_handlers._shared import _run_sync
             from core.essence_reasoner import essence_reasoner
             prompt = method_config.get("prompt", "")
             insights = method_config.get("truth_insights", "")
@@ -165,7 +165,7 @@ async def execute_method(method_name: str, method_config: Dict) -> Tuple[bool, s
             return False, "经验库中无相关记录"
 
         elif method_type == "ask_model":
-            from backend.services.orchestrator_helpers import _run_sync
+            from backend.services.path_handlers._shared import _run_sync
             from adapters.llm.ollama_adapter import ollama_chat_request
             prompt = method_config.get("prompt", "")
             result = await _run_sync(
@@ -217,7 +217,7 @@ async def execute_method(method_name: str, method_config: Dict) -> Tuple[bool, s
             return False, "工具构建失败"
 
         elif method_type == "decompose":
-            from backend.services.orchestrator_helpers import _run_sync
+            from backend.services.path_handlers._shared import _run_sync
             from adapters.llm.ollama_adapter import ollama_chat_request
             prompt = method_config.get("prompt", "")
             result = await _run_sync(

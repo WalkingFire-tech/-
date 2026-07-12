@@ -14,7 +14,7 @@ class ToolResultCache:
     MAX_PARAMS_SIZE = 10240
     MAX_RESULT_SIZE = 102400
     
-    def __init__(self, db_path: str = "tool_cache.db", ttl_days: int = 7):
+    def __init__(self, db_path: str = "data/tool_cache.db", ttl_days: int = 7):
         self.db_path = db_path
         self.ttl_days = ttl_days
         self._init_db()

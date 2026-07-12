@@ -90,10 +90,10 @@ class MetaController:
     def _get_recent_performance(self, days: int = 7) -> Dict:
         """从统计库获取最近几天的汇总性能"""
         try:
-            db_path = "model_stats.db"
+            db_path = "data/model_stats.db"
             
-            conn = DatabaseManager.get(db_path)._get_conn()
-            cur = conn.execute('''
+            db = DatabaseManager.get(db_path)
+            row = db.query_one('''
                 SELECT
                     AVG(quality_score) as avg_quality,
                     AVG(duration) as avg_duration,
@@ -101,8 +101,6 @@ class MetaController:
                 FROM model_performance
                 WHERE datetime(timestamp) > datetime('now', ?)
             ''', (f'-{days} days',))
-            
-            row = cur.fetchone()
             
             if row and row[0] is not None:
                 return {
@@ -120,10 +118,10 @@ class MetaController:
     def _get_task_performance(self, task_type: str, days: int = 7) -> Dict:
         """获取特定任务类型的性能数据"""
         try:
-            db_path = "experience_pool.db"
+            db_path = "data/experience_pool.db"
             
-            conn = DatabaseManager.get(db_path)._get_conn()
-            cur = conn.execute('''
+            db = DatabaseManager.get(db_path)
+            row = db.query_one('''
                 SELECT
                     AVG(quality_score) as avg_quality,
                     AVG(duration) as avg_duration
@@ -131,8 +129,6 @@ class MetaController:
                 WHERE intent_type = ? 
                 AND datetime(timestamp) > datetime('now', ?)
             ''', (task_type, f'-{days} days'))
-            
-            row = cur.fetchone()
             
             if row and row[0] is not None:
                 return {

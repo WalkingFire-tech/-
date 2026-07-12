@@ -65,16 +65,14 @@ class PatternMiner:
         threshold = datetime.now() - timedelta(days=days)
 
         try:
-            conn = DatabaseManager.get(db_path)._get_conn()
-            # 查询表名（动态获取，兼容复数或单数）
-            cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND (name='experiences' OR name='experience')")
-            table_row = cur.fetchone()
+            db = DatabaseManager.get(db_path)
+            table_row = db.query_one("SELECT name FROM sqlite_master WHERE type='table' AND (name='experiences' OR name='experience')")
             if not table_row:
                 logger.error("经验池表不存在，请检查数据库初始化")
                 return []
             table_name = table_row[0]
 
-            cur = conn.execute(f'''
+            rows = db.query(f'''
                 SELECT intent_type, raw_input, model_name, quality_score,
                        success, duration, user_feedback, timestamp
                 FROM {table_name}
@@ -82,7 +80,7 @@ class PatternMiner:
                 ORDER BY timestamp DESC
             ''', (threshold.isoformat(),))
 
-            experiences = [dict(row) for row in cur.fetchall()]
+            experiences = [dict(row) for row in rows]
             
             # 添加时间衰减权重
             now = datetime.now()
@@ -296,8 +294,8 @@ class RuleGenerator:
         try:
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
             
-            conn = DatabaseManager.get(db_path)._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get(db_path)
+            db.execute('''
                 CREATE TABLE IF NOT EXISTS learning_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     condition TEXT,
@@ -310,23 +308,22 @@ class RuleGenerator:
                     source TEXT,
                     metadata TEXT
                 )
-            ''')
+            ''', commit=True)
             
-            for rule in rules:
-                conn.execute('''
-                    INSERT INTO learning_rules
-                    (condition, action, priority, created_at, status, source, metadata, confidence)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    rule["condition"],
-                    rule["action"],
-                    rule["priority"],
-                    rule["created_at"],
-                    rule["status"],
-                    rule["source"],
-                    json.dumps(rule["metadata"], ensure_ascii=False),
-                    rule.get("confidence", 0.5)
-                ))
+            db.executemany('''
+                INSERT INTO learning_rules
+                (condition, action, priority, created_at, status, source, metadata, confidence)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', [(
+                rule["condition"],
+                rule["action"],
+                rule["priority"],
+                rule["created_at"],
+                rule["status"],
+                rule["source"],
+                json.dumps(rule["metadata"], ensure_ascii=False),
+                rule.get("confidence", 0.5)
+            ) for rule in rules], commit=True)
             
             logger.info(f"保存{len(rules)}条归纳规则")
         
@@ -466,8 +463,8 @@ class InductionScheduler:
     def activate_pending_rules(self, min_confidence: float = 0.4) -> int:
         """激活待定规则：置信度达标的直接激活，低于阈值的晋升到trial"""
         try:
-            conn = DatabaseManager.get("data/learning_rules.db")._get_conn()
-            cur = conn.execute('''
+            db = DatabaseManager.get("data/learning_rules.db")
+            cur = db.execute('''
                 UPDATE learning_rules
                 SET status = 'active'
                 WHERE status = 'pending' AND confidence >= ?
@@ -475,15 +472,14 @@ class InductionScheduler:
             
             activated = cur.rowcount
             
-            cur2 = conn.execute('''
+            cur2 = db.execute('''
                 UPDATE learning_rules
                 SET status = 'trial', promoted_at = ?,
                     promotion_reason = '归纳调度晋升试用：置信度不足但值得验证'
                 WHERE status = 'pending' AND confidence >= 0.3
-            ''', (datetime.now().isoformat(),))
+            ''', (datetime.now().isoformat(),), commit=True)
             
             promoted = cur2.rowcount
-            conn.commit()
             
             logger.info(f"激活{activated}条规则，晋升{promoted}条到试用期")
             return activated + promoted

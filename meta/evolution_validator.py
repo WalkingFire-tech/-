@@ -14,9 +14,9 @@ class EvolutionValidator:
     """自我进化验证器"""
     
     def __init__(self):
-        self.experience_db = "experience_pool.db"
-        self.rules_db = "learning_rules.db"
-        self.stats_db = "model_stats.db"
+        self.experience_db = "data/experience_pool.db"
+        self.rules_db = "data/learning_rules.db"
+        self.stats_db = "data/model_stats.db"
         
     def get_evolution_metrics(self) -> Dict[str, Any]:
         """
@@ -41,33 +41,27 @@ class EvolutionValidator:
     def _get_experience_metrics(self) -> Dict:
         """经验池指标"""
         try:
-            conn = DatabaseManager.get(self.experience_db)._get_conn()
-            cursor = conn.cursor()
+            db = DatabaseManager.get(self.experience_db)
             
-            # 总经验数
-            cursor.execute("SELECT COUNT(*) FROM experiences")
-            total = cursor.fetchone()[0]
+            row = db.query_one("SELECT COUNT(*) FROM experiences")
+            total = row[0]
             
-            # 高质量经验数（质量分 >= 0.7）
-            cursor.execute("SELECT COUNT(*) FROM experiences WHERE quality_score >= 0.7")
-            high_quality = cursor.fetchone()[0]
+            row = db.query_one("SELECT COUNT(*) FROM experiences WHERE quality_score >= 0.7")
+            high_quality = row[0]
             
-            # 最近7天新增
             week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-            cursor.execute("SELECT COUNT(*) FROM experiences WHERE timestamp >= ?", (week_ago,))
-            recent = cursor.fetchone()[0]
+            row = db.query_one("SELECT COUNT(*) FROM experiences WHERE timestamp >= ?", (week_ago,))
+            recent = row[0]
             
-            # 平均质量分
-            cursor.execute("SELECT AVG(quality_score) FROM experiences")
-            avg_quality = cursor.fetchone()[0] or 0.0
+            row = db.query_one("SELECT AVG(quality_score) FROM experiences")
+            avg_quality = row[0] or 0.0
             
-            # 按意图类型分布
-            cursor.execute("""
+            rows = db.query("""
                 SELECT intent_type, COUNT(*), AVG(quality_score)
                 FROM experiences
                 GROUP BY intent_type
             """)
-            by_intent = {row[0]: {"count": row[1], "avg_quality": row[2]} for row in cursor.fetchall()}
+            by_intent = {row[0]: {"count": row[1], "avg_quality": row[2]} for row in rows}
             
             return {
                 "total": total,
@@ -85,50 +79,40 @@ class EvolutionValidator:
     def _get_rule_metrics(self) -> Dict:
         """规则指标"""
         try:
-            conn = DatabaseManager.get(self.rules_db)._get_conn()
-            cursor = conn.cursor()
+            db = DatabaseManager.get(self.rules_db)
             
-            # 检查表名
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = [row[0] for row in cursor.fetchall()]
+            rows = db.query("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [row[0] for row in rows]
             
-            # 使用正确的表名
             table_name = "learning_rules" if "learning_rules" in tables else "rules"
             
-            # 总规则数
-            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-            total = cursor.fetchone()[0]
+            row = db.query_one(f"SELECT COUNT(*) FROM {table_name}")
+            total = row[0]
             
-            # 按状态统计
-            cursor.execute(f"""
+            rows = db.query(f"""
                 SELECT status, COUNT(*)
                 FROM {table_name}
                 GROUP BY status
             """)
-            by_status = dict(cursor.fetchall())
+            by_status = dict(rows)
             
-            # 活跃规则数
             active = by_status.get("active", 0)
             
-            # 待激活规则数
             pending = by_status.get("pending", 0)
             
-            # 平均置信度
-            cursor.execute(f"SELECT AVG(confidence) FROM {table_name} WHERE status='active'")
-            avg_confidence = cursor.fetchone()[0] or 0.0
+            row = db.query_one(f"SELECT AVG(confidence) FROM {table_name} WHERE status='active'")
+            avg_confidence = row[0] or 0.0
             
-            # 最近激活的规则
             week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-            cursor.execute(f"""
+            row = db.query_one(f"""
                 SELECT COUNT(*) FROM {table_name}
                 WHERE status='active' AND activated_at >= ?
             """, (week_ago,))
-            recent_activated = cursor.fetchone()[0]
+            recent_activated = row[0]
             
-            # 规则应用次数（如果有trigger_count字段）
             try:
-                cursor.execute(f"SELECT SUM(trigger_count) FROM {table_name}")
-                total_triggers = cursor.fetchone()[0] or 0
+                row = db.query_one(f"SELECT SUM(trigger_count) FROM {table_name}")
+                total_triggers = row[0] or 0
             except:
                 total_triggers = 0
             
@@ -150,54 +134,46 @@ class EvolutionValidator:
     def _get_quality_metrics(self) -> Dict:
         """质量指标"""
         try:
-            conn = DatabaseManager.get(self.stats_db)._get_conn()
-            cursor = conn.cursor()
+            db = DatabaseManager.get(self.stats_db)
             
-            # 检查表名
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = [row[0] for row in cursor.fetchall()]
+            rows = db.query("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [row[0] for row in rows]
             
-            # 使用正确的表名
             table_name = "model_performance" if "model_performance" in tables else "model_stats"
             
-            # 总调用次数
-            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-            total_calls = cursor.fetchone()[0]
+            row = db.query_one(f"SELECT COUNT(*) FROM {table_name}")
+            total_calls = row[0]
             
-            # 平均质量分
-            cursor.execute(f"SELECT AVG(quality_score) FROM {table_name}")
-            avg_quality = cursor.fetchone()[0] or 0.0
+            row = db.query_one(f"SELECT AVG(quality_score) FROM {table_name}")
+            avg_quality = row[0] or 0.0
             
-            # 按模型统计
-            cursor.execute(f"""
+            rows = db.query(f"""
                 SELECT model_name, COUNT(*), AVG(quality_score), AVG(response_time)
                 FROM {table_name}
                 GROUP BY model_name
             """)
             by_model = {}
-            for row in cursor.fetchall():
+            for row in rows:
                 by_model[row[0]] = {
                     "calls": row[1],
                     "avg_quality": round(row[2], 3) if row[2] else 0.0,
                     "avg_time": round(row[3], 2) if row[3] else 0.0
                 }
             
-            # 最近7天质量趋势
             week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-            cursor.execute(f"""
+            row = db.query_one(f"""
                 SELECT AVG(quality_score)
                 FROM {table_name}
                 WHERE timestamp >= ?
             """, (week_ago,))
-            recent_quality = cursor.fetchone()[0] or 0.0
+            recent_quality = row[0] or 0.0
             
-            # 用户干预次数（feedback）
             try:
-                cursor.execute(f"SELECT COUNT(*) FROM {table_name} WHERE feedback < 0")
-                negative_feedback = cursor.fetchone()[0]
+                row = db.query_one(f"SELECT COUNT(*) FROM {table_name} WHERE feedback < 0")
+                negative_feedback = row[0]
                 
-                cursor.execute(f"SELECT COUNT(*) FROM {table_name} WHERE feedback > 0")
-                positive_feedback = cursor.fetchone()[0]
+                row = db.query_one(f"SELECT COUNT(*) FROM {table_name} WHERE feedback > 0")
+                positive_feedback = row[0]
             except:
                 negative_feedback = 0
                 positive_feedback = 0

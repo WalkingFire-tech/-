@@ -285,9 +285,10 @@ class CognitiveRhythmController:
                 actions = ["调整方向", "学习新方法"]
         
         if new_phase:
+            old_phase = self.current_phase
             self.current_phase = new_phase
             return RhythmAdjustment(
-                old_phase=self.current_phase,
+                old_phase=old_phase,
                 new_phase=new_phase,
                 reason=reason,
                 confidence=success_rate,

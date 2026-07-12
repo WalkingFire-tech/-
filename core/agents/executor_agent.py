@@ -181,9 +181,21 @@ class ExecutorAgent(BaseAgent):
         try:
             from core.tool_registry import tool_executor
             import asyncio
-            result = asyncio.get_event_loop().run_until_complete(
-                tool_executor.execute("calculator", {"expression": query})
-            )
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    result = pool.submit(
+                        asyncio.run,
+                        tool_executor.execute("calculator", {"expression": query})
+                    ).result(timeout=10)
+            else:
+                result = asyncio.run(
+                    tool_executor.execute("calculator", {"expression": query})
+                )
             if result.success:
                 return {"response": result.data, "source": "tool", "quality": 70, "success": True}
         except Exception:

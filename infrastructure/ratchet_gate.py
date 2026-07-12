@@ -106,7 +106,7 @@ class RatchetGate:
 
         try:
             from pathlib import Path
-            exp_db = Path("experience_pool.db")
+            exp_db = Path("data/experience_pool.db")
             if exp_db.exists():
                 db = DatabaseManager.get(str(exp_db))
                 row = db.query_one("SELECT AVG(quality_score) FROM experiences")

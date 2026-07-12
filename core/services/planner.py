@@ -315,7 +315,7 @@ class DataDrivenPlanner:
                     type=subtask['type'],
                     raw_text=subtask['description'],
                     confidence=0.8,
-                    entities=[]
+                    entities={}
                 )
                 
                 # 使用联邦调度执行子任务

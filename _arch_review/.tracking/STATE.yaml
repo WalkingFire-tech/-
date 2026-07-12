@@ -1,13 +1,13 @@
 # 架构巡检状态
-# 更新: 2026-07-11 23:10 (巡检#44)
+# 更新: 2026-07-11 (巡检#61)
 
-last_check_time: "2026-07-11 23:10 (巡检#44)"
-last_commit_hash: "3780030"
-last_commit_message: "Phase 3 端口抽象: 5个新端口接口 + 适配器实现"
-uncommitted_changes: 26
-untracked_files: 31
-total_checks: 44
-total_score: 87
+last_check_time: "2026-07-11 (巡检#61)"
+last_commit_hash: "b979b8f"
+last_commit_message: "docs: 行动指南更新——新增3次提交记录+待办完成标记"
+uncommitted_changes: 5
+untracked_files: 18
+total_checks: 61
+total_score: 89
 score_trend: stable
-new_messages: 2
-inspector_notes: "→ 87 持平（连续7轮）。无新commit（与巡检#43相同）。工作区26源文件修改+31 untracked（含runtime DB/日志文件），与巡检#43基本一致。Runtime裸except持续0处。sqlite3.connect持续0处。工作区冻结12轮🔴。新评分维度仍未引入（连续14轮提醒🔔）。回复2则架构留言：学习回路断裂（接线50行+自检回路补充）+认知驱动断裂（认知契约方案）。"
+new_messages: 0
+inspector_notes: "→ 89 持平（天花板效应持续30轮🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥）。3个新commit（e220682+f823011+b979b8f）：SelfModel能力画像聚合（model.py +125/-15，skill_emergence.py _get_conn()残留修复✅）+ CognitivePlanner Phase2信号融合（chat_orchestrator +144/-148 net -4，旁路提前到L1+结果优先+副作用去重✅）+ docs更新（行动指南+3次提交记录）。所有跟踪指标维持满分：chat_stream 40行/main_fast 182行双满分✅、裸except跟踪0✅、DB零硬编码✅。异常96/模块耦合82/测试14不变。chat_orchestrator 2343行（net -1，首次净缩减📉）。⚠️ 天花板效应持续30轮🔴——新评分维度仍未引入（连续30轮提醒🔔）。score_trend: stable。"

@@ -84,9 +84,9 @@ class HyperparamOptimizer:
             return 0
         
         try:
-            conn = DatabaseManager.get(str(stats_db))._get_conn()
-            cur = conn.execute('SELECT COUNT(*) FROM model_performance')
-            return cur.fetchone()[0]
+            db = DatabaseManager.get(str(stats_db))
+            row = db.query_one('SELECT COUNT(*) FROM model_performance')
+            return row[0]
         except:
             return 0
     
@@ -162,8 +162,8 @@ class HyperparamOptimizer:
             return 0.0
         
         try:
-            conn = DatabaseManager.get(str(stats_db))._get_conn()
-            cur = conn.execute('''
+            db = DatabaseManager.get(str(stats_db))
+            rows = db.query('''
                 SELECT 
                     quality_score,
                     duration,
@@ -176,7 +176,7 @@ class HyperparamOptimizer:
             ''')
             
             scores = []
-            for row in cur.fetchall():
+            for row in rows:
                 quality, duration, cost, success, feedback = row
                 
                 norm_quality = (quality or 50) / 100.0

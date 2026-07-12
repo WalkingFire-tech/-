@@ -429,7 +429,7 @@ class SkillEmergence:
 
             db = DatabaseManager.get("data/skill_emergence.db")
             db.execute(
-                "INSERT OR REPLACE INTO skills (skill_name, skill_type, trigger_pattern, solution_path, success_count, fail_count, success_rate, is_active, created_at) VALUES (?,?,?,?,?,?,?,?,datetime('now'))",
+                "INSERT OR REPLACE INTO skills (skill_name, skill_type, trigger_patterns, solution_path, success_count, fail_count, success_rate, is_active, created_at) VALUES (?,?,?,?,?,?,?,?,datetime('now'))",
                 (skill_name, gap_type, query[:50], "待学习", 0, 1, 0.0, 1),
                 commit=True
             )

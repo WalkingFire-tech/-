@@ -321,7 +321,7 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
     # ========== 策略8.5：科学免责（语义级判断） ==========
     if final_response:
         try:
-            from backend.chat_stream import _understand_response_content, _has_science_domain_signatures, _infer_domain_from_content
+            from backend.services.intent_service import understand_response_content as _understand_response_content, has_science_domain_signatures as _has_science_domain_signatures, infer_domain_from_content as _infer_domain_from_content
             import re as _re_sc
             content_understanding = _understand_response_content(user_input, final_response)
             _simple_fact_exempt = bool(_re_sc.search(r'(?:等于几|几加几|\d+\s*[+\-*/×÷]\s*\d+)', user_input))

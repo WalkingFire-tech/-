@@ -20,7 +20,7 @@ class CausalReasoner:
     
     def __init__(self):
         self.templates = self._load_templates()
-        self.experience_db = Path("experience_pool.db")
+        self.experience_db = Path("data/experience_pool.db")
         logger.info("因果推理器初始化完成")
     
     def reason(
