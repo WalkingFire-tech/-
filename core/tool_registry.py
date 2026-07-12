@@ -14,12 +14,19 @@
 
 import asyncio
 import concurrent.futures
+import re as _re
+import subprocess
 import threading
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from loguru import logger
+
+_MISSING_MODULE_PATTERN = _re.compile(r"No module named ['\"]?(\w+)['\"]?")
+_IMPORT_ERROR_PATTERN = _re.compile(r"cannot import name.*from ['\"]?(\w+)['\"]?")
+_PIP_INSTALL_LOCK = threading.Lock()
+_INSTALLED_IN_SESSION: set = set()
 
 _tool_executor_pool = concurrent.futures.ThreadPoolExecutor(
     max_workers=8, thread_name_prefix="tool_exec"
@@ -358,9 +365,27 @@ class ToolExecutor:
                               source=tool_name, duration_ms=duration)
         except Exception as e:
             duration = (time.time() - start) * 1000
-            self._record_stat(tool_name, False, duration, error=str(e), params=params)
+            error_str = str(e)
+            missing = self._detect_missing_module(error_str)
+            if missing:
+                installed = self._auto_install(missing)
+                if installed:
+                    try:
+                        retry_result = await asyncio.wait_for(tool.execute(**params), timeout=timeout)
+                        retry_result.duration_ms = (time.time() - start) * 1000
+                        retry_result.metadata = retry_result.metadata or {}
+                        retry_result.metadata["auto_installed"] = missing
+                        self._record_stat(tool_name, True, retry_result.duration_ms, params=params, output=str(retry_result.data)[:200] if retry_result.data else "")
+                        logger.info(f"工具{tool_name}自动安装{missing}后重试成功")
+                        return retry_result
+                    except Exception as retry_e:
+                        duration = (time.time() - start) * 1000
+                        self._record_stat(tool_name, False, duration, error=str(retry_e), params=params)
+                        logger.error(f"工具{tool_name}自动安装{missing}后重试仍失败: {retry_e}")
+                        return ToolResult(success=False, error=str(retry_e), source=tool_name, duration_ms=duration)
+            self._record_stat(tool_name, False, duration, error=error_str, params=params)
             logger.error(f"工具执行异常: {tool_name} - {e}")
-            return ToolResult(success=False, error=str(e),
+            return ToolResult(success=False, error=error_str,
                               source=tool_name, duration_ms=duration)
 
     async def execute_parallel(self, tool_names: List[str],
@@ -398,6 +423,46 @@ class ToolExecutor:
         tool = self.registry.get(tool_name)
         category = tool.category if tool else "unknown"
         self._persist_stat(tool_name, category, success, duration_ms, error, params, output)
+
+    def _detect_missing_module(self, error_str: str) -> Optional[str]:
+        m = _MISSING_MODULE_PATTERN.search(error_str)
+        if m:
+            return m.group(1)
+        m = _IMPORT_ERROR_PATTERN.search(error_str)
+        if m:
+            return m.group(1)
+        return None
+
+    def _auto_install(self, module_name: str) -> bool:
+        if module_name in _INSTALLED_IN_SESSION:
+            return True
+        _PIP_PACKAGE_MAP = {
+            "cv2": "opencv-python", "PIL": "Pillow", "sklearn": "scikit-learn",
+            "serial": "pyserial", "usb": "pyusb", "yaml": "pyyaml",
+            "dotenv": "python-dotenv", "bs4": "beautifulsoup4",
+            "lxml": "lxml", "folium": "folium", "serial.tools": "pyserial",
+        }
+        pip_name = _PIP_PACKAGE_MAP.get(module_name, module_name)
+        with _PIP_INSTALL_LOCK:
+            if module_name in _INSTALLED_IN_SESSION:
+                return True
+            try:
+                logger.info(f"AutoInstall: 自动安装 {pip_name} (模块: {module_name})")
+                result = subprocess.run(
+                    ["pip", "install", pip_name, "--quiet"],
+                    capture_output=True, text=True, timeout=60,
+                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0,
+                )
+                if result.returncode == 0:
+                    _INSTALLED_IN_SESSION.add(module_name)
+                    logger.info(f"AutoInstall: {pip_name} 安装成功")
+                    return True
+                else:
+                    logger.warning(f"AutoInstall: {pip_name} 安装失败: {result.stderr[:200]}")
+                    return False
+            except Exception as e:
+                logger.warning(f"AutoInstall: {pip_name} 安装异常: {e}")
+                return False
 
     def _publish_event(self, tool_name: str, params: Dict, result: ToolResult):
         try:

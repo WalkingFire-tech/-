@@ -52,7 +52,14 @@ async def fetch_tool_results(query: str, intent_type: str = "", methodology: dic
             except Exception:
                 logger.warning("操作降级跳过")
         logger.debug(f"[TOOL_DIAG] 最终candidates: {len(candidates)}个, sources={[c['source'] for c in candidates]}")
-        return candidates if candidates else None
+        if candidates:
+            return candidates
+
+        logger.info(f"[TOOL_DIAG] 工具执行无有效结果，触发自主执行回路...")
+        auto_result = await _auto_execution_fallback(query, intent_type, params)
+        if auto_result:
+            return auto_result
+        return None
     except Exception as e:
         logger.error(f"[TOOL_DIAG] 工具调用异常: {e}", exc_info=True)
         return None
@@ -156,3 +163,47 @@ def extract_tool_params(query: str, intent_type: str = "", methodology: dict = N
         params.setdefault("_tool_hint", "dependency_analyzer")
 
     return params
+
+
+async def _auto_execution_fallback(query: str, intent_type: str = "", params: dict = None) -> Optional[list]:
+    """自主执行回路：工具失败时，系统自己生成代码→执行→验证→修正→重试"""
+    try:
+        from core.learning.auto_execution_loop import auto_execution_loop
+        expected_type = ""
+        if intent_type == "hardware" or any(kw in query.lower() for kw in ["串口", "serial", "com", "gps"]):
+            expected_type = "serial"
+            if any(kw in query.lower() for kw in ["地图", "标记", "渲染", "folium", "map"]):
+                expected_type = "gps"
+        elif any(kw in query.lower() for kw in ["地图", "标记", "渲染", "folium", "map"]):
+            expected_type = "map"
+
+        context = {}
+        if params:
+            if params.get("port"):
+                context["port"] = params["port"]
+            if params.get("baudrate"):
+                context["baudrate"] = params["baudrate"]
+
+        logger.info(f"[AUTO_EXEC] 触发自主执行: goal='{query[:60]}', expected_type='{expected_type}'")
+        result = await auto_execution_loop.execute(query, expected_type=expected_type, context=context)
+
+        if result.success:
+            logger.info(f"[AUTO_EXEC] 自主执行成功! attempts={result.attempts}, duration={result.duration_ms:.0f}ms")
+            candidate = {
+                "source": f"auto_exec(attempts={result.attempts})",
+                "response": result.output,
+                "quality": max(50, 80 - result.attempts * 10),
+                "metadata": {
+                    "auto_executed": True,
+                    "attempts": result.attempts,
+                    "auto_installed": result.auto_installed,
+                    "duration_ms": result.duration_ms,
+                },
+            }
+            return [candidate]
+        else:
+            logger.warning(f"[AUTO_EXEC] 自主执行失败: {result.error[:100]}")
+            return None
+    except Exception as e:
+        logger.error(f"[AUTO_EXEC] 自主执行回路异常: {e}", exc_info=True)
+        return None
