@@ -84,23 +84,45 @@ class ExperienceAbstractor:
         return f"{scent.get('sensor', '?')}:{scent.get('action', '?')}:{scent.get('target', '?')}"
 
     @classmethod
-    def scent_similarity(cls, scent_a: Dict[str, str], scent_b: Dict[str, str]) -> float:
+    def scent_similarity(cls, scent_a: Dict[str, str], scent_b: Dict[str, str],
+                         query_a: str = "", query_b: str = "") -> float:
         """
         计算两个气味特征的相似度。
-        三个维度各占1/3权重，相同=1.0，不同=0.0。
+        三维度关键词匹配 + 语义向量距离，加权融合。
+        keyword_weight=0.5, semantic_weight=0.5
         """
-        score = 0.0
+        keyword_score = 0.0
         for dim in ("sensor", "action", "target"):
             a_val = scent_a.get(dim, "unknown")
             b_val = scent_b.get(dim, "unknown")
             if a_val != "unknown" and b_val != "unknown":
                 if a_val == b_val:
-                    score += 1.0 / 3
+                    keyword_score += 1.0 / 3
                 elif a_val == "unknown" or b_val == "unknown":
                     pass
                 else:
-                    score += 0.1 / 3
-        return score
+                    keyword_score += 0.1 / 3
+
+        if not query_a or not query_b:
+            return keyword_score
+
+        semantic_score = cls._semantic_scent_score(query_a, query_b)
+        if semantic_score is None:
+            return keyword_score
+
+        return keyword_score * 0.5 + semantic_score * 0.5
+
+    @classmethod
+    def _semantic_scent_score(cls, text_a: str, text_b: str) -> Optional[float]:
+        """用共享嵌入计算语义向量距离，降级返回None"""
+        try:
+            from core.shared_embedding import similarity as emb_similarity
+            score = emb_similarity(text_a, text_b)
+            if score > 0.0:
+                return score
+        except Exception:
+            pass
+        return None
 
     @classmethod
     def abstract(cls, user_query: str, intent_type: str, steps: List[Dict],
@@ -239,7 +261,8 @@ class ExperienceAbstractor:
                 trigger_text = " ".join(trigger_parts)
                 if trigger_text:
                     existing_scent = cls.extract_scent(trigger_text)
-                scent_sim = cls.scent_similarity(new_scent, existing_scent)
+                scent_sim = cls.scent_similarity(new_scent, existing_scent,
+                                                  query_a=new_query, query_b=trigger_text)
 
                 combined_score = skeleton_sim * 0.6 + scent_sim * 0.4
                 
@@ -261,7 +284,7 @@ class ExperienceAbstractor:
                 logger.info(f"🧠 骨架联想: {best_match['skill_name']} (综合{best_score:.2f}=骨架{best_match['skeleton_similarity']:.2f}+气味{best_match['scent_similarity']:.2f}, 骨架{best_match['skeleton']})")
                 return best_match
         except Exception as e:
-            logger.debug(f"骨架联想失败: {e}")
+            logger.error(f"骨架联想失败: {e}")
         return None
 
     @classmethod
@@ -300,4 +323,4 @@ class ExperienceAbstractor:
                             (skill_name,), commit=True
                         )
         except Exception as e:
-            logger.debug(f"经验抽象沉淀跳过: {e}")
+            logger.warning(f"经验抽象沉淀跳过: {e}")

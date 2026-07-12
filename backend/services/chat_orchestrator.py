@@ -110,7 +110,7 @@ async def chat_stream(user_input: str, context: dict):
         if not _chat_session_id:
             _chat_session_id = _ch.create_session()
     except Exception as e:
-        logger.debug(f"对话历史初始化跳过: {e}")
+        logger.warning(f"对话历史初始化跳过: {e}")
 
     user_input = user_input.strip().rstrip("/\\|").strip()
     if not user_input:
@@ -122,7 +122,7 @@ async def chat_stream(user_input: str, context: dict):
             from infrastructure.chat_history import get_chat_history
             get_chat_history().add_message(_chat_session_id, "user", user_input)
         except Exception as e:
-            logger.debug(f"对话历史写入user跳过: {e}")
+            logger.warning(f"对话历史写入user跳过: {e}")
 
     # CBNR L1: 认知规范化 — 在处理前进行认知复位
     cbnr_context = {}
@@ -139,7 +139,7 @@ async def chat_stream(user_input: str, context: dict):
                 if hasattr(snap, 'operating_mode'):
                     _resource_mode = snap.operating_mode.value if hasattr(snap.operating_mode, 'value') else str(snap.operating_mode)
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         _l1_result = _cbnr_hub.process_l1(
             {"user_input": user_input, "intent": intent_type},
             {"resource_mode": _resource_mode}
@@ -154,11 +154,11 @@ async def chat_stream(user_input: str, context: dict):
         cbnr_context["l1_high_surprise"] = _attn.get("high_surprise", False)
         cbnr_context["l1_focus_boost"] = _attn.get("focus_boost", 1.0)
         if _l1_result.bias_cleared:
-            logger.debug(f"CBNR L1: 清除偏差{_l1_result.bias_cleared}, 不确定性={_l1_result.uncertainty:.2f}")
+            logger.warning(f"CBNR L1: 清除偏差{_l1_result.bias_cleared}, 不确定性={_l1_result.uncertainty:.2f}")
         if _attn.get("high_surprise"):
             logger.info(f"CBNR L1: 高预测误差({cbnr_context['l1_prediction_error']:.2f}), 增强深度推理权重")
     except Exception as e:
-        logger.debug(f"CBNR L1跳过: {e}")
+        logger.warning(f"CBNR L1跳过: {e}")
         _alchemize_error(e, context={"user_input": user_input[:50]}, phase="CBNR_L1")
     MAX_INPUT_LENGTH = 4000
     if len(user_input) > MAX_INPUT_LENGTH:
@@ -176,7 +176,7 @@ async def chat_stream(user_input: str, context: dict):
                         if hasattr(snap, 'operating_mode'):
                             mode = snap.operating_mode.value if hasattr(snap.operating_mode, 'value') else str(snap.operating_mode)
                     except Exception:
-                        pass
+                        logger.warning("操作降级跳过")
                 processed = processor.process(user_input, memory_usage=mem_usage, mode=mode)
                 if processed.was_distilled:
                     logger.info(f"长输入动态提炼: {processed.original_length}→{processed.distilled_length}字符 (压缩率{processed.compression_ratio:.1%}, 模式={processed.mode}, 策略={processed.cognitive_strategy})")
@@ -207,7 +207,7 @@ async def chat_stream(user_input: str, context: dict):
                     _sm_snap = _sm_obj.snapshot()
                     _sm_health = _sm_snap.get("health", {}).get("score", 1.0)
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
             if snap.memory_usage > 0.85 or _sm_health < 0.3:
                 reason = f"内存{snap.memory_usage:.1%}" if snap.memory_usage > 0.85 else f"系统健康度低({_sm_health:.1%})"
                 logger.warning(f"资源保护触发: {reason}，走轻量响应")
@@ -222,7 +222,7 @@ async def chat_stream(user_input: str, context: dict):
                     yield _emit("result", {"response": _never_give_up_response(user_input, attempts), "attempts": attempts, "intent": "simple", "confidence": 0.2, "route": "fast"})
                 return
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
 
     history = context.get("history", []) if context else []
@@ -245,7 +245,7 @@ async def chat_stream(user_input: str, context: dict):
             yield _emit("step", {"phase": "连续性感知", "status": "done",
                 "detail": f"📉 上下文衰减: 最近{len(history)}轮对话, 活跃度={_continuity_signal['activity_level']:.2f}"})
     except Exception as e:
-        logger.debug(f"对话连续性感知跳过: {e}")
+        logger.warning(f"对话连续性感知跳过: {e}")
 
     # CBNR L2: 认知瓶颈 — 压缩核心+双模型推理（接收L1的normalized_input）
     try:
@@ -260,9 +260,9 @@ async def chat_stream(user_input: str, context: dict):
         cbnr_context["l2_question_type"] = _l2_result.core_essence.get("question_type", "")
         cbnr_context["l2_causal_chain"] = _l2_result.reconstructed_output.get("causal_chain", [])
         cbnr_context["l2_counterfactuals"] = _l2_result.reconstructed_output.get("counterfactuals", [])
-        logger.debug(f"CBNR L2: 压缩={_l2_result.compression_ratio:.1%}, 冲突={_l2_result.conflict_delta:.2f}, 模式={_l2_result.conflict_mode.value}")
+        logger.warning(f"CBNR L2: 压缩={_l2_result.compression_ratio:.1%}, 冲突={_l2_result.conflict_delta:.2f}, 模式={_l2_result.conflict_mode.value}")
     except Exception as e:
-        logger.debug(f"CBNR L2跳过: {e}")
+        logger.warning(f"CBNR L2跳过: {e}")
         _alchemize_error(e, context={"user_input": user_input[:50]}, phase="CBNR_L2")
 
     # 通知存在层：用户正在交互
@@ -270,7 +270,7 @@ async def chat_stream(user_input: str, context: dict):
         from core.presence.existence_layer import get_existence_layer
         get_existence_layer().user_interaction()
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     # 资源感知：注册活跃查询 + 紧急模式预警
     _query_registered = False
@@ -284,7 +284,7 @@ async def chat_stream(user_input: str, context: dict):
             elif monitor.is_conservative():
                 yield _emit("info", {"type": "resource_conservative", "message": "系统资源偏紧，已自动减少并行路径"})
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     # P1-1: 发布UserMessage事件
     try:
@@ -295,7 +295,7 @@ async def chat_stream(user_input: str, context: dict):
             "route": route,
         })
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     stereo_context = await _run_sync(_get_stereo_memory_context, user_input, timeout=5)
     if stereo_context:
@@ -319,7 +319,7 @@ async def chat_stream(user_input: str, context: dict):
         if relationship_context:
             conversation_context = (conversation_context + "\n" + relationship_context) if conversation_context else relationship_context
     except Exception as e:
-        logger.debug(f"关系模型跳过: {e}")
+        logger.warning(f"关系模型跳过: {e}")
 
     # ========== 阶段1：意图识别 ==========
     logger.info(f"📩 收到请求: '{user_input}'")
@@ -335,6 +335,39 @@ async def chat_stream(user_input: str, context: dict):
         intent_type = dispatch_result.get("intent_type", "unknown")
         route = dispatch_result.get("route", "slow")
         confidence = dispatch_result.get("confidence", 0.5)
+        
+        # 场域上下文消费：将field_context注入methodology
+        _field_context = dispatch_result.get("field_context", {})
+        if _field_context:
+            _fc_sensing = _field_context.get("_sensing_mode", "unknown")
+            _fc_new_topic = _field_context.get("is_new_topic", False)
+            _fc_familiar = _field_context.get("is_familiar", False)
+            _fc_residual = _field_context.get("residual_strength", 0.0)
+            
+            if _fc_sensing == "blind":
+                logger.warning("场域失明: embedding不可用, 场域辅助决策降级")
+                try:
+                    from infrastructure.database_manager import DatabaseManager
+                    _db = DatabaseManager.get("data/spirit_lessons.db")
+                    _db.execute(
+                        "INSERT INTO spirit_lessons (lesson_type, lesson_text, severity, context) VALUES (?, ?, ?, ?)",
+                        ("field_blind", f"场域失明: embedding不可用, query={user_input[:50]}", 3, "M2_field_context"),
+                        commit=True
+                    )
+                except Exception:
+                    pass
+            
+            if _fc_new_topic:
+                methodology.setdefault("field_topic_shift", True)
+                methodology.setdefault("need_analogous_match", True)
+                logger.info(f"场域感知: 话题跳跃检测, 提升骨架联想权重")
+            elif _fc_familiar:
+                methodology.setdefault("field_prefer_reflex", True)
+                logger.info(f"场域感知: 熟悉话题, 优先本能匹配")
+            
+            if _fc_residual > 0.5:
+                methodology.setdefault("field_continuity", _fc_residual)
+                methodology.setdefault("previous_topic", _field_context.get("previous_topic", ""))
         
         # 额外验证：直接调用_quick_intent_classification
         raw_intent, raw_conf = dispatcher._quick_intent_classification(user_input)
@@ -359,7 +392,7 @@ async def chat_stream(user_input: str, context: dict):
             if emotion != "neutral" or urgency > 0.7 or confusion > 0.5:
                 yield _emit("step", {"phase": "L1认知感知", "status": "done",
                     "detail": f"情绪={emotion}, 紧迫度={urgency:.1f}, 困惑度={confusion:.1f}"})
-            logger.debug(f"L1认知感知: emotion={emotion}, urgency={urgency:.2f}, confusion={confusion:.2f}")
+            logger.warning(f"L1认知感知: emotion={emotion}, urgency={urgency:.2f}, confusion={confusion:.2f}")
             _sm = _get_self_model()
             if _sm:
                 _sm.record_cognitive_cycle(perception=_cognitive_perception)
@@ -378,7 +411,7 @@ async def chat_stream(user_input: str, context: dict):
                 methodology.setdefault("need_essence_reasoning", True)
                 logger.info(f"🤔 困惑度高({confusion:.1f})，启用本质推理")
         except Exception as e:
-            logger.debug(f"L1认知感知跳过: {e}")
+            logger.warning(f"L1认知感知跳过: {e}")
 
         # Phase 2: 提前启动认知旁路（异步），后续阶段可使用结果
         try:
@@ -388,7 +421,7 @@ async def chat_stream(user_input: str, context: dict):
                 _fast_executor, lambda: cp.process(user_input, _bypass_ctx)
             )
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     # ========== 阶段1.5：规则匹配与执行 ==========
 
@@ -409,7 +442,7 @@ async def chat_stream(user_input: str, context: dict):
                 "detail": f"反射规则触发: {_reflex_action}"})
             logger.info(f"反射安全检查触发: action={_reflex_action}")
     except Exception as e:
-        logger.debug(f"反射安全检查跳过: {e}")
+        logger.warning(f"反射安全检查跳过: {e}")
 
     if _reflex_action:
         if _reflex_action in ("block", "reject") or _reflex_action.startswith("block:"):
@@ -517,36 +550,56 @@ async def chat_stream(user_input: str, context: dict):
             yield _emit("step", {"phase": "真谛类推", "status": "done", "detail": f"类推适用：{', '.join(insight_names)}"})
             attempts.append(("真谛类推", True, f"{len(applicable)}条洞察"))
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     # ========== 阶段2.6：能力评估 + 本能查询 ==========
+    # 场域感知调整：根据field_context调整本能/骨架优先级
+    _field_prefer_reflex = methodology.get("field_prefer_reflex", False)
+    _field_need_analogous = methodology.get("need_analogous_match", False)
+    
     # 先查本能：有没有匹配的本能级技能可直接触发？
     instinct_hit = None
     skeleton_analogy = None
-    try:
-        from core.skill_emergence import SkillEmergence
-        se = SkillEmergence()
-        instinct_hit = se.reflex_query(user_input)
-        if instinct_hit:
-            yield _emit("step", {"phase": "本能查询", "status": "done",
-                "detail": f"⚡ 本能触发: {instinct_hit['skill_name']} (置信度{instinct_hit['confidence']:.2f})"})
-            methodology["instinct_path"] = instinct_hit["solution_path"]
-            methodology["instinct_skeleton"] = instinct_hit.get("skeleton", "")
-    except Exception:
-        pass
+    
+    if _field_prefer_reflex:
+        try:
+            from core.skill_emergence import SkillEmergence
+            se = SkillEmergence()
+            instinct_hit = se.reflex_query(user_input)
+            if instinct_hit:
+                yield _emit("step", {"phase": "本能查询", "status": "done",
+                    "detail": f"⚡ 场域加速-本能触发: {instinct_hit['skill_name']} (置信度{instinct_hit['confidence']:.2f})"})
+                methodology["instinct_path"] = instinct_hit["solution_path"]
+                methodology["instinct_skeleton"] = instinct_hit.get("skeleton", "")
+        except Exception:
+            logger.warning("操作降级跳过")
+    else:
+        try:
+            from core.skill_emergence import SkillEmergence
+            se = SkillEmergence()
+            instinct_hit = se.reflex_query(user_input)
+            if instinct_hit:
+                yield _emit("step", {"phase": "本能查询", "status": "done",
+                    "detail": f"⚡ 本能触发: {instinct_hit['skill_name']} (置信度{instinct_hit['confidence']:.2f})"})
+                methodology["instinct_path"] = instinct_hit["solution_path"]
+                methodology["instinct_skeleton"] = instinct_hit.get("skeleton", "")
+        except Exception:
+            logger.warning("操作降级跳过")
 
     # 没有本能→查骨架联想：有没有结构相似的历史经验可迁移？
     if not instinct_hit:
         try:
             from core.cognition.experience_abstractor import ExperienceAbstractor
-            skeleton_analogy = ExperienceAbstractor.find_analogous(user_input)
+            _analogous_threshold = 0.4 if _field_need_analogous else 0.6
+            skeleton_analogy = ExperienceAbstractor.find_analogous(user_input, threshold=_analogous_threshold)
             if skeleton_analogy:
+                _boost_label = " (场域加速)" if _field_need_analogous else ""
                 yield _emit("step", {"phase": "骨架联想", "status": "done",
-                    "detail": f"🧠 类比迁移: {skeleton_analogy['skill_name']} (相似度{skeleton_analogy['similarity']:.2f})"})
+                    "detail": f"🧠 类比迁移{ _boost_label}: {skeleton_analogy['skill_name']} (相似度{skeleton_analogy['similarity']:.2f})"})
                 methodology["analogous_skeleton"] = skeleton_analogy["skeleton"]
                 methodology["analogous_path"] = skeleton_analogy["solution_path"]
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
     # 能力缺口检测：我有没有合适的工具？
     capability_gap = None
@@ -559,7 +612,7 @@ async def chat_stream(user_input: str, context: dict):
                 "detail": f"⚠️ 检测到能力缺口: 无适用工具"})
             methodology["capability_gap"] = capability_gap
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     # ========== 阶段2.7：三思后行 — R4七维自检 ==========
     # 在关键决策点（能力评估后、执行前）强制执行元宪法检查
@@ -591,7 +644,7 @@ async def chat_stream(user_input: str, context: dict):
         else:
             yield _emit("step", {"phase": "事实锚点", "status": "done", "detail": "无相关事实锚点"})
     except Exception as e:
-        logger.debug(f"事实锚点查询跳过: {e}")
+        logger.warning(f"事实锚点查询跳过: {e}")
 
     if fact_context and not truth_insights:
         truth_insights = fact_context
@@ -610,7 +663,7 @@ async def chat_stream(user_input: str, context: dict):
             yield _emit("step", {"phase": "分层记忆", "status": "done",
                 "detail": f"战略{lm_context['strategic_count']}/程序{lm_context['procedural_count']}/工具{lm_context['tool_count']}"})
     except Exception as e:
-        logger.debug(f"分层记忆查询跳过: {e}")
+        logger.warning(f"分层记忆查询跳过: {e}")
 
     yield _emit("step", {"phase": "方法论发现", "status": "done", "detail": f"解决策略：{methodology['strategy']} | 来源优先级：{' → '.join(methodology['source_priority'][:3])}"})
 
@@ -631,7 +684,7 @@ async def chat_stream(user_input: str, context: dict):
                     _new_intent = _ra.split(":", 1)[1]
                     intent_type = _new_intent
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
 
     # ========== 阶段2：能力评估与获取 ==========
     # 在行动之前，先想清楚：我能不能做这件事？如果不能，怎么获得能力？
@@ -660,7 +713,7 @@ async def chat_stream(user_input: str, context: dict):
         else:
             yield _emit("step", {"phase": "能力评估", "status": "done", "detail": "能力充足，开始执行"})
     except Exception as _ce:
-        logger.debug(f"能力评估跳过: {_ce}")
+        logger.warning(f"能力评估跳过: {_ce}")
 
     # ========== 阶段3：多策略并行尝试 ==========
     yield _emit("thinking", {
@@ -682,7 +735,7 @@ async def chat_stream(user_input: str, context: dict):
 
     logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] 进入阶段4: 对比择优, {len(candidates)}个候选")
     for i, c in enumerate(candidates):
-        logger.debug(f"[ORCH_DIAG] 候选{i}: source={c.get('source')}, quality={c.get('quality')}, resp_len={len(c.get('response',''))}, resp_preview={c.get('response','')[:80]}")
+        logger.warning(f"[ORCH_DIAG] 候选{i}: source={c.get('source')}, quality={c.get('quality')}, resp_len={len(c.get('response',''))}, resp_preview={c.get('response','')[:80]}")
     yield _emit("step", {"phase": "对比择优", "status": "running", "detail": f"对{len(candidates)}个结果评分对比..."})
 
     best, comparison = _compare_and_select(candidates, user_input, cbnr_ctx=cbnr_context)
@@ -703,7 +756,7 @@ async def chat_stream(user_input: str, context: dict):
                 if c.get("score", 0) >= 60:
                     tb.record_success(c["source"], user_input, c.get("response", "")[:200])
         except Exception as e:
-            logger.debug(f"ToolBuilder观察跳过: {e}")
+            logger.warning(f"ToolBuilder观察跳过: {e}")
 
         # 贡献度归因（SHAP风格）+ 路径权重更新（AdaBoost风格，不确定性感知）
         try:
@@ -724,7 +777,7 @@ async def chat_stream(user_input: str, context: dict):
                     unc_str = f" | 不确定性维度:{unc_dims}"
                 yield _emit("step", {"phase": "贡献归因", "status": "done", "detail": f"贡献度: {contrib_str}{unc_str}"})
         except Exception as e:
-            logger.debug(f"贡献归因跳过: {e}")
+            logger.warning(f"贡献归因跳过: {e}")
 
         # 动态概率场初始化（异步概率计算核心）+ 不确定性驱动路由
         try:
@@ -741,7 +794,7 @@ async def chat_stream(user_input: str, context: dict):
                 yield _emit("step", {"phase": "概率场", "status": "done",
                     "detail": f"概率分布: top={prob_dist['top']['source']}({prob_dist['top']['probability']:.0%}) 熵={prob_dist['entropy']:.2f}{action_hint}"})
         except Exception as e:
-            logger.debug(f"概率场初始化跳过: {e}")
+            logger.warning(f"概率场初始化跳过: {e}")
 
         # 世界模型反事实推理 + 验证闭环
         try:
@@ -773,7 +826,7 @@ async def chat_stream(user_input: str, context: dict):
                     {"outcome": "success" if best.get("score", 0) >= 60 else "failure", "source": best.get("source", "")}
                 )
         except Exception as e:
-            logger.debug(f"世界模型反事实推理跳过: {e}")
+            logger.warning(f"世界模型反事实推理跳过: {e}")
     else:
         yield _emit("step", {"phase": "对比择优", "status": "done", "detail": "无有效候选结果"})
 
@@ -795,12 +848,12 @@ async def chat_stream(user_input: str, context: dict):
             try:
                 _cognitive_learning = cp._learn(user_input, _cognitive_perception)
             except Exception as e:
-                logger.debug(f"L2认知学习跳过: {e}")
+                logger.warning(f"L2认知学习跳过: {e}")
                 _alchemize_error(e, context={"user_input": user_input[:50]}, phase="L2_cognitive_learning")
             try:
                 _cognitive_integration = cp._integrate(_cognitive_learning)
             except Exception as e:
-                logger.debug(f"L3认知整合跳过: {e}")
+                logger.warning(f"L3认知整合跳过: {e}")
         knowledge_gained = _cognitive_learning.get("knowledge_gained", 0)
         if knowledge_gained > 0:
             yield _emit("step", {"phase": "L2认知学习", "status": "done",
@@ -863,7 +916,7 @@ async def chat_stream(user_input: str, context: dict):
                             fact_verified = False
                             fact_issues.append(f"与已纠错事实冲突: {neg_claim}")
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
             
             if not fact_verified:
                 essence_result["passed"] = False
@@ -935,7 +988,7 @@ async def chat_stream(user_input: str, context: dict):
                             from core.essence_reasoner import essence_reasoner
                             recheck = await _run_sync(essence_reasoner.reason, user_input, single["response"], conversation_context, timeout=30)
                         except Exception:
-                            pass
+                            logger.warning("操作降级跳过")
                         if recheck and recheck["confidence"] > essence_result["confidence"]:
                             final_response = single["response"]
                             _save_to_experience_pool(user_input, final_response, success=True, intent_type="single_source", model_name=best.get("source","unknown") if best else "unknown")
@@ -952,7 +1005,7 @@ async def chat_stream(user_input: str, context: dict):
             logger.warning("本质推理超时(15秒)")
             yield _emit("step", {"phase": "本质推理", "status": "timeout", "detail": "本质推理超时，跳过验证继续"})
         except Exception as e:
-            logger.debug(f"本质推理异常: {e}")
+            logger.error(f"本质推理异常: {e}")
             _alchemize_error(e, context={"user_input": user_input[:50]}, phase="essence_reasoning")
             yield _emit("step", {"phase": "本质推理", "status": "done", "detail": "本质推理异常，继续后续验证"})
 
@@ -985,11 +1038,11 @@ async def chat_stream(user_input: str, context: dict):
                                 logger.info(f"🔧 工具构建器: 自动构建工具'{_build_result.tool_id}'成功")
                                 yield _emit("learning", {"type": "tool_built", "tool_id": _build_result.tool_id})
                             else:
-                                logger.debug(f"工具构建器: 构建失败 - {_build_result.error}")
+                                logger.error(f"工具构建器: 构建失败 - {_build_result.error}")
                     except Exception as _tbe:
-                        logger.debug(f"工具构建器跳过: {_tbe}")
+                        logger.warning(f"工具构建器跳过: {_tbe}")
         except Exception as _ge:
-            logger.debug(f"能力缺失学习异常: {_ge}")
+            logger.error(f"能力缺失学习异常: {_ge}")
 
         fallback = _generate_meaningful_fallback(user_input, attempts)
         if fallback == "__NEED_DYNAMIC_FALLBACK__":
@@ -1063,7 +1116,7 @@ async def chat_stream(user_input: str, context: dict):
                     FailureClassifier.record_failure(category, user_input, {"intent_type": intent_type})
                     AuditLogger.log(user_input, {"intent_type": intent_type}, final_response[:200], reflection)
                 except Exception:
-                    pass
+                    logger.warning("操作降级跳过")
             else:
                 verification = await _self_verify(user_input, final_response)
         else:
@@ -1139,7 +1192,7 @@ async def chat_stream(user_input: str, context: dict):
                         final_response += unc_note
                         attempts.append(("不确定性坦诚", True, "针对性结语"))
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
 
         _sm_growth = _get_self_model()
         if _sm_growth:
@@ -1154,7 +1207,7 @@ async def chat_stream(user_input: str, context: dict):
                         if growth_note not in final_response:
                             final_response += growth_note
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
         if intent_type == "code" and final_response:
             code_verify = _verify_code_response(user_input, final_response)
             if code_verify["passed"]:
@@ -1187,7 +1240,7 @@ async def chat_stream(user_input: str, context: dict):
             else:
                 yield _emit("step", {"phase": "适应度评估", "status": "done", "detail": f"开放性问题 | 主观分{fitness_score.subjective_score:.0f}"})
         except Exception as e:
-            logger.debug(f"适应度评估跳过: {e}")
+            logger.warning(f"适应度评估跳过: {e}")
 
     # 概率场更新：用适应度结果作为证据更新概率分布 + 闭环校准反馈
     try:
@@ -1206,7 +1259,7 @@ async def chat_stream(user_input: str, context: dict):
                     best.get("source", ""), fitness_score.final_score
                 )
     except Exception as e:
-        logger.debug(f"概率场更新跳过: {e}")
+        logger.warning(f"概率场更新跳过: {e}")
 
     # ========== 阶段5.55：ReAct迭代循环（P0-3/P0-5 — 适应度<60时启动Reason→Act→Observe→Reflect） ==========
     if fitness_score and fitness_score.final_score < 60 and fitness_score.final_score >= 20 and final_response and route == "slow":
@@ -1235,7 +1288,7 @@ async def chat_stream(user_input: str, context: dict):
                     yield _emit("step", {"phase": "短板聚焦", "status": "done",
                         "detail": f"识别短板: {gap['gap_type']}(严重度{gap['severity']:.2f}), 已注入增强提示"})
             except Exception as e:
-                logger.debug(f"ReactEnhancer跳过: {e}")
+                logger.warning(f"ReactEnhancer跳过: {e}")
 
             async def _react_fitness(q, r):
                 try:
@@ -1278,7 +1331,7 @@ async def chat_stream(user_input: str, context: dict):
                 yield _emit("step", {"phase": "ReAct循环", "status": "done",
                     "detail": f"ReAct {react_result.total_iterations}次迭代未显著改善，保留当前结果"})
         except Exception as e:
-            logger.debug(f"ReAct循环异常: {e}")
+            logger.error(f"ReAct循环异常: {e}")
             yield _emit("step", {"phase": "ReAct循环", "status": "done", "detail": "ReAct循环跳过"})
     elif fitness_score and fitness_score.final_score >= 60:
         pass
@@ -1320,7 +1373,7 @@ async def chat_stream(user_input: str, context: dict):
                 attempts.append(("闭环迭代", False, "迭代未改善"))
                 yield _emit("step", {"phase": "闭环迭代", "status": "done", "detail": "迭代未显著改善，保留当前结果"})
         except Exception as e:
-            logger.debug(f"闭环迭代异常: {e}")
+            logger.error(f"闭环迭代异常: {e}")
             yield _emit("step", {"phase": "闭环迭代", "status": "done", "detail": "闭环迭代跳过"})
 
     # ========== 阶段6：精神内核验证 ==========
@@ -1362,7 +1415,7 @@ async def chat_stream(user_input: str, context: dict):
                         final_response += f"\n\n⚠️ 以上引用的洞察（{', '.join(_r1_unverified_truths[:2])}）尚未经过充分验证，请谨慎参考。"
                     logger.warning(f"元宪法R1违反: {_meta_constitution_violation}")
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
 
         # R3检查：涉及系统级变更的回复需要人类确认
         if final_response and any(kw in final_response for kw in ["我将修改", "我会删除", "我将关闭", "我将重启", "我将重置"]):
@@ -1382,7 +1435,7 @@ async def chat_stream(user_input: str, context: dict):
         else:
             yield _emit("step", {"phase": "元宪法", "status": "done", "detail": "R1/R3检查通过 ✅"})
     except Exception as e:
-        logger.debug(f"元宪法检查跳过: {e}")
+        logger.warning(f"元宪法检查跳过: {e}")
 
     if SPIRIT_CORE_AVAILABLE:
         original_response = final_response
@@ -1399,7 +1452,7 @@ async def chat_stream(user_input: str, context: dict):
             logger.warning("精神内核验证超时(3秒)，跳过")
             yield _emit("step", {"phase": "精神验证", "status": "timeout", "detail": "精神内核验证超时，跳过"})
         except Exception as e:
-            logger.debug(f"精神内核异常: {e}")
+            logger.error(f"精神内核异常: {e}")
             yield _emit("step", {"phase": "精神验证", "status": "done", "detail": "精神内核异常，跳过验证"})
     else:
         yield _emit("step", {"phase": "精神验证", "status": "done", "detail": "基础验证完成"})
@@ -1480,7 +1533,7 @@ async def chat_stream(user_input: str, context: dict):
                         else:
                             yield _emit("step", {"phase": "L4修正推理", "status": "done", "detail": "无可用模型"})
         except Exception as e:
-            logger.debug(f"L4认知校验跳过: {e}")
+            logger.warning(f"L4认知校验跳过: {e}")
             _alchemize_error(e, context={"user_input": user_input[:50]}, phase="L4_validation")
     _sm = _get_self_model()
     if _sm and _cognitive_validation:
@@ -1502,7 +1555,7 @@ async def chat_stream(user_input: str, context: dict):
                 )
                 logger.debug("L5进化层已异步触发")
             except Exception as e:
-                logger.debug(f"L5进化层触发跳过: {e}")
+                logger.warning(f"L5进化层触发跳过: {e}")
         else:
             logger.debug("L5进化层: 旁路已包含副作用，跳过手动触发")
 
@@ -1528,7 +1581,7 @@ async def chat_stream(user_input: str, context: dict):
                                     gene_pool.mutate(_gid, _delta, trigger="l5_evolution_sync")
                                     _synced_genes += 1
                             except Exception:
-                                pass
+                                logger.warning("操作降级跳过")
                     if _synced_genes > 0:
                         logger.info(f"L5→基因池同步: {_synced_genes}个基因已通过mutate()写入gene_pool")
 
@@ -1546,11 +1599,11 @@ async def chat_stream(user_input: str, context: dict):
                                 )
                                 _synced_skills += 1
                             except Exception:
-                                pass
+                                logger.warning("操作降级跳过")
                     if _synced_skills > 0:
                         logger.info(f"L5→技能库同步: {_synced_skills}个技能已写入skill_emergence")
         except Exception as e:
-            logger.debug(f"进化岛结果反馈跳过: {e}")
+            logger.warning(f"进化岛结果反馈跳过: {e}")
         try:
             if _bypass_side_effects_done and _bypass_result_l2l3.introspection:
                 _cognitive_introspection = _bypass_result_l2l3.introspection
@@ -1560,23 +1613,23 @@ async def chat_stream(user_input: str, context: dict):
                 if _cognitive_introspection:
                     logger.debug("L6内省层: 获取到内省报告")
         except Exception as e:
-            logger.debug(f"L6内省层跳过: {e}")
+            logger.warning(f"L6内省层跳过: {e}")
         if not _bypass_side_effects_done:
             try:
                 cp._save_memory(user_input, final_response or "", _cognitive_perception, _cognitive_validation)
                 logger.debug("认知记忆已保存")
             except Exception as e:
-                logger.debug(f"认知记忆保存跳过: {e}")
+                logger.warning(f"认知记忆保存跳过: {e}")
             try:
                 cp._update_relationship(user_input, final_response or "", _cognitive_perception, _cognitive_validation)
                 logger.debug("认知关系模型已更新")
             except Exception as e:
-                logger.debug(f"认知关系模型更新跳过: {e}")
+                logger.warning(f"认知关系模型更新跳过: {e}")
             try:
                 cp._submit_signals(_cognitive_perception, _cognitive_validation)
                 logger.debug("认知信号已提交")
             except Exception as e:
-                logger.debug(f"认知信号提交跳过: {e}")
+                logger.warning(f"认知信号提交跳过: {e}")
         else:
             logger.debug("认知副作用(记忆/关系/信号): 旁路已包含，跳过")
         _sm = _get_self_model()
@@ -1586,7 +1639,7 @@ async def chat_stream(user_input: str, context: dict):
                 _sm.sync_from_cognitive_planner(cp)
                 _sm.evaluate_and_act()
             except Exception as e:
-                logger.debug(f"SelfModel同步跳过: {e}")
+                logger.warning(f"SelfModel同步跳过: {e}")
 
     try:
         reflection = await _run_sync(_reflect_and_learn, user_input, final_response, attempts, start_time, comparison if candidates else [], timeout=5, phase="反思学习")
@@ -1595,7 +1648,7 @@ async def chat_stream(user_input: str, context: dict):
         reflection = "反思学习超时，跳过"
         yield _emit("step", {"phase": "反思学习", "status": "timeout", "detail": "反思学习超时，跳过"})
     except Exception as e:
-        logger.debug(f"反思学习异常: {e}")
+        logger.error(f"反思学习异常: {e}")
         _alchemize_error(e, context={"user_input": user_input[:50]}, phase="reflection_learning")
         reflection = "反思学习异常，跳过"
 
@@ -1614,7 +1667,7 @@ async def chat_stream(user_input: str, context: dict):
         if _abstraction_result.get("key_insights"):
             reflection += f"; 🧬 抽象:{_abstraction_result['key_insights'][0][:60]}"
     except Exception as e:
-        logger.debug(f"经验抽象跳过: {e}")
+        logger.warning(f"经验抽象跳过: {e}")
 
     # 基因微调：从交互中学习（反脆弱性：失败也触发学习）
     try:
@@ -1634,7 +1687,7 @@ async def chat_stream(user_input: str, context: dict):
         else:
             reflection += "; 🧬 基因已微调"
     except Exception as e:
-        logger.debug(f"基因微调异常: {e}")
+        logger.error(f"基因微调异常: {e}")
 
     # 【墙上的画→引擎】错误炼金：从失败步骤中提炼学习信号
     # 之前：ErrorAlchemy从未被chat_orchestrator调用，错误信息仅记录到日志
@@ -1659,7 +1712,7 @@ async def chat_stream(user_input: str, context: dict):
         if _error_alchemy_signals:
             reflection += f"; 🔮 错误炼金提取{len(_error_alchemy_signals)}个信号({','.join(_error_alchemy_signals[:3])})"
     except Exception as e:
-        logger.debug(f"错误炼金跳过: {e}")
+        logger.warning(f"错误炼金跳过: {e}")
 
     # 【墙上的画→引擎】元学习：优化学习策略本身
     # 审计报告要求：推荐策略应指导learn_from_interaction逻辑，而非仅记录推荐
@@ -1687,7 +1740,7 @@ async def chat_stream(user_input: str, context: dict):
                 )
             reflection += f"; 📚 元学习推荐:{_recommendations[0].strategy.name}"
     except Exception as e:
-        logger.debug(f"元学习跳过: {e}")
+        logger.warning(f"元学习跳过: {e}")
 
     # 元学习策略指导基因微调：不同策略→不同学习率
     if _meta_learning_strategy:
@@ -1704,9 +1757,9 @@ async def chat_stream(user_input: str, context: dict):
                 gene_pool.mutate("retry_aggression", 0.02, trigger="meta_application")
             elif _s_type == "evaluation":
                 gene_pool.mutate("self_doubt_frequency", 0.02, trigger="meta_evaluation")
-            logger.debug(f"元学习策略指导基因微调: {_s_type}")
+            logger.warning(f"元学习策略指导基因微调: {_s_type}")
         except Exception as e:
-            logger.debug(f"元学习策略微调跳过: {e}")
+            logger.warning(f"元学习策略微调跳过: {e}")
 
     # Agent协作触发：复杂查询且质量不达标时，启动多Agent闭环
     if intent_type in ("complex_query", "code") and fitness_score is not None and hasattr(fitness_score, 'final_score') and fitness_score.final_score < 50:
@@ -1723,7 +1776,7 @@ async def chat_stream(user_input: str, context: dict):
         except asyncio.TimeoutError:
             logger.debug("Agent协作超时,跳过")
         except Exception as e:
-            logger.debug(f"Agent协作异常: {e}")
+            logger.error(f"Agent协作异常: {e}")
 
     # 双速进化快循环：秒级经验积累 + 痛点信号收集
     try:
@@ -1734,7 +1787,7 @@ async def chat_stream(user_input: str, context: dict):
             fitness_score=fitness_val, intent_type=intent_type,
         )
     except Exception as e:
-        logger.debug(f"双速进化快循环异常: {e}")
+        logger.error(f"双速进化快循环异常: {e}")
 
     # 路径权重批量更新（AdaBoost快循环）：根据attempts结果更新各路径权重
     try:
@@ -1750,7 +1803,7 @@ async def chat_stream(user_input: str, context: dict):
                         pass
                 path_weight_manager.update_weight(path_name, success, conf)
     except Exception as e:
-        logger.debug(f"路径权重批量更新跳过: {e}")
+        logger.warning(f"路径权重批量更新跳过: {e}")
 
     # 知识固化：高质量回复升级为知识
     try:
@@ -1758,7 +1811,7 @@ async def chat_stream(user_input: str, context: dict):
         if gene_result:
             reflection += f"; {gene_result}"
     except Exception as e:
-        logger.debug(f"知识固化异常: {e}")
+        logger.error(f"知识固化异常: {e}")
 
     # 事实提取：高质量回复自动提取三元组存入事实库
     try:
@@ -1769,7 +1822,7 @@ async def chat_stream(user_input: str, context: dict):
             if fact_count > 0:
                 reflection += f"; 📚 事实提取{fact_count}条三元组"
     except Exception as e:
-        logger.debug(f"事实提取异常: {e}")
+        logger.error(f"事实提取异常: {e}")
 
     # 反思管道：异步触发深度反思（不阻塞响应）
     try:
@@ -1788,7 +1841,7 @@ async def chat_stream(user_input: str, context: dict):
             }
             asyncio.create_task(pipeline.process(execution_context))
     except Exception as e:
-        logger.debug(f"反思管道触发跳过: {e}")
+        logger.warning(f"反思管道触发跳过: {e}")
 
     # SelfReflection联动：从精神内核获取教训，注入反思学习
     try:
@@ -1804,7 +1857,7 @@ async def chat_stream(user_input: str, context: dict):
             if violations:
                 reflection += f"; 违规记录: {len(violations)}条"
     except Exception as e:
-        logger.debug(f"精神内核联动跳过: {e}")
+        logger.warning(f"精神内核联动跳过: {e}")
 
     # ========== 先发射最终响应（确保前端立即收到，不再被后续处理阻塞） ==========
     elapsed = time.time() - start_time
@@ -1896,7 +1949,7 @@ async def chat_stream(user_input: str, context: dict):
             source="live"
         )
     except Exception as e:
-        logger.debug(f"轨迹存储跳过: {e}")
+        logger.warning(f"轨迹存储跳过: {e}")
 
     token_summary = {}
     for c in candidates:
@@ -1911,7 +1964,7 @@ async def chat_stream(user_input: str, context: dict):
         guard = get_alignment_guard()
         guard.check_response_alignment(user_input, final_response or "", "chat_stream")
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     # CBNR L3: 认知残差 — 经验复用+增量学习+状态更新 (移至result前确保L3数据包含在响应中)
     try:
@@ -1929,13 +1982,13 @@ async def chat_stream(user_input: str, context: dict):
         cbnr_context["l3_search_tree_size"] = _l3_result.search_tree_size
         cbnr_context["l3_fallback_used"] = _l3_result.fallback_used
         cbnr_context["l3_has_experience_base"] = _l3_result.new_state.get("_has_experience_base", False)
-        logger.debug(f"CBNR L3: 复用率={_l3_result.state_reuse_rate:.1%}, 搜索树={_l3_result.search_tree_size}")
+        logger.warning(f"CBNR L3: 复用率={_l3_result.state_reuse_rate:.1%}, 搜索树={_l3_result.search_tree_size}")
         try:
             _cbnr_hub.finalize_distributed()
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
     except Exception as e:
-        logger.debug(f"CBNR L3跳过: {e}")
+        logger.warning(f"CBNR L3跳过: {e}")
 
     if final_response and len(final_response) > _MAX_RESPONSE_CHARS:
         logger.warning(f"响应过长({len(final_response)}字符)，截断至{_MAX_RESPONSE_CHARS}(GPU过热保护)")
@@ -1955,7 +2008,7 @@ async def chat_stream(user_input: str, context: dict):
                 "spirit_score": validation.get("score", 0),
             }
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     # ========== 目标达成检查：半成品不输出，继续求解 ==========
     if final_response and not _is_goal_achieved(user_input, final_response, intent_type, attempts):
@@ -2020,7 +2073,7 @@ async def chat_stream(user_input: str, context: dict):
         from infrastructure.hardware_monitor import set_ollama_cooldown
         set_ollama_cooldown(3.0)
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     if _chat_session_id and final_response:
         try:
@@ -2031,21 +2084,21 @@ async def chat_stream(user_input: str, context: dict):
                 if cbnr_context:
                     _cbnr_sum = json.dumps(cbnr_context, ensure_ascii=False)[:500]
             except Exception:
-                pass
+                logger.warning("操作降级跳过")
             _ch.add_message(
                 _chat_session_id, "assistant", final_response,
                 intent=intent_type, route=route, confidence=confidence,
                 elapsed=round(elapsed, 1), cbnr_summary=_cbnr_sum
             )
         except Exception as e:
-            logger.debug(f"对话历史写入assistant跳过: {e}")
+            logger.warning(f"对话历史写入assistant跳过: {e}")
 
     try:
         from infrastructure.ratchet_gate import guard_change
         resp_quality = confidence if fitness_score is None else fitness_score.final_score / 100.0
         guard_change("chat_response", resp_quality, f"chat: {user_input[:40]} intent={intent_type} route={route}")
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     try:
         from core.perception_snapshot import update_action_trace
@@ -2058,7 +2111,7 @@ async def chat_stream(user_input: str, context: dict):
             route=route,
         )
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     # P1-1: 发布KnowledgeUpdate和ModelStatusChange事件
     try:
@@ -2079,7 +2132,7 @@ async def chat_stream(user_input: str, context: dict):
                 "timestamp": time.time(),
             })
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     # ========== 以下全部为后台fire-and-forget任务，不阻塞SSE流 ==========
 
@@ -2110,7 +2163,7 @@ async def chat_stream(user_input: str, context: dict):
             asyncio.create_task(_bg_auto_evolution())
             yield _emit("step", {"phase": "反思学习", "status": "done", "detail": "后台学习中..."})
     except Exception as e:
-        logger.debug(f"自动学习进化跳过: {e}")
+        logger.warning(f"自动学习进化跳过: {e}")
 
     # 自适应进化目标：从交互中推断进化方向
     try:
@@ -2123,7 +2176,7 @@ async def chat_stream(user_input: str, context: dict):
             "success": any(a[1] for a in attempts),
         })
     except Exception as e:
-        logger.debug(f"自适应进化目标跳过: {e}")
+        logger.warning(f"自适应进化目标跳过: {e}")
 
     # 注入验证：验证知识注入/事实提取/知识固化的实际效果
     try:
@@ -2149,7 +2202,7 @@ async def chat_stream(user_input: str, context: dict):
             else:
                 reflection += f"; ✅ 注入验证通过(改进{verification.improvement:.1f}分)"
     except Exception as e:
-        logger.debug(f"注入验证跳过: {e}")
+        logger.warning(f"注入验证跳过: {e}")
 
     yield _emit("step", {"phase": "反思学习", "status": "done", "detail": reflection})
 
@@ -2186,7 +2239,7 @@ async def chat_stream(user_input: str, context: dict):
         )
         asyncio.ensure_future(sm_store_coro)
     except Exception as e:
-        logger.debug(f"立体记忆存储跳过: {e}")
+        logger.warning(f"立体记忆存储跳过: {e}")
 
     # 关系模型更新：记录本次互动，演化信任度
     try:
@@ -2217,7 +2270,7 @@ async def chat_stream(user_input: str, context: dict):
         )
         asyncio.ensure_future(rm_record_coro)
     except Exception as e:
-        logger.debug(f"关系模型更新跳过: {e}")
+        logger.warning(f"关系模型更新跳过: {e}")
 
     # 存在层信号：将交互结果发送给存在层
     try:
@@ -2232,7 +2285,7 @@ async def chat_stream(user_input: str, context: dict):
             "fitness": fitness_score.final_score if fitness_score else None,
         })
     except Exception:
-        pass
+        logger.warning("操作降级跳过")
 
     # ========== 阶段8：后台持续进化（认知时差：延迟启动） ==========
     try:
@@ -2251,7 +2304,7 @@ async def chat_stream(user_input: str, context: dict):
             if exp_count > 0 and exp_count % 50 == 0:
                 task_queue.enqueue("stress_test", {}, priority=9, delay_seconds=120)
         except Exception:
-            pass
+            logger.warning("操作降级跳过")
     except Exception as e:
         logger.warning(f"任务入队失败，降级为内存任务: {e}")
         asyncio.create_task(_background_deep_thinking(user_input, context, intent_type))
@@ -2296,6 +2349,14 @@ def _generate_meaningful_fallback(query: str, attempts: list) -> str:
 
 
 def _never_give_up_response(user_input: str, attempts: list) -> str:
+    try:
+        from core.cognition.failure_classifier import FailureClassifier, FailureCategory
+        failed_methods = [a[0] for a in attempts if isinstance(a, tuple) and len(a) >= 2 and not a[1]]
+        if failed_methods:
+            FailureClassifier.record_failure(FailureCategory.KNOWLEDGE_GAP, user_input,
+                                              {"failed_methods": failed_methods[:5], "total_attempts": len(attempts)})
+    except Exception:
+        pass
     try:
         from core.spirit_core import spirit_core
         attempt_dicts = []
@@ -2375,6 +2436,11 @@ def _is_goal_achieved(user_input: str, response: str, intent_type: str, attempts
         has_real = any(p in resp_lower for p in real_data_markers)
         if has_fabricated and not has_real:
             logger.info(f"🔄 目标未达成: 检测到LLM伪造的硬件数据，非真实读取结果")
+            try:
+                from core.cognition.failure_classifier import FailureClassifier, FailureCategory
+                FailureClassifier.record_failure(FailureCategory.LLM_HALLUCINATION, user_input, {"fabricated": True})
+            except Exception:
+                pass
             return False
 
     if is_operational:
