@@ -27,7 +27,7 @@ class PlanTemplateLibrary:
     """计划模板库"""
     
     def __init__(self):
-        self.db_path = Path("plan_templates.db")
+        self.db_path = Path("data/plan_templates.db")
         self._init_db()
         self.min_success_rate = config.get("plan_template.min_success_rate", 0.7)
         self.min_quality = config.get("plan_template.min_quality", 70)

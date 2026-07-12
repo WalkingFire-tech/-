@@ -232,6 +232,8 @@ class FurnaceTrainer:
         
         logger.info(f"🚀 开始训练: step {start_step} -> {total_steps}")
         
+        start = time.time()
+        
         # 模拟训练步骤
         for step in range(start_step, total_steps):
             # 模拟训练一步
@@ -251,7 +253,7 @@ class FurnaceTrainer:
             
             # 检查是否超时
             if max_time_minutes:
-                elapsed = time.time() - time.time()  # 这里应该用开始时间
+                elapsed = time.time() - start
                 # 简化：训练20步后暂停
                 if step - start_step >= 20:
                     logger.info(f"⏰ 达到训练限制，暂停")

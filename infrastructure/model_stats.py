@@ -4,7 +4,7 @@ from loguru import logger
 from infrastructure.database_manager import DatabaseManager
 
 class ModelStats:
-    def __init__(self, db_path: str = "model_stats.db"):
+    def __init__(self, db_path: str = "data/model_stats.db"):
         self.db_path = db_path
         self._init_db()
 

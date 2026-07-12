@@ -431,7 +431,7 @@ class MetacognitiveExecutor:
             try:
                 from infrastructure.database_manager import DatabaseManager
                 rows = DatabaseManager.get("data/knowledge_store.db").query(
-                    "SELECT content FROM knowledge WHERE content LIKE ? LIMIT 3",
+                    "SELECT answer FROM knowledge_items WHERE answer LIKE ? LIMIT 3",
                     (f"%{q[:30]}%",)
                 )
                 if rows:

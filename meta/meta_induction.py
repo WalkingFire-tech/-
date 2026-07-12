@@ -74,10 +74,9 @@ class MetaInductor:
         """
         try:
             db_path = self.BASE_DATA_DIR / "learning_rules.db"
-            conn = DatabaseManager.get(str(db_path))._get_conn()
-            cursor = conn.cursor()
+            db = DatabaseManager.get(str(db_path))
             
-            cursor.execute("""
+            rows = db.query("""
                 SELECT 
                     action,
                     COUNT(*) as total,
@@ -90,7 +89,7 @@ class MetaInductor:
             """)
             
             performance = {}
-            for row in cursor.fetchall():
+            for row in rows:
                 action = row['action']
                 total = row['total']
                 successful = row['successful']

@@ -454,8 +454,8 @@ class CognitiveResidual:
                 if parent_id and parent_id in self._search_tree._nodes:
                     if node_id not in self._search_tree._nodes[parent_id].children_ids:
                         self._search_tree._nodes[parent_id].children_ids.append(node_id)
-                    elif not self._search_tree._root_id:
-                        self._search_tree._root_id = node_id
+                if not self._search_tree._root_id:
+                    self._search_tree._root_id = node_id
             if self._search_tree.size() > 0:
                 logger.debug(f"L3搜索树从数据库加载: {self._search_tree.size()}个节点")
         except Exception as e:

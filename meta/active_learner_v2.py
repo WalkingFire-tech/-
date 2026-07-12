@@ -214,21 +214,20 @@ class ActiveLearner:
     
     def _save_learning_data(self, data: Dict):
         """保存学习数据到规则库"""
-        db_path = config.get("learning_rules.db_path", "learning_rules.db")
+        db_path = config.get("learning_rules.db_path", "data/learning_rules.db")
         
         try:
-            conn = DatabaseManager.get(db_path)._get_conn()
+            db = DatabaseManager.get(db_path)
             if data["type"] == "correction":
-                # ✅ 修复SQL注入：对用户输入进行转义
                 escaped_input = data['user_input'][:30].replace("'", "''")
                 condition = f"raw_input LIKE '%{escaped_input}%'"
                 action = f"correct_intent:{data.get('suggested_intent', 'chat')}"
                 
-                conn.execute('''
+                db.execute('''
                     INSERT INTO learning_rules
                     (condition, action, priority, created_at, status, source)
                     VALUES (?, ?, 5, ?, 'pending', 'user_correction')
-                ''', (condition, action, datetime.now().isoformat()))
+                ''', (condition, action, datetime.now().isoformat()), commit=True)
             
             elif data["type"] == "confirmation":
                 pass

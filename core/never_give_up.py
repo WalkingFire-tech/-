@@ -195,7 +195,7 @@ class NeverGiveUpEngine:
         """尝试知识检索"""
         try:
             from infrastructure.database_manager import DatabaseManager
-            row = DatabaseManager.get("data/knowledge_store.db").query_one("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{question[:30]}%",))
+            row = DatabaseManager.get("data/knowledge_store.db").query_one("SELECT answer FROM knowledge_items WHERE answer LIKE ? LIMIT 1", (f"%{question[:30]}%",))
             if row:
                 return {"success": True, "answer": row[0], "confidence": 0.8}
         except Exception:

@@ -18,7 +18,7 @@ from infrastructure.config_manager import config
 class Intent:
     type: str
     raw_text: str
-    entities: dict
+    entities: dict = field(default_factory=dict)
     confidence: float = 1.0
     source: str = "rule"  # rule, llm, corrected
 
@@ -329,7 +329,7 @@ class AutoIntentParser:
                 "text": text,
                 "wrong_intent": wrong_intent,
                 "correct_intent": correct_intent,
-                "timestamp": str(Path.cwd())
+                "timestamp": datetime.now().isoformat()
             }
             self.learning_data["corrections"].append(correction)
             self.correction_count += 1

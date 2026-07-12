@@ -12,7 +12,7 @@ class SmartExperiencePool:
     """智能经验池"""
     
     def __init__(self, db_path: str = None):
-        self.db_path = db_path or config.get("memory.long_term.db_path", "experience_pool.db")
+        self.db_path = db_path or config.get("memory.long_term.db_path", "data/experience_pool.db")
         self._init_db()
         
         self.decay_rate = config.get("experience.decay_rate", 0.01)

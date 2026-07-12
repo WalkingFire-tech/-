@@ -62,7 +62,7 @@ class InductionEngine:
                                       limit: int = 50) -> List[Dict]:
         """获取高质量成功经验"""
         try:
-            db_path = "experience_pool.db"
+            db_path = "data/experience_pool.db"
             
             db = DatabaseManager.get(db_path)
             if intent_type:
@@ -94,7 +94,7 @@ class InductionEngine:
                                limit: int = 25) -> List[Dict]:
         """获取失败经验"""
         try:
-            db_path = "experience_pool.db"
+            db_path = "data/experience_pool.db"
             
             db = DatabaseManager.get(db_path)
             if intent_type:

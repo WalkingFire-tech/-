@@ -62,15 +62,7 @@ class StateCollector:
         self._init_database()
         self._init_heartbeat()
         
-        self._listeners: List[Callable] = []
-        
-        self._db_path = Path("data/state_reports.db")
-        self._init_database()
-        
-        self._last_snapshot: Optional[SystemSnapshot] = None
-        
-        self._init_heartbeat()
-        
+
         logger.info("📊 状态收集器已初始化")
     
     def _init_heartbeat(self):
@@ -303,7 +295,7 @@ class StateCollector:
                     "health": row["health"],
                     "confidence": row["confidence"]
                 }
-                for row in cursor.fetchall()
+                for row in rows
             ]
         except Exception as e:
             logger.error(f"获取健康趋势失败: {e}")
@@ -349,7 +341,6 @@ class StateCollector:
         }
 
 
-_state_collector = None
 
 _state_collector: Optional[StateCollector] = None
 _state_collector_lock = threading.Lock()

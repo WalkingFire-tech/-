@@ -119,7 +119,7 @@ class ContinuousSelfAssessment:
                 "weight": self.config['metric_weights']['helpfulness'],
                 "description": "回答是否有帮助",
             },
-            PerformanceMetric.CLAIRTY: {
+            PerformanceMetric.CLARITY: {
                 "weight": self.config['metric_weights']['clarity'],
                 "description": "回答是否清晰",
             },
@@ -416,7 +416,7 @@ class ContinuousSelfAssessment:
         else:
             clarity = 0.6
         
-        metrics[PerformanceMetric.CLAIRTY.value] = min(1.0, clarity)
+        metrics[PerformanceMetric.CLARITY.value] = min(1.0, clarity)
         
         response_time = context.get('response_time_ms')
         if response_time is not None:

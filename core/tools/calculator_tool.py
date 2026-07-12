@@ -56,7 +56,7 @@ class CalculatorTool(ToolInterface):
             allowed = set("0123456789+-*/().% ")
             if not all(c in allowed for c in clean):
                 return ToolResult(success=False, error="表达式包含不安全字符", source=self.name)
-            result = eval(clean, {"__builtins__": None}, {})
+            result = eval(clean, {"__builtins__": {}}, {})
             return ToolResult(
                 success=True, data=str(result),
                 source="计算器", quality=95,

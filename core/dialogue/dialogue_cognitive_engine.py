@@ -238,12 +238,12 @@ class DialogueCognitiveEngine:
         )
         
         role_intent_mapping = {
-            "question": IntentType.INFORMATION_SEEKING,
-            "knowledge_contribution": IntentType.KNOWLEDGE_SHARING,
-            "correction": IntentType.CORRECTION,
-            "challenge": IntentType.VERIFICATION,
-            "confirmation": IntentType.CONFIRMATION,
-            "teaching": IntentType.TEACHING
+            "question": IntentType.SEEK_INFORMATION,
+            "knowledge_contribution": IntentType.SHARE_KNOWLEDGE,
+            "correction": IntentType.CORRECT_MISTAKE,
+            "challenge": IntentType.VERIFY_UNDERSTANDING,
+            "confirmation": IntentType.VERIFY_UNDERSTANDING,
+            "teaching": IntentType.SHARE_KNOWLEDGE
         }
         
         intent_type = role_intent_mapping.get(
@@ -262,19 +262,19 @@ class DialogueCognitiveEngine:
         question_patterns = [r'如何', r'怎么', r'为什么', r'什么是', r'能否']
         if any(re.search(p, user_input) for p in question_patterns):
             if intent_type == IntentType.UNKNOWN:
-                intent_type = IntentType.INFORMATION_SEEKING
+                intent_type = IntentType.SEEK_INFORMATION
             confidence = min(1.0, confidence + 0.1)
             evidence.append("包含疑问词")
         
         correction_patterns = [r'不对', r'错了', r'应该是', r'纠正']
         if any(re.search(p, user_input) for p in correction_patterns):
-            intent_type = IntentType.CORRECTION
+            intent_type = IntentType.CORRECT_MISTAKE
             confidence = min(1.0, confidence + 0.15)
             evidence.append("包含纠正词")
         
         knowledge_patterns = [r'我发现', r'其实', r'经验是', r'建议']
         if any(re.search(p, user_input) for p in knowledge_patterns):
-            intent_type = IntentType.KNOWLEDGE_SHARING
+            intent_type = IntentType.SHARE_KNOWLEDGE
             confidence = min(1.0, confidence + 0.15)
             evidence.append("包含知识贡献词")
         
@@ -283,7 +283,7 @@ class DialogueCognitiveEngine:
             description=f"基于角色推断的意图: {intent_type.value}",
             confidence=confidence,
             evidence=evidence,
-            requires_action=(intent_type in [IntentType.CORRECTION, IntentType.TEACHING])
+            requires_action=(intent_type in [IntentType.CORRECT_MISTAKE, IntentType.SHARE_KNOWLEDGE])
         )
         
         alternatives = []
@@ -308,9 +308,9 @@ class DialogueCognitiveEngine:
         )
         
         learning_opportunity = intent_type in [
-            IntentType.KNOWLEDGE_SHARING,
-            IntentType.CORRECTION,
-            IntentType.TEACHING
+            IntentType.SHARE_KNOWLEDGE,
+            IntentType.CORRECT_MISTAKE,
+            IntentType.SHARE_KNOWLEDGE
         ]
         
         learning_content = None
@@ -337,12 +337,15 @@ class DialogueCognitiveEngine:
         from .dialogue_understander import IntentType
         
         strategy_mapping = {
-            IntentType.INFORMATION_SEEKING: "提供信息",
-            IntentType.KNOWLEDGE_SHARING: "确认并学习",
-            IntentType.CORRECTION: "接受纠正并更新",
-            IntentType.VERIFICATION: "提供证据",
-            IntentType.CONFIRMATION: "简单确认",
-            IntentType.TEACHING: "学习并应用",
+            IntentType.SEEK_INFORMATION: "提供信息",
+            IntentType.SHARE_KNOWLEDGE: "确认并学习",
+            IntentType.CORRECT_MISTAKE: "接受纠正并更新",
+            IntentType.VERIFY_UNDERSTANDING: "提供证据",
+            IntentType.SEEK_GUIDANCE: "提供指导",
+            IntentType.EXPRESS_PREFERENCE: "记录偏好",
+            IntentType.GUIDE_CONVERSATION: "跟随引导",
+            IntentType.EXPRESS_FRUSTRATION: "安抚并改进",
+            IntentType.TEST_SYSTEM: "认真回应",
             IntentType.UNKNOWN: "谨慎回应"
         }
         

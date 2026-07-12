@@ -14,7 +14,7 @@ class HealthDashboard:
     """健康度仪表盘 - 系统自我感知的核心"""
     
     def __init__(self):
-        self.db_path = Path("health_history.db")
+        self.db_path = "data/health_history.db"
         self._init_db()
         
         self.weights = {
@@ -174,7 +174,7 @@ class HealthDashboard:
             rules_dir = Path("meta/generated_rules")
             rules_count = len(list(rules_dir.glob("*.yaml"))) if rules_dir.exists() else 0
             
-            experience_db = Path("experience_pool.db")
+            experience_db = Path("data/experience_pool.db")
             if experience_db.exists():
                 db = DatabaseManager.get(str(experience_db))
                 row = db.query_one("SELECT COUNT(*) FROM experiences WHERE timestamp > datetime('now', '-7 days')")

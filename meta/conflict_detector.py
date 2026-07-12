@@ -14,7 +14,7 @@ class ConflictDetector:
     """规则冲突检测器"""
     
     def __init__(self):
-        self.db_path = config.get("learning_rules.db_path", "learning_rules.db")
+        self.db_path = config.get("learning_rules.db_path", "data/learning_rules.db")
         logger.info("规则冲突检测器初始化完成")
     
     def detect_conflicts(self) -> List[Dict]:
@@ -38,15 +38,15 @@ class ConflictDetector:
     def _load_active_rules(self) -> List[Dict]:
         """加载活跃规则"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            cur = conn.execute('''
+            db = DatabaseManager.get(self.db_path)
+            rows = db.query('''
                 SELECT id, condition, action, priority, confidence, status, source
                 FROM learning_rules
                 WHERE status = 'active'
                 ORDER BY priority DESC, confidence DESC
             ''')
             
-            return [dict(row) for row in cur.fetchall()]
+            return [dict(row) for row in rows]
         
         except Exception as e:
             logger.error(f"加载规则失败: {e}")
@@ -185,10 +185,11 @@ class ConflictDetector:
     def _deactivate_rule(self, rule_id: int):
         """停用规则"""
         try:
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            conn.execute(
+            db = DatabaseManager.get(self.db_path)
+            db.execute(
                 "UPDATE learning_rules SET status = 'conflicted' WHERE id = ?",
-                (rule_id,)
+                (rule_id,),
+                commit=True
             )
             
             logger.info(f"规则 {rule_id} 已标记为冲突并停用")
@@ -200,12 +201,12 @@ class ConflictDetector:
         """创建合并规则(使用JSON格式存储动作列表)"""
         try:
             import json
-            conn = DatabaseManager.get(self.db_path)._get_conn()
-            conn.execute('''
+            db = DatabaseManager.get(self.db_path)
+            db.execute('''
                 INSERT INTO learning_rules 
                 (condition, action, priority, confidence, status, source, created_at, metadata)
                 VALUES (?, ?, ?, ?, 'pending', 'merge_auto', ?, ?)
-            ''', (condition, action, 5, confidence, datetime.now().isoformat(), "{}"))
+            ''', (condition, action, 5, confidence, datetime.now().isoformat(), "{}"), commit=True)
             
             logger.info(f"创建合并规则: {condition} -> {action}")
         
