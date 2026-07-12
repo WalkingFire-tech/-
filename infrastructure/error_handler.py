@@ -47,7 +47,7 @@ class ModelTimeoutError(CampfireError):
         return "抱歉,模型响应超时。建议:\n1. 稍后重试\n2. 简化问题\n3. 检查系统资源"
 
 
-class ConnectionError(CampfireError):
+class ServiceConnectionError(CampfireError):
     """连接异常"""
     def __init__(self, service: str, url: str):
         super().__init__(
@@ -151,7 +151,7 @@ class ErrorHandler:
     @classmethod
     def is_retriable(cls, error: Exception) -> bool:
         """判断错误是否可重试"""
-        if isinstance(error, (ModelTimeoutError, ConnectionError)):
+        if isinstance(error, (ModelTimeoutError, ServiceConnectionError)):
             return True
         
         error_str = str(error).lower()
@@ -169,7 +169,7 @@ class ErrorHandler:
         if isinstance(error, ModelTimeoutError):
             return "尝试简化问题或等待系统负载降低"
         
-        if isinstance(error, ConnectionError):
+        if isinstance(error, ServiceConnectionError):
             service = error.details.get("service", "")
             if "ollama" in service.lower():
                 return "运行命令: ollama serve"

@@ -330,16 +330,7 @@ async def execute_parallel_paths(
                 t.cancel()
             pending_set = set()
             break
-            if _tool_intent and tool_task and not tool_task.done():
-                pass
-            else:
-                waiting_names = '+'.join(still_waiting)
-                yield _emit("step", {"phase": "智能调度", "status": "done",
-                    "detail": f"已有{high_q}条高质量候选，先综合输出，慢路径({waiting_names})后台补充"})
-                for t in list(pending_set):
-                    asyncio.ensure_future(_background_collect(t, user_input, pending_tasks.get(t, "未知路径")))
-                    pending_set.discard(t)
-                break
+
 
         if has_strong_self_reason and heartbeat_sec >= 5:
             if _tool_intent and tool_task and not tool_task.done():

@@ -118,8 +118,7 @@ class FeedbackStore:
             }
     
     def clear_old_feedback(self, days: int = 30) -> int:
-        cutoff = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        cutoff = cutoff.replace(day=cutoff.day - days)
+        cutoff = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days)
         cutoff_str = cutoff.isoformat()
         
         with self._lock:

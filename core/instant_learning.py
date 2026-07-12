@@ -39,10 +39,11 @@ class InstantLearningSystem:
             fact_db_path: 事实库路径
             knowledge_log_path: 学习日志路径
         """
-        self.fact_db_path = Path(fact_db_path)
+        self.fact_db_path = fact_db_path
         self.knowledge_log_path = Path(knowledge_log_path)
         self.knowledge_log_path.parent.mkdir(parents=True, exist_ok=True)
-        self.fact_db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.fact_db_path_parent = Path(fact_db_path)
+        self.fact_db_path_parent.mkdir(parents=True, exist_ok=True)
         
         # 初始化事实库
         self._init_fact_db()
