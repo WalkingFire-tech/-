@@ -103,18 +103,22 @@ class PathWeightManager:
                   datetime.now().isoformat()), commit=True)
 
     def update_weight(self, path: str, success: bool, confidence: float = 0.5,
-                      uncertainty: float = None, retrieval_entropy: float = None):
-        """更新路径权重 - 不确定性感知版
+                      uncertainty: float = None, retrieval_entropy: float = None,
+                      resource_pressure: float = None):
+        """更新路径权重 - 不确定性感知+资源竞争感知版
         
         增强特性：
         - uncertainty: 检索不确定性(0-1)，高不确定性但成功的路径应获得更大权重提升
         - retrieval_entropy: 检索结果熵值，用于量化检索过程的可靠性
+        - resource_pressure: 当前资源压力(0-1)，高压力下GPU密集路径的成功应获更大奖励
         
-        核心思想（来自BayesRAG/DAT）：
+        核心思想（来自BayesRAG/DAT + 迭代最佳响应）：
         - 高不确定性+成功 = 意外收获，应大幅提升权重（探索价值高）
         - 高不确定性+失败 = 预期之中，权重衰减较小（保留探索可能性）
         - 低不确定性+成功 = 稳定贡献，正常提升权重
         - 低不确定性+失败 = 需警惕，权重衰减较大
+        - 高资源压力+GPU路径成功 = 约束下高效，额外奖励（迭代最佳响应信号）
+        - 高资源压力+GPU路径失败 = 约束下低效，额外惩罚
         """
         if path not in self._paths:
             self._paths[path] = {"weight": 0.05, "success_rate": 0.5, "total_uses": 0, "total_successes": 0, "history": []}
@@ -125,13 +129,23 @@ class PathWeightManager:
         if uncertainty is not None and uncertainty > 0.5 and success:
             uncertainty_bonus = self._alpha * uncertainty * 0.5
 
+        resource_bonus = 0.0
+        if resource_pressure is not None and resource_pressure > 0.5:
+            profile = self._get_resource_profile(path)
+            is_gpu_intensive = profile.get("vram_cost", 0) > 0.1
+            if is_gpu_intensive:
+                if success:
+                    resource_bonus = self._alpha * resource_pressure * 0.3
+                else:
+                    resource_bonus = -self._alpha * resource_pressure * 0.2
+
         if success:
-            delta = self._alpha * confidence + uncertainty_bonus
+            delta = self._alpha * confidence + uncertainty_bonus + resource_bonus
         else:
             uncertainty_penalty = 0.0
             if uncertainty is not None and uncertainty < 0.3:
                 uncertainty_penalty = self._alpha * 0.3
-            delta = -self._alpha * confidence * 0.5 - uncertainty_penalty
+            delta = -self._alpha * confidence * 0.5 - uncertainty_penalty + resource_bonus
 
         # R2渐进注入门控：|delta|超过0.15时，先注入20%，下次交互再全量生效
         actual_delta = delta
@@ -219,6 +233,26 @@ class PathWeightManager:
         weight = self.get_weight(path)
         confidence = self._paths.get(path, {}).get("success_rate", 0.5)
         return base_score * weight * confidence
+
+    def _get_resource_profile(self, path: str) -> dict:
+        try:
+            from core.resource_awareness.adaptive_governor import AdaptiveGovernor
+            return AdaptiveGovernor.PATH_RESOURCE_PROFILES.get(path, {"vram_cost": 0, "ram_cost": 0, "cpu_cost": 0})
+        except Exception:
+            return {"vram_cost": 0, "ram_cost": 0, "cpu_cost": 0}
+
+    def compute_resource_pressure(self) -> float:
+        """计算当前资源压力(0-1)，供update_weight的resource_pressure参数使用"""
+        try:
+            from core.resource_awareness.health_monitor import get_health_monitor
+            monitor = get_health_monitor()
+            snap = monitor.check()
+            mem_pressure = snap.memory_usage
+            cpu_pressure = snap.cpu_percent
+            gpu_pressure = snap.gpu_memory
+            return max(mem_pressure, cpu_pressure, gpu_pressure)
+        except Exception:
+            return 0.0
 
     def batch_update(self, results: List[Dict]):
         for r in results:

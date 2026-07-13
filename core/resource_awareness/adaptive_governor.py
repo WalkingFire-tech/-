@@ -19,7 +19,8 @@
 """
 
 import threading
-from typing import Dict, Optional, Any, List, Callable
+import math
+from typing import Dict, Optional, Any, List, Callable, Tuple
 from datetime import datetime, timedelta
 from enum import Enum
 
@@ -237,7 +238,13 @@ class AdaptiveGovernor:
 
         return ActionDecision(allowed=True, mode=mode.value)
 
-    def get_parallel_path_count(self, requested: int = 9) -> int:
+    def get_parallel_path_count(self, requested: int = 9, path_weights: Dict[str, float] = None) -> int:
+        if path_weights:
+            alloc = self.compute_resource_allocation(path_weights, requested)
+            optimized = len(alloc["active_paths"])
+            if optimized < requested:
+                logger.info(f"⚖️ 路径优化：{requested}→{optimized}（约束优化求解）")
+            return min(requested, optimized)
         max_paths = self.health_monitor.get_max_parallel_paths()
         effective = self.get_effective_mode()
         effective_sev = self._MODE_SEVERITY.get(effective, 0)
@@ -254,6 +261,167 @@ class AdaptiveGovernor:
         if self.health_monitor.should_use_dense_retrieval():
             return "hybrid"
         return "sparse_only"
+
+    PATH_RESOURCE_PROFILES = {
+        "rule_reasoning":    {"vram_cost": 0.0, "ram_cost": 0.05, "cpu_cost": 0.05, "latency": 0.1, "quality_base": 0.60},
+        "experience_pool":   {"vram_cost": 0.0, "ram_cost": 0.10, "cpu_cost": 0.05, "latency": 0.2, "quality_base": 0.65},
+        "knowledge_base":    {"vram_cost": 0.0, "ram_cost": 0.10, "cpu_cost": 0.10, "latency": 0.3, "quality_base": 0.60},
+        "ollama":            {"vram_cost": 0.55, "ram_cost": 0.15, "cpu_cost": 0.30, "latency": 5.0, "quality_base": 0.80},
+        "external_model":    {"vram_cost": 0.0, "ram_cost": 0.02, "cpu_cost": 0.02, "latency": 3.0, "quality_base": 0.85},
+        "external_learner":  {"vram_cost": 0.0, "ram_cost": 0.02, "cpu_cost": 0.02, "latency": 4.0, "quality_base": 0.60},
+        "fact_anchor":       {"vram_cost": 0.0, "ram_cost": 0.05, "cpu_cost": 0.05, "latency": 0.1, "quality_base": 0.75},
+        "self_reasoning":    {"vram_cost": 0.0, "ram_cost": 0.05, "cpu_cost": 0.10, "latency": 0.5, "quality_base": 0.55},
+        "tool_framework":    {"vram_cost": 0.0, "ram_cost": 0.10, "cpu_cost": 0.15, "latency": 2.0, "quality_base": 0.70},
+    }
+
+    def compute_resource_allocation(
+        self,
+        path_weights: Dict[str, float],
+        requested_paths: int = 9,
+    ) -> Dict[str, Any]:
+        """
+        约束优化求解：给定资源约束和路径权重，计算最优资源分配。
+
+        数学框架（单同行者约束优化）：
+            max  Σ_i  w_i * q_i * x_i           （最大化加权质量）
+            s.t. Σ_i  vram_i * x_i ≤ VRAM_budget （VRAM约束）
+                 Σ_i  cpu_i  * x_i ≤ CPU_budget  （CPU约束）
+                 0 ≤ x_i ≤ 1                      （连续分配比例）
+
+        求解方法：拉格朗日松弛 + 投影梯度下降（轻量级，无需scipy）
+        迭代3-5次即可收敛（路径数≤9，约束数≤3）。
+
+        返回:
+            {
+                "allocation": {path_name: float},   # 0.0-1.0 资源分配比例
+                "active_paths": [str],               # x_i > 0.1 的路径
+                "total_quality": float,              # 预期总质量
+                "vram_utilization": float,           # VRAM利用率
+                "iterations": int,                   # 收敛迭代次数
+            }
+        """
+        snap = self.health_monitor.check()
+        mode = self.get_effective_mode()
+
+        vram_total = self.health_monitor.hardware.gpu_vram_gb
+        vram_used = snap.gpu_vram_used_gb
+        vram_available = max(0.0, vram_total - vram_used)
+
+        cpu_available = max(0.0, 1.0 - snap.cpu_percent)
+        ram_available = max(0.0, 1.0 - snap.memory_usage)
+
+        if mode == OperatingMode.EMERGENCY:
+            vram_budget = vram_available * 0.2
+            cpu_budget = cpu_available * 0.3
+            ram_budget = ram_available * 0.3
+        elif mode == OperatingMode.CONSERVATIVE:
+            vram_budget = vram_available * 0.5
+            cpu_budget = cpu_available * 0.6
+            ram_budget = ram_available * 0.6
+        else:
+            vram_budget = vram_available * 0.8
+            cpu_budget = cpu_available * 0.8
+            ram_budget = ram_available * 0.8
+
+        paths = []
+        for name, profile in self.PATH_RESOURCE_PROFILES.items():
+            w = path_weights.get(name, 0.05)
+            q = profile["quality_base"]
+            paths.append({
+                "name": name,
+                "weight": w,
+                "quality": q,
+                "vram": profile["vram_cost"],
+                "cpu": profile["cpu_cost"],
+                "ram": profile["ram_cost"],
+                "marginal_value": w * q,
+            })
+
+        paths.sort(key=lambda p: p["marginal_value"] / max(p["vram"] + p["cpu"] + p["ram"], 0.01), reverse=True)
+
+        x = {p["name"]: 1.0 for p in paths}
+
+        for p in paths:
+            if p["weight"] < 0.03:
+                x[p["name"]] = 0.0
+
+        max_iterations = 5
+        step_size = 0.3
+        converged = False
+
+        for iteration in range(max_iterations):
+            total_vram = sum(p["vram"] * x[p["name"]] for p in paths)
+            total_cpu = sum(p["cpu"] * x[p["name"]] for p in paths)
+            total_ram = sum(p["ram"] * x[p["name"]] for p in paths)
+
+            vram_excess = total_vram - vram_budget
+            cpu_excess = total_cpu - cpu_budget
+            ram_excess = total_ram - ram_budget
+
+            if vram_excess <= 0 and cpu_excess <= 0 and ram_excess <= 0:
+                converged = True
+                break
+
+            if vram_excess > 0:
+                vram_pressure = vram_excess / max(vram_budget, 0.01)
+            else:
+                vram_pressure = 0.0
+            if cpu_excess > 0:
+                cpu_pressure = cpu_excess / max(cpu_budget, 0.01)
+            else:
+                cpu_pressure = 0.0
+            if ram_excess > 0:
+                ram_pressure = ram_excess / max(ram_budget, 0.01)
+            else:
+                ram_pressure = 0.0
+
+            for p in paths:
+                if x[p["name"]] <= 0.01:
+                    continue
+                resource_cost = (p["vram"] * vram_pressure +
+                                 p["cpu"] * cpu_pressure +
+                                 p["ram"] * ram_pressure)
+                if resource_cost > 0:
+                    reduction = step_size * resource_cost * x[p["name"]]
+                    x[p["name"]] = max(0.0, x[p["name"]] - reduction)
+
+            total_obj = sum(p["weight"] * p["quality"] * x[p["name"]] for p in paths)
+            for p in paths:
+                if x[p["name"]] <= 0.01:
+                    continue
+                gradient = p["weight"] * p["quality"]
+                x[p["name"]] = min(1.0, x[p["name"]] + step_size * 0.1 * gradient)
+
+            for p in paths:
+                val = x[p["name"]]
+                val = min(1.0, val)
+                val = max(0.0, val)
+                x[p["name"]] = val
+
+        active_paths = [p["name"] for p in paths if x[p["name"]] > 0.1]
+        total_quality = sum(p["weight"] * p["quality"] * x[p["name"]] for p in paths)
+        vram_used_alloc = sum(p["vram"] * x[p["name"]] for p in paths)
+        vram_util = vram_used_alloc / max(vram_budget, 0.01)
+
+        result = {
+            "allocation": {p["name"]: round(x[p["name"]], 3) for p in paths},
+            "active_paths": active_paths,
+            "total_quality": round(total_quality, 3),
+            "vram_utilization": round(min(1.0, vram_util), 3),
+            "iterations": iteration + 1,
+            "converged": converged,
+            "budget": {
+                "vram_gb": round(vram_budget, 2),
+                "cpu": round(cpu_budget, 2),
+                "ram": round(ram_budget, 2),
+            },
+        }
+
+        logger.debug(f"⚖️ 资源分配优化: {len(active_paths)}条活跃路径, "
+                      f"质量={total_quality:.2f}, VRAM利用率={vram_util:.0%}, "
+                      f"迭代={iteration+1}, 收敛={converged}")
+
+        return result
 
     def _log_decision(self, action: ActionType, allowed: bool, mode: str, reason: str):
         entry = {
@@ -281,6 +449,7 @@ class AdaptiveGovernor:
             "recent_decisions": self.get_decision_log(10),
             "parallel_paths": self.get_parallel_path_count(),
             "retrieval_strategy": self.get_retrieval_strategy(),
+            "resource_profiles": {k: {"vram": v["vram_cost"], "cpu": v["cpu_cost"], "ram": v["ram_cost"], "quality": v["quality_base"]} for k, v in self.PATH_RESOURCE_PROFILES.items()},
         }
 
 

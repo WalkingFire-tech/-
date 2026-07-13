@@ -1106,7 +1106,8 @@ async def chat_stream(user_input: str, context: dict):
                 for src, score in attrib.get("contributions", {}).items():
                     unc_info = (attrib.get("retrieval_uncertainties") or {}).get(src)
                     uncertainty = unc_info.get("retrieval_entropy") if unc_info else None
-                    path_weight_manager.update_weight(src, True, score, uncertainty=uncertainty)
+                    path_weight_manager.update_weight(src, True, score, uncertainty=uncertainty,
+                                                        resource_pressure=path_weight_manager.compute_resource_pressure())
                 if attrib.get("contributions"):
                     contrib_str = " | ".join(f"{k}:{float(v):.0%}" for k, v in list(attrib["contributions"].items())[:5] if v is not None)
                     unc_str = ""
@@ -1643,23 +1644,44 @@ async def chat_stream(user_input: str, context: dict):
             except Exception:
                 logger.warning("操作降级跳过")
 
-        # L4善意延伸：资源紧张时自然告知用户
+        # L4善意延伸：场景感知融合
         if final_response:
             try:
+                from core.presence.scene_awareness import scene_awareness, SceneSnapshot
                 from core.resource_awareness.health_monitor import get_health_monitor, OperatingMode
                 _hm = get_health_monitor()
                 _mode = _hm.get_operating_mode()
-                if _mode in (OperatingMode.CONSERVATIVE, OperatingMode.EMERGENCY):
-                    try:
-                        from infrastructure.hardware_monitor import get_gpu_stats
-                        _gs = get_gpu_stats()
-                        _gpu_temp = _gs.get("temperature", 0) if _gs.get("available") else 0
-                    except Exception:
-                        _gpu_temp = 0
-                    if _mode == OperatingMode.EMERGENCY:
-                        final_response += f"\n\n⚠️ 系统资源紧张中（GPU {_gpu_temp}°C），已精简运行路径，回答可能较简。"
-                    else:
-                        final_response += f"\n\n🌡️ GPU温度偏高（{_gpu_temp}°C），已自动降频运行，不影响回答质量但速度可能稍慢。"
+                _gpu_temp = 0
+                try:
+                    from infrastructure.hardware_monitor import get_gpu_stats
+                    _gs = get_gpu_stats()
+                    _gpu_temp = _gs.get("temperature", 0) if _gs.get("available") else 0
+                except Exception:
+                    pass
+                _snap = _hm.check()
+                _gaps_count = 0
+                try:
+                    from core.presence.curiosity_engine import get_curiosity_engine
+                    _gaps_count = len(get_curiosity_engine().perceive_gaps())
+                except Exception:
+                    pass
+                scene = scene_awareness.build_scene(
+                    resource_mode=_mode.value,
+                    gpu_temp=_gpu_temp,
+                    memory_usage=_snap.memory_usage,
+                    cpu_percent=_snap.cpu_percent,
+                    intent_type=intent_type,
+                    complexity=methodology.get("complexity", 0.5) if methodology else 0.5,
+                    confidence=methodology.get("confidence", 0.5) if methodology else 0.5,
+                    response_length=len(final_response),
+                    sources_count=len(candidates) if candidates else 0,
+                    has_tool_result=any("工具" in (c.get("source", "") if isinstance(c, dict) else "") for c in (candidates or [])),
+                    knowledge_gaps=_gaps_count,
+                )
+                if scene_awareness.should_extend(scene):
+                    extension = scene_awareness.compose_extension(scene, final_response)
+                    if extension:
+                        final_response += f"\n\n{extension}"
             except Exception:
                 pass
 
@@ -2265,7 +2287,8 @@ async def chat_stream(user_input: str, context: dict):
                             conf = float(detail.split("置信度")[-1].split("%")[0]) / 100
                         except (ValueError, IndexError):
                             pass
-                    path_weight_manager.update_weight(path_name, success, conf)
+                    path_weight_manager.update_weight(path_name, success, conf,
+                                                        resource_pressure=path_weight_manager.compute_resource_pressure())
         except Exception as e:
             logger.warning(f"路径权重批量更新跳过: {e}")
 

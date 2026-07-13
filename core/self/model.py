@@ -499,6 +499,21 @@ class SelfModel:
                 "handler": self._action_trigger_evolution,
             })
 
+        try:
+            from core.presence.curiosity_engine import get_curiosity_engine
+            curiosity = get_curiosity_engine()
+            gaps = curiosity.perceive_gaps()
+            if gaps:
+                high_urgency = [g for g in gaps if g.urgency.value in ("high", "critical")]
+                if high_urgency:
+                    actions.append({
+                        "action": "curiosity_driven_learning",
+                        "reason": f"好奇心驱动: {len(high_urgency)}个高紧急度知识缺口",
+                        "handler": self._action_curiosity_driven_learning,
+                    })
+        except Exception:
+            pass
+
         for a in actions:
             try:
                 a["handler"]()
@@ -589,6 +604,49 @@ class SelfModel:
                 ml.trigger_sandbox_evolution()
         except Exception as e:
             logger.warning(f"SelfModel trigger_evolution failed: {e}")
+
+    def _action_curiosity_driven_learning(self):
+        try:
+            from core.presence.curiosity_engine import get_curiosity_engine
+            engine = get_curiosity_engine()
+            actions = engine.generate_learning_actions()
+            for action in actions[:3]:
+                if action.action_type == "create_capability":
+                    try:
+                        from core.capability_creation_loop import capability_creation_loop
+                        import asyncio
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            asyncio.ensure_future(
+                                capability_creation_loop.handle(action.content, context={"intent_type": "curiosity", "trigger": "curiosity_driven"})
+                            )
+                        else:
+                            loop.run_until_complete(
+                                capability_creation_loop.handle(action.content, context={"intent_type": "curiosity", "trigger": "curiosity_driven"})
+                            )
+                    except Exception as e:
+                        logger.debug(f"好奇心能力创造跳过: {e}")
+                elif action.action_type == "search_external":
+                    try:
+                        from core.external_learner import external_learner
+                        if hasattr(external_learner, 'learn_from_external'):
+                            external_learner.learn_from_external(
+                                user_input=action.content,
+                                context={"trigger": "curiosity"},
+                                trigger_reason="curiosity_driven"
+                            )
+                    except Exception as e:
+                        logger.debug(f"好奇心外部学习跳过: {e}")
+                elif action.action_type == "reflect_internal":
+                    try:
+                        from core.self_modification.defect_diagnoser import defect_diagnoser
+                        lesson_defects = defect_diagnoser.diagnose_from_lessons()
+                        if lesson_defects:
+                            logger.info(f"🔍 好奇心反思: {len(lesson_defects)}条未修正教训待处理")
+                    except Exception as e:
+                        logger.debug(f"好奇心反思跳过: {e}")
+        except Exception as e:
+            logger.warning(f"SelfModel curiosity_driven_learning failed: {e}")
 
 
 _self_model_instance: Optional[SelfModel] = None

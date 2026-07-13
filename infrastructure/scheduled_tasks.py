@@ -316,6 +316,26 @@ class ScheduledTaskManager:
         except Exception as e:
             logger.warning(f"主动性检查跳过: {e}")
 
+        # 好奇心驱动的主动提问
+        try:
+            from core.presence.curiosity_engine import get_curiosity_engine
+            curiosity = get_curiosity_engine()
+            action = curiosity.generate_question()
+            if action and action.action_type == "ask_user":
+                logger.info(f"🤔 好奇心提问: {action.content[:60]}")
+                try:
+                    from backend.main_fast import _enqueue_proactivity
+                    _enqueue_proactivity({
+                        "type": "curiosity",
+                        "content": action.content,
+                        "reason": action.reason,
+                        "source": "curiosity_engine",
+                    })
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         # L4善意延伸：资源状态感知的主动告知
         try:
             from core.resource_awareness.health_monitor import get_health_monitor

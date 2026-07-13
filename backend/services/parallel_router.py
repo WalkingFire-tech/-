@@ -55,14 +55,19 @@ async def execute_parallel_paths(
 
     max_paths = 9
     resource_mode = "normal"
+    resource_allocation = None
     if _RESOURCE_AWARE:
         try:
             from core.resource_awareness.adaptive_governor import get_adaptive_governor
             from core.resource_awareness.health_monitor import get_health_monitor
             governor = get_adaptive_governor()
             monitor = get_health_monitor()
-            max_paths = governor.get_parallel_path_count(9)
+            _path_weights_for_alloc = methodology.get("path_weights", {}) if methodology else {}
+            max_paths = governor.get_parallel_path_count(9, path_weights=_path_weights_for_alloc if _path_weights_for_alloc else None)
             resource_mode = monitor.get_mode_value()
+            if _path_weights_for_alloc:
+                resource_allocation = governor.compute_resource_allocation(_path_weights_for_alloc, 9)
+                max_paths = len(resource_allocation["active_paths"])
             if max_paths < 9:
                 logger.info(f"⚖️ 资源感知：{resource_mode}模式，并行路径 9→{max_paths}")
                 yield _emit("step", {"phase": "资源感知", "status": "info", "detail": f"当前{resource_mode}模式，并行路径调整为{max_paths}"})
@@ -92,6 +97,12 @@ async def execute_parallel_paths(
     _path_weights = methodology.get("path_weights", {}) if methodology else {}
 
     def _should_run(path_name: str, default: bool = True) -> bool:
+        if resource_allocation:
+            alloc_val = resource_allocation["allocation"].get(path_name, 0.0)
+            if alloc_val < 0.1:
+                logger.info(f"⚖️ 资源优化: {path_name}分配={alloc_val:.2f}，跳过")
+                return False
+            return default
         w = _path_weights.get(path_name, 1.0)
         if w < 0.3:
             logger.info(f"⚖️ 路径权重: {path_name}={w:.1f}，跳过")
@@ -538,9 +549,14 @@ async def execute_parallel_paths(
             if k in src:
                 wkey = v
                 break
-        if wkey and wkey in _path_weights:
-            orig_q = c.get("quality", 50)
-            c["quality"] = int(orig_q * _path_weights[wkey])
+        if wkey:
+            if resource_allocation:
+                alloc_val = resource_allocation["allocation"].get(wkey, 1.0)
+                orig_q = c.get("quality", 50)
+                c["quality"] = int(orig_q * max(alloc_val, 0.3))
+            elif wkey in _path_weights:
+                orig_q = c.get("quality", 50)
+                c["quality"] = int(orig_q * _path_weights[wkey])
 
     yield _emit("step", {"phase": "多策略并行", "status": "done", "detail": f"共获取{len(candidates)}个候选结果（{len(sources_got)}条路径：{'+'.join(sources_got)}）"})
 
