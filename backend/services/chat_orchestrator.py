@@ -17,6 +17,15 @@ from loguru import logger
 from adapters.llm.ollama_adapter import ollama_chat_request
 from infrastructure.database_manager import DatabaseManager
 
+
+def _feature_enabled(flag_name: str, default: bool = True) -> bool:
+    try:
+        from infrastructure.config_manager import config_manager
+        flags = config_manager.get("feature_flags", {})
+        return flags.get(flag_name, default)
+    except Exception:
+        return default
+
 from backend.services.path_handlers._shared import (
     _slow_executor, _fast_executor,
     _ollama_last_inference_time,
@@ -87,6 +96,51 @@ from backend.services.response_aggregator import (
     cross_source_merge as _cross_source_merge,
     list_divergences as _list_divergences,
 )
+
+
+async def _auto_fix_checkpoint(attempts: list, methodology: dict, user_input: str,
+                                intent_type: str, checkpoint_name: str = "") -> dict:
+    """
+    闭环2：失败自我修复检查点
+    检查attempts中的最近失败，调用FailureClassifier分类+修复，
+    将methodology_patch立即注入当前methodology，使当前请求受益。
+    """
+    recent_failures = [(src, ok, detail) for src, ok, detail in attempts if not ok]
+    if not recent_failures:
+        return {"fixes_applied": 0}
+
+    fixes_applied = 0
+    patches_applied = []
+
+    for src, _, detail in recent_failures[-3:]:
+        try:
+            from core.cognition.failure_classifier import FailureClassifier
+            reflection = {
+                "status": "execution_failure",
+                "reason": f"{src}: {detail}",
+                "source": src,
+            }
+            fix_result = await FailureClassifier.classify_and_fix(
+                reflection, user_input,
+                context={"intent_type": intent_type, "checkpoint": checkpoint_name},
+            )
+            auto_fix = fix_result.get("auto_fix_result", {})
+            if auto_fix.get("fix_applied") and auto_fix.get("methodology_patch"):
+                methodology.update(auto_fix["methodology_patch"])
+                patches_applied.append({
+                    "source": src,
+                    "category": fix_result.get("category", "").value if hasattr(fix_result.get("category", ""), "value") else str(fix_result.get("category", "")),
+                    "patch_keys": list(auto_fix["methodology_patch"].keys()),
+                })
+                fixes_applied += 1
+                logger.info(f"🔧 闭环2修复 [{checkpoint_name}]: {src} → {auto_fix.get('detail', '')[:60]}")
+        except Exception as e:
+            logger.warning(f"闭环2修复跳过 [{src}]: {e}")
+
+    if fixes_applied > 0:
+        logger.info(f"🔧 闭环2检查点 [{checkpoint_name}]: {fixes_applied}个修复已注入methodology")
+
+    return {"fixes_applied": fixes_applied, "patches": patches_applied}
 
 
 async def chat_stream(user_input: str, context: dict):
@@ -177,6 +231,7 @@ async def chat_stream(user_input: str, context: dict):
                             mode = snap.operating_mode.value if hasattr(snap.operating_mode, 'value') else str(snap.operating_mode)
                     except Exception:
                         logger.warning("操作降级跳过")
+
                 processed = processor.process(user_input, memory_usage=mem_usage, mode=mode)
                 if processed.was_distilled:
                     logger.info(f"长输入动态提炼: {processed.original_length}→{processed.distilled_length}字符 (压缩率{processed.compression_ratio:.1%}, 模式={processed.mode}, 策略={processed.cognitive_strategy})")
@@ -265,10 +320,50 @@ async def chat_stream(user_input: str, context: dict):
         logger.warning(f"CBNR L2跳过: {e}")
         _alchemize_error(e, context={"user_input": user_input[:50]}, phase="CBNR_L2")
 
-    # 通知存在层：用户正在交互
+    # 通知存在层：用户正在交互 + 读取存在层状态驱动策略
+    _presence_state = "awake"
     try:
         from core.presence.existence_layer import get_existence_layer
-        get_existence_layer().user_interaction()
+        el = get_existence_layer()
+        el.user_interaction()
+        _presence_state = el.state.value if hasattr(el.state, 'value') else str(el.state)
+        
+        if _feature_enabled("path_weight_matrix"):
+            _path_weights = {
+                "experience": 1.0, "knowledge": 1.0, "fact": 1.0,
+                "tool": 1.0, "self_reason": 1.0, "ollama": 1.0,
+                "external_api": 1.0, "external_learning": 1.0,
+            }
+            if _presence_state == "growing":
+                methodology.setdefault("prefer_learning_path", True)
+                methodology.setdefault("need_essence_reasoning", True)
+                _path_weights.update({
+                    "experience": 1.3, "knowledge": 1.3, "self_reason": 1.2,
+                    "external_api": 0.8, "external_learning": 0.7,
+                })
+                logger.info(f"🌱 存在层=GROWING，优先学习路径")
+            elif _presence_state == "resting":
+                methodology.setdefault("prefer_fast_path", True)
+                methodology.setdefault("skip_tool_path", True)
+                _path_weights.update({
+                    "experience": 1.2, "fact": 1.1, "tool": 0.5,
+                    "self_reason": 0.6, "ollama": 0.8, "external_api": 0.5,
+                })
+                logger.info(f"💤 存在层=RESTING，优先快速路径")
+            elif _presence_state == "sleeping":
+                methodology.setdefault("skip_tool_path", True)
+                methodology.setdefault("prefer_knowledge_path", True)
+                _path_weights.update({
+                    "knowledge": 1.5, "fact": 1.2, "experience": 1.0,
+                    "tool": 0.2, "self_reason": 0.3, "ollama": 0.3,
+                    "external_api": 0.1, "external_learning": 0.1,
+                })
+                logger.info(f"😴 存在层=SLEEPING，仅知识路径")
+            methodology["path_weights"] = _path_weights
+        yield _emit("thinking", {
+            "phase": f"存在层状态: {_presence_state}",
+            "presence_state": _presence_state,
+        })
     except Exception:
         logger.warning("操作降级跳过")
 
@@ -325,16 +420,38 @@ async def chat_stream(user_input: str, context: dict):
     logger.info(f"📩 收到请求: '{user_input}'")
     yield _emit("step", {"phase": "意图识别", "status": "running", "detail": "分析问题类型和复杂度..."})
 
+    methodology = {}
     try:
         from core.cognitive_dispatcher import get_cognitive_dispatcher
         dispatcher = get_cognitive_dispatcher()
         
-        # 直接在当前线程同步调用，避免线程问题
-        dispatch_result = dispatcher.dispatch(user_query=user_input, context=context)
+        # 快速意图分类（<100ms），用于即时反馈和超时fallback
+        raw_intent, raw_conf = dispatcher._quick_intent_classification(user_input)
+        logger.info(f"🔍 快速意图: raw_intent={raw_intent} raw_conf={raw_conf:.2f}")
         
-        intent_type = dispatch_result.get("intent_type", "unknown")
-        route = dispatch_result.get("route", "slow")
-        confidence = dispatch_result.get("confidence", 0.5)
+        # 完整dispatch（含场域层+能力扫描），限时5秒
+        # 使用run_in_executor避免阻塞async事件循环
+        dispatch_result = None
+        try:
+            loop = asyncio.get_event_loop()
+            dispatch_result = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: dispatcher.dispatch(user_query=user_input, context=context)),
+                timeout=15.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"意图识别dispatch超时(5s)，使用快速分类结果: {raw_intent}")
+        except Exception as _de:
+            logger.warning(f"意图识别dispatch异常: {_de}")
+        
+        if dispatch_result:
+            intent_type = dispatch_result.get("intent_type", "unknown")
+            route = dispatch_result.get("route", "slow")
+            confidence = dispatch_result.get("confidence", 0.5)
+        else:
+            intent_type = raw_intent
+            route = "fast" if raw_intent in ("greeting", "confirmation") else "slow"
+            confidence = raw_conf
+            dispatch_result = {"intent_type": intent_type, "route": route, "confidence": confidence, "field_context": {}, "execution_plan": {"tasks": []}}
         
         # 场域上下文消费：将field_context注入methodology
         _field_context = dispatch_result.get("field_context", {})
@@ -416,8 +533,21 @@ async def chat_stream(user_input: str, context: dict):
         attempts.append(("意图识别", True, f"{intent_type}({route})"))
         yield _emit("step", {"phase": "意图识别", "status": "done", "detail": f"识别为「{intent_type}」，置信度={confidence:.0%}"})
     except Exception as e:
+        logger.warning(f"意图识别异常: {e}", exc_info=True)
+        intent_type = "unknown"
+        route = "slow"
+        confidence = 0.3
+        dispatch_result = {"intent_type": intent_type, "route": route, "confidence": confidence, "field_context": {}, "execution_plan": {"tasks": []}}
         attempts.append(("意图识别", False, str(e)[:50]))
         yield _emit("step", {"phase": "意图识别", "status": "done", "detail": "识别失败，按复杂问题处理"})
+
+    # 闭环2检查点1：意图识别后
+    try:
+        _af1 = await _auto_fix_checkpoint(attempts, methodology, user_input, intent_type, "意图识别后")
+        if _af1["fixes_applied"] > 0:
+            yield _emit("step", {"phase": "自我修复", "status": "done", "detail": f"🔧 意图阶段修复{_af1['fixes_applied']}项，已调整策略"})
+    except Exception:
+        pass
 
     # L1认知感知层：通过CognitivePlanner获取情绪/紧迫度/困惑度信号
     _cognitive_perception = {}
@@ -562,7 +692,8 @@ async def chat_stream(user_input: str, context: dict):
     except ImportError:
         yield _emit("step", {"phase": "本质闸门", "status": "done", "detail": "本质闸门未安装，使用默认策略"})
 
-    methodology = _discover_methodology(user_input, intent_type)
+    _discovered_methodology = _discover_methodology(user_input, intent_type)
+    methodology.update(_discovered_methodology)
     if essence_gate_result:
         methodology["strategy"] = essence_gate_result["dispatch_strategy"]
         if essence_gate_result["is_paradox"]:
@@ -755,24 +886,100 @@ async def chat_stream(user_input: str, context: dict):
     except Exception as _ce:
         logger.warning(f"能力评估跳过: {_ce}")
 
+    # ========== 阶段2.5：map/weather意图快速路径 ==========
+    if intent_type == "map":
+        try:
+            from core.capability_creation_loop import capability_creation_loop
+            yield _emit("step", {"phase": "地图生成", "status": "running", "detail": "检测到地图意图，直接生成地图..."})
+            map_result = await capability_creation_loop._solve_map_render(user_input)
+            if map_result and map_result.get("success"):
+                final_response = map_result["data"]
+                attempts.append(("地图生成", True, "map fast path"))
+                confidence = 0.85
+                yield _emit("step", {"phase": "地图生成", "status": "done", "detail": "地图已生成 ✅"})
+                logger.info(f"🗺️ Map快速路径: 地图生成成功")
+            else:
+                yield _emit("step", {"phase": "地图生成", "status": "done", "detail": "地图生成失败，尝试常规路径..."})
+                logger.warning(f"🗺️ Map快速路径失败，回退到常规路径")
+        except Exception as _me:
+            logger.warning(f"Map快速路径异常: {_me}", exc_info=True)
+            yield _emit("step", {"phase": "地图生成", "status": "done", "detail": f"地图生成异常({str(_me)[:60]})，尝试常规路径..."})
+
+    if intent_type == "weather" and not final_response:
+        try:
+            from core.capability_creation_loop import capability_creation_loop
+            yield _emit("step", {"phase": "天气查询", "status": "running", "detail": "检测到天气意图，正在获取天气信息..."})
+            weather_result = await capability_creation_loop._solve_weather_query(user_input)
+            if weather_result and weather_result.get("success"):
+                final_response = weather_result["data"]
+                attempts.append(("天气查询", True, "weather fast path"))
+                confidence = 0.85
+                yield _emit("step", {"phase": "天气查询", "status": "done", "detail": "天气信息已获取 ✅"})
+                logger.info(f"🌤️ Weather快速路径: 天气查询成功")
+            else:
+                yield _emit("step", {"phase": "天气查询", "status": "done", "detail": "天气查询失败，尝试常规路径..."})
+                logger.warning(f"🌤️ Weather快速路径失败，回退到常规路径")
+        except Exception as _we:
+            logger.warning(f"Weather快速路径异常: {_we}", exc_info=True)
+            yield _emit("step", {"phase": "天气查询", "status": "done", "detail": f"天气查询异常({str(_we)[:60]})，尝试常规路径..."})
+
     # ========== 阶段3：多策略并行尝试 ==========
-    yield _emit("thinking", {
-        "phase": f"我正在用多种策略同时思考你的问题",
-        "confidence": float(confidence) if 'confidence' in locals() else 0.5,
-        "sources": ["经验池", "知识库", "本地模型", "外部API"],
-    })
-    from backend.services.parallel_router import execute_parallel_paths
-    candidates = []
-    async for event_or_candidates in execute_parallel_paths(
-        user_input, intent_type, conversation_context, truth_insights, methodology, start_time
-    ):
-        if isinstance(event_or_candidates, list):
-            candidates = event_or_candidates
-        else:
-            yield event_or_candidates
+    if not final_response:
+        yield _emit("thinking", {
+            "phase": f"我正在用多种策略同时思考你的问题",
+            "confidence": float(confidence) if 'confidence' in locals() else 0.5,
+            "sources": ["经验池", "知识库", "本地模型", "外部API"],
+        })
+        from backend.services.parallel_router import execute_parallel_paths
+        candidates = []
+        async for event_or_candidates in execute_parallel_paths(
+            user_input, intent_type, conversation_context, truth_insights, methodology, start_time
+        ):
+            if isinstance(event_or_candidates, list):
+                candidates = event_or_candidates
+            else:
+                yield event_or_candidates
+
+    # 闭环2检查点2：多策略并行后
+    try:
+        _af2 = await _auto_fix_checkpoint(attempts, methodology, user_input, intent_type, "多策略并行后")
+        if _af2["fixes_applied"] > 0:
+            yield _emit("step", {"phase": "自我修复", "status": "done", "detail": f"🔧 执行阶段修复{_af2['fixes_applied']}项，已调整策略"})
+    except Exception:
+        pass
 
     # ========== 阶段4：对比择优 ==========
 
+    try:
+        candidates
+    except NameError:
+        candidates = []
+    comparison = []
+    path_percentages = {}
+    token_summary = {}
+    
+    if final_response:
+        logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] 快速路径已完成，跳过阶段4-7")
+        elapsed = time.time() - start_time
+        yield _emit("result", {
+            "response": final_response,
+            "attempts": attempts,
+            "intent": intent_type,
+            "confidence": confidence,
+            "route": route,
+            "elapsed": round(elapsed, 1),
+            "spirit_compliant": SPIRIT_CORE_AVAILABLE,
+            "candidates": [],
+            "path_contributions": {},
+            "token_usage": {},
+            "cbnr": {},
+            "session_id": "",
+            "companion_layers": {},
+            "cognitive_layers": {},
+        })
+        logger.info(f"✅ 快速路径响应已发送({elapsed:.1f}秒)")
+        return
+    
     logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] 进入阶段4: 对比择优, {len(candidates)}个候选")
     for i, c in enumerate(candidates):
         logger.warning(f"[ORCH_DIAG] 候选{i}: source={c.get('source')}, quality={c.get('quality')}, resp_len={len(c.get('response',''))}, resp_preview={c.get('response','')[:80]}")
@@ -799,42 +1006,44 @@ async def chat_stream(user_input: str, context: dict):
             logger.warning(f"ToolBuilder观察跳过: {e}")
 
         # 贡献度归因（SHAP风格）+ 路径权重更新（AdaBoost风格，不确定性感知）
-        try:
-            from core.contrib_attributor import contrib_attributor
-            from core.path_weight_manager import path_weight_manager
-            attrib = contrib_attributor.compute_contributions(
-                candidates, final_response, best["source"], user_input
-            )
-            for src, score in attrib.get("contributions", {}).items():
-                unc_info = (attrib.get("retrieval_uncertainties") or {}).get(src)
-                uncertainty = unc_info.get("retrieval_entropy") if unc_info else None
-                path_weight_manager.update_weight(src, True, score, uncertainty=uncertainty)
-            if attrib.get("contributions"):
-                contrib_str = " | ".join(f"{k}:{v:.0%}" for k, v in list(attrib["contributions"].items())[:5] if v is not None)
-                unc_str = ""
-                if attrib.get("retrieval_uncertainties"):
-                    unc_dims = len(attrib["retrieval_uncertainties"])
-                    unc_str = f" | 不确定性维度:{unc_dims}"
-                yield _emit("step", {"phase": "贡献归因", "status": "done", "detail": f"贡献度: {contrib_str}{unc_str}"})
-        except Exception as e:
-            logger.warning(f"贡献归因跳过: {e}")
+        if _feature_enabled("path_weight_matrix"):
+            try:
+                from core.contrib_attributor import contrib_attributor
+                from core.path_weight_manager import path_weight_manager
+                attrib = contrib_attributor.compute_contributions(
+                    candidates, final_response, best["source"], user_input
+                )
+                for src, score in attrib.get("contributions", {}).items():
+                    unc_info = (attrib.get("retrieval_uncertainties") or {}).get(src)
+                    uncertainty = unc_info.get("retrieval_entropy") if unc_info else None
+                    path_weight_manager.update_weight(src, True, score, uncertainty=uncertainty)
+                if attrib.get("contributions"):
+                    contrib_str = " | ".join(f"{k}:{float(v):.0%}" for k, v in list(attrib["contributions"].items())[:5] if v is not None)
+                    unc_str = ""
+                    if attrib.get("retrieval_uncertainties"):
+                        unc_dims = len(attrib["retrieval_uncertainties"])
+                        unc_str = f" | 不确定性维度:{unc_dims}"
+                    yield _emit("step", {"phase": "贡献归因", "status": "done", "detail": f"贡献度: {contrib_str}{unc_str}"})
+            except Exception as e:
+                logger.warning(f"贡献归因跳过: {e}")
 
         # 动态概率场初始化（异步概率计算核心）+ 不确定性驱动路由
-        try:
-            from core.dynamic_probability_field import dynamic_probability_field
-            from core.path_weight_manager import path_weight_manager
-            prob_dist = dynamic_probability_field.initialize(candidates, path_weight_manager.get_weights())
-            if prob_dist.get("top"):
-                action = dynamic_probability_field.get_uncertainty_action()
-                action_hint = ""
-                if action["depth"] == "deep":
-                    action_hint = " | 建议深度探索"
-                elif action["depth"] == "moderate":
-                    action_hint = f" | {action.get('uncertainty_label', '')}"
-                yield _emit("step", {"phase": "概率场", "status": "done",
-                    "detail": f"概率分布: top={prob_dist['top']['source']}({prob_dist['top']['probability']:.0%}) 熵={prob_dist['entropy']:.2f}{action_hint}"})
-        except Exception as e:
-            logger.warning(f"概率场初始化跳过: {e}")
+        if _feature_enabled("path_weight_matrix"):
+            try:
+                from core.dynamic_probability_field import dynamic_probability_field
+                from core.path_weight_manager import path_weight_manager
+                prob_dist = dynamic_probability_field.initialize(candidates, path_weight_manager.get_weights())
+                if prob_dist.get("top"):
+                    action = dynamic_probability_field.get_uncertainty_action()
+                    action_hint = ""
+                    if action["depth"] == "deep":
+                        action_hint = " | 建议深度探索"
+                    elif action["depth"] == "moderate":
+                        action_hint = f" | {action.get('uncertainty_label', '')}"
+                    yield _emit("step", {"phase": "概率场", "status": "done",
+                        "detail": f"概率分布: top={prob_dist['top']['source']}({float(prob_dist['top']['probability']):.0%}) 熵={prob_dist['entropy']:.2f}{action_hint}"})
+            except Exception as e:
+                logger.warning(f"概率场初始化跳过: {e}")
 
         # 世界模型反事实推理 + 验证闭环
         try:
@@ -1084,7 +1293,22 @@ async def chat_stream(user_input: str, context: dict):
         except Exception as _ge:
             logger.error(f"能力缺失学习异常: {_ge}")
 
-        fallback = _generate_meaningful_fallback(user_input, attempts)
+        # 能力创造回路：系统自己动手做到成功
+        if _feature_enabled("capability_creation_loop"):
+            try:
+                from core.capability_creation_loop import capability_creation_loop
+                yield _emit("step", {"phase": "能力创造", "status": "running", "detail": "常规方法未解决，启动能力创造回路..."})
+                cap_result = await capability_creation_loop.handle(user_input, context={"intent_type": intent_type})
+                if cap_result and cap_result.get("handled") and cap_result.get("data"):
+                    final_response = cap_result["data"]
+                    attempts.append(("能力创造回路", True, f"method={cap_result.get('method', 'unknown')}"))
+                    yield _emit("step", {"phase": "能力创造", "status": "done", "detail": "能力创造回路成功解决 ✅"})
+                    logger.info(f"能力创造回路成功: {user_input[:50]}")
+            except Exception as _cce:
+                logger.warning(f"能力创造回路跳过: {_cce}")
+
+        if not final_response:
+            fallback = _generate_meaningful_fallback(user_input, attempts)
         if fallback == "__NEED_DYNAMIC_FALLBACK__":
             try:
                 ollama_result = await _fetch_ollama_response(user_input, conversation_context=conversation_context, truth_insights=truth_insights)
@@ -1110,6 +1334,7 @@ async def chat_stream(user_input: str, context: dict):
                         conversation_context=conversation_context,
                         truth_insights=truth_insights,
                         emit_fn=_ps_emit,
+                        intent_type=intent_type,
                     )
                     for _et, _ed in _ps_events:
                         yield _emit(_et, _ed)
@@ -1133,7 +1358,7 @@ async def chat_stream(user_input: str, context: dict):
     if final_response:
         yield _emit("step", {"phase": "自我验证", "status": "running", "detail": "验证回复质量和逻辑性..."})
 
-        if intent_type == "hardware" and final_response:
+        if intent_type in ("hardware", "map", "weather") and final_response:
             _intent_output_mismatch = False
             _mismatch_reason = ""
             q_lower = user_input.lower()
@@ -1163,6 +1388,22 @@ async def chat_stream(user_input: str, context: dict):
                 verification = await _self_verify(user_input, final_response)
         else:
             verification = await _self_verify(user_input, final_response)
+
+        # Map意图后处理：用户要地图但返回了数据，提取坐标生成地图
+        if intent_type == "map" and final_response:
+            _has_map_output = any(kw in final_response.lower() for kw in ["地图已生成", "folium", "map.html", "gps_map", "浏览器中打开"])
+            if not _has_map_output:
+                try:
+                    from core.capability_creation_loop import capability_creation_loop
+                    yield _emit("step", {"phase": "地图生成", "status": "running", "detail": "检测到地图意图，生成地图..."})
+                    map_result = await capability_creation_loop._solve_map_render(user_input)
+                    if map_result and map_result.get("success"):
+                        final_response = map_result["data"]
+                        attempts.append(("地图生成", True, "map intent post-processing"))
+                        yield _emit("step", {"phase": "地图生成", "status": "done", "detail": "地图已生成 ✅"})
+                        logger.info(f"🗺️ Map意图后处理: 地图生成成功")
+                except Exception as _me:
+                    logger.warning(f"地图生成跳过: {_me}")
         v_conf = verification["confidence"]
         e_conf = essence_confidence
         if v_conf > 0 and e_conf > 0:
@@ -1250,6 +1491,27 @@ async def chat_stream(user_input: str, context: dict):
                             final_response += growth_note
             except Exception:
                 logger.warning("操作降级跳过")
+
+        # L4善意延伸：资源紧张时自然告知用户
+        if final_response:
+            try:
+                from core.resource_awareness.health_monitor import get_health_monitor, OperatingMode
+                _hm = get_health_monitor()
+                _mode = _hm.get_operating_mode()
+                if _mode in (OperatingMode.CONSERVATIVE, OperatingMode.EMERGENCY):
+                    try:
+                        from infrastructure.hardware_monitor import get_gpu_stats
+                        _gs = get_gpu_stats()
+                        _gpu_temp = _gs.get("temperature", 0) if _gs.get("available") else 0
+                    except Exception:
+                        _gpu_temp = 0
+                    if _mode == OperatingMode.EMERGENCY:
+                        final_response += f"\n\n⚠️ 系统资源紧张中（GPU {_gpu_temp}°C），已精简运行路径，回答可能较简。"
+                    else:
+                        final_response += f"\n\n🌡️ GPU温度偏高（{_gpu_temp}°C），已自动降频运行，不影响回答质量但速度可能稍慢。"
+            except Exception:
+                pass
+
         if intent_type == "code" and final_response:
             code_verify = _verify_code_response(user_input, final_response)
             if code_verify["passed"]:
@@ -1417,6 +1679,14 @@ async def chat_stream(user_input: str, context: dict):
         except Exception as e:
             logger.error(f"闭环迭代异常: {e}")
             yield _emit("step", {"phase": "闭环迭代", "status": "done", "detail": "闭环迭代跳过"})
+
+    # 闭环2检查点3：验证+迭代后
+    try:
+        _af3 = await _auto_fix_checkpoint(attempts, methodology, user_input, intent_type, "验证迭代后")
+        if _af3["fixes_applied"] > 0:
+            yield _emit("step", {"phase": "自我修复", "status": "done", "detail": f"🔧 验证阶段修复{_af3['fixes_applied']}项，已调整策略"})
+    except Exception:
+        pass
 
     # ========== 阶段6：精神内核验证 ==========
     yield _emit("step", {"phase": "精神验证", "status": "running", "detail": "验证回复是否符合核心原则..."})
@@ -1832,20 +2102,21 @@ async def chat_stream(user_input: str, context: dict):
         logger.error(f"双速进化快循环异常: {e}")
 
     # 路径权重批量更新（AdaBoost快循环）：根据attempts结果更新各路径权重
-    try:
-        from core.path_weight_manager import path_weight_manager
-        for src, success, detail in attempts:
-            path_name = src
-            if path_name in path_weight_manager._paths:
-                conf = 0.5
-                if "置信度" in detail:
-                    try:
-                        conf = float(detail.split("置信度")[-1].split("%")[0]) / 100
-                    except (ValueError, IndexError):
-                        pass
-                path_weight_manager.update_weight(path_name, success, conf)
-    except Exception as e:
-        logger.warning(f"路径权重批量更新跳过: {e}")
+    if _feature_enabled("path_weight_matrix"):
+        try:
+            from core.path_weight_manager import path_weight_manager
+            for src, success, detail in attempts:
+                path_name = src
+                if path_name in path_weight_manager._paths:
+                    conf = 0.5
+                    if "置信度" in detail:
+                        try:
+                            conf = float(detail.split("置信度")[-1].split("%")[0]) / 100
+                        except (ValueError, IndexError):
+                            pass
+                    path_weight_manager.update_weight(path_name, success, conf)
+        except Exception as e:
+            logger.warning(f"路径权重批量更新跳过: {e}")
 
     # 知识固化：高质量回复升级为知识
     try:
@@ -1929,6 +2200,7 @@ async def chat_stream(user_input: str, context: dict):
                     conversation_context=conversation_context,
                     truth_insights="",
                     emit_fn=_ps_emit2,
+                    intent_type=intent_type,
                 )
                 for _et2, _ed2 in _ps_events2:
                     yield _emit(_et2, _ed2)
@@ -2067,6 +2339,7 @@ async def chat_stream(user_input: str, context: dict):
                 conversation_context=conversation_context,
                 truth_insights=truth_insights if 'truth_insights' in locals() else "",
                 emit_fn=_ps_emit3,
+                intent_type=intent_type,
             )
             for _et3, _ed3 in _ps_events3:
                 yield _emit(_et3, _ed3)
@@ -2614,13 +2887,19 @@ def _r4_self_check(user_input: str, intent_type: str, methodology: dict, capabil
     if intent_type == "hardware" and strategy not in ("tool_first", "slow"):
         result["warnings"].append(f"方向不一致: hardware意图但策略={strategy}，建议tool_first")
         result["adjustments"]["strategy"] = "tool_first"
+    if intent_type == "map" and strategy not in ("tool_first", "slow"):
+        result["warnings"].append(f"方向不一致: map意图但策略={strategy}，建议tool_first")
+        result["adjustments"]["strategy"] = "tool_first"
+    if intent_type == "weather" and strategy not in ("tool_first", "slow"):
+        result["warnings"].append(f"方向不一致: weather意图但策略={strategy}，建议tool_first")
+        result["adjustments"]["strategy"] = "tool_first"
 
     # ② 最小侵入：是否需要造新工具
     if capability_gap and methodology.get("strategy") == "tool_first":
         result["warnings"].append(f"能力缺口: {capability_gap}，将尝试工具构建")
 
     # ③ 无过度设计：操作类问题不应走纯推理路径
-    if intent_type in ("hardware", "code") and methodology.get("strategy") == "reasoning_only":
+    if intent_type in ("hardware", "code", "map", "weather") and methodology.get("strategy") == "reasoning_only":
         result["warnings"].append(f"过度设计: {intent_type}意图不应走纯推理，切换为tool_first")
         result["adjustments"]["strategy"] = "tool_first"
 
@@ -2631,6 +2910,10 @@ def _r4_self_check(user_input: str, intent_type: str, methodology: dict, capabil
     # ⑤ 可验证：操作类问题必须走工具执行路径
     if intent_type == "hardware" and not methodology.get("source_priority"):
         result["adjustments"]["source_priority"] = ["工具执行", "经验池", "知识库", "Ollama"]
+    if intent_type == "map" and not methodology.get("source_priority"):
+        result["adjustments"]["source_priority"] = ["工具执行", "经验池", "知识库", "Ollama"]
+    if intent_type == "weather" and not methodology.get("source_priority"):
+        result["adjustments"]["source_priority"] = ["天气API", "经验池", "知识库", "Ollama"]
 
     # ⑥ 精神内核对齐：伪造数据检测
     if methodology.get("fabricated_data_detected"):

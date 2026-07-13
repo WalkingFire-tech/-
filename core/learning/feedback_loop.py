@@ -8,6 +8,12 @@ from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime
 from enum import Enum
 
+try:
+    from loguru import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
+
 
 class FeedbackType(Enum):
     POSITIVE = "positive"

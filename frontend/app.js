@@ -265,6 +265,18 @@ async function sendMessage() {
                         if (event.session_id && !currentSessionId) {
                             currentSessionId = event.session_id;
                         }
+                    } else if (event.type === 'warning') {
+                        const warnEl = document.createElement('div');
+                        warnEl.className = 'thinking-step timeout';
+                        warnEl.innerHTML = `<span class="step-icon">⚠️</span> <strong>系统警告</strong> - ${event.message || JSON.stringify(event)}`;
+                        stepsContainer.appendChild(warnEl);
+                        stepsContainer.scrollTop = stepsContainer.scrollHeight;
+                    } else if (event.type === 'info') {
+                        const infoEl = document.createElement('div');
+                        infoEl.className = 'thinking-step running';
+                        infoEl.innerHTML = `<span class="step-icon">ℹ️</span> <strong>系统信息</strong> - ${event.message || JSON.stringify(event)}`;
+                        stepsContainer.appendChild(infoEl);
+                        stepsContainer.scrollTop = stepsContainer.scrollHeight;
                     }
                 } catch (e) {
                     // JSON解析失败，忽略
@@ -1921,6 +1933,22 @@ async function refreshSystemPanorama() {
                     const silMins = Math.floor(data.silence_duration / 60);
                     html += '<div style="margin-top:4px;font-size:10px;color:#aaa;">静默: ' + silMins + '分</div>';
                 }
+                try {
+                    const sleepResp = await fetch('/api/sleep/status');
+                    const sleepData = await sleepResp.json();
+                    if (!sleepData.error) {
+                        html += '<div style="margin-top:6px;border-top:1px solid #eee;padding-top:4px;">';
+                        html += '<div style="font-size:10px;font-weight:bold;color:#9C27B0;margin-bottom:2px;">💤 睡眠整合</div>';
+                        if (sleepData.is_sleeping) {
+                            html += '<div style="font-size:10px;color:#9C27B0;">当前: ' + (sleepData.current_stage || 'unknown') + ' 整合中...</div>';
+                        }
+                        if (sleepData.summary) {
+                            const s = sleepData.summary;
+                            html += '<div style="font-size:9px;color:#666;">累计: ' + (s.total_consolidations||0) + '次 整合记忆:' + (s.total_memories_consolidated||0) + ' 固化技能:' + (s.total_skills_solidified||0) + '</div>';
+                        }
+                        html += '</div>';
+                    }
+                } catch(e) {}
             }
                 if (percData && !percData.error && percData.summary) {
                     html += '<div style="margin-top:6px;border-top:1px solid #eee;padding-top:4px;">';
@@ -2073,6 +2101,17 @@ async function refreshSystemPanorama() {
                         html += '<div style="font-size:10px;color:#666;margin:1px 0;">' + (m.key || '?') + ': ' + (m.old != null ? m.old.toFixed(2) : '') + ' → ' + (m.new != null ? m.new.toFixed(2) : '') + ' <span style="color:' + (m.delta > 0 ? '#4CAF50' : '#F44336') + ';">' + delta + '</span> <span style="color:#aaa;">(' + (m.trigger || '') + ')</span></div>';
                     }
                 }
+                try {
+                    const injResp = await fetch('/api/evolution/injection-status');
+                    const injData = await injResp.json();
+                    if (injData.injections && injData.injections.length > 0) {
+                        html += '<div style="margin-top:8px;"><b>🧬 安全注入记录:</b></div>';
+                        for (const inj of injData.injections.slice(0, 5)) {
+                            const statusColor = inj.status === 'completed' ? '#4CAF50' : inj.status === 'rolled_back' ? '#F44336' : '#FF9800';
+                            html += '<div style="font-size:10px;color:#666;margin:1px 0;">' + inj.proposal_id + ' <span style="color:' + statusColor + ';">' + inj.status + '</span> fitness=' + (inj.fitness || 0).toFixed(2) + '</div>';
+                        }
+                    }
+                } catch(e) {}
             }
             container.innerHTML = html || '<p style="color:#999;font-size:11px;">暂无基因数据</p>';
         } else if (_currentPanoramaTab === 'cognitive') {

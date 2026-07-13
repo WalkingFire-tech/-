@@ -541,6 +541,7 @@ class SelfModel:
     def _action_capability_gap_learning(self):
         try:
             from core.learning.capability_gap_learner import capability_gap_learner
+            from infrastructure.database_manager import DatabaseManager
             db = DatabaseManager.get("data/capability_gaps.db")
             rows = db.query("SELECT query, gap_type, failed_paths FROM capability_gaps WHERE resolved=0 ORDER BY attempts DESC LIMIT 3")
             for row in rows:
@@ -550,8 +551,22 @@ class SelfModel:
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
                         asyncio.ensure_future(capability_gap_learner.try_resolve_gap(gap))
+                        try:
+                            from core.capability_creation_loop import capability_creation_loop
+                            asyncio.ensure_future(
+                                capability_creation_loop.handle(row[0], context={"intent_type": row[1], "trigger": "self_model_gap"})
+                            )
+                        except Exception:
+                            pass
                     else:
                         loop.run_until_complete(capability_gap_learner.try_resolve_gap(gap))
+                        try:
+                            from core.capability_creation_loop import capability_creation_loop
+                            loop.run_until_complete(
+                                capability_creation_loop.handle(row[0], context={"intent_type": row[1], "trigger": "self_model_gap"})
+                            )
+                        except Exception:
+                            pass
                 except RuntimeError:
                     asyncio.run(capability_gap_learner.try_resolve_gap(gap))
         except Exception as e:

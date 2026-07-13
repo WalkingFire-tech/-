@@ -434,6 +434,14 @@ class ToolExecutor:
         return None
 
     def _auto_install(self, module_name: str) -> bool:
+        try:
+            from infrastructure.config_manager import config_manager
+            _flags = config_manager.get("feature_flags", {})
+            if not _flags.get("auto_pip_install", True):
+                logger.info(f"AutoInstall: auto_pip_install已禁用(feature flag)，跳过安装 {module_name}")
+                return False
+        except Exception:
+            pass
         if module_name in _INSTALLED_IN_SESSION:
             return True
         _PIP_PACKAGE_MAP = {

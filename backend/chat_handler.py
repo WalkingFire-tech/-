@@ -109,6 +109,7 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
             "greeting": "chat", "confirmation": "chat", "simple_query": "question",
             "complex_query": "code", "learning_trigger": "question",
             "challenge": "verification", "history_query": "memory",
+            "weather": "weather", "map": "map",
         }
         _mapped_type = _INTENT_TYPE_MAP.get(intent_type, intent_type)
         _rule_ctx = {
@@ -159,6 +160,18 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
         final_response = await _solve_history_query(user_input)
         attempts.append(("历史查询", True, "历史"))
         return {"response": final_response, "attempts": attempts, "intent": intent_type}
+    
+    elif intent_type == "weather":
+        try:
+            from core.capability_creation_loop import capability_creation_loop
+            weather_result = await capability_creation_loop._solve_weather_query(user_input)
+            if weather_result and weather_result.get("success"):
+                final_response = weather_result["data"]
+                attempts.append(("天气查询", True, "weather fast path"))
+                return {"response": final_response, "attempts": attempts, "intent": intent_type, "confidence": 0.85}
+        except Exception as _we:
+            logger.warning(f"天气查询异常: {_we}")
+            attempts.append(("天气查询", False, str(_we)[:50]))
     
     # ========== 策略3：深度认知处理（超时不放弃！） ==========
     if not final_response:

@@ -356,17 +356,28 @@ class SystemHealthMonitor:
         cpu = self._snapshot.cpu_percent
         gpu = self._snapshot.gpu_memory
 
+        gpu_temp = 0
+        try:
+            from infrastructure.hardware_monitor import get_gpu_stats
+            gs = get_gpu_stats()
+            if gs.get("available"):
+                gpu_temp = gs.get("temperature", 0)
+        except Exception:
+            pass
+
         if (mem > self.thresholds["memory_critical"]
                 or avail < self.thresholds["available_memory_min_gb"]
                 or threads > self.thresholds["thread_critical"]
                 or cpu > self.thresholds["cpu_critical"]
-                or gpu > self.thresholds["gpu_memory_critical"]):
+                or gpu > self.thresholds["gpu_memory_critical"]
+                or gpu_temp >= 90):
             return OperatingMode.EMERGENCY
 
         if (mem > self.thresholds["memory_warn"]
                 or threads > self.thresholds["thread_warn"]
                 or cpu > self.thresholds["cpu_warn"]
-                or gpu > self.thresholds["gpu_memory_warn"]):
+                or gpu > self.thresholds["gpu_memory_warn"]
+                or gpu_temp >= 80):
             return OperatingMode.CONSERVATIVE
 
         if self._is_memory_rising_fast():
@@ -508,11 +519,21 @@ class SystemHealthMonitor:
         logger.warning(f"🔴 OOM事件记录 (累计{self._oom_count}次)")
 
     def get_max_parallel_paths(self) -> int:
-        """根据当前模式返回最大并行路径数"""
+        """根据当前模式返回最大并行路径数——动态降频，永不停工"""
         mode = self.get_operating_mode()
         if mode == OperatingMode.EMERGENCY:
-            return 2
+            return 3
         if mode == OperatingMode.CONSERVATIVE:
+            gpu_temp = 0
+            try:
+                from infrastructure.hardware_monitor import get_gpu_stats
+                gs = get_gpu_stats()
+                if gs.get("available"):
+                    gpu_temp = gs.get("temperature", 0)
+            except Exception:
+                pass
+            if gpu_temp >= 85:
+                return 3
             return 5
         return 9
 

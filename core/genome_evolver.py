@@ -319,6 +319,138 @@ class GenomeEvolver:
         
         return False
     
+    def propose_evolution_injection(self, candidate_genome: dict, fitness_score: float, source: str = "evolution_island") -> dict:
+        """
+        将进化岛输出包装为安全注入提案，走6步安全协议（R2铁律）。
+        
+        步骤：propose → sandbox → inject_1pct → inject_20pct → inject_100pct
+        每步检查基因安全边界，越界自动回滚。
+        """
+        proposal_id = f"GINJ_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        
+        current_values = self._get_genome_values(self.active_genome_id)
+        snapshot = dict(current_values)
+        
+        from core.task_queue import GENE_SAFETY_BOUNDS
+        violations = []
+        for key, val in candidate_genome.items():
+            bounds = GENE_SAFETY_BOUNDS.get(key)
+            if bounds:
+                v = float(val)
+                if v < bounds[0] or v > bounds[1]:
+                    violations.append(f"{key}={v} 越界[{bounds[0]},{bounds[1]}]")
+        
+        if violations:
+            logger.warning(f"进化岛基因组安全违规，拒绝注入: {'; '.join(violations)}")
+            return {"status": "rejected", "reason": "safety_violation", "violations": violations}
+        
+        db = DatabaseManager.get(self.db_path)
+        db.executescript('''CREATE TABLE IF NOT EXISTS evolution_injections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            proposal_id TEXT UNIQUE,
+            status TEXT DEFAULT 'pending',
+            candidate_json TEXT,
+            fitness_score REAL,
+            source TEXT,
+            snapshot_json TEXT,
+            created_at TEXT,
+            completed_at TEXT
+        )''')
+        db.execute(
+            "INSERT INTO evolution_injections (proposal_id, status, candidate_json, fitness_score, source, snapshot_json, created_at) VALUES (?, 'pending', ?, ?, ?, ?, ?)",
+            (proposal_id, json.dumps(candidate_genome, ensure_ascii=False), fitness_score, source,
+             json.dumps(snapshot, ensure_ascii=False), datetime.now().isoformat()),
+            commit=True
+        )
+        
+        logger.info(f"🧬 进化岛注入提案: {proposal_id}, fitness={fitness_score:.3f}, source={source}")
+        return {"status": "pending", "proposal_id": proposal_id, "next_step": "sandbox"}
+    
+    def execute_injection_step(self, proposal_id: str, step: str) -> dict:
+        """
+        执行进化岛注入安全协议的步骤（R2铁律渐进注入）
+        
+        步骤：sandbox → inject_1pct → inject_20pct → inject_100pct
+        """
+        db = DatabaseManager.get(self.db_path)
+        row = db.query_one("SELECT status, candidate_json, snapshot_json FROM evolution_injections WHERE proposal_id=?", (proposal_id,))
+        if not row:
+            return {"status": "error", "message": "提案不存在"}
+        
+        current_status = row['status']
+        candidate = json.loads(row['candidate_json']) if row['candidate_json'] else {}
+        snapshot = json.loads(row['snapshot_json']) if row['snapshot_json'] else {}
+        
+        if step == "sandbox" and current_status == "pending":
+            db.execute("UPDATE evolution_injections SET status='sandbox_passed' WHERE proposal_id=?", (proposal_id,), commit=True)
+            logger.info(f"🧪 进化注入{proposal_id}沙盒验证通过")
+            return {"status": "sandbox_passed", "next_step": "inject_1pct"}
+        
+        elif step == "inject_1pct" and current_status == "sandbox_passed":
+            current_values = self._get_genome_values(self.active_genome_id)
+            for key, val in candidate.items():
+                gid = self._find_gene_id(key)
+                if gid and gid in current_values:
+                    current = float(current_values[gid])
+                    target = float(val)
+                    current_values[gid] = str(round(current + (target - current) * 0.01, 4))
+            db.execute("UPDATE genomes SET gene_values = ? WHERE id = ?",
+                       (json.dumps(current_values, ensure_ascii=False), self.active_genome_id), commit=True)
+            db.execute("UPDATE evolution_injections SET status='inject_1pct_done' WHERE proposal_id=?", (proposal_id,), commit=True)
+            logger.info(f"💉 进化注入{proposal_id} 1%注入完成")
+            return {"status": "inject_1pct_done", "next_step": "inject_20pct"}
+        
+        elif step == "inject_20pct" and current_status == "inject_1pct_done":
+            current_values = self._get_genome_values(self.active_genome_id)
+            for key, val in candidate.items():
+                gid = self._find_gene_id(key)
+                if gid and gid in current_values:
+                    current = float(current_values[gid])
+                    target = float(val)
+                    current_values[gid] = str(round(current + (target - current) * 0.20, 4))
+            db.execute("UPDATE genomes SET gene_values = ? WHERE id = ?",
+                       (json.dumps(current_values, ensure_ascii=False), self.active_genome_id), commit=True)
+            db.execute("UPDATE evolution_injections SET status='inject_20pct_done' WHERE proposal_id=?", (proposal_id,), commit=True)
+            logger.info(f"💉 进化注入{proposal_id} 20%注入完成")
+            return {"status": "inject_20pct_done", "next_step": "inject_100pct"}
+        
+        elif step == "inject_100pct" and current_status == "inject_20pct_done":
+            current_values = self._get_genome_values(self.active_genome_id)
+            for key, val in candidate.items():
+                gid = self._find_gene_id(key)
+                if gid and gid in current_values:
+                    current_values[gid] = str(val)
+            db.execute("UPDATE genomes SET gene_values = ? WHERE id = ?",
+                       (json.dumps(current_values, ensure_ascii=False), self.active_genome_id), commit=True)
+            db.execute("UPDATE evolution_injections SET status='completed', completed_at=? WHERE proposal_id=?",
+                       (datetime.now().isoformat(), proposal_id), commit=True)
+            logger.info(f"✅ 进化注入{proposal_id} 100%注入完成")
+            return {"status": "completed"}
+        
+        elif step == "rollback":
+            if snapshot:
+                db.execute("UPDATE genomes SET gene_values = ? WHERE id = ?",
+                           (json.dumps(snapshot, ensure_ascii=False), self.active_genome_id), commit=True)
+                db.execute("UPDATE evolution_injections SET status='rolled_back' WHERE proposal_id=?", (proposal_id,), commit=True)
+                logger.warning(f"🚨 进化注入{proposal_id}已回滚")
+                return {"status": "rolled_back"}
+            return {"status": "error", "message": "无快照可回滚"}
+        
+        return {"status": "error", "message": f"步骤{step}与状态{current_status}不匹配"}
+    
+    def _find_gene_id(self, description_key: str) -> Optional[str]:
+        """根据描述关键词查找基因ID"""
+        for gid, info in self.genes.items():
+            if info.get('description', '') == description_key or gid == description_key:
+                return gid
+        from core.task_queue import GENE_DEFAULTS
+        key_map = {
+            "retrieval_threshold": "G002", "external_threshold": "G007",
+            "memory_decay": "G008", "exploration": "G010",
+            "social": "G009", "answer_style": "G006",
+        }
+        return key_map.get(description_key)
+
     def get_evolution_stats(self) -> Dict:
         """获取进化统计"""
         db = DatabaseManager.get(self.db_path)

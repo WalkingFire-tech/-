@@ -393,35 +393,27 @@ class ActiveScheduler:
             return {"error": str(e)}
     
     def _apply_evolved_genome(self, genome: Dict):
-        """应用进化后的基因组"""
+        """应用进化后的基因组 — 通过6步安全协议（R2铁律）"""
         try:
             from core.genome_evolver import genome_evolver
             
-            # 更新基因值
-            db = DatabaseManager.get(genome_evolver.db_path)
-            cur = db.query_one("SELECT gene_values FROM genomes WHERE id = ?", 
-                             (genome_evolver.active_genome_id,))
+            fitness = genome.get('_fitness', 0.0)
+            proposal = genome_evolver.propose_evolution_injection(genome, fitness, source="active_scheduler")
             
-            if cur:
-                current_values = json.loads(cur['gene_values'])
-                
-                if 'retrieval_threshold' in genome:
-                    current_values['G002'] = str(genome['retrieval_threshold'])
-                if 'external_threshold' in genome:
-                    current_values['G007'] = str(genome['external_threshold'])
-                if 'memory_decay' in genome:
-                    current_values['G008'] = str(genome['memory_decay'])
-                if 'exploration' in genome:
-                    current_values['G010'] = str(genome['exploration'])
-                if 'social' in genome:
-                    current_values['G009'] = str(genome['social'])
-                if 'answer_style' in genome:
-                    current_values['G006'] = str(genome['answer_style'])
-                
-                db.execute("UPDATE genomes SET gene_values = ? WHERE id = ?",
-                           (json.dumps(current_values), genome_evolver.active_genome_id), commit=True)
-                
-                logger.info(f"已应用进化基因组: {genome}")
+            if proposal.get("status") == "rejected":
+                logger.warning(f"基因组注入被安全协议拒绝: {proposal.get('violations')}")
+                return
+            
+            proposal_id = proposal["proposal_id"]
+            steps = ["sandbox", "inject_1pct", "inject_20pct", "inject_100pct"]
+            for step in steps:
+                result = genome_evolver.execute_injection_step(proposal_id, step)
+                if result.get("status") == "error":
+                    logger.error(f"基因组注入步骤{step}失败: {result.get('message')}")
+                    genome_evolver.execute_injection_step(proposal_id, "rollback")
+                    return
+            
+            logger.info(f"基因组已通过安全协议注入: {proposal_id}")
         except Exception as e:
             logger.error(f"应用进化基因组失败: {e}")
     
