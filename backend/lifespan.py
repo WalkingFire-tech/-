@@ -16,6 +16,48 @@ from contextlib import asynccontextmanager
 from loguru import logger
 
 
+
+def _inject_evolved_genome(genome: dict, fitness: float = 0.0):
+    try:
+        from infrastructure.config_manager import config_manager
+        _flags = config_manager.get("feature_flags", {})
+        if not _flags.get("evolution_safety_protocol", True):
+            logger.info("进化岛安全协议已禁用(feature flag)，跳过基因组注入")
+            return
+    except Exception:
+        pass
+    from core.genome_evolver import genome_evolver
+    proposal = genome_evolver.propose_evolution_injection(genome, fitness, source="evolution_island")
+    if proposal.get("status") == "rejected":
+        logger.warning(f"进化岛基因组注入被安全协议拒绝: {proposal.get('violations')}")
+        return
+    proposal_id = proposal["proposal_id"]
+    steps = ["sandbox", "inject_1pct", "inject_20pct", "inject_100pct"]
+    for step in steps:
+        result = genome_evolver.execute_injection_step(proposal_id, step)
+        if result.get("status") == "error":
+            logger.error(f"进化注入步骤{step}失败: {result.get('message')}")
+            genome_evolver.execute_injection_step(proposal_id, "rollback")
+            return
+    logger.info(f"进化岛基因组已通过安全协议注入: {proposal_id}")
+
+
+def _import_evolved_skills(skills: list):
+    from infrastructure.database_manager import DatabaseManager
+    db = DatabaseManager.get("data/knowledge_store.db")
+    for skill in skills:
+        name = skill.get('name', f"evolved_skill_{hash(str(skill)) % 10000}")
+        code = skill.get('code', '')
+        trigger = skill.get('trigger', '')
+        existing = db.query_one("SELECT 1 FROM tools WHERE name = ?", (name,))
+        if existing:
+            continue
+        db.execute(
+            "INSERT INTO tools (name, code, trigger_pattern, status) VALUES (?, ?, ?, 'active')",
+            (name, code, trigger), commit=True
+        )
+
+
 # ========== 主动性SSE广播 ==========
 
 _proactivity_subscribers: list = []
@@ -191,6 +233,20 @@ async def _start_evolution_loop(app):
                 app.state.evolution_generation += result.get("stats", {}).get("generations", 0)
                 best_fitness = result.get("stats", {}).get("final_best_fitness", 0)
                 logger.info(f"进化岛周期运行完成: 最优适应度={best_fitness:.3f}, 累计代数={app.state.evolution_generation}")
+
+                if result.get("best_genome") and best_fitness > 0.5:
+                    try:
+                        _inject_evolved_genome(result["best_genome"], fitness=best_fitness)
+                        logger.info(f"进化岛基因组安全注入流程已启动 (适应度={best_fitness:.3f})")
+                    except Exception as inj_e:
+                        logger.warning(f"进化岛基因组注入失败: {inj_e}")
+
+                if result.get("best_skills"):
+                    try:
+                        _import_evolved_skills(result["best_skills"])
+                        logger.info(f"进化岛技能已自动导入 ({len(result['best_skills'])}个)")
+                    except Exception as imp_e:
+                        logger.warning(f"进化岛技能导入失败: {imp_e}")
 
                 _sm = None
                 try:

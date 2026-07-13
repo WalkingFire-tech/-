@@ -1,20 +1,26 @@
 """
 自适应调节器 - 根据资源状态调节系统行为
 
-核心理念：主动降级优于被动崩溃
+核心理验：主动降级优于被动崩溃
 - 当资源紧张时，系统主动切换到低功耗模式
 - 根据资源紧张程度，采取不同级别的调节措施
 - 所有资源消耗型操作都经过调节器审批
 
 设计原则：
 - 渐进式限制：正常→保守→紧急，逐级收紧
-- 可恢复：资源恢复后自动解除限制
+- 可恢复：资源恢复后自动解除限制（带冷却缓冲期）
 - 透明：每次调节都有明确原因和日志
+- 硬约束：decide()返回allowed=False时，调用方必须遵守
+
+闭环1：资源自我保存
+- 冷却缓冲期：EMERGENCY/CONSERVATIVE→NORMAL需要30秒稳定期
+- 模式变更回调：模式切换时通知所有订阅者
+- 硬约束执行：parallel_router等模块必须遵守decide()的决策
 """
 
 import threading
-from typing import Dict, Optional, Any, List
-from datetime import datetime
+from typing import Dict, Optional, Any, List, Callable
+from datetime import datetime, timedelta
 from enum import Enum
 
 try:
@@ -65,7 +71,15 @@ class AdaptiveGovernor:
 
     所有资源消耗型操作都经过调节器审批。
     根据当前运行模式决定是否允许、降级或拒绝操作。
+    
+    闭环1增强：
+    - 冷却缓冲期：从降级模式恢复到NORMAL需要30秒稳定期
+    - 模式变更回调：模式切换时通知订阅者
+    - 硬约束：decide()返回allowed=False时调用方必须遵守
     """
+
+    COOLDOWN_SECONDS = 30
+    _MODE_SEVERITY = {OperatingMode.NORMAL: 0, OperatingMode.CONSERVATIVE: 1, OperatingMode.EMERGENCY: 2}
 
     def __init__(self, health_monitor: SystemHealthMonitor = None):
         self.health_monitor = health_monitor or get_health_monitor()
@@ -92,11 +106,50 @@ class AdaptiveGovernor:
             ActionType.DENSE_RETRIEVAL: "tfidf_fallback",
         }
 
-        logger.info("⚖️ 自适应调节器已创建")
+        self._last_mode: OperatingMode = OperatingMode.NORMAL
+        self._effective_mode: OperatingMode = OperatingMode.NORMAL
+        self._cooldown_until: Optional[datetime] = None
+        self._mode_change_callbacks: List[Callable[[OperatingMode, OperatingMode], None]] = []
+
+        logger.info("⚖️ 自适应调节器已创建（含冷却缓冲+模式变更回调）")
+
+    def on_mode_change(self, callback: Callable[[OperatingMode, OperatingMode], None]):
+        self._mode_change_callbacks.append(callback)
+
+    def get_effective_mode(self) -> OperatingMode:
+        now = datetime.now()
+        raw_mode = self.health_monitor.get_operating_mode()
+
+        if raw_mode != self._last_mode:
+            old_mode = self._last_mode
+            self._last_mode = raw_mode
+
+            old_sev = self._MODE_SEVERITY.get(old_mode, 0)
+            new_sev = self._MODE_SEVERITY.get(raw_mode, 0)
+
+            if new_sev < old_sev:
+                self._cooldown_until = now + timedelta(seconds=self.COOLDOWN_SECONDS)
+                logger.info(f"⚖️ 资源恢复中：{old_mode.value}→{raw_mode.value}，冷却缓冲{self.COOLDOWN_SECONDS}秒")
+            elif new_sev > old_sev:
+                self._effective_mode = raw_mode
+                self._cooldown_until = None
+                logger.warning(f"⚖️ 资源降级：{old_mode.value}→{raw_mode.value}")
+
+            for cb in self._mode_change_callbacks:
+                try:
+                    cb(old_mode, raw_mode)
+                except Exception as e:
+                    logger.warning(f"模式变更回调异常: {e}")
+
+        if self._cooldown_until and now < self._cooldown_until:
+            return self._effective_mode
+
+        self._effective_mode = raw_mode
+        self._cooldown_until = None
+        return self._effective_mode
 
     def decide(self, action: ActionType, context: Dict = None) -> ActionDecision:
-        """根据当前状态决定是否允许执行某操作"""
-        mode = self.health_monitor.get_operating_mode()
+        mode = self.get_effective_mode()
         context = context or {}
 
         try:
@@ -156,16 +209,13 @@ class AdaptiveGovernor:
         return ActionDecision(allowed=True, mode=mode.value)
 
     def decide_ollama(self) -> ActionDecision:
-        """快捷方法：判断是否允许Ollama推理"""
         return self.decide(ActionType.OLLAMA_INFERENCE)
 
     def decide_search(self) -> ActionDecision:
-        """快捷方法：判断是否允许外部搜索"""
         return self.decide(ActionType.EXTERNAL_SEARCH)
 
     def decide_background(self, task_name: str) -> ActionDecision:
-        """快捷方法：判断后台任务是否应该运行"""
-        mode = self.health_monitor.get_operating_mode()
+        mode = self.get_effective_mode()
 
         if mode == OperatingMode.EMERGENCY:
             self._log_decision(ActionType.BACKGROUND_TASK, False, mode.value, f"emergency_block:{task_name}")
@@ -188,21 +238,24 @@ class AdaptiveGovernor:
         return ActionDecision(allowed=True, mode=mode.value)
 
     def get_parallel_path_count(self, requested: int = 9) -> int:
-        """获取当前允许的并行路径数"""
         max_paths = self.health_monitor.get_max_parallel_paths()
+        effective = self.get_effective_mode()
+        effective_sev = self._MODE_SEVERITY.get(effective, 0)
+        if effective_sev >= 2:
+            max_paths = min(max_paths, 3)
+        elif effective_sev >= 1:
+            max_paths = min(max_paths, 5)
         actual = min(requested, max_paths)
         if actual < requested:
-            logger.info(f"⚖️ 路径削减：{requested}→{actual}（{self.health_monitor.get_mode_value()}模式）")
+            logger.info(f"⚖️ 路径削减：{requested}→{actual}（{effective.value}模式）")
         return actual
 
     def get_retrieval_strategy(self) -> str:
-        """获取当前推荐的检索策略"""
         if self.health_monitor.should_use_dense_retrieval():
             return "hybrid"
         return "sparse_only"
 
     def _log_decision(self, action: ActionType, allowed: bool, mode: str, reason: str):
-        """记录调节决策"""
         entry = {
             "action": action.value,
             "allowed": allowed,
@@ -216,14 +269,15 @@ class AdaptiveGovernor:
                 self._decision_log = self._decision_log[-self._max_log:]
 
     def get_decision_log(self, limit: int = 20) -> List[Dict]:
-        """获取最近的调节决策"""
         with self._lock:
             return self._decision_log[-limit:]
 
     def get_status(self) -> Dict[str, Any]:
-        """获取调节器状态"""
+        effective = self.get_effective_mode()
         return {
             "health": self.health_monitor.get_status(),
+            "effective_mode": effective.value,
+            "cooldown_remaining": (self._cooldown_until - datetime.now()).total_seconds() if self._cooldown_until and datetime.now() < self._cooldown_until else 0,
             "recent_decisions": self.get_decision_log(10),
             "parallel_paths": self.get_parallel_path_count(),
             "retrieval_strategy": self.get_retrieval_strategy(),
@@ -235,7 +289,6 @@ _governor_lock = threading.Lock()
 
 
 def get_adaptive_governor() -> AdaptiveGovernor:
-    """获取自适应调节器单例"""
     global _governor
     with _governor_lock:
         if _governor is None:

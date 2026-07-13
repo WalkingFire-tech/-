@@ -420,6 +420,41 @@ async def agent_status():
         return {"error": str(e)}
 
 
+@router.get("/evolution/injection-status")
+async def get_evolution_injection_status():
+    try:
+        from core.genome_evolver import genome_evolver
+        db = DatabaseManager.get(genome_evolver.db_path)
+        rows = db.query(
+            "SELECT proposal_id, status, fitness_score, source, created_at, completed_at FROM evolution_injections ORDER BY created_at DESC LIMIT 10"
+        )
+        injections = []
+        for row in (rows or []):
+            injections.append({
+                "proposal_id": row[0],
+                "status": row[1],
+                "fitness": row[2],
+                "source": row[3],
+                "created_at": row[4],
+                "completed_at": row[5],
+            })
+        return {"injections": injections, "total": len(injections)}
+    except Exception as e:
+        return {"injections": [], "total": 0, "error": str(e)}
+
+
+@router.get("/sleep/status")
+async def get_sleep_status():
+    try:
+        from core.presence.sleep_consolidation import get_sleep_engine
+        engine = get_sleep_engine()
+        status = engine.get_sleep_status()
+        summary = engine.get_consolidation_summary()
+        return {**status, "summary": summary}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.get("/tasks/{task_id}")
 async def get_task_status(task_id: str):
     try:

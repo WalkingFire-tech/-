@@ -168,7 +168,7 @@ def extract_tool_params(query: str, intent_type: str = "", methodology: dict = N
 async def _auto_execution_fallback(query: str, intent_type: str = "", params: dict = None) -> Optional[list]:
     """自主执行回路：工具失败时，系统自己生成代码→执行→验证→修正→重试"""
     try:
-        from core.learning.auto_execution_loop import auto_execution_loop
+        from core.capability_creation_loop import capability_creation_loop
         expected_type = ""
         if intent_type == "hardware" or any(kw in query.lower() for kw in ["串口", "serial", "com", "gps"]):
             expected_type = "serial"
@@ -185,7 +185,7 @@ async def _auto_execution_fallback(query: str, intent_type: str = "", params: di
                 context["baudrate"] = params["baudrate"]
 
         logger.info(f"[AUTO_EXEC] 触发自主执行: goal='{query[:60]}', expected_type='{expected_type}'")
-        result = await auto_execution_loop.execute(query, expected_type=expected_type, context=context)
+        result = await capability_creation_loop.execute_with_retry(query, expected_type=expected_type, context=context)
 
         if result.success:
             logger.info(f"[AUTO_EXEC] 自主执行成功! attempts={result.attempts}, duration={result.duration_ms:.0f}ms")

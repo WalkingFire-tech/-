@@ -6,16 +6,59 @@
   探测 → 研究 → 尝试 → 验证 → 记住
 
 这是系统"活过来"的起点。
+
+合并了auto_execution_loop的能力：
+  - LLM代码生成+修正
+  - 自动pip安装
+  - 危险命令拦截
+  - 诊断修正+重试
+  - fallback代码模板
 """
 
 import asyncio
+import os
 import subprocess
 import re
 import json
 import time
-from typing import Dict, List, Optional, Any
+import urllib.parse
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Any, Tuple
 from loguru import logger
 from datetime import datetime
+
+
+_DANGEROUS_PATTERNS = [
+    r'\brm\s+-rf\b', r'\bdel\s+/s\b', r'\bformat\b', r'\bfdisk\b',
+    r'\bmkfs\b', r'\bshutdown\b', r'\breboot\b', r'\btaskkill\b',
+    r'\breg\s+delete\b', r'\breg\s+add\b', r'\bnet\s+user\b',
+    r'\bcipher\b', r'\bsfc\b', r'\bdism\b', r'\bbcdedit\b',
+    r'\bos\.remove\b', r'\bshutil\.rmtree\b', r'\bos\.system\b',
+]
+
+_PIP_PACKAGE_MAP = {
+    "cv2": "opencv-python", "PIL": "Pillow", "sklearn": "scikit-learn",
+    "serial": "pyserial", "usb": "pyusb", "yaml": "pyyaml",
+    "dotenv": "python-dotenv", "bs4": "beautifulsoup4",
+    "folium": "folium", "serial.tools": "pyserial",
+    "winreg": None,
+}
+
+_INSTALLED_IN_SESSION: set = set()
+
+_MAX_ATTEMPTS = 3
+_EXECUTION_TIMEOUT = 30
+
+
+@dataclass
+class ExecutionResult:
+    success: bool
+    output: str = ""
+    error: str = ""
+    attempts: int = 0
+    code_history: List[str] = field(default_factory=list)
+    auto_installed: List[str] = field(default_factory=list)
+    duration_ms: float = 0.0
 
 
 class CapabilityGap:
@@ -64,15 +107,349 @@ class CapabilityCreationLoop:
         self.gaps: List[CapabilityGap] = []
         self.attempts: List[CreationAttempt] = []
         self._tools_created = {}
+        self._execution_history: List[Dict] = []
         
-        # 已知的问题模式 → 对应的解决方案
         self._pattern_solutions = {
             "serial": self._solve_serial_read,
             "serial_port": self._solve_serial_read,
             "com_port": self._solve_serial_read,
             "uart": self._solve_serial_read,
             "串口": self._solve_serial_read,
+            "地图": self._solve_map_render,
+            "标记": self._solve_map_render,
+            "folium": self._solve_map_render,
+            "可视化": self._solve_map_render,
         }
+
+    @staticmethod
+    def _is_dangerous(code: str) -> bool:
+        for pattern in _DANGEROUS_PATTERNS:
+            if re.search(pattern, code, re.IGNORECASE):
+                return True
+        return False
+
+    @staticmethod
+    def _extract_missing_module(error_str: str) -> Optional[str]:
+        m = re.search(r"No module named ['\"]?(\w+)['\"]?", error_str)
+        if m:
+            return m.group(1)
+        m = re.search(r"cannot import name.*from ['\"]?(\w+)['\"]?", error_str)
+        if m:
+            return m.group(1)
+        return None
+
+    @staticmethod
+    def _auto_install(module_name: str) -> bool:
+        if module_name in _INSTALLED_IN_SESSION:
+            return True
+        pip_name = _PIP_PACKAGE_MAP.get(module_name, module_name)
+        if pip_name is None:
+            return False
+        try:
+            logger.info(f"CapabilityLoop: 自动安装 {pip_name}")
+            result = subprocess.run(
+                ["pip", "install", pip_name, "--quiet"],
+                capture_output=True, text=True, timeout=60,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0,
+            )
+            if result.returncode == 0:
+                _INSTALLED_IN_SESSION.add(module_name)
+                logger.info(f"CapabilityLoop: {pip_name} 安装成功")
+                return True
+            logger.warning(f"CapabilityLoop: {pip_name} 安装失败: {result.stderr[:200]}")
+            return False
+        except Exception as e:
+            logger.warning(f"CapabilityLoop: {pip_name} 安装异常: {e}")
+            return False
+
+    @staticmethod
+    def _execute_python_code(code: str, timeout: int = _EXECUTION_TIMEOUT) -> Tuple[bool, str, str]:
+        try:
+            result = subprocess.run(
+                ["python", "-c", code],
+                capture_output=True, text=True, timeout=timeout,
+                encoding="utf-8", errors="replace",
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0,
+            )
+            output = result.stdout.strip() if result.stdout else ""
+            error = result.stderr.strip() if result.stderr else ""
+            return result.returncode == 0, output, error
+        except subprocess.TimeoutExpired:
+            return False, "", f"执行超时({timeout}s)"
+        except Exception as e:
+            return False, "", str(e)
+
+    @staticmethod
+    def _validate_output(output: str, expected_type: str = "") -> bool:
+        if not output or len(output.strip()) < 2:
+            return False
+        if expected_type == "gps":
+            return bool(re.search(r'\d+\.\d+.*[°]?\s*[NS]', output)) or bool(re.search(r'经度|纬度|latitude|longitude', output, re.IGNORECASE))
+        if expected_type == "map":
+            return "html" in output.lower() or "folium" in output.lower() or "map" in output.lower()
+        if expected_type == "serial":
+            return bool(re.search(r'COM\d+|serial|串口|数据', output, re.IGNORECASE))
+        return True
+
+    def _diagnose_and_fix(self, error: str, output: str, code: str, attempt: int) -> Optional[str]:
+        missing = self._extract_missing_module(error)
+        if missing:
+            if self._auto_install(missing):
+                return code
+
+        if "Permission" in error or "拒绝" in error:
+            port_match = re.search(r'COM(\d+)', code)
+            if port_match and attempt < 2:
+                new_port = f"COM{int(port_match.group(1)) + 1}"
+                code = code.replace(f"COM{port_match.group(1)}", new_port)
+                logger.info(f"CapabilityLoop: 端口被占用，尝试 {new_port}")
+                return code
+
+        if "not found" in error or "找不到" in error:
+            port_matches = re.findall(r'COM\d+', error)
+            if port_matches and attempt < 2:
+                for pm in port_matches:
+                    code = code.replace(pm, "COM_AUTO")
+                return code
+
+        if "timeout" in error.lower() or "超时" in error:
+            timeout_match = re.search(r'timeout\s*=\s*(\d+)', code)
+            if timeout_match:
+                old_t = int(timeout_match.group(1))
+                new_t = min(old_t * 2, 30)
+                code = code.replace(f"timeout={old_t}", f"timeout={new_t}")
+                logger.info(f"CapabilityLoop: 超时，增加timeout {old_t}→{new_t}")
+                return code
+
+        return None
+
+    async def execute_with_retry(self, goal: str, expected_type: str = "",
+                                  context: Dict[str, Any] = None) -> ExecutionResult:
+        start = time.time()
+        context = context or {}
+
+        code = await self._generate_code_via_llm(goal, context)
+        if not code:
+            code = self._fallback_code_generation(goal)
+        if not code:
+            return ExecutionResult(
+                success=False, error="无法生成执行代码",
+                attempts=1, duration_ms=(time.time() - start) * 1000,
+            )
+
+        code_history = [code]
+        auto_installed = []
+
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            logger.info(f"CapabilityLoop: 第{attempt}次执行 (目标: {goal[:50]})")
+
+            if self._is_dangerous(code):
+                return ExecutionResult(
+                    success=False, error="代码包含危险操作，拒绝执行",
+                    attempts=attempt, code_history=code_history,
+                    duration_ms=(time.time() - start) * 1000,
+                )
+
+            success, output, error = await asyncio.wait_for(
+                asyncio.get_running_loop().run_in_executor(
+                    None, lambda: self._execute_python_code(code, _EXECUTION_TIMEOUT)
+                ),
+                timeout=_EXECUTION_TIMEOUT + 5,
+            )
+
+            if success and self._validate_output(output, expected_type):
+                self._record_execution(goal, True, output, attempt, code)
+                return ExecutionResult(
+                    success=True, output=output, attempts=attempt,
+                    code_history=code_history, auto_installed=auto_installed,
+                    duration_ms=(time.time() - start) * 1000,
+                )
+
+            logger.warning(f"CapabilityLoop: 第{attempt}次失败 - error={error[:100]}, output={output[:100]}")
+
+            missing = self._extract_missing_module(error)
+            if missing and missing not in auto_installed:
+                if self._auto_install(missing):
+                    auto_installed.append(missing)
+                    code_history.append(code)
+                    continue
+
+            fixed_code = self._diagnose_and_fix(error, output, code, attempt)
+            if fixed_code:
+                code = fixed_code
+                code_history.append(code)
+            else:
+                new_code = await self._regenerate_code_via_llm(goal, error, output, attempt, context)
+                if new_code:
+                    code = new_code
+                    code_history.append(code)
+                else:
+                    self._record_execution(goal, False, error, attempt, code)
+                    return ExecutionResult(
+                        success=False, error=f"自主执行{attempt}次后仍失败: {error[:200]}",
+                        output=output, attempts=attempt, code_history=code_history,
+                        auto_installed=auto_installed,
+                        duration_ms=(time.time() - start) * 1000,
+                    )
+
+        self._record_execution(goal, False, "达到最大重试次数", _MAX_ATTEMPTS, code)
+        return ExecutionResult(
+            success=False, error=f"自主执行{_MAX_ATTEMPTS}次后仍失败",
+            attempts=_MAX_ATTEMPTS, code_history=code_history,
+            auto_installed=auto_installed,
+            duration_ms=(time.time() - start) * 1000,
+        )
+
+    async def _generate_code_via_llm(self, goal: str, context: Dict[str, Any] = None) -> Optional[str]:
+        try:
+            from adapters.llm.ollama_adapter import ollama_chat_request
+            from infrastructure.config_manager import config_manager
+            base_url = config_manager.get("ollama.base_url", "http://localhost:11434")
+            model = config_manager.get("ollama.model", "qwen2.5-coder:7b")
+            ctx_str = ""
+            if context:
+                port = context.get("port", "")
+                baudrate = context.get("baudrate", "")
+                if port:
+                    ctx_str += f"\n- 串口: {port}"
+                if baudrate:
+                    ctx_str += f"\n- 波特率: {baudrate}"
+            prompt = f"""生成一段Python代码来完成任务。只输出代码，不要解释。
+
+目标: {goal}
+{ctx_str}
+
+要求：
+- 代码必须可独立执行
+- 用print()输出关键结果
+- 如果需要读取串口，用pyserial库
+- 如果需要渲染地图，用folium库
+- 如果需要扫描串口，用serial.tools.list_ports
+- 处理异常，不要让程序崩溃
+- 如果读取GPS，解析NMEA数据并输出经纬度
+"""
+            result = ollama_chat_request(base_url, model, prompt, timeout=30)
+            if result and result.get("content"):
+                code = result["content"]
+                code = re.sub(r'^```python\s*', '', code)
+                code = re.sub(r'^```\s*', '', code)
+                code = re.sub(r'\s*```$', '', code)
+                code = code.strip()
+                if "import " in code or "def " in code or "print(" in code:
+                    logger.info(f"CapabilityLoop: LLM生成代码 ({len(code)}字符)")
+                    return code
+        except Exception as e:
+            logger.warning(f"CapabilityLoop: LLM代码生成失败: {e}")
+        return None
+
+    async def _regenerate_code_via_llm(self, goal: str, error: str, output: str,
+                                        attempt: int, context: Dict[str, Any] = None) -> Optional[str]:
+        try:
+            from adapters.llm.ollama_adapter import ollama_chat_request
+            from infrastructure.config_manager import config_manager
+            base_url = config_manager.get("ollama.base_url", "http://localhost:11434")
+            model = config_manager.get("ollama.model", "qwen2.5-coder:7b")
+            prompt = f"""之前的代码执行失败了，请修正。
+
+目标: {goal}
+错误: {error[:500]}
+输出: {output[:300]}
+第{attempt}次尝试
+
+要求：
+- 修正错误，生成可执行的Python代码
+- 只输出代码，不要解释
+- 代码必须用print()输出结果
+- 如果是串口问题，尝试扫描可用端口
+- 如果是超时，增加等待时间
+"""
+            result = ollama_chat_request(base_url, model, prompt, timeout=30)
+            if result and result.get("content"):
+                code = result["content"]
+                code = re.sub(r'^```python\s*', '', code)
+                code = re.sub(r'^```\s*', '', code)
+                code = re.sub(r'\s*```$', '', code)
+                code = code.strip()
+                if "import " in code or "def " in code or "print(" in code:
+                    logger.info(f"CapabilityLoop: LLM修正代码 ({len(code)}字符)")
+                    return code
+        except Exception as e:
+            logger.warning(f"CapabilityLoop: LLM代码修正失败: {e}")
+        return None
+
+    def _fallback_code_generation(self, goal: str) -> Optional[str]:
+        goal_lower = goal.lower()
+
+        if any(kw in goal_lower for kw in ["串口", "serial", "com", "gps"]):
+            port = "COM3"
+            port_match = re.search(r'COM\d+', goal, re.IGNORECASE)
+            if port_match:
+                port = port_match.group().upper()
+            num_match = re.search(r'串口\s*(\d+)', goal)
+            if num_match:
+                port = f"COM{num_match.group(1)}"
+
+            return f'''import serial
+import serial.tools.list_ports
+import time
+
+ports = serial.tools.list_ports.comports()
+if not ports:
+    print("未检测到串口设备")
+else:
+    print(f"检测到{{len(ports)}}个串口:")
+    for p in sorted(ports, key=lambda x: x.device):
+        print(f"  {{p.device}} | {{p.description}}")
+
+target_port = "{port}"
+try:
+    ser = serial.Serial(port=target_port, baudrate=9600, timeout=5)
+    lines = []
+    start = time.time()
+    while time.time() - start < 5:
+        if ser.in_waiting > 0:
+            raw = ser.readline()
+            decoded = raw.decode("ascii", errors="ignore").strip()
+            if decoded:
+                lines.append(decoded)
+        time.sleep(0.05)
+    ser.close()
+    if lines:
+        for line in lines[:20]:
+            print(line)
+    else:
+        print(f"端口{{target_port}}已打开但5秒内未收到数据")
+except Exception as e:
+    print(f"读取{{target_port}}失败: {{e}}")
+    for p in sorted(serial.tools.list_ports.comports(), key=lambda x: x.device):
+        print(f"  可用: {{p.device}} | {{p.description}}")
+'''
+
+        if any(kw in goal_lower for kw in ["地图", "map", "标记", "folium"]):
+            return '''import folium
+import os
+m = folium.Map(location=[31.2304, 121.4737], zoom_start=13)
+folium.Marker([31.2304, 121.4737], popup="当前位置").add_to(m)
+filepath = os.path.join(os.environ.get("TEMP", "/tmp"), "gps_map.html")
+m.save(filepath)
+print(f"地图已生成: {filepath}")
+print(f"坐标: 31.2304, 121.4737")
+'''
+
+        return None
+
+    def _record_execution(self, goal: str, success: bool, output: str,
+                          attempts: int, code: str):
+        self._execution_history.append({
+            "goal": goal[:100],
+            "success": success,
+            "output_preview": output[:200] if output else "",
+            "attempts": attempts,
+            "code_length": len(code),
+            "timestamp": time.time(),
+        })
+        if len(self._execution_history) > 100:
+            self._execution_history = self._execution_history[-50:]
 
     async def handle(self, query: str, context: Dict = None) -> Dict:
         """
@@ -108,6 +485,17 @@ class CapabilityCreationLoop:
                         
                         # 4. 尝试注册工具
                         await self._register_tool(query, result.get("data", ""), pattern)
+                        
+                        try:
+                            from infrastructure.config_manager import config_manager
+                            _flags = config_manager.get("feature_flags", {})
+                            if _flags.get("intent_keyword_learning", True):
+                                from core.cognitive_dispatcher import get_cognitive_dispatcher
+                                cognitive_dispatcher = get_cognitive_dispatcher()
+                                _learned_intent = context.get("intent_type", "hardware") if context else "hardware"
+                                cognitive_dispatcher.learn_keyword_from_experience(query, _learned_intent, source="capability_creation_loop")
+                        except Exception:
+                            pass
                         
                         return {
                             "handled": True,
@@ -149,6 +537,86 @@ class CapabilityCreationLoop:
             "confidence": 0.0,
         }
 
+    async def _solve_map_render(self, query: str) -> Dict:
+        """解决地图渲染问题——用Python folium生成地图HTML，支持串口GPS复合请求"""
+        import tempfile
+        import webbrowser
+        try:
+            import folium
+        except ImportError:
+            self._auto_install("folium")
+            try:
+                import folium
+            except ImportError:
+                return {"success": False, "data": "", "error": "folium安装失败"}
+
+        lat, lon = 31.2304, 121.4737
+        _coords_from_serial = False
+
+        if any(kw in query for kw in ["串口", "serial", "COM", "com"]):
+            serial_result = await self._solve_serial_read(query)
+            if serial_result.get("success"):
+                serial_data = serial_result.get("data", "")
+                gga_match = re.search(r'\$GNGGA,\d+\.\d+,(\d{2})(\d{2}\.\d+),[NS],(\d{3})(\d{2}\.\d+),[EW]', serial_data)
+                if gga_match:
+                    lat = float(gga_match.group(1)) + float(gga_match.group(2)) / 60
+                    lon = float(gga_match.group(3)) + float(gga_match.group(4)) / 60
+                    _coords_from_serial = True
+                    logger.info(f"🗺️ 从串口数据解析GPS: {lat:.6f}°N, {lon:.6f}°E")
+
+        lat_patterns = [
+            r'[纬纬度:：]*\s*(\d+\.?\d*)\s*[°度]\s*[NS北南]',
+            r'[纬纬度:：]*\s*(\d+\.?\d*)\s*[NS北南]',
+        ]
+        lon_patterns = [
+            r'[经经度:：]*\s*(\d+\.?\d*)\s*[°度]\s*[EW东西]',
+            r'[经经度:：]*\s*(\d+\.?\d*)\s*[EW东西]',
+        ]
+        for pat in lat_patterns:
+            lat_match = re.search(pat, query)
+            if lat_match:
+                lat = float(lat_match.group(1))
+                _coords_from_serial = False
+                break
+        for pat in lon_patterns:
+            lon_match = re.search(pat, query)
+            if lon_match:
+                lon = float(lon_match.group(1))
+                _coords_from_serial = False
+                break
+
+        if not _coords_from_serial:
+            try:
+                from core.cognitive_dispatcher import get_cognitive_dispatcher
+                cd = get_cognitive_dispatcher()
+                dispatch = cd.dispatch(query)
+                if dispatch.get("field_context", {}).get("previous_topic"):
+                    prev = dispatch["field_context"]["previous_topic"]
+                    coord_match = re.search(r'(\d+\.\d+)[°]\s*[NS],\s*(\d+\.\d+)[°]\s*[EW]', prev)
+                    if coord_match:
+                        lat, lon = float(coord_match.group(1)), float(coord_match.group(2))
+            except Exception:
+                pass
+
+        m = folium.Map(
+            location=[lat, lon], zoom_start=13,
+            tiles="https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}",
+            attr="高德地图",
+        )
+        folium.Marker([lat, lon], popup=f"标记位置 ({lat:.4f}°N, {lon:.4f}°E)").add_to(m)
+        filepath = os.path.join(tempfile.gettempdir(), "gps_map.html")
+        m.save(filepath)
+
+        try:
+            webbrowser.open(filepath)
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "data": f"地图已生成: {filepath}\n坐标: {lat:.4f}°N, {lon:.4f}°E\n已在浏览器中打开",
+        }
+
     async def _solve_serial_read(self, query: str) -> Dict:
         """
         解决串口读取问题
@@ -156,9 +624,15 @@ class CapabilityCreationLoop:
         """
         # 解析参数
         port_match = re.search(r'COM\d+', query, re.IGNORECASE)
-        baud_match = re.search(r'(\d{4,6})', query)
+        cn_port_match = re.search(r'串口\s*(\d+)', query)
+        baud_match = re.search(r'波特率\s*(\d{4,6})', query) or re.search(r'(\d{4,6})', query)
         
-        port = port_match.group(0).upper() if port_match else "COM1"
+        if port_match:
+            port = port_match.group(0).upper()
+        elif cn_port_match:
+            port = f"COM{cn_port_match.group(1)}"
+        else:
+            port = "COM1"
         baud = baud_match.group(1) if baud_match else "9600"
         
         # 构建 PowerShell 命令
@@ -287,13 +761,97 @@ try {{
 
     def get_status(self) -> Dict:
         """获取回路状态"""
+        total = len(self._execution_history)
+        successes = sum(1 for h in self._execution_history if h["success"])
         return {
             "gaps_detected": len(self.gaps),
             "gaps_resolved": sum(1 for g in self.gaps if g.resolved),
             "attempts_made": len(self.attempts),
             "attempts_succeeded": sum(1 for a in self.attempts if a.success),
             "tools_created": list(self._tools_created.keys()),
+            "executions_total": total,
+            "executions_success_rate": successes / total if total > 0 else 0.0,
         }
+
+    async def _solve_weather_query(self, query: str) -> Dict:
+        """
+        解决天气查询问题
+        使用wttr.in免费API获取天气信息
+        """
+        import urllib.parse
+        import httpx
+
+        location = None
+        loc_match = re.search(r'(?:在|去|到|的|附近|最近)\s*([^\s?？，,！!的]+?)(?:的|天气|$)', query)
+        if not loc_match:
+            loc_match = re.search(r'^([\u4e00-\u9fa5]{2,4}(?:市|区|县|省)?)(?:今天|明天|后天|本周|这周)', query)
+        if not loc_match:
+            loc_match = re.search(r'^([\u4e00-\u9fa5]{2,4}(?:市|区|县|省)?)天气', query)
+        if not loc_match:
+            loc_match = re.search(r'([\u4e00-\u9fa5]{2,4}(?:市|区|县|省)?)天气', query)
+        if loc_match:
+            location = loc_match.group(1).strip()
+        _time_words = {'今天', '明天', '后天', '大后天', '昨天', '前天', '本周', '这周', '上周', '下周'}
+        if location in _time_words:
+            location = None
+
+        try:
+            url = "https://wttr.in/"
+            if location:
+                url += f"{urllib.parse.quote(location)}?format=j1&lang=zh"
+            else:
+                url += "?format=j1&lang=zh"
+
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(url, headers={"User-Agent": "curl/7.68.0"})
+                resp.raise_for_status()
+                data = resp.json()
+
+            current = data.get("current_condition", [{}])[0]
+            area = data.get("nearest_area", [{}])[0]
+            city = area.get("areaName", [{}])[0].get("value", location or "当前位置")
+            country = area.get("country", [{}])[0].get("value", "")
+            temp_c = current.get("temp_C", "?")
+            feels_like = current.get("FeelsLikeC", "?")
+            humidity = current.get("humidity", "?")
+            desc_raw = current.get("lang_zh", [{}])[0].get("value", "") or current.get("weatherDesc", [{}])[0].get("value", "")
+            _weather_zh = {
+                "Sunny": "晴天", "Clear": "晴朗", "Partly cloudy": "多云",
+                "Cloudy": "阴天", "Overcast": "阴", "Mist": "薄雾",
+                "Fog": "雾", "Light rain": "小雨", "Moderate rain": "中雨",
+                "Heavy rain": "大雨", "Patchy rain nearby": "零星小雨",
+                "Light drizzle": "毛毛雨", "Thunderstorm": "雷暴",
+                "Light snow": "小雪", "Moderate snow": "中雪",
+                "Heavy snow": "大雪", "Blizzard": "暴风雪",
+                "Freezing fog": "冻雾", "Light freezing rain": "冻雨",
+            }
+            desc = _weather_zh.get(desc_raw, desc_raw)
+            wind_speed = current.get("windspeedKmph", "?")
+            wind_dir = current.get("winddir16Point", "")
+            visibility = current.get("visibility", "?")
+            pressure = current.get("pressure", "?")
+
+            result_text = f"**{city}（{country}）当前天气**\n\n"
+            result_text += f"- 天气状况：{desc}\n"
+            result_text += f"- 气温：{temp_c}°C（体感温度 {feels_like}°C）\n"
+            result_text += f"- 湿度：{humidity}%\n"
+            result_text += f"- 风速：{wind_speed} km/h {wind_dir}\n"
+            result_text += f"- 能见度：{visibility} km\n"
+            result_text += f"- 气压：{pressure} hPa\n"
+
+            weather_list = data.get("weather", [])
+            if len(weather_list) > 1:
+                tomorrow = weather_list[1]
+                t_max = tomorrow.get("maxtempC", "?")
+                t_min = tomorrow.get("mintempC", "?")
+                t_desc_raw = tomorrow.get("hourly", [{}])[4].get("lang_zh", [{}])[0].get("value", "") or tomorrow.get("hourly", [{}])[4].get("weatherDesc", [{}])[0].get("value", "") if len(tomorrow.get("hourly", [])) > 4 else ""
+                t_desc = _weather_zh.get(t_desc_raw, t_desc_raw)
+                result_text += f"\n**明天预报**：{t_desc}，{t_min}°C ~ {t_max}°C\n"
+
+            return {"success": True, "data": result_text}
+
+        except Exception as e:
+            return {"success": False, "data": f"天气查询失败：{str(e)[:100]}。建议查看天气应用获取实时天气信息。"}
 
 
 # 全局实例

@@ -138,7 +138,7 @@ async def generate_new_method(
         }
 
 
-async def execute_method(method_name: str, method_config: Dict) -> Tuple[bool, str]:
+async def execute_method(method_name: str, method_config: Dict, intent_type: str = "") -> Tuple[bool, str]:
     """执行一个解决方法，返回 (success, result_text)"""
     method_type = method_config.get("type", "")
 
@@ -189,7 +189,7 @@ async def execute_method(method_name: str, method_config: Dict) -> Tuple[bool, s
             register_builtin_tools()
             query = method_config.get("query", "")
             from core.tool_registry import tool_registry
-            tools = tool_registry.plan_tools(query, "complex_query")
+            tools = tool_registry.plan_tools(query, intent_type or "complex_query")
             if tools:
                 result = await tool_executor.execute(tools[0], {"query": query}, timeout_override=20)
                 if result and result.success and result.data:
@@ -242,6 +242,7 @@ async def persistent_solve(
     conversation_context: str = "",
     truth_insights: str = "",
     emit_fn=None,
+    intent_type: str = "",
 ) -> Tuple[str, list, bool]:
     """
     持续求解引擎：失败→分析→生成新方法→执行→回顾
@@ -268,7 +269,7 @@ async def persistent_solve(
         logger.info(f"🔄 持续求解第{round_num}轮: 尝试「{method_name}」")
 
         success, result = await asyncio.wait_for(
-            execute_method(method_name, method_config),
+            execute_method(method_name, method_config, intent_type=intent_type),
             timeout=ROUND_TIMEOUT,
         )
 
@@ -278,6 +279,16 @@ async def persistent_solve(
             solved = True
             final_response = result
             logger.info(f"✅ 持续求解成功: 第{round_num}轮「{method_name}」解决了问题")
+            
+            try:
+                from infrastructure.config_manager import config_manager
+                _flags = config_manager.get("feature_flags", {})
+                if _flags.get("intent_keyword_learning", True):
+                    from core.cognitive_dispatcher import get_cognitive_dispatcher
+                    cognitive_dispatcher = get_cognitive_dispatcher()
+                    cognitive_dispatcher.learn_keyword_from_experience(user_input, intent_type or "complex_query", source="persistent_solver")
+            except Exception as _lke:
+                logger.warning(f"意图词表学习跳过: {_lke}")
 
             if emit_fn:
                 await emit_fn("step", {"phase": f"持续求解-R{round_num}", "status": "done",

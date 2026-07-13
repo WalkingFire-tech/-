@@ -447,7 +447,10 @@ class PersistentTaskQueue:
         try:
             from infrastructure.hardware_monitor import get_gpu_throttle
             throttle = get_gpu_throttle()
-            if throttle["delay_seconds"] > 0:
+            if throttle.get("level") == "critical":
+                logger.warning(f"深度思考降级: GPU过热({throttle.get('temperature', 0)}°C)，等待冷却")
+                await asyncio.sleep(10)
+            elif throttle["delay_seconds"] > 0:
                 logger.info(f"深度思考节流: {throttle['message']}，等待{throttle['delay_seconds']}秒")
                 await asyncio.sleep(throttle["delay_seconds"])
         except Exception:
@@ -472,7 +475,10 @@ class PersistentTaskQueue:
         try:
             from infrastructure.hardware_monitor import get_gpu_throttle
             throttle = get_gpu_throttle()
-            if throttle["delay_seconds"] > 0:
+            if throttle.get("level") == "critical":
+                logger.warning(f"后台Ollama降级: GPU过热({throttle.get('temperature', 0)}°C)，等待冷却")
+                await asyncio.sleep(10)
+            elif throttle["delay_seconds"] > 0:
                 logger.info(f"后台Ollama节流: {throttle['message']}，等待{throttle['delay_seconds']}秒")
                 await asyncio.sleep(throttle["delay_seconds"])
         except Exception:
@@ -526,7 +532,10 @@ class PersistentTaskQueue:
         try:
             from infrastructure.hardware_monitor import get_gpu_throttle
             throttle = get_gpu_throttle()
-            if throttle["delay_seconds"] > 0:
+            if throttle.get("level") == "critical":
+                logger.warning(f"模型评估降级: GPU过热({throttle.get('temperature', 0)}°C)，等待冷却")
+                await asyncio.sleep(10)
+            elif throttle["delay_seconds"] > 0:
                 logger.info(f"模型评估节流: {throttle['message']}，等待{throttle['delay_seconds']}秒")
                 await asyncio.sleep(throttle["delay_seconds"])
         except Exception:

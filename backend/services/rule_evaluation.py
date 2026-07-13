@@ -10,6 +10,7 @@ _INTENT_TYPE_MAP = {
     "greeting": "chat", "confirmation": "chat", "simple_query": "question",
     "complex_query": "code", "learning_trigger": "question",
     "challenge": "verification", "history_query": "memory",
+    "weather": "weather", "map": "map",
 }
 
 

@@ -163,6 +163,13 @@ intent:
       - "踩"
       - "好评"
       - "差评"
+    map:
+      - "地图"
+      - "标记"
+      - "渲染"
+      - "可视化"
+      - "绘制"
+      - "folium"
 
 # 记忆系统配置
 memory:
@@ -293,3 +300,20 @@ recurrent:
     - code
     - question
     - meta
+
+# Feature Flags — 新功能开关，出问题时可快速回退
+feature_flags:
+  # P0-3: 能力创造回路（工具失败时自主执行）
+  capability_creation_loop: true
+  # P1-1: 存在层路径权重矩阵（sleeping切断外部API等）
+  path_weight_matrix: true
+  # P1-3: 意图词表从经验中自动学习
+  intent_keyword_learning: true
+  # P0-1: 进化岛安全协议（6步渐进注入）
+  evolution_safety_protocol: true
+  # P1-2: 睡眠整合学习机制（4个机制挂接）
+  sleep_learning_mechanisms: true
+  # P0-4: persistent_solver传入实际intent_type
+  persistent_solver_intent: true
+  # 自动pip install缺失依赖
+  auto_pip_install: true

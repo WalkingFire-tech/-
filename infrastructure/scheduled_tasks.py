@@ -49,6 +49,43 @@ class ScheduledTaskManager:
         self.register_job("deferred_deep_process", 600.0, self._job_deferred_deep_process)
         self.register_job("sleep_consolidation", 3600.0, self._job_sleep_consolidation)
         self.register_job("metabolism", 300.0, self._job_metabolism)
+        self.register_job("capability_assessment", 1800.0, self._job_capability_assessment)
+        try:
+            from core.resource_awareness.adaptive_governor import get_adaptive_governor
+            from core.resource_awareness.health_monitor import OperatingMode
+            governor = get_adaptive_governor()
+            governor.on_mode_change(self._on_resource_mode_change)
+            logger.info("✅ 已注册资源模式变更回调")
+        except Exception as e:
+            logger.warning(f"资源模式变更回调注册失败: {e}")
+
+    def _on_resource_mode_change(self, old_mode, new_mode):
+        try:
+            from core.resource_awareness.health_monitor import OperatingMode
+            _MODE_SEVERITY = {OperatingMode.NORMAL: 0, OperatingMode.CONSERVATIVE: 1, OperatingMode.EMERGENCY: 2}
+            old_sev = _MODE_SEVERITY.get(old_mode, 0)
+            new_sev = _MODE_SEVERITY.get(new_mode, 0)
+            if new_sev > old_sev:
+                from core.resource_awareness.health_monitor import OperatingMode
+                from infrastructure.hardware_monitor import get_gpu_stats
+                _gs = get_gpu_stats()
+                _gpu_temp = _gs.get("temperature", 0) if _gs.get("available") else 0
+                _mode_label = {OperatingMode.CONSERVATIVE: "保守", OperatingMode.EMERGENCY: "紧急"}.get(new_mode, "未知")
+                _msg = f"系统进入{_mode_label}模式（GPU {_gpu_temp}°C），已自动降低并行度以保证稳定。"
+                try:
+                    from backend.main_fast import _enqueue_proactivity
+                    _enqueue_proactivity({
+                        "type": "warning",
+                        "content": _msg,
+                        "source": "self_preservation",
+                    })
+                except Exception:
+                    pass
+                logger.warning(f"⚖️ 资源模式变更: {old_mode.value}→{new_mode.value}, 已通知用户")
+            elif new_sev < old_sev:
+                logger.info(f"⚖️ 资源恢复中: {old_mode.value}→{new_mode.value}, 冷却缓冲30秒后恢复")
+        except Exception as e:
+            logger.warning(f"资源模式变更回调异常: {e}")
 
     def register_job(self, name: str, interval_seconds: float, callback: Optional[Callable] = None):
         with self._lock:
@@ -279,6 +316,37 @@ class ScheduledTaskManager:
         except Exception as e:
             logger.warning(f"主动性检查跳过: {e}")
 
+        # L4善意延伸：资源状态感知的主动告知
+        try:
+            from core.resource_awareness.health_monitor import get_health_monitor
+            _hm = get_health_monitor()
+            _mode = _hm.get_operating_mode()
+            from core.resource_awareness.health_monitor import OperatingMode
+            if _mode in (OperatingMode.CONSERVATIVE, OperatingMode.EMERGENCY):
+                try:
+                    from infrastructure.hardware_monitor import get_gpu_stats
+                    _gs = get_gpu_stats()
+                    _gpu_temp = _gs.get("temperature", 0) if _gs.get("available") else 0
+                except Exception:
+                    _gpu_temp = 0
+
+                if _mode == OperatingMode.EMERGENCY:
+                    _msg = f"系统资源紧张中（GPU {_gpu_temp}°C），我正在精简运行路径以保证稳定响应，回答可能稍简。"
+                else:
+                    _msg = f"我注意到GPU温度偏高（{_gpu_temp}°C），已自动降低并行度，不影响回答但速度可能稍慢。"
+
+                try:
+                    from backend.main_fast import _enqueue_proactivity
+                    _enqueue_proactivity({
+                        "type": "warning",
+                        "content": _msg,
+                        "source": "self_preservation",
+                    })
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     def _job_introspection(self):
         try:
             from core.introspector import get_introspector
@@ -497,6 +565,65 @@ class ScheduledTaskManager:
             )
         except Exception as e:
             logger.warning(f"代谢跳过: {e}")
+
+    def _job_capability_assessment(self):
+        """
+        闭环3：能力自我提升
+        定期评估SelfModel能力画像，检测短板并自动触发能力创造回路。
+        链路：SelfModel.evaluate_and_act() → capability_gaps → capability_creation_loop
+        """
+        try:
+            from core.self.model import get_self_model
+            sm = get_self_model()
+
+            try:
+                from core.services.cognitive_planner import get_cognitive_planner
+                cp = get_cognitive_planner()
+                if cp:
+                    sm.sync_from_cognitive_planner(cp)
+            except Exception:
+                pass
+
+            actions = sm.evaluate_and_act()
+
+            gap_actions = [a for a in actions if a.get("action") == "capability_gap_learning"]
+            if gap_actions:
+                logger.info(f"🧠 闭环3：检测到能力缺口，触发能力创造回路")
+                try:
+                    from infrastructure.database_manager import DatabaseManager
+                    db = DatabaseManager.get("data/capability_gaps.db")
+                    rows = db.query(
+                        "SELECT query, gap_type, failed_paths FROM capability_gaps WHERE resolved=0 ORDER BY attempts DESC LIMIT 3"
+                    )
+                    for row in rows:
+                        query, gap_type, failed_paths = row[0], row[1], row[2] or ""
+                        try:
+                            from core.capability_creation_loop import capability_creation_loop
+                            loop = asyncio.new_event_loop()
+                            try:
+                                result = loop.run_until_complete(
+                                    capability_creation_loop.handle(query, context={"intent_type": gap_type, "trigger": "capability_assessment"})
+                                )
+                                if result and result.get("handled"):
+                                    logger.info(f"🧠 闭环3：能力创造成功 query={query[:40]} method={result.get('method', '?')}")
+                                else:
+                                    logger.debug(f"🧠 闭环3：能力创造未解决 query={query[:40]}")
+                            finally:
+                                loop.close()
+                        except Exception as e:
+                            logger.warning(f"闭环3能力创造跳过 [{gap_type}]: {e}")
+                except Exception as e:
+                    logger.warning(f"闭环3缺口查询跳过: {e}")
+
+            profile = sm.snapshot().get("capability_profile", {})
+            strength = profile.get("overall_strength", 0)
+            gaps = profile.get("gaps", [])
+            logger.info(
+                f"🧠 闭环3能力评估: strength={strength:.2f}, gaps={len(gaps)}, "
+                f"actions={len(actions)}, gap_actions={len(gap_actions)}"
+            )
+        except Exception as e:
+            logger.warning(f"能力评估跳过: {e}")
 
 
 scheduled_task_manager = ScheduledTaskManager()

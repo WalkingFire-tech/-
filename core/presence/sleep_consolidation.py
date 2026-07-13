@@ -300,6 +300,16 @@ class SleepConsolidationEngine:
         self._sleep_stage = stage
         self._sleep_cycles += 1
 
+        try:
+            from core.learning.rhythm_controller import CognitiveRhythmController
+            crc = CognitiveRhythmController()
+            snapshot = crc.tick()
+            recommended = crc.get_recommended_actions()
+            if recommended:
+                logger.info(f"🎵 认知节奏: phase={snapshot.phase.value}, energy={snapshot.energy_level:.2f}, 推荐={recommended[:3]}")
+        except Exception as e:
+            logger.warning(f"认知节奏控制器跳过: {e}")
+
         logger.info(f"💤 进入睡眠: {stage.value}")
 
         start_time = time.time()
@@ -360,7 +370,16 @@ class SleepConsolidationEngine:
             
             topic_counts = Counter()
             for mem in recent:
-                topic = mem.get('topic', 'general')
+                if isinstance(mem, dict):
+                    topic = mem.get('topic', 'general')
+                else:
+                    topic = getattr(mem, 'content', None)
+                    if topic and isinstance(topic, dict):
+                        topic = topic.get('topic', 'general')
+                    elif topic and isinstance(topic, str):
+                        topic = topic[:50] if len(topic) > 50 else topic
+                    else:
+                        topic = 'general'
                 if topic and topic != 'general':
                     topic_counts[topic] += 1
             
@@ -394,6 +413,29 @@ class SleepConsolidationEngine:
                 logger.info(f"📋 睡眠整合消费审计日志: {len(audit_failures)}条")
         except Exception as e:
             logger.warning(f"审计日志消费跳过: {e}")
+        
+        try:
+            from core.learning.incremental_perception import IncrementalPerception, Signal, SignalType
+            ip = IncrementalPerception()
+            from core.memory.stereo_memory import get_stereo_memory
+            store = get_stereo_memory()
+            recent = store.get_recent(limit=20)
+            for mem in recent:
+                try:
+                    sig = Signal(
+                        type=SignalType.USER_FEEDBACK if mem.get('feedback') else SignalType.INTERACTION,
+                        content=str(mem.get('content', ''))[:200],
+                        source="sleep_consolidation",
+                        timestamp=mem.get('timestamp', datetime.now().isoformat()),
+                    )
+                    result = ip.perceive(sig)
+                    if result.patterns_detected:
+                        details.setdefault('perception_patterns', []).extend(result.patterns_detected)
+                except Exception:
+                    pass
+            logger.info(f"🔍 增量感知: 处理{len(recent)}条记忆信号")
+        except Exception as e:
+            logger.warning(f"增量感知挂接跳过: {e}")
         
         impact = 0.2 + consolidated * 0.02 + solidified * 0.05
         
@@ -458,6 +500,32 @@ class SleepConsolidationEngine:
             details['forgotten'] = forgotten
         except Exception as e:
             logger.error(f"记忆清理失败: {e}")
+        
+        try:
+            from core.learning.feedback_loop import LearningFeedbackLoop, Feedback, FeedbackType
+            fbl = LearningFeedbackLoop()
+            db = DatabaseManager.get(str(self._db_path))
+            rows = db.query("SELECT skill_name, occurrence_count, importance FROM solidified_skills WHERE importance >= 0.5 LIMIT 20")
+            validated_count = 0
+            for row in (rows or []):
+                try:
+                    kid = row[0] if isinstance(row, (list, tuple)) else row.get('skill_name', '')
+                    occ = row[1] if isinstance(row, (list, tuple)) else row.get('occurrence_count', 0)
+                    fb = Feedback(
+                        knowledge_id=str(kid),
+                        feedback_type=FeedbackType.POSITIVE if occ >= 3 else FeedbackType.NEUTRAL,
+                        content=f"深睡验证: 出现{occ}次",
+                        confidence=min(1.0, occ / 10.0),
+                    )
+                    result = fbl.validate(fb)
+                    if result.validated:
+                        validated_count += 1
+                except Exception:
+                    pass
+            details['feedback_validated'] = validated_count
+            logger.info(f"🔄 反馈回路验证: {validated_count}条知识")
+        except Exception as e:
+            logger.warning(f"反馈回路挂接跳过: {e}")
         
         impact = 0.4 + consolidated * 0.01 + solidified * 0.05 + patterns * 0.03
         
@@ -533,6 +601,28 @@ class SleepConsolidationEngine:
             reorganized += self._reorganize_from_db()
         except Exception as e:
             logger.error(f"知识结构更新失败: {e}")
+        
+        try:
+            from core.learning.knowledge_weaver import KnowledgeWeaver, NodeType, ConnectionType
+            kw = KnowledgeWeaver()
+            from core.memory.stereo_memory import get_stereo_memory
+            store = get_stereo_memory()
+            recent = store.get_recent(limit=50)
+            nodes_to_weave = []
+            for mem in recent:
+                topic = mem.get('topic', '')
+                if topic and topic != 'general':
+                    nodes_to_weave.append((topic, NodeType.CONCEPT))
+            if nodes_to_weave:
+                weave_result = kw.weave(nodes_to_weave)
+                reorganized += weave_result.nodes_added
+                patterns += weave_result.clusters_updated
+                details['weaver_nodes'] = weave_result.nodes_added
+                details['weaver_connections'] = weave_result.connections_added
+                details['weaver_clusters'] = weave_result.clusters_updated
+                logger.info(f"🕸️ 知识编织: {weave_result.nodes_added}节点, {weave_result.connections_added}连接, {weave_result.clusters_updated}聚类")
+        except Exception as e:
+            logger.warning(f"知识编织挂接跳过: {e}")
         
         impact = 0.6 + consolidated * 0.005 + solidified * 0.03 + patterns * 0.05
         

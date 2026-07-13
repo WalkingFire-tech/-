@@ -128,8 +128,54 @@ class CognitiveDispatcher:
                     timestamp TEXT
                 )
             ''', commit=True)
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS learned_keywords (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    keyword TEXT UNIQUE,
+                    intent_type TEXT,
+                    source TEXT,
+                    learned_at TEXT
+                )
+            ''', commit=True)
         except Exception as e:
             logger.error(f"调度历史数据库初始化失败: {e}")
+    
+    def learn_keyword_from_experience(self, query: str, correct_intent: str, source: str = "persistent_solver"):
+        """从经验中学习意图关键词——当系统纠正了误分类后，自动补充词表"""
+        try:
+            import jieba
+            words = [w for w in jieba.cut(query) if len(w) >= 2]
+        except ImportError:
+            words = []
+            for w in re.findall(r'[\u4e00-\u9fff]{2,}|[a-zA-Z]{2,}\d*|COM\d+', query):
+                if len(w) >= 2:
+                    words.append(w)
+            for w in re.split(r'[\s,，。.?？!！;；:：、]+', query):
+                if 2 <= len(w) <= 6 and w not in words:
+                    words.append(w)
+        
+        existing = set(self.intent_patterns.get(correct_intent, []))
+        added = 0
+        for w in words:
+            if len(w) < 2 or w in existing:
+                continue
+            if w.isdigit() or re.match(r'^[a-zA-Z]$', w):
+                continue
+            self.intent_patterns.setdefault(correct_intent, []).append(w)
+            existing.add(w)
+            added += 1
+            try:
+                db = DatabaseManager.get("data/dispatch_history.db")
+                db.execute(
+                    "INSERT OR IGNORE INTO learned_keywords (keyword, intent_type, source, learned_at) VALUES (?, ?, ?, ?)",
+                    (w, correct_intent, source, datetime.now().isoformat()),
+                    commit=True,
+                )
+            except Exception:
+                pass
+        
+        if added > 0:
+            logger.info(f"📚 意图词表自动学习: +{added}个关键词→{correct_intent} (来源:{source})")
     
     def _load_intent_patterns(self, config: Dict = None) -> Dict[str, List[str]]:
         """加载意图模式（支持外部配置）"""
@@ -166,7 +212,18 @@ class CognitiveDispatcher:
                 "读取数据", "获取数据", "传感器", "usb设备",
                 "ch340", "cp210", "ft232", "arduino", "stm32", "esp32", "单片机",
                 "运行命令", "执行命令", "cmd", "powershell", "bash", "shell",
-                "地图", "标记", "渲染", "folium", "地图标记"
+            ],
+            "weather": [
+                "天气", "气温", "下雨", "下雪", "阴天", "晴天",
+                "湿度", "气压", "降水", "暴雨", "台风",
+                "天气预报", "天气如何", "天气怎么样", "今天天气", "明天天气",
+                "最近天气", "附近天气", "当前天气", "实时天气",
+            ],
+            "map": [
+                "地图", "标记", "渲染", "folium", "地图标记",
+                "在地图上", "画地图", "生成地图", "显示地图",
+                "可视化", "绘制", "图表", "plot", "chart",
+                "heatmap", "散点图", "折线图", "柱状图",
             ],
             "simple_query": [
                 "是什么", "什么是", "怎么读", "多少", "什么时候",
@@ -399,7 +456,7 @@ class CognitiveDispatcher:
 
         # 匹配优先级：hardware > challenge > complex > simple > 其他
         # hardware优先于challenge：当用户说"时间不对"时更可能是要求重新执行硬件操作
-        match_order = ["hardware", "challenge", "complex_query", "learning_trigger", "simple_query", "history_query", "greeting", "confirmation"]
+        match_order = ["weather", "map", "hardware", "challenge", "complex_query", "learning_trigger", "simple_query", "history_query", "greeting", "confirmation"]
         short_match_intents = {"greeting", "confirmation", "challenge"}
         
         for intent_type in match_order:
@@ -513,17 +570,21 @@ class CognitiveDispatcher:
             "simple_query": 0.3,
             "complex_query": 0.7,
             "learning_trigger": 0.5,
-            "hardware": 0.6
+            "hardware": 0.6,
+            "map": 0.65,
+            "weather": 0.5,
         }
         complexity = base_complexity.get(intent_type, 0.5)
         
-        # 长度加成
         if len(query) > 50:
             complexity += 0.1
         if len(query) > 100:
             complexity += 0.1
         
-        # 关键词加成
+        tool_dependent_intents = {"hardware", "map", "weather", "complex_query"}
+        if intent_type in tool_dependent_intents:
+            complexity += 0.05
+        
         complex_keywords = ["为什么", "如何", "分析", "比较", "设计", "优化", "实现"]
         for kw in complex_keywords:
             if kw in query:

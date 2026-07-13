@@ -86,10 +86,14 @@ async def fetch_ollama(query: str, model: str, timeout: int = 60, conversation_c
         try:
             from infrastructure.hardware_monitor import get_gpu_throttle
             throttle = get_gpu_throttle()
-            if throttle["delay_seconds"] > 0:
+            if throttle.get("level") == "critical":
+                logger.warning(f"Ollama降级: GPU过热({throttle.get('temperature', 0)}°C)，优先外部API，缩短推理")
+                _num_predict = min(_num_predict, 128)
+                await asyncio.sleep(5)
+            elif throttle["delay_seconds"] > 0:
                 logger.info(f"Ollama推理节流: {throttle['message']}，等待{throttle['delay_seconds']}秒")
                 await asyncio.sleep(throttle["delay_seconds"])
-            _num_predict = throttle.get("max_tokens", 1024)
+                _num_predict = throttle.get("max_tokens", 1024)
         except Exception:
             logger.warning("操作降级跳过")
         if _RESOURCE_AWARE:

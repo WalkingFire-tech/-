@@ -89,6 +89,15 @@ async def execute_parallel_paths(
 
     candidates = []
 
+    _path_weights = methodology.get("path_weights", {}) if methodology else {}
+
+    def _should_run(path_name: str, default: bool = True) -> bool:
+        w = _path_weights.get(path_name, 1.0)
+        if w < 0.3:
+            logger.info(f"⚖️ 路径权重: {path_name}={w:.1f}，跳过")
+            return False
+        return default
+
     rule_result = fetch_rule(user_input, intent_type)
     if rule_result and rule_result.get("response"):
         candidates.append(rule_result)
@@ -99,15 +108,15 @@ async def execute_parallel_paths(
     LOCAL_FIRST_WINDOW = 3.0
     LOCAL_QUALITY_THRESHOLD = 55
 
-    exp_task = asyncio.create_task(fetch_experience(user_input))
-    know_task = asyncio.create_task(fetch_knowledge(user_input))
-    fact_task = asyncio.create_task(fetch_fact_assertions(user_input))
+    exp_task = asyncio.create_task(fetch_experience(user_input)) if _should_run("experience") else None
+    know_task = asyncio.create_task(fetch_knowledge(user_input)) if _should_run("knowledge") else None
+    fact_task = asyncio.create_task(fetch_fact_assertions(user_input)) if _should_run("fact") else None
     _tool_intent = (methodology.get("strategy") == "tool_first" if methodology else False) or intent_type == "code" or query_needs_tools(user_input)
     tool_task = None
-    if _tool_intent or max_paths >= 7:
+    if (_tool_intent or max_paths >= 7) and _should_run("tool"):
         tool_task = asyncio.create_task(fetch_tool_results(user_input, intent_type, methodology=methodology, tool_intent=_tool_intent))
     self_reason_task = None
-    if max_paths >= 6:
+    if max_paths >= 6 and _should_run("self_reason"):
         from backend.services.path_handlers._shared import _check_vector_available, _fast_executor
         self_reason_task = asyncio.create_task(_self_reason_impl(user_input, conversation_context, truth_insights))
 
@@ -227,26 +236,54 @@ async def execute_parallel_paths(
 
     # API路径：延迟启动（本地先行窗口结束后才启动）
     ollama_task = None
-    if max_paths >= 3:
+    if max_paths >= 3 and _should_run("ollama"):
+        _ollama_decision = None
         try:
-            from infrastructure.hardware_monitor import get_gpu_throttle
-            throttle = get_gpu_throttle()
-            if throttle["level"] in ("warm", "hot", "critical"):
-                logger.info(f"Ollama节流: {throttle['message']}")
-                yield _emit("step", {"phase": "GPU节流", "status": "info", "detail": f"{throttle['message']}"})
-                async def _delayed_ollama():
-                    await asyncio.sleep(throttle["delay_seconds"])
-                    return await fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights)
-                ollama_task = asyncio.create_task(_delayed_ollama())
-            else:
-                ollama_task = asyncio.create_task(fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights))
+            from core.resource_awareness.adaptive_governor import get_adaptive_governor, ActionType
+            _ollama_decision = get_adaptive_governor().decide(ActionType.OLLAMA_INFERENCE)
+            if not _ollama_decision.allowed:
+                logger.warning(f"⚖️ Ollama路径被governor阻止: {_ollama_decision.message}")
+            elif _ollama_decision.degraded_to:
+                logger.info(f"⚖️ Ollama路径被governor降级: {_ollama_decision.degraded_to}")
         except Exception:
-            ollama_task = asyncio.create_task(fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights))
+            pass
+        
+        if _ollama_decision is None or _ollama_decision.allowed:
+            try:
+                from infrastructure.hardware_monitor import get_gpu_throttle
+                throttle = get_gpu_throttle()
+                if throttle.get("level") == "critical":
+                    logger.warning(f"Ollama降级: GPU过热({throttle.get('temperature', 0)}°C)，延迟5秒+短推理")
+                    yield _emit("step", {"phase": "GPU保护", "status": "warning", "detail": f"GPU过热({throttle.get('temperature', 0)}°C)，本地模型降频运行"})
+                    async def _throttled_ollama():
+                        await asyncio.sleep(5)
+                        return await fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights)
+                    ollama_task = asyncio.create_task(_throttled_ollama())
+                elif throttle["level"] in ("warm", "hot"):
+                    logger.info(f"Ollama节流: {throttle['message']}")
+                    yield _emit("step", {"phase": "GPU节流", "status": "info", "detail": f"{throttle['message']}"})
+                    async def _delayed_ollama():
+                        await asyncio.sleep(throttle["delay_seconds"])
+                        return await fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights)
+                    ollama_task = asyncio.create_task(_delayed_ollama())
+                else:
+                    ollama_task = asyncio.create_task(fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights))
+            except Exception:
+                ollama_task = asyncio.create_task(fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights))
     ext_task = None
-    if max_paths >= 4:
-        ext_task = asyncio.create_task(fetch_external_api(user_input, conversation_context=conversation_context, truth_insights=truth_insights))
+    if max_paths >= 4 and _should_run("external_api"):
+        _search_decision = None
+        try:
+            from core.resource_awareness.adaptive_governor import get_adaptive_governor, ActionType
+            _search_decision = get_adaptive_governor().decide(ActionType.EXTERNAL_SEARCH)
+            if not _search_decision.allowed:
+                logger.warning(f"⚖️ 外部搜索被governor阻止: {_search_decision.message}")
+        except Exception:
+            pass
+        if _search_decision is None or _search_decision.allowed:
+            ext_task = asyncio.create_task(fetch_external_api(user_input, conversation_context=conversation_context, truth_insights=truth_insights))
     ext_learn_task = None
-    if max_paths >= 5:
+    if max_paths >= 5 and _should_run("external_learning"):
         ext_learn_task = asyncio.create_task(fetch_external_learning(user_input, conversation_context))
 
     ollama_got = False
@@ -301,6 +338,30 @@ async def execute_parallel_paths(
 
         if not pending_set:
             break
+
+        # 自我保存本能：实时监控GPU温度，上升时取消高消耗待完成任务
+        try:
+            from infrastructure.hardware_monitor import get_gpu_throttle
+            _throttle_check = get_gpu_throttle()
+            if _throttle_check.get("level") == "critical":
+                _gpu_temp_now = _throttle_check.get("temperature", 0)
+                _cancel_gpu_tasks = []
+                _keep_light_tasks = set()
+                for t in pending_set:
+                    tname = pending_tasks.get(t, "")
+                    if tname in ("本地模型", "自我推理"):
+                        t.cancel()
+                        _cancel_gpu_tasks.append(tname)
+                    else:
+                        _keep_light_tasks.add(t)
+                if _cancel_gpu_tasks:
+                    logger.warning(f"🛡️ 自我保存: GPU过热({_gpu_temp_now}°C)，取消高消耗任务{_cancel_gpu_tasks}")
+                    yield _emit("step", {"phase": "自我保存", "status": "warning", "detail": f"GPU过热({_gpu_temp_now}°C)，取消本地模型推理，保留轻量路径"})
+                    pending_set = _keep_light_tasks
+                    if not pending_set:
+                        break
+        except Exception:
+            pass
 
         heartbeat_sec += 3
 
@@ -462,6 +523,24 @@ async def execute_parallel_paths(
             sources_got.add("事实锚点")
         elif "自我推理" in src:
             sources_got.add("自我推理")
+
+    _src_weight_map = {
+        "经验池": "experience", "知识库": "knowledge", "事实锚点": "fact",
+        "工具调用": "tool", "工具": "tool", "自我推理": "self_reason",
+        "本地模型": "ollama", "Ollama": "ollama",
+        "外部模型": "external_api", "外部API": "external_api",
+        "外部学习": "external_learning",
+    }
+    for c in candidates:
+        src = c.get("source", "")
+        wkey = None
+        for k, v in _src_weight_map.items():
+            if k in src:
+                wkey = v
+                break
+        if wkey and wkey in _path_weights:
+            orig_q = c.get("quality", 50)
+            c["quality"] = int(orig_q * _path_weights[wkey])
 
     yield _emit("step", {"phase": "多策略并行", "status": "done", "detail": f"共获取{len(candidates)}个候选结果（{len(sources_got)}条路径：{'+'.join(sources_got)}）"})
 
