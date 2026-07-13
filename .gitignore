@@ -29,7 +29,17 @@ data/
 .env.local
 
 # JSON data files (allow project config JSON)
-config/*.json
+config/backups/*.json
+!config/external_api.json
+!config/uncertainty_words.json
+!config/lora_model_config.json
+!config/lora_config.json
+!config/dialogue_cognitive_config.json
+!config/three_layer_knowledge_sources.json
+!config/knowledge_sources.json
+!config/detector_config.json
+!config/system_config.json
+!tests/complex_tasks.json
 !package.json
 !tsconfig.json
 !pyproject.json

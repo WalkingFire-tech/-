@@ -258,30 +258,49 @@ class ExistenceLayer:
         )
     
     def _grow(self):
-        """间隙生长：消化未处理的信号"""
+        """间隙生长：消化未处理的信号 + 好奇心驱动的主动探索"""
         if self.state not in [PresenceState.GROWING, PresenceState.PERCEIVING]:
             return
         
+        if self.pending_signals:
+            self.metrics.growing_cycles += 1
+            
+            signals_to_process = self.pending_signals[:10]
+            self.pending_signals = self.pending_signals[10:]
+            
+            if self.gap_growth and hasattr(self.gap_growth, 'process_signals'):
+                try:
+                    self.gap_growth.process_signals(signals_to_process)
+                except Exception as e:
+                    logger.warning(f"间隙生长处理失败: {e}")
+            
+            self.metrics.signals_processed += len(signals_to_process)
+            
+            logger.debug(
+                f"🌱 间隙生长: 处理了 {len(signals_to_process)} 个信号, "
+                f"剩余 {len(self.pending_signals)} 个"
+            )
+        
         if not self.pending_signals:
-            return
-        
-        self.metrics.growing_cycles += 1
-        
-        signals_to_process = self.pending_signals[:10]
-        self.pending_signals = self.pending_signals[10:]
-        
-        if self.gap_growth and hasattr(self.gap_growth, 'process_signals'):
             try:
-                self.gap_growth.process_signals(signals_to_process)
+                from core.presence.curiosity_engine import get_curiosity_engine
+                engine = get_curiosity_engine()
+                gaps = engine.explore()
+                if gaps:
+                    self.metrics.growing_cycles += 1
+                    gap_topics = [g.topic[:30] for g in gaps[:3]]
+                    logger.info(f"🔍 好奇心驱动生长: 发现{len(gaps)}个知识缺口 → {gap_topics}")
+                    for g in gaps:
+                        self.pending_signals.append({
+                            "type": "knowledge_gap",
+                            "topic": g.topic,
+                            "gap_type": g.gap_type,
+                            "urgency": g.urgency.value,
+                            "source": "curiosity",
+                        })
+                        engine.mark_explored(g.topic)
             except Exception as e:
-                logger.warning(f"间隙生长处理失败: {e}")
-        
-        self.metrics.signals_processed += len(signals_to_process)
-        
-        logger.debug(
-            f"🌱 间隙生长: 处理了 {len(signals_to_process)} 个信号, "
-            f"剩余 {len(self.pending_signals)} 个"
-        )
+                logger.debug(f"好奇心探索跳过: {e}")
     
     def _rest(self):
         """休息：低功耗状态下的轻量整合"""
