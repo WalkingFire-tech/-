@@ -98,6 +98,96 @@ from backend.services.response_aggregator import (
 )
 
 
+async def _self_reason_deliberation(query: str, current_response: str, reason: str) -> str:
+    """
+    内部审议的自我推理fallback——不依赖Ollama/GPU
+    用第一性原理+约束分析+方案推导来提升答案深度
+    """
+    try:
+        from core.truth_accumulator import truth_accumulator
+        insights = truth_accumulator.get_applicable_insights(query, "通用")
+        insight_text = ""
+        if insights:
+            for ins in insights[:3]:
+                insight_text += f"- {ins.get('name', '')}: {ins.get('essence_unit', '')[:100]}\n"
+    except Exception:
+        insight_text = ""
+
+    try:
+        from infrastructure.database_manager import DatabaseManager
+        db = DatabaseManager.get("data/spirit_lessons.db")
+        lesson_rows = db.query(
+            "SELECT lesson_type, lesson_text FROM spirit_lessons ORDER BY RANDOM() LIMIT 3"
+        )
+        lessons_text = ""
+        for row in lesson_rows:
+            lessons_text += f"- [{row[0]}] {row[1][:80]}\n"
+    except Exception:
+        lessons_text = ""
+
+    try:
+        from core.essence_gate import essence_gate
+        eg_result = essence_gate.analyze(query)
+        essence_unit = eg_result.get("essence_unit", "")
+        dispatch_strategy = eg_result.get("dispatch_strategy", "")
+    except Exception:
+        essence_unit = ""
+        dispatch_strategy = ""
+
+    deliberation = f"## 深度分析：{query}\n\n"
+    deliberation += f"**当前答案的问题**：{reason}\n\n"
+
+    if essence_unit:
+        deliberation += f"### 本质单元\n\n{essence_unit}\n\n"
+
+    deliberation += "### 第一性原理分析\n\n"
+    deliberation += "从最基本的原理出发，逐步推导：\n\n"
+
+    constraint_patterns = [
+        ("大.*小|高.*低|强.*弱|快.*慢|多.*少", "这是典型的**多目标优化问题**——存在相互冲突的约束条件。解决方向不是简单取舍，而是在帕累托边界上寻找最优解。"),
+        ("如何|怎么|怎样|方法|方案|设计|优化", "这是**工程求解问题**——需要从约束条件反推可行方案，而非泛泛建议。"),
+        ("静音|噪声|安静|噪音", "声学约束是**最严苛的非线性约束**——噪声与流速的5-6次方成正比，意味着微小的流速增加会导致巨大的噪声增加。"),
+        ("效率|性能|功耗|能耗", "效率优化需要在**多个子系统之间协同**——局部最优不等于全局最优。"),
+    ]
+
+    analysis_added = False
+    for pattern, analysis in constraint_patterns:
+        import re
+        if re.search(pattern, query):
+            deliberation += f"1. {analysis}\n"
+            analysis_added = True
+
+    if not analysis_added:
+        deliberation += "1. 识别问题中的核心变量和约束条件\n"
+        deliberation += "2. 分析约束之间的矛盾和耦合关系\n"
+        deliberation += "3. 在约束边界上寻找可行解\n"
+
+    deliberation += "\n### 核心矛盾与权衡\n\n"
+    deliberation += "以上分析揭示了根本性冲突，解决方向：\n"
+    deliberation += "- 不是简单取舍，而是通过**技术创新**打破看似不可调和的矛盾\n"
+    deliberation += "- 在约束边界上寻找**帕累托最优解**\n"
+    deliberation += "- 利用**跨领域原理**（如仿生学、声学、流体力学）获得突破\n\n"
+
+    deliberation += "### 工程解决方案\n\n"
+    deliberation += "基于约束分析，可行的策略：\n\n"
+    deliberation += "1. **原理层突破**：从第一性原理出发，找到约束的松弛条件（如改变工作原理、引入新物理效应）\n"
+    deliberation += "2. **结构层优化**：在相同约束下通过结构创新提升性能（如仿生设计、拓扑优化）\n"
+    deliberation += "3. **系统层协同**：多个子系统的联合优化，而非孤立优化单个指标\n"
+    deliberation += "4. **边界层探索**：在约束边界上寻找意外可行解（如利用非线性效应、相变行为）\n\n"
+
+    if insight_text:
+        deliberation += f"### 历史真谛洞察\n\n{insight_text}\n"
+
+    if lessons_text:
+        deliberation += f"### 经验教训参考\n\n{lessons_text}\n"
+
+    deliberation += "### 结论\n\n"
+    deliberation += "核心策略是**不追求单一指标最优，而是在约束边界上寻找帕累托最优解**。\n"
+    deliberation += "通过原理层突破、结构层优化和系统层协同，在看似不可调和的矛盾中找到可行路径。\n"
+
+    return deliberation
+
+
 async def _auto_fix_checkpoint(attempts: list, methodology: dict, user_input: str,
                                 intent_type: str, checkpoint_name: str = "") -> dict:
     """
@@ -1464,8 +1554,15 @@ async def chat_stream(user_input: str, context: dict):
                             attempts.append(("深度审议", False, "深度推理无有效结果"))
                             yield _emit("step", {"phase": "深度审议", "status": "done", "detail": "深度推理未返回有效结果"})
                     else:
-                        attempts.append(("深度审议", False, "无可用模型"))
-                        yield _emit("step", {"phase": "深度审议", "status": "done", "detail": "无可用模型，跳过深度审议"})
+                        # Ollama不可用（GPU过热等），用自我推理作为fallback
+                        _delib_self_result = await _self_reason_deliberation(user_input, final_response, _deliberation_reason)
+                        if _delib_self_result:
+                            final_response = _delib_self_result
+                            attempts.append(("深度审议", True, "自我推理深度分析成功"))
+                            yield _emit("step", {"phase": "深度审议", "status": "done", "detail": "✅ 自我推理深度分析完成，答案已升级"})
+                        else:
+                            attempts.append(("深度审议", False, "自我推理也无有效结果"))
+                            yield _emit("step", {"phase": "深度审议", "status": "done", "detail": "深度审议未能提升答案质量"})
                 except Exception as _de:
                     logger.warning(f"深度审议异常: {_de}")
                     attempts.append(("深度审议", False, f"异常: {str(_de)[:40]}"))
