@@ -1416,6 +1416,60 @@ async def chat_stream(user_input: str, context: dict):
         if verification["verified"]:
             attempts.append(("自我验证", True, f"通过 (置信度{verification['confidence']:.0%})"))
             yield _emit("step", {"phase": "自我验证", "status": "done", "detail": f"验证通过 ✅ 置信度{verification['confidence']:.0%}"})
+
+            # 内部审议循环：验证通过但答案可能平庸，检查深度
+            _deliberation_needed = False
+            _deliberation_reason = ""
+            if final_response and len(final_response) > 50:
+                _has_synthesis = any(kw in final_response for kw in ["因此", "综上", "核心在于", "关键在于", "本质上", "根本原因", "原理是", "之所以", "设计思路", "权衡"])
+                _is_list_only = final_response.count("\n-") > 3 and not _has_synthesis
+                _has_baidu_prefix = "[baidu]" in final_response and final_response.count("[baidu]") >= 2
+                _too_short_for_complex = len(final_response) < 200 and any(kw in user_input for kw in ["如何", "怎么", "怎样", "设计", "优化", "改进", "方案"])
+                if _is_list_only and not _has_synthesis:
+                    _deliberation_needed = True
+                    _deliberation_reason = "答案仅为列表堆砌，缺乏综合分析"
+                elif _has_baidu_prefix and not _has_synthesis:
+                    _deliberation_needed = True
+                    _deliberation_reason = "答案仅为搜索结果拼接，缺乏深度推理"
+                elif _too_short_for_complex:
+                    _deliberation_needed = True
+                    _deliberation_reason = "复杂问题答案过短，缺乏展开"
+
+            if _deliberation_needed and not any(a[0] == "深度审议" for a in attempts):
+                logger.info(f"🤔 内部审议: {_deliberation_reason}，触发深度推理")
+                yield _emit("step", {"phase": "深度审议", "status": "running", "detail": f"🤔 {_deliberation_reason}，启动深度推理..."})
+                try:
+                    model = await _get_available_ollama_model_async()
+                    if model:
+                        _delib_prompt = (
+                            f"用户问题：{user_input}\n\n"
+                            f"当前回答（仅作参考，需要更深入）：\n{final_response[:500]}\n\n"
+                            f"请给出更深入、更有洞察力的回答。要求：\n"
+                            f"1. 不要重复已有内容，要给出更深层的原理和权衡\n"
+                            f"2. 分析问题背后的核心矛盾和约束\n"
+                            f"3. 给出具体的、可执行的方案而非泛泛建议\n"
+                        )
+                        _delib_result = await _fetch_ollama(_delib_prompt, model, timeout=30, conversation_context=conversation_context)
+                        if _delib_result and _delib_result.get("response") and len(_delib_result["response"]) > len(final_response) * 0.5:
+                            _delib_score = _score_response(_delib_result, user_input)
+                            _orig_score = _score_response({"response": final_response, "source": "original"}, user_input)
+                            if _delib_score >= _orig_score * 0.8:
+                                final_response = _delib_result["response"]
+                                attempts.append(("深度审议", True, f"深度推理成功 (评分{_delib_score:.0f})"))
+                                yield _emit("step", {"phase": "深度审议", "status": "done", "detail": f"✅ 深度推理完成，答案已升级"})
+                            else:
+                                attempts.append(("深度审议", False, f"深度推理评分{_delib_score:.0f}未显著优于原{_orig_score:.0f}"))
+                                yield _emit("step", {"phase": "深度审议", "status": "done", "detail": "深度推理未显著优于原答案"})
+                        else:
+                            attempts.append(("深度审议", False, "深度推理无有效结果"))
+                            yield _emit("step", {"phase": "深度审议", "status": "done", "detail": "深度推理未返回有效结果"})
+                    else:
+                        attempts.append(("深度审议", False, "无可用模型"))
+                        yield _emit("step", {"phase": "深度审议", "status": "done", "detail": "无可用模型，跳过深度审议"})
+                except Exception as _de:
+                    logger.warning(f"深度审议异常: {_de}")
+                    attempts.append(("深度审议", False, f"异常: {str(_de)[:40]}"))
+                    yield _emit("step", {"phase": "深度审议", "status": "done", "detail": "深度审议跳过"})
         else:
             filtered_issues = [i for i in verification["issues"] if i not in essence_issues]
             if not filtered_issues and essence_cross_validated:
