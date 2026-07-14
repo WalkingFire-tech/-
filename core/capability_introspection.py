@@ -52,7 +52,7 @@ class CapabilityIntrospection:
             ],
             "知识管理": [
                 ("知识检索", "core.learning", "enhanced_learner", "retrieve_knowledge"),
-                ("向量检索", "core.vector_retriever", "vector_retriever", "hybrid_search"),
+                ("向量检索", "infrastructure.vector_retriever", "vector_retriever", "hybrid_search"),
                 ("知识验证", "core.knowledge.validator", "KnowledgeValidator", "validate"),
                 ("知识检测", "core.knowledge.detector", "KnowledgeDetector", "detect"),
             ],
