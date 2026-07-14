@@ -299,6 +299,29 @@ class ExistenceLayer:
                             "source": "curiosity",
                         })
                         engine.mark_explored(g.topic)
+
+                    actions = engine.generate_learning_actions()
+                    for action in actions[:5]:
+                        try:
+                            from core.task_queue import task_queue
+                            if action.action_type == "search_external":
+                                task_queue.enqueue("knowledge_gap_learning", {
+                                    "gap": action.content,
+                                    "source": "curiosity",
+                                    "priority": "medium",
+                                }, priority=5, delay_seconds=60)
+                            elif action.action_type == "reflect_internal":
+                                task_queue.enqueue("deep_thinking", {
+                                    "query": f"反思失败经验: {action.content}",
+                                    "context": {"source": "curiosity", "action": "reflect_internal"},
+                                }, priority=3, delay_seconds=120)
+                            elif action.action_type == "create_capability":
+                                task_queue.enqueue("deep_thinking", {
+                                    "query": f"设计新能力方案: {action.content}",
+                                    "context": {"source": "curiosity", "action": "create_capability"},
+                                }, priority=4, delay_seconds=90)
+                        except Exception as e:
+                            logger.debug(f"好奇心行动分发跳过: {e}")
             except Exception as e:
                 logger.debug(f"好奇心探索跳过: {e}")
     
