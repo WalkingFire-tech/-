@@ -51,6 +51,7 @@ class ScheduledTaskManager:
         self.register_job("metabolism", 300.0, self._job_metabolism)
         self.register_job("capability_assessment", 1800.0, self._job_capability_assessment)
         self.register_job("self_modification_check", 3600.0, self._job_self_modification_check)
+        self.register_job("system_diagnostics", 1800.0, self._job_system_diagnostics)
         try:
             from core.resource_awareness.adaptive_governor import get_adaptive_governor
             from core.resource_awareness.health_monitor import OperatingMode
@@ -706,6 +707,29 @@ class ScheduledTaskManager:
 
         except Exception as e:
             logger.warning(f"L5自修改检查跳过: {e}")
+
+    def _job_system_diagnostics(self):
+        """系统自诊断：通过安全的CMD/PowerShell命令检测系统健康"""
+        try:
+            from core.system_diagnostician import system_diagnostician
+            results = system_diagnostician.run_quick()
+            report = system_diagnostician.get_diagnostic_report()
+
+            if report["error_count"] > 0:
+                logger.warning(f"🏥 系统诊断: {report['error_count']}个错误, "
+                              f"{report['warning_count']}个警告")
+                for err in report.get("errors", []):
+                    logger.warning(f"  ❌ {err['probe']}: {err['summary']}")
+                    if err.get("fix"):
+                        logger.info(f"     💡 建议: {err['fix']}")
+            elif report["warning_count"] > 0:
+                logger.info(f"🏥 系统诊断: {report['warning_count']}个警告, "
+                           f"{report['ok_count']}项正常")
+            else:
+                logger.debug(f"🏥 系统诊断: 全部{report['ok_count']}项正常")
+
+        except Exception as e:
+            logger.warning(f"系统诊断跳过: {e}")
 
 
 scheduled_task_manager = ScheduledTaskManager()
