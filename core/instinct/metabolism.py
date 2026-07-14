@@ -212,6 +212,14 @@ class MetabolismOrchestrator:
     def _prune_knowledge_items(self) -> tuple:
         try:
             db = DatabaseManager.get("data/knowledge_items.db")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS knowledge_items ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "question TEXT, answer TEXT, quality REAL DEFAULT 50, "
+                "updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+                "source TEXT DEFAULT '', domain TEXT DEFAULT '', "
+                "embedding BLOB, quality_score REAL DEFAULT 50)"
+            )
             rows = db.query(
                 "SELECT id, question, answer, quality FROM knowledge_items "
                 "WHERE updated_at < datetime('now', '-30 days') AND quality > 0 "
