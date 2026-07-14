@@ -16,7 +16,10 @@ class TestDefectDiagnosis:
         root = str(Path(__file__).parent.parent.parent)
         if root not in sys.path:
             sys.path.insert(0, root)
+        self._target_path = Path(__file__).parent / "l5_test_target.py"
+        self._original_content = self._target_path.read_text(encoding="utf-8")
         yield
+        self._target_path.write_text(self._original_content, encoding="utf-8")
 
     @property
     def _target_file(self):
@@ -67,7 +70,10 @@ class TestPatchGeneration:
         root = str(Path(__file__).parent.parent.parent)
         if root not in sys.path:
             sys.path.insert(0, root)
+        self._target_path = Path(__file__).parent / "l5_test_target.py"
+        self._original_content = self._target_path.read_text(encoding="utf-8")
         yield
+        self._target_path.write_text(self._original_content, encoding="utf-8")
 
     @property
     def _target_file(self):
@@ -123,7 +129,10 @@ class TestL5FullPipeline:
         root = str(Path(__file__).parent.parent.parent)
         if root not in sys.path:
             sys.path.insert(0, root)
+        self._target_path = Path(__file__).parent / "l5_test_target.py"
+        self._original_content = self._target_path.read_text(encoding="utf-8")
         yield
+        self._target_path.write_text(self._original_content, encoding="utf-8")
 
     def test_self_modification_loop_finds_defects(self):
         """SelfModificationLoop.run_from_file应触发并找到缺陷"""
