@@ -1,0 +1,70 @@
+{
+  "scene_perceiver": {
+    "role_confidence_threshold": 0.6,
+    "multi_role_threshold": 0.4,
+    "context_window": 5,
+    "role_indicators": {
+      "question": ["？", "?", "如何", "怎么", "为什么", "什么是", "能否", "可以", "是否", "请教", "求助", "请问"],
+      "knowledge_contribution": ["我发现", "其实", "实际上", "正确的做法是", "应该是", "补充一点", "分享", "经验是", "建议"],
+      "correction": ["不对", "错了", "不是这样", "应该是", "纠正", "修正", "更正", "其实不对", "理解有误", "你回答得", "你说的", "回答有问题", "说得不对", "搞错了", "弄错了"],
+      "challenge": ["质疑", "怀疑", "真的吗", "确定吗", "凭什么", "证据", "反例", "但是", "可是", "不一定", "对么", "对吗", "正确吗", "是这样吗", "对不对", "是不是", "有问题", "不对吧", "错了吧", "这不对", "有问题吧"],
+      "confirmation": ["好的", "明白", "懂了", "谢谢", "感谢", "收到", "了解了", "清楚了", "你好", "您好", "hi", "hello", "嗨"],
+      "teaching": ["教你", "告诉你", "记住", "注意", "重点是", "关键在于", "记住这个", "要学会"]
+    }
+  },
+  "dialogue_understander": {
+    "max_hypotheses": 5,
+    "hypothesis_scoring_weights": {
+      "context_consistency": 0.3,
+      "role_match": 0.25,
+      "intent_clarity": 0.25,
+      "historical_pattern": 0.2
+    },
+    "deep_intent_patterns": {
+      "learn_from_example": {
+        "indicators": ["比如", "例如", "举个例子", "像这样"],
+        "implied_intent": "用户在通过实例教学"
+      },
+      "test_understanding": {
+        "indicators": ["那如果", "假如", "假设", "换个情况"],
+        "implied_intent": "用户在测试系统的泛化能力"
+      },
+      "guide_direction": {
+        "indicators": ["我想", "我希望", "目标是", "最终要"],
+        "implied_intent": "用户在引导对话方向"
+      },
+      "express_frustration": {
+        "indicators": ["还是不行", "又错了", "怎么总是", "一直"],
+        "implied_intent": "用户对当前进展不满，需要调整策略"
+      },
+      "follow_up_question": {
+        "indicators": ["那么", "那", "继续", "接着", "还有呢", "然后呢", "说完", "补充"],
+        "implied_intent": "用户在追问或要求继续之前的话题"
+      },
+      "challenge_previous": {
+        "indicators": ["这对么", "这不对", "有问题", "错了吧", "不对吧", "好像不对", "不太对"],
+        "implied_intent": "用户质疑上一条回答的正确性"
+      },
+      "request_continuation": {
+        "indicators": ["继续说", "说完", "没说完", "只有一半", "被截断", "没讲完", "还有呢"],
+        "implied_intent": "用户要求继续之前被中断的回答"
+      }
+    }
+  },
+  "self_verifier": {
+    "verification_threshold": 0.7,
+    "max_questions": 3,
+    "question_templates": {
+      "assumption_check": "我理解的是{assumption}，对吗？",
+      "intent_check": "您是想{intent}，还是{alternative}？",
+      "context_check": "在这个上下文中，{context_understanding}是否准确？"
+    }
+  },
+  "integration": {
+    "enable_learning": true,
+    "enable_self_verification": true,
+    "enable_deep_understanding": true,
+    "cache_understanding": true,
+    "cache_ttl": 300
+  }
+}

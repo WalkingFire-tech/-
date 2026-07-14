@@ -400,7 +400,7 @@ def {func_name}(params: dict) -> dict:
 
 问题: {description}
 """
-            result = ollama_chat_request(base_url, model, prompt, timeout=30)
+            result = ollama_chat_request(base_url, model, prompt, timeout=60)
             if result and result.get("content"):
                 code = result["content"]
                 code = re.sub(r'^```python\s*', '', code)

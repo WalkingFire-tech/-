@@ -18,6 +18,31 @@ from adapters.llm.ollama_adapter import ollama_chat_request
 from infrastructure.database_manager import DatabaseManager
 
 
+
+def _get_intent_domain_keywords(intent_type, user_input):
+    kw = {}
+    if intent_type == "hardware":
+        kw.update({"system":0.9,"cmd":0.8,"powershell":0.8,"command":0.8,"process":0.6,"resource":0.7,"fix":0.7,"diagnose":0.7,"self":0.5,"manage":0.6,"gpu":0.7,"memory":0.6,"cpu":0.6})
+    elif intent_type == "map":
+        kw.update({"map":1.0,"coordinate":0.9,"location":0.9,"navigate":0.8,"gps":0.8,"marker":0.7,"latitude":0.9,"longitude":0.9})
+    elif intent_type == "weather":
+        kw.update({"weather":1.0,"temperature":0.9,"forecast":0.8,"rain":0.8,"wind":0.6,"humidity":0.7})
+    for word in (user_input or "")[:200].replace("?"," ").replace(","," ").split():
+        w = word.strip().lower()
+        if len(w) >= 2:
+            kw[w] = kw.get(w, 0.25)
+    return kw
+
+def _compute_relevance(text, domain_keywords):
+    if not text or not domain_keywords:
+        return 0.5
+    tl = (text or "").lower()[:500]
+    score, matched = 0.0, 0
+    for kw, w in domain_keywords.items():
+        if kw.lower() in tl:
+            score += w; matched += 1
+    return 0.05 if matched == 0 else min(score / max(len(domain_keywords),1) * (1+matched*0.1), 1.0)
+
 def _feature_enabled(flag_name: str, default: bool = True) -> bool:
     try:
         from infrastructure.config_manager import config_manager
@@ -25,6 +50,14 @@ def _feature_enabled(flag_name: str, default: bool = True) -> bool:
         return flags.get(flag_name, default)
     except Exception:
         return default
+
+
+def _build_fallback_dispatch(raw_intent: str, raw_conf: float) -> dict:
+    intent_type = raw_intent
+    route = "fast" if raw_intent in ("greeting", "confirmation") else "slow"
+    confidence = raw_conf
+    return {"intent_type": intent_type, "route": route, "confidence": confidence, "field_context": {}, "execution_plan": {"tasks": []}}
+
 
 from backend.services.path_handlers._shared import (
     _slow_executor, _fast_executor,
@@ -538,10 +571,10 @@ async def chat_stream(user_input: str, context: dict):
             route = dispatch_result.get("route", "slow")
             confidence = dispatch_result.get("confidence", 0.5)
         else:
-            intent_type = raw_intent
-            route = "fast" if raw_intent in ("greeting", "confirmation") else "slow"
-            confidence = raw_conf
-            dispatch_result = {"intent_type": intent_type, "route": route, "confidence": confidence, "field_context": {}, "execution_plan": {"tasks": []}}
+            dispatch_result = _build_fallback_dispatch(raw_intent, raw_conf)
+            intent_type = dispatch_result["intent_type"]
+            route = dispatch_result["route"]
+            confidence = dispatch_result["confidence"]
         
         # 场域上下文消费：将field_context注入methodology
         _field_context = dispatch_result.get("field_context", {})
@@ -1070,6 +1103,18 @@ async def chat_stream(user_input: str, context: dict):
         logger.info(f"✅ 快速路径响应已发送({elapsed:.1f}秒)")
         return
     
+    # ---- relevance filter ----
+    _domain_keywords = _get_intent_domain_keywords(intent_type, user_input)
+    for c in candidates:
+        c["_relevance"] = _compute_relevance(c.get("response", ""), _domain_keywords)
+    _before_cnt = len(candidates)
+    candidates = [c for c in candidates if c["_relevance"] > 0.12]
+    if len(candidates) < 1:
+        candidates = candidates  # keep all if none pass
+    for c in candidates:
+        c["quality"] = int(c.get("quality", 30) * 0.6 + c["_relevance"] * 40)
+    # ---- end relevance filter ----
+
     logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] 进入阶段4: 对比择优, {len(candidates)}个候选")
     for i, c in enumerate(candidates):
         logger.warning(f"[ORCH_DIAG] 候选{i}: source={c.get('source')}, quality={c.get('quality')}, resp_len={len(c.get('response',''))}, resp_preview={c.get('response','')[:80]}")

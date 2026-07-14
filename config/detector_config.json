@@ -1,0 +1,17 @@
+{
+  "domain_confidence_threshold": 0.5,
+  "coverage_threshold": 0.3,
+  "confidence_threshold": 0.5,
+  "response_min_length": 50,
+  "semantic_similarity_threshold": 0.5,
+  "learn_keywords": [
+    "如何",
+    "为什么",
+    "原理",
+    "详解",
+    "深入",
+    "请教",
+    "推荐",
+    "选型"
+  ]
+}

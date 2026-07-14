@@ -278,6 +278,15 @@ class CapabilityGapLearner:
         self._record_gap(gap)
         return gap
 
+    async def try_resolve_gap(self, gap: dict) -> str:
+        """尝试解决能力缺口 — 被SelfModel._action_capability_gap_learning调用"""
+        result = await self.acquire_capability({
+            'query': gap.get('description', gap.get('query', '')),
+            'gap_type': gap.get('gap_type', ''),
+        })
+        self._record_gap(gap, resolved=1, resolution=result)
+        return result
+
     def _record_gap(self, gap: dict, resolved: int = 0, resolution: str = ""):
         try:
             from datetime import datetime

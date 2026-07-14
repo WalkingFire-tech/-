@@ -492,7 +492,7 @@ class PersistentTaskQueue:
                         base_url="http://localhost:11434",
                         model=model,
                         prompt=query,
-                        timeout=30
+                        timeout=60
                     )
                 ),
                 timeout=35

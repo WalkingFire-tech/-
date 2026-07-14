@@ -500,7 +500,7 @@ class MetacognitiveExecutor:
                             base_url="http://localhost:11434",
                             model=selected_model,
                             prompt=query,
-                            timeout=30
+                            timeout=60
                         )
                     ),
                     timeout=35

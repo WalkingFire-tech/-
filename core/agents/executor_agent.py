@@ -157,7 +157,7 @@ class ExecutorAgent(BaseAgent):
                 base_url="http://localhost:11434",
                 model=model,
                 prompt=query,
-                timeout=30,
+                timeout=60,
             )
             text = resp.get("content", "")
             if text:

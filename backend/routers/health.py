@@ -1,15 +1,21 @@
 """
 健康检查路由 — /api/health, /api/resource-status, /api/hardware/status
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from loguru import logger
 
 router = APIRouter()
 
 
 @router.get("/health")
-async def health():
-    return {"status": "ok", "version": "4.0.0"}
+async def health(request: Request):
+    """健康检查 — 仅在所有子系统初始化完成后返回 ready: true"""
+    initialized = getattr(request.app.state, "initialized", False)
+    return {
+        "status": "ok" if initialized else "starting",
+        "ready": initialized,
+        "version": "4.0.0",
+    }
 
 
 @router.get("/resource-status")

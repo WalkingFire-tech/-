@@ -464,6 +464,8 @@ async def lifespan(app):
     logger.info("文件变化感知已标记为手动模式（config_manager兼容性问题）")
 
     # 让服务开始处理请求
+    app.state.initialized = True
+    logger.info("✅ 后端服务初始化完成，所有子系统就绪")
     yield
 
     # === 关闭序列 ===
