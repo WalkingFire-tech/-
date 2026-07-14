@@ -819,6 +819,23 @@ class PersistentTaskQueue:
 
         if learned_items:
             logger.info(f"📚 知识缺口学习完成: {gap[:50]} → {len(learned_items)}项")
+            try:
+                from core.learning.strategy_library import strategy_library
+                strategy_library.add_strategy(
+                    trigger_pattern=f"knowledge_gap: {gap[:60]}",
+                    action_patch=f"外部学习+Ollama推理: {'; '.join(learned_items)}",
+                    category="knowledge_gap",
+                    source=source,
+                    context=gap[:200],
+                    confidence=0.6,
+                )
+            except Exception:
+                pass
+            try:
+                from core.learning.intrinsic_reward import intrinsic_reward
+                intrinsic_reward.reward("learn_new_knowledge", f"学习了{gap[:40]}")
+            except Exception:
+                pass
             return f"学习了{len(learned_items)}项: {'; '.join(learned_items)}"
         return f"知识缺口学习未获得有效结果: {gap[:50]}"
 

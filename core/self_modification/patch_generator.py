@@ -56,7 +56,13 @@ class PatchGenerator:
 
     def generate_patch(self, defect: Dict, source: str) -> Optional[Patch]:
         category = defect.get("category", "")
-        if category == "exception_handling" and "裸except" in defect.get("description", ""):
+        description = defect.get("description", "")
+
+        strategy_patch = self._query_strategy_library(category, description, source)
+        if strategy_patch:
+            return strategy_patch
+
+        if category == "exception_handling" and "裸except" in description:
             return self._patch_bare_except(defect, source)
         elif category == "database" and "sqlite3" in defect.get("description", ""):
             return self._patch_sqlite3_migration(defect, source)
@@ -203,6 +209,37 @@ FIXED: <the fixed code line>"""
                     confidence=0.5,
                 )
         return None
+
+    def _query_strategy_library(self, category: str, description: str, source: str) -> Optional[Patch]:
+        try:
+            from core.learning.strategy_library import strategy_library
+            strategies = strategy_library.query_strategy(description, category=category)
+            if not strategies:
+                return None
+
+            best = strategies[0]
+            if best.confidence < 0.4:
+                return None
+
+            lines = source.splitlines()
+            if not lines:
+                return None
+
+            logger.info(f"📋 策略库命中: #{best.id} (置信度{best.confidence:.2f}) → {best.action_patch[:40]}")
+
+            strategy_library.record_outcome(best.id, success=True)
+
+            return Patch(
+                file="",
+                original="",
+                replacement=best.action_patch,
+                description=f"策略库#{best.id}: {best.trigger_pattern}",
+                defect_category=category,
+                confidence=best.confidence,
+            )
+        except Exception as e:
+            logger.debug(f"策略库查询跳过: {e}")
+            return None
 
 
 patch_generator = PatchGenerator()
