@@ -426,6 +426,8 @@ class PersistentTaskQueue:
             return await self._do_cognitive_metabolism(payload)
         elif task_type == "stress_test":
             return await self._do_stress_test(payload)
+        elif task_type == "knowledge_gap_learning":
+            return await self._do_knowledge_gap_learning(payload)
         else:
             return f"未知任务类型: {task_type}"
 
@@ -776,6 +778,49 @@ class PersistentTaskQueue:
         result = f"压力测试: {passed}/{total}通过; " + "; ".join([f"{t[0]}={'✅' if t[1] else '❌'}{t[2]}" for t in tests])
         logger.info(f"🔥 {result}")
         return result
+
+    async def _do_knowledge_gap_learning(self, payload: dict) -> str:
+        """知识缺口学习：从检测到的知识缺口中主动学习"""
+        gap = payload.get("gap", "")
+        source = payload.get("source", "curiosity")
+        if not gap:
+            return "知识缺口为空，跳过学习"
+
+        learned_items = []
+
+        try:
+            from core.external_learner import ExternalLearner
+            learner = ExternalLearner()
+            result = learner.search_and_learn(gap)
+            if result and result.get("success"):
+                learned_items.append(f"外部学习: {gap[:50]}")
+        except Exception as e:
+            logger.warning(f"知识缺口外部学习失败: {e}")
+
+        try:
+            ollama_result = await self._do_ollama_thinking({
+                "query": f"请简要解释: {gap}",
+                "context": {"source": source, "purpose": "knowledge_gap_filling"}
+            })
+            if ollama_result and len(ollama_result) > 20:
+                try:
+                    db = DatabaseManager.get("data/knowledge_store.db")
+                    db.execute('''
+                        INSERT OR IGNORE INTO knowledge_items
+                        (topic, content, source, confidence, timestamp)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (gap[:100], ollama_result[:2000], f"gap_learning:{source}", 0.6,
+                          datetime.now().isoformat()), commit=True)
+                    learned_items.append(f"Ollama学习: {gap[:50]}")
+                except Exception:
+                    logger.warning("知识存储跳过")
+        except Exception as e:
+            logger.warning(f"知识缺口Ollama学习失败: {e}")
+
+        if learned_items:
+            logger.info(f"📚 知识缺口学习完成: {gap[:50]} → {len(learned_items)}项")
+            return f"学习了{len(learned_items)}项: {'; '.join(learned_items)}"
+        return f"知识缺口学习未获得有效结果: {gap[:50]}"
 
 
 task_queue = PersistentTaskQueue()

@@ -50,6 +50,7 @@ class ScheduledTaskManager:
         self.register_job("sleep_consolidation", 3600.0, self._job_sleep_consolidation)
         self.register_job("metabolism", 300.0, self._job_metabolism)
         self.register_job("capability_assessment", 1800.0, self._job_capability_assessment)
+        self.register_job("self_modification_check", 3600.0, self._job_self_modification_check)
         try:
             from core.resource_awareness.adaptive_governor import get_adaptive_governor
             from core.resource_awareness.health_monitor import OperatingMode
@@ -668,6 +669,43 @@ class ScheduledTaskManager:
             )
         except Exception as e:
             logger.warning(f"能力评估跳过: {e}")
+
+    def _job_self_modification_check(self):
+        """L5自修改循环：定期检查代码缺陷并生成修复提案"""
+        try:
+            from core.self_modification.loop import self_modification_loop
+            if not self_modification_loop.can_run():
+                return
+
+            target_files = [
+                "core/cognitive_dispatcher.py",
+                "core/truth_accumulator.py",
+                "core/skill_emergence.py",
+                "core/presence/curiosity_engine.py",
+                "core/presence/gap_growth.py",
+                "core/presence/existence_layer.py",
+                "core/task_queue.py",
+                "infrastructure/scheduled_tasks.py",
+            ]
+
+            total_defects = 0
+            total_proposals = 0
+            for f in target_files:
+                try:
+                    result = self_modification_loop.run_from_file(f)
+                    if result.triggered:
+                        total_defects += result.defects_found
+                        total_proposals += result.proposals_created
+                except Exception as e:
+                    logger.debug(f"L5检查{f}跳过: {e}")
+
+            if total_defects > 0:
+                logger.info(f"🔧 L5自修改检查: 发现{total_defects}个缺陷, 生成{total_proposals}个提案")
+            else:
+                logger.debug("🔧 L5自修改检查: 未发现缺陷")
+
+        except Exception as e:
+            logger.warning(f"L5自修改检查跳过: {e}")
 
 
 scheduled_task_manager = ScheduledTaskManager()
