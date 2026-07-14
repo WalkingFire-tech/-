@@ -336,6 +336,26 @@ class ScheduledTaskManager:
         except Exception:
             pass
 
+        # L5自触发回路：好奇心驱动的自我代码改进
+        try:
+            from core.self_modification.loop import self_modification_loop
+            if self_modification_loop.can_run():
+                from core.presence.curiosity_engine import get_curiosity_engine
+                _curiosity = get_curiosity_engine()
+                _gaps = _curiosity.perceive_gaps()
+                _reflect_gaps = [g for g in _gaps if g.learning_strategy == "reflect_internal"]
+                if _reflect_gaps:
+                    _mod_result = self_modification_loop.run_from_lessons()
+                    if _mod_result.triggered:
+                        logger.info(
+                            f"🔧 L5自触发(proactivity): "
+                            f"缺陷={_mod_result.defects_found}, "
+                            f"补丁={_mod_result.patches_generated}, "
+                            f"提案={_mod_result.proposals_created}"
+                        )
+        except Exception:
+            pass
+
         # L4善意延伸：资源状态感知的主动告知
         try:
             from core.resource_awareness.health_monitor import get_health_monitor

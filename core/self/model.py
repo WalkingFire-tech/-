@@ -639,10 +639,21 @@ class SelfModel:
                         logger.debug(f"好奇心外部学习跳过: {e}")
                 elif action.action_type == "reflect_internal":
                     try:
-                        from core.self_modification.defect_diagnoser import defect_diagnoser
-                        lesson_defects = defect_diagnoser.diagnose_from_lessons()
-                        if lesson_defects:
-                            logger.info(f"🔍 好奇心反思: {len(lesson_defects)}条未修正教训待处理")
+                        from core.self_modification.loop import self_modification_loop
+                        if self_modification_loop.can_run():
+                            mod_result = self_modification_loop.run_from_lessons()
+                            if mod_result.triggered:
+                                logger.info(
+                                    f"🔍 好奇心反思→L5自触发: "
+                                    f"缺陷={mod_result.defects_found}, "
+                                    f"补丁={mod_result.patches_generated}, "
+                                    f"安全={mod_result.patches_safe}, "
+                                    f"提案={mod_result.proposals_created}"
+                                )
+                            else:
+                                logger.info(f"🔍 好奇心反思: 无缺陷待处理")
+                        else:
+                            logger.debug("好奇心反思: L5自触发冷却中，跳过")
                     except Exception as e:
                         logger.debug(f"好奇心反思跳过: {e}")
         except Exception as e:
