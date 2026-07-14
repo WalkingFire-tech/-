@@ -18,5 +18,6 @@ from core.self_modification.code_reader import CodeReader
 from core.self_modification.defect_diagnoser import DefectDiagnoser
 from core.self_modification.patch_generator import PatchGenerator
 from core.self_modification.patch_sandbox_deployer import PatchSandbox, PatchDeployer
+from core.self_modification.loop import SelfModificationLoop, self_modification_loop
 
-__all__ = ["CodeReader", "DefectDiagnoser", "PatchGenerator", "PatchSandbox", "PatchDeployer"]
+__all__ = ["CodeReader", "DefectDiagnoser", "PatchGenerator", "PatchSandbox", "PatchDeployer", "SelfModificationLoop", "self_modification_loop"]
