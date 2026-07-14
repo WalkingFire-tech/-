@@ -19,12 +19,31 @@ class ExternalLearner:
         self.db_path = db_path
         self.search_api_key = self.config.get("search_api_key", "")
         self.search_engine_id = self.config.get("search_engine_id", "")
-        self.llm_api_key = self.config.get("llm_api_key", "")
-        self.llm_model = self.config.get("llm_model", "gpt-4")
-        self.llm_base_url = self.config.get("llm_base_url", "https://api.openai.com/v1")
-        
+
+        # 从external_api.json读取API密钥
+        try:
+            import json
+            with open("config/external_api.json", "r", encoding="utf-8") as f:
+                ext_config = json.load(f)
+                self.llm_api_key = ext_config.get("deepseek_api_key") or ext_config.get("openai_api_key") or ""
+                if ext_config.get("deepseek_api_key"):
+                    self.llm_model = "deepseek-chat"
+                    self.llm_base_url = "https://api.deepseek.com/v1"
+                elif ext_config.get("openai_api_key"):
+                    self.llm_model = "gpt-4"
+                    self.llm_base_url = "https://api.openai.com/v1"
+                else:
+                    self.llm_api_key = ""
+                    self.llm_model = "gpt-4"
+                    self.llm_base_url = "https://api.openai.com/v1"
+        except Exception as e:
+            logger.warning(f"读取external_api.json失败: {e}，使用默认配置")
+            self.llm_api_key = self.config.get("llm_api_key", "")
+            self.llm_model = self.config.get("llm_model", "gpt-4")
+            self.llm_base_url = self.config.get("llm_base_url", "https://api.openai.com/v1")
+
         Path(db_path).parent.mkdir(exist_ok=True)
-        logger.info("外部学习器已初始化")
+        logger.info(f"外部学习器已初始化 (API: {'DeepSeek' if 'deepseek' in self.llm_base_url else 'OpenAI' if self.llm_api_key else 'None'})")
     
     def search_web(self, query: str, num_results: int = 3) -> List[str]:
         """搜索引擎查询 — 优先隐身搜索(TLS指纹伪装)，降级到多源搜索，再降级到本地"""
@@ -120,11 +139,15 @@ class ExternalLearner:
         if self.llm_api_key:
             try:
                 import requests
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
                 messages = []
                 if system_prompt:
                     messages.append({"role": "system", "content": system_prompt})
                 messages.append({"role": "user", "content": prompt})
-                
+
+                logger.info(f"调用外部LLM: {self.llm_base_url}, 模型: {self.llm_model}")
                 response = requests.post(
                     f"{self.llm_base_url}/chat/completions",
                     headers={
@@ -137,17 +160,23 @@ class ExternalLearner:
                         "temperature": 0.7,
                         "max_tokens": 2000
                     },
-                    timeout=30
+                    timeout=30,
+                    verify=False
                 )
-                
+                logger.info(f"外部LLM响应状态码: {response.status_code}")
+
                 if response.status_code == 200:
                     data = response.json()
+                    logger.info(f"外部LLM响应数据: {data}")
                     return data["choices"][0]["message"]["content"]
                 else:
                     logger.error(f"外部LLM失败({response.status_code})，尝试本地Ollama")
             except Exception as e:
                 logger.error(f"外部LLM失败: {e}，尝试本地Ollama")
-        
+                import traceback
+                logger.error(traceback.format_exc())
+
+        logger.info(f"降级到本地Ollama")
         return self._ask_local_ollama(prompt, system_prompt)
     
     def _ask_local_ollama(self, prompt: str, system_prompt: str = None) -> str:
