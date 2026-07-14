@@ -488,7 +488,22 @@ class CognitivePlanner:
                 if not learning.get("success"):
                     return {"success": False, "reason": "学习失败"}
                 
-                result = self.l3.integrate(learning)
+                knowledge_ids = learning.get("knowledge_ids", [])
+                knowledge_items = []
+                if knowledge_ids:
+                    try:
+                        from infrastructure.database_manager import DatabaseManager
+                        db = DatabaseManager.get("data/knowledge_store.db")
+                        placeholders = ",".join(["?" for _ in knowledge_ids])
+                        rows = db.query(
+                            f"SELECT id, question, answer, quality_score, created_at FROM knowledge_items WHERE id IN ({placeholders})",
+                            knowledge_ids
+                        )
+                        knowledge_items = [dict(row) for row in rows]
+                    except Exception as e:
+                        logger.warning(f"查询knowledge_items失败: {e}")
+                
+                result = self.l3.integrate(knowledge_items)
                 return {
                     "success": True,
                     "core_knowledge": [{"content": "基于用户输入的分析", "confidence": 0.7}]

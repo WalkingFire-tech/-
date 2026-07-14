@@ -101,6 +101,44 @@ class StereoMemory:
     context: MemoryContext = field(default_factory=MemoryContext)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    def get(self, key: str, default=None):
+        """dict兼容访问器 — 使StereoMemory可像dict一样访问，用于睡眠整合等消费端"""
+        if key == "content":
+            return self.content
+        if key == "memory_id":
+            return self.memory_id
+        if key == "importance":
+            return self.importance
+        if key == "memory_type":
+            return self.memory_type
+        return self.metadata.get(key, default)
+
+
+@dataclass
+class StereoMemoryEntry:
+    """立体记忆条目 — 用于对话记忆存储"""
+    id: str
+    user_content: str
+    system_content: str
+    intent: str
+    topic: str
+    trust_change: float = 0.0
+    intimacy_change: float = 0.0
+    dependency_change: float = 0.0
+    self_state_before: Dict = field(default_factory=dict)
+    self_state_after: Dict = field(default_factory=dict)
+    skills_used: List[str] = field(default_factory=list)
+    skills_formed: List[str] = field(default_factory=list)
+    timestamp: str = ""
+    importance: float = 0.5
+    user_emotion: str = "neutral"
+    system_emotion: str = "neutral"
+    memory_type: MemoryType = MemoryType.CONVERSATION
+
+    def __post_init__(self):
+        if not self.timestamp:
+            self.timestamp = datetime.now().isoformat()
+
 
 class StereoMemorySystem:
     """立体记忆系统"""
