@@ -1,0 +1,314 @@
+{
+  "version": "2.0",
+  "description": "三层知识源配置 - 本地→学术→通用",
+  
+  "architecture": {
+    "layer1": {
+      "name": "本地知识库",
+      "description": "最快、最可信、离线可用",
+      "priority_range": [1, 9]
+    },
+    "layer2": {
+      "name": "权威学术/技术库",
+      "description": "高可信度、学术权威",
+      "priority_range": [10, 29]
+    },
+    "layer3": {
+      "name": "通用知识/搜索引擎",
+      "description": "降级方案、广泛覆盖",
+      "priority_range": [30, 99]
+    }
+  },
+  
+  "sources": [
+    {
+      "name": "本地知识库",
+      "type": "local",
+      "layer": 1,
+      "enabled": true,
+      "priority": 1,
+      "description": "系统已学习的知识",
+      "config": {
+        "db_path": "data/knowledge_store.db"
+      }
+    },
+    
+    {
+      "name": "本地学术库",
+      "type": "local_academic",
+      "layer": 1,
+      "enabled": true,
+      "priority": 2,
+      "description": "用户自建学术论文/技术文档库",
+      "config": {
+        "db_path": "data/academic_library.db",
+        "indexing_enabled": true,
+        "auto_index_dir": "data/academic_papers/",
+        "embedding_model": "all-MiniLM-L6-v2"
+      }
+    },
+    
+    {
+      "name": "arXiv",
+      "type": "academic",
+      "layer": 2,
+      "enabled": true,
+      "priority": 10,
+      "description": "arXiv学术论文预印本",
+      "config": {
+        "api_url": "http://export.arxiv.org/api/query",
+        "search_field": "all",
+        "max_results": 3,
+        "categories": ["cs.AI", "cs.LG", "cs.CL", "physics", "math"]
+      }
+    },
+    
+    {
+      "name": "PubMed",
+      "type": "academic",
+      "layer": 2,
+      "enabled": true,
+      "priority": 11,
+      "description": "PubMed生物医学文献",
+      "config": {
+        "api_url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
+        "db": "pubmed",
+        "max_results": 3
+      }
+    },
+    
+    {
+      "name": "Semantic Scholar",
+      "type": "academic",
+      "layer": 2,
+      "enabled": true,
+      "priority": 12,
+      "description": "Semantic Scholar学术论文",
+      "config": {
+        "api_url": "https://api.semanticscholar.org/v1/paper/search",
+        "api_key_env": "S2_API_KEY",
+        "max_results": 3
+      }
+    },
+    
+    {
+      "name": "CORE",
+      "type": "academic",
+      "layer": 2,
+      "enabled": false,
+      "priority": 13,
+      "description": "CORE开放获取论文",
+      "config": {
+        "api_url": "https://api.core.ac.uk/v3/search/works",
+        "api_key_env": "CORE_API_KEY",
+        "max_results": 3
+      }
+    },
+    
+    {
+      "name": "IEEE Xplore",
+      "type": "academic",
+      "layer": 2,
+      "enabled": false,
+      "priority": 14,
+      "description": "IEEE电子工程/计算机论文",
+      "config": {
+        "api_key_env": "IEEE_API_KEY",
+        "max_results": 3
+      }
+    },
+    
+    {
+      "name": "中国知网",
+      "type": "academic",
+      "layer": 2,
+      "enabled": false,
+      "priority": 20,
+      "description": "中国知网（CNKI）- 需商业授权",
+      "config": {
+        "api_key_env": "CNKI_API_KEY",
+        "max_results": 3
+      }
+    },
+    
+    {
+      "name": "万方数据",
+      "type": "academic",
+      "layer": 2,
+      "enabled": false,
+      "priority": 21,
+      "description": "万方数据知识服务平台",
+      "config": {
+        "api_key_env": "WANFANG_API_KEY",
+        "max_results": 3
+      }
+    },
+    
+    {
+      "name": "DeepSeek",
+      "type": "llm",
+      "layer": 2,
+      "enabled": true,
+      "priority": 25,
+      "description": "DeepSeek大模型推理",
+      "config": {
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+        "strengths": ["深度推理", "代码理解", "知识问答"]
+      }
+    },
+    
+    {
+      "name": "维基百科（中文）",
+      "type": "wiki",
+      "layer": 3,
+      "enabled": true,
+      "priority": 30,
+      "description": "维基百科中文",
+      "config": {
+        "base_url": "https://zh.wikipedia.org/api/rest_v1/page/summary/",
+        "language": "zh"
+      }
+    },
+    
+    {
+      "name": "维基百科（英文）",
+      "type": "wiki",
+      "layer": 3,
+      "enabled": true,
+      "priority": 31,
+      "description": "维基百科英文",
+      "config": {
+        "base_url": "https://en.wikipedia.org/api/rest_v1/page/summary/",
+        "language": "en"
+      }
+    },
+    
+    {
+      "name": "百度百科",
+      "type": "wiki",
+      "layer": 3,
+      "enabled": true,
+      "priority": 32,
+      "description": "百度百科",
+      "config": {
+        "base_url": "https://baike.baidu.com/item/",
+        "language": "zh"
+      }
+    },
+    
+    {
+      "name": "GitHub",
+      "type": "api",
+      "layer": 3,
+      "enabled": true,
+      "priority": 35,
+      "description": "GitHub代码搜索",
+      "config": {
+        "base_url": "https://api.github.com/search/repositories",
+        "api_key_env": "GITHUB_TOKEN"
+      }
+    },
+    
+    {
+      "name": "Stack Overflow",
+      "type": "api",
+      "layer": 3,
+      "enabled": true,
+      "priority": 36,
+      "description": "Stack Overflow问答",
+      "config": {
+        "base_url": "https://api.stackexchange.com/2.3/search",
+        "api_key_env": "STACKOVERFLOW_KEY"
+      }
+    },
+    
+    {
+      "name": "知乎",
+      "type": "web",
+      "layer": 3,
+      "enabled": true,
+      "priority": 40,
+      "description": "知乎问答社区",
+      "config": {
+        "base_url": "https://www.zhihu.com/search"
+      }
+    },
+    
+    {
+      "name": "CSDN",
+      "type": "web",
+      "layer": 3,
+      "enabled": true,
+      "priority": 41,
+      "description": "CSDN技术社区",
+      "config": {
+        "base_url": "https://so.csdn.net/search"
+      }
+    },
+    
+    {
+      "name": "DuckDuckGo",
+      "type": "search",
+      "layer": 3,
+      "enabled": true,
+      "priority": 50,
+      "description": "DuckDuckGo搜索（无需API）",
+      "config": {
+        "max_results": 5
+      }
+    },
+    
+    {
+      "name": "模拟降级",
+      "type": "mock",
+      "layer": 3,
+      "enabled": true,
+      "priority": 99,
+      "description": "最后的降级方案",
+      "config": {}
+    }
+  ],
+  
+  "routing_rules": [
+    {
+      "keywords": ["论文", "研究", "学术", "arxiv", "paper"],
+      "preferred_sources": ["arXiv", "Semantic Scholar", "PubMed"],
+      "layer": 2
+    },
+    {
+      "keywords": ["代码", "编程", "实现", "如何写", "github"],
+      "preferred_sources": ["GitHub", "Stack Overflow", "CSDN"],
+      "layer": 3
+    },
+    {
+      "keywords": ["是什么", "定义", "概念", "介绍"],
+      "preferred_sources": ["维基百科（中文）", "百度百科", "知乎"],
+      "layer": 3
+    },
+    {
+      "keywords": ["医学", "疾病", "药物", "健康"],
+      "preferred_sources": ["PubMed", "维基百科（中文）"],
+      "layer": 2
+    },
+    {
+      "keywords": ["AI", "机器学习", "深度学习", "神经网络"],
+      "preferred_sources": ["arXiv", "Semantic Scholar", "DeepSeek"],
+      "layer": 2
+    }
+  ],
+  
+  "cache_config": {
+    "enabled": true,
+    "ttl_hours": 24,
+    "max_entries": 1000,
+    "db_path": "data/knowledge_cache.db"
+  },
+  
+  "rate_limiting": {
+    "requests_per_minute": 60,
+    "requests_per_hour": 1000,
+    "retry_after_seconds": 60
+  }
+}

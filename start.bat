@@ -69,8 +69,11 @@ echo   Logs: logs\
 echo ========================================
 echo.
 
-REM Open browser after server is ready (poll /api/health)
-powershell -WindowStyle Hidden -File "%~dp0wait_and_open.ps1"
+REM Open browser only after server is fully initialized (app.state.initialized=true)
+echo.
+echo Waiting for server to fully initialize (health check: ready=true)...
+echo (Browser will open automatically when ready, max 90s)
+powershell -ExecutionPolicy Bypass -File "%~dp0wait_and_open.ps1"
 
 REM Try smart starter with watchfiles-based reload (avoids Windows socketpair issue)
 python start_smart.py 2>nul

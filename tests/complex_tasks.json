@@ -1,0 +1,58 @@
+[
+    {
+        "id": 1,
+        "input": "写一个快速排序算法的Python实现，并解释其时间复杂度，同时比较递归和迭代版本的性能。",
+        "expected_subtasks": ["代码实现", "时间复杂度解释", "性能比较"],
+        "category": "code+explanation",
+        "eval_method": "quality"
+    },
+    {
+        "id": 2,
+        "input": "计算斐波那契数列的前10项，并分析其增长规律。",
+        "expected_subtasks": ["计算", "分析"],
+        "category": "calculation+analysis",
+        "eval_method": "quality"
+    },
+    {
+        "id": 3,
+        "input": "分析Python和Java的区别，并给出学习建议。",
+        "expected_subtasks": ["对比分析", "建议"],
+        "category": "analysis",
+        "eval_method": "quality"
+    },
+    {
+        "id": 4,
+        "input": "实现一个用户登录功能，包括前端表单验证、后端API接口和数据库存储。",
+        "expected_subtasks": ["前端", "后端", "数据库"],
+        "category": "code",
+        "eval_method": "quality"
+    },
+    {
+        "id": 5,
+        "input": "写一个冒泡排序",
+        "expected_subtasks": ["代码实现"],
+        "category": "simple",
+        "eval_method": "quality"
+    },
+    {
+        "id": 6,
+        "input": "解释什么是机器学习，并举例说明其在实际中的应用。",
+        "expected_subtasks": ["概念解释", "应用举例"],
+        "category": "explanation",
+        "eval_method": "quality"
+    },
+    {
+        "id": 7,
+        "input": "比较TCP和UDP协议的区别，并说明各自的适用场景。",
+        "expected_subtasks": ["协议对比", "场景说明"],
+        "category": "analysis",
+        "eval_method": "quality"
+    },
+    {
+        "id": 8,
+        "input": "写一个Python爬虫程序，并处理可能的异常情况。",
+        "expected_subtasks": ["爬虫实现", "异常处理"],
+        "category": "code",
+        "eval_method": "quality"
+    }
+]

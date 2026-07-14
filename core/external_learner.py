@@ -167,7 +167,7 @@ class ExternalLearner:
                 model=model,
                 prompt=prompt,
                 system_prompt=system_prompt,
-                timeout=30
+                timeout=60
             )
             
             content = result.get("content", "")

@@ -599,7 +599,7 @@ async function runInduction() {
 }
 
 // 健康检查和统计
-async function checkHealth(retryCount = 0, maxRetry = 15) {
+async function checkHealth(retryCount = 0, maxRetry = 30) {
     const indicator = document.getElementById('status-indicator');
     const statusText = document.getElementById('status-text');
     
@@ -608,12 +608,23 @@ async function checkHealth(retryCount = 0, maxRetry = 15) {
             signal: AbortSignal.timeout(5000)
         });
         const data = await response.json();
-        if (indicator) indicator.classList.add('connected');
-        if (statusText) statusText.textContent = `已连接 (v${data.version})`;
-        return true;
+        // 检查 ready 字段 — 仅在所有子系统初始化完成后才标记为已连接
+        if (data.ready === true) {
+            if (indicator) indicator.classList.add('connected');
+            if (statusText) statusText.textContent = `已连接 (v${data.version})`;
+            return true;
+        }
+        // 服务器可达但仍在初始化
+        if (retryCount < maxRetry) {
+            if (statusText) statusText.textContent = `初始化中... (${retryCount + 1}/${maxRetry})`;
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            return checkHealth(retryCount + 1, maxRetry);
+        }
+        if (statusText) statusText.textContent = '初始化超时（点击重试）';
+        return false;
     } catch (error) {
         if (retryCount < maxRetry) {
-            if (statusText) statusText.textContent = `连接中... (${retryCount + 1}/${maxRetry})`;
+            if (statusText) statusText.textContent = `等待服务器... (${retryCount + 1}/${maxRetry})`;
             await new Promise(resolve => setTimeout(resolve, 2000));
             return checkHealth(retryCount + 1, maxRetry);
         }

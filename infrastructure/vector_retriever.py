@@ -397,6 +397,8 @@ class VectorRetriever:
         if _ST_AVAILABLE and _ST_MODEL is not None:
             try:
                 query_vec = _ST_MODEL.encode([query])
+                if len(query_vec.shape) == 1:
+                    query_vec = query_vec.reshape(1, -1)
                 if self._cached_vecs is None or self._cached_vecs_count != len(self._texts):
                     try:
                         import psutil

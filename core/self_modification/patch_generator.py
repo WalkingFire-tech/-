@@ -164,15 +164,8 @@ class PatchGenerator:
                 )
         return None
 
-    def _patch_file_too_long(self, defect: Dict, source: str) -> Optional[Patch]:
-        return Patch(
-            file=defect.get("file", ""),
-            original="",
-            replacement="",
-            description="文件过长，建议拆分（需人工决策拆分策略）",
-            defect_category="code_smell",
-            confidence=0.1,
-        )
+    def _patch_file_too_long(self, defect, source):
+        return None  # skip
 
     def _build_prompt(self, defect: Dict, source: str) -> str:
         return f"""You are a Python code fixer. Fix the following defect.

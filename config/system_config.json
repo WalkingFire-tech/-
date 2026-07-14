@@ -1,0 +1,78 @@
+{
+  "system": {
+    "name": "Alliance Pioneer",
+    "version": "6.0",
+    "description": "A Thinking Companion"
+  },
+  "layers": {
+    "L0": {
+      "enabled": true,
+      "description": "存在层"
+    },
+    "L1": {
+      "enabled": true,
+      "description": "感知层"
+    },
+    "L2": {
+      "enabled": true,
+      "description": "学习层"
+    },
+    "L3": {
+      "enabled": true,
+      "description": "整合层"
+    },
+    "L4": {
+      "enabled": true,
+      "description": "校验层"
+    },
+    "L5": {
+      "enabled": true,
+      "description": "进化层"
+    },
+    "L6": {
+      "enabled": true,
+      "description": "内省层"
+    }
+  },
+  "presence": {
+    "heartbeat_interval": 10,
+    "perception_interval": 30,
+    "growth_interval": 15,
+    "sleep_interval": 300,
+    "consolidation_interval": 1800
+  },
+  "memory": {
+    "stereo_memory_db": "data/stereo_memory.db",
+    "relationship_db": "data/relationship.db",
+    "max_history": 1000,
+    "decay_rate": 0.99
+  },
+  "evolution": {
+    "gene_evolution_interval": 7,
+    "skill_threshold": 3,
+    "reflex_threshold": 3,
+    "abstraction_interval": 14
+  },
+  "proactivity": {
+    "level": "moderate",
+    "silence_threshold": 600,
+    "cooldown_seconds": 300,
+    "max_actions_per_hour": 3
+  },
+  "goals": {
+    "default_priority": 5,
+    "min_evidence_for_goal": 3,
+    "priority_update_interval": 7
+  },
+  "review": {
+    "enabled": true,
+    "thresholds": {
+      "understanding": 0.6,
+      "relevance": 0.6,
+      "helpfulness": 0.6,
+      "clarity": 0.5,
+      "empathy": 0.4,
+      "boundary": 0.7
+    }
+  }
+}

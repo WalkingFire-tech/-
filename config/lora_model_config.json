@@ -1,0 +1,12 @@
+{
+  "base_model": "Qwen/Qwen2.5-7B-Instruct",
+  "lora_path": "C:\\Users\\Administrator\\alliance_pioneer\\models\\closed_loop_lora",
+  "adapter_config": "C:\\Users\\Administrator\\alliance_pioneer\\models\\closed_loop_lora\\adapter_config.json",
+  "adapter_weights": "C:\\Users\\Administrator\\alliance_pioneer\\models\\closed_loop_lora\\adapter_model.safetensors",
+  "training_info": {
+    "training_data": "727 samples",
+    "epochs": 3,
+    "loss": 1.8123,
+    "eval_loss": 1.6767
+  }
+}

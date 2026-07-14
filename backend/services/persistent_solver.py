@@ -169,7 +169,7 @@ async def execute_method(method_name: str, method_config: Dict, intent_type: str
             from adapters.llm.ollama_adapter import ollama_chat_request
             prompt = method_config.get("prompt", "")
             result = await _run_sync(
-                ollama_chat_request, prompt, model_name="gemma-4-12B", timeout=25, phase=f"持续求解-{method_name}"
+                ollama_chat_request, prompt, model="gemma-4-12B", timeout=25
             )
             if result and result.get("response"):
                 return True, result["response"]

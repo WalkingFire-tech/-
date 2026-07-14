@@ -342,7 +342,7 @@ class CapabilityCreationLoop:
 - 处理异常，不要让程序崩溃
 - 如果读取GPS，解析NMEA数据并输出经纬度
 """
-            result = ollama_chat_request(base_url, model, prompt, timeout=30)
+            result = ollama_chat_request(base_url, model, prompt, timeout=60)
             if result and result.get("content"):
                 code = result["content"]
                 code = re.sub(r'^```python\s*', '', code)
@@ -377,7 +377,7 @@ class CapabilityCreationLoop:
 - 如果是串口问题，尝试扫描可用端口
 - 如果是超时，增加等待时间
 """
-            result = ollama_chat_request(base_url, model, prompt, timeout=30)
+            result = ollama_chat_request(base_url, model, prompt, timeout=60)
             if result and result.get("content"):
                 code = result["content"]
                 code = re.sub(r'^```python\s*', '', code)

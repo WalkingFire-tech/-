@@ -1,0 +1,223 @@
+{
+  "version": "1.0",
+  "description": "外部知识源配置 - 支持多种权威知识来源",
+  
+  "knowledge_sources": {
+    "llm_apis": {
+      "deepseek": {
+        "enabled": true,
+        "priority": 1,
+        "type": "llm",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+        "description": "DeepSeek大模型API",
+        "strengths": ["深度推理", "代码理解", "知识问答"],
+        "cost": "low",
+        "speed": "fast"
+      },
+      "openai": {
+        "enabled": false,
+        "priority": 2,
+        "type": "llm",
+        "api_key_env": "OPENAI_API_KEY",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4",
+        "description": "OpenAI GPT-4",
+        "strengths": ["通用知识", "创意生成", "复杂推理"],
+        "cost": "high",
+        "speed": "medium"
+      }
+    },
+    
+    "search_engines": {
+      "duckduckgo": {
+        "enabled": true,
+        "priority": 1,
+        "type": "search",
+        "description": "DuckDuckGo搜索（无需API密钥）",
+        "max_results": 5,
+        "timeout": 10,
+        "note": "可能在国内网络受限"
+      },
+      "baidu": {
+        "enabled": false,
+        "priority": 2,
+        "type": "search_api",
+        "api_key_env": "BAIDU_API_KEY",
+        "description": "百度搜索API",
+        "max_results": 5
+      },
+      "bing": {
+        "enabled": false,
+        "priority": 3,
+        "type": "search_api",
+        "api_key_env": "BING_API_KEY",
+        "description": "Bing搜索API",
+        "max_results": 5
+      }
+    },
+    
+    "knowledge_bases": {
+      "wikipedia_zh": {
+        "enabled": true,
+        "priority": 1,
+        "type": "wiki",
+        "base_url": "https://zh.wikipedia.org/api/rest_v1/page/summary/",
+        "description": "维基百科中文",
+        "language": "zh",
+        "reliability": "high",
+        "strengths": ["百科知识", "历史", "科学", "文化"]
+      },
+      "wikipedia_en": {
+        "enabled": true,
+        "priority": 2,
+        "type": "wiki",
+        "base_url": "https://en.wikipedia.org/api/rest_v1/page/summary/",
+        "description": "维基百科英文",
+        "language": "en",
+        "reliability": "high",
+        "strengths": ["technical", "science", "history"]
+      },
+      "baike_baidu": {
+        "enabled": true,
+        "priority": 3,
+        "type": "baike",
+        "base_url": "https://baike.baidu.com/item/",
+        "description": "百度百科",
+        "language": "zh",
+        "reliability": "medium",
+        "strengths": ["中文知识", "流行文化", "人物", "地点"]
+      }
+    },
+    
+    "developer_resources": {
+      "github": {
+        "enabled": true,
+        "priority": 1,
+        "type": "api",
+        "base_url": "https://api.github.com/search/repositories",
+        "description": "GitHub代码搜索",
+        "strengths": ["代码", "开源项目", "技术文档"],
+        "api_key_env": "GITHUB_TOKEN"
+      },
+      "stackoverflow": {
+        "enabled": true,
+        "priority": 2,
+        "type": "api",
+        "base_url": "https://api.stackexchange.com/2.3/search",
+        "description": "Stack Overflow问答",
+        "strengths": ["编程问题", "技术方案", "最佳实践"],
+        "api_key_env": "STACKOVERFLOW_KEY"
+      },
+      "csdn": {
+        "enabled": true,
+        "priority": 3,
+        "type": "search",
+        "base_url": "https://so.csdn.net/search",
+        "description": "CSDN技术社区",
+        "strengths": ["中文技术文章", "教程", "经验分享"]
+      }
+    },
+    
+    "academic_sources": {
+      "arxiv": {
+        "enabled": true,
+        "priority": 1,
+        "type": "api",
+        "base_url": "http://export.arxiv.org/api/query",
+        "description": "arXiv学术论文",
+        "strengths": ["AI/ML论文", "计算机科学", "数学", "物理"],
+        "reliability": "very_high"
+      },
+      "zhihu": {
+        "enabled": true,
+        "priority": 2,
+        "type": "search",
+        "base_url": "https://www.zhihu.com/search",
+        "description": "知乎问答",
+        "strengths": ["专业知识", "经验分享", "深度讨论"],
+        "reliability": "medium"
+      },
+      "google_scholar": {
+        "enabled": false,
+        "priority": 3,
+        "type": "api",
+        "description": "Google Scholar学术搜索",
+        "note": "需要VPN"
+      }
+    },
+    
+    "official_docs": {
+      "python": {
+        "enabled": true,
+        "priority": 1,
+        "type": "docs",
+        "base_url": "https://docs.python.org/3/",
+        "description": "Python官方文档",
+        "strengths": ["Python语法", "标准库", "最佳实践"]
+      },
+      "pytorch": {
+        "enabled": true,
+        "priority": 2,
+        "type": "docs",
+        "base_url": "https://pytorch.org/docs/",
+        "description": "PyTorch官方文档",
+        "strengths": ["深度学习", "神经网络", "张量操作"]
+      },
+      "tensorflow": {
+        "enabled": true,
+        "priority": 3,
+        "type": "docs",
+        "base_url": "https://www.tensorflow.org/api_docs/",
+        "description": "TensorFlow官方文档",
+        "strengths": ["机器学习", "模型训练", "部署"]
+      }
+    }
+  },
+  
+  "query_routing": {
+    "rules": [
+      {
+        "keywords": ["代码", "编程", "实现", "如何写"],
+        "sources": ["github", "stackoverflow", "csdn"],
+        "llm_fallback": true
+      },
+      {
+        "keywords": ["论文", "研究", "学术", "arxiv"],
+        "sources": ["arxiv", "wikipedia_en"],
+        "llm_fallback": true
+      },
+      {
+        "keywords": ["是什么", "定义", "概念", "介绍"],
+        "sources": ["wikipedia_zh", "baike_baidu", "zhihu"],
+        "llm_fallback": true
+      },
+      {
+        "keywords": ["Python", "pytorch", "tensorflow"],
+        "sources": ["python", "pytorch", "tensorflow", "stackoverflow"],
+        "llm_fallback": true
+      }
+    ]
+  },
+  
+  "fallback_strategy": {
+    "primary": "llm_apis",
+    "secondary": "search_engines",
+    "tertiary": "knowledge_bases",
+    "final": "cached_responses"
+  },
+  
+  "cache_config": {
+    "enabled": true,
+    "ttl_hours": 24,
+    "max_entries": 1000,
+    "db_path": "data/knowledge_cache.db"
+  },
+  
+  "rate_limiting": {
+    "requests_per_minute": 60,
+    "requests_per_hour": 1000,
+    "retry_after_seconds": 60
+  }
+}

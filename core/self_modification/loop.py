@@ -143,7 +143,7 @@ class SelfModificationLoop:
                 result.details.append({"defect": defect_dict.get("description", ""), "status": "skipped_no_source"})
                 continue
 
-            patch = patch_generator.generate_patch(defect_dict, source="template")
+            patch = patch_generator.generate_patch(defect_dict, source_code)
             if not patch:
                 patch = patch_generator.generate_llm_patch(defect_dict, source_code)
             if not patch:
@@ -152,12 +152,14 @@ class SelfModificationLoop:
 
             result.patches_generated += 1
 
-            safe, violations = patch_sandbox.validate_safety(file_path, patch.replacement)
+            # Build full patched source for validation
+            patched_source = source_code.replace(patch.original, patch.replacement, 1) if patch.original else source_code
+            safe, violations = patch_sandbox.validate_safety(file_path, patched_source)
             if not safe:
                 result.details.append({"defect": defect_dict.get("description", ""), "status": "unsafe", "violations": violations})
                 continue
 
-            syntax_ok, syntax_err = patch_sandbox.validate_syntax(patch.replacement)
+            syntax_ok, syntax_err = patch_sandbox.validate_syntax(patched_source)
             if not syntax_ok:
                 result.details.append({"defect": defect_dict.get("description", ""), "status": "syntax_error", "error": syntax_err})
                 continue
@@ -166,16 +168,32 @@ class SelfModificationLoop:
 
             proposal = deployer.propose(
                 file_path=file_path,
-                original_code=patch.original,
-                patched_code=patch.replacement,
+                original_code=source_code,
+                patched_code=patched_source,
                 description=patch.description,
                 defect_category=patch.defect_category,
                 confidence=patch.confidence,
             )
             result.proposals_created += 1
+
+            # Activate 6-step safety protocol for high-confidence template patches
+            auto_status = "proposed"
+            if patch.confidence >= 0.9 and patch.defect_category == "exception_handling":
+                approve_result = deployer.approve(proposal.proposal_id, approver="L5-auto")
+                if approve_result.get("status") == "approved":
+                    sandbox_result = deployer.sandbox_verify(proposal.proposal_id)
+                    if sandbox_result.get("status") == "sandbox_passed":
+                        deployer.inject_1pct(proposal.proposal_id)
+                        deployer.inject_20pct(proposal.proposal_id)
+                        deployer.inject_100pct(proposal.proposal_id)
+                        auto_status = "completed"
+                    else:
+                        auto_status = "sandbox_rejected"
+                else:
+                    auto_status = "approve_blocked"
             result.details.append({
                 "defect": defect_dict.get("description", ""),
-                "status": "proposed",
+                "status": auto_status,
                 "proposal_id": proposal.proposal_id,
                 "file": file_path,
             })
