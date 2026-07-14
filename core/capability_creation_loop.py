@@ -119,6 +119,20 @@ class CapabilityCreationLoop:
             "标记": self._solve_map_render,
             "folium": self._solve_map_render,
             "可视化": self._solve_map_render,
+            "cmd": self._solve_system_management,
+            "命令行": self._solve_system_management,
+            "command": self._solve_system_management,
+            "powershell": self._solve_system_management,
+            "ps1": self._solve_system_management,
+            "系统管理": self._solve_system_management,
+            "system": self._solve_system_management,
+            "自我检测": self._solve_system_diagnosis,
+            "self": self._solve_system_diagnosis,
+            "diagnose": self._solve_system_diagnosis,
+            "诊断": self._solve_system_diagnosis,
+            "修复": self._solve_auto_repair,
+            "fix": self._solve_auto_repair,
+            "repair": self._solve_auto_repair,
         }
 
     @staticmethod
@@ -437,6 +451,614 @@ print(f"坐标: 31.2304, 121.4737")
 '''
 
         return None
+
+    async def _solve_system_management(self, query: str) -> Dict:
+        """生成PowerShell/CMD系统管理脚本"""
+        goal_lower = query.lower()
+        
+        # 识别具体需求
+        if any(kw in goal_lower for kw in ["进程", "process", "task"]):
+            return '''import subprocess
+import json
+import os
+
+def get_processes():
+    """获取所有进程信息"""
+    try:
+        result = subprocess.run(['tasklist', '/fo', 'csv', '/nh'], capture_output=True, text=True, timeout=5)
+        lines = result.stdout.strip().split('\\n')
+        if len(lines) < 2:
+            return []
+        headers = [h.strip('"') for h in lines[0].split(',')]
+        processes = []
+        for line in lines[1:]:
+            parts = [p.strip('"') for p in line.split(',')]
+            if len(parts) >= len(headers):
+                proc = dict(zip(headers, parts))
+                try:
+                    proc['Memory(KB)'] = int(proc['Memory(K)'])
+                except:
+                    proc['Memory(KB)'] = 0
+                processes.append(proc)
+        return processes
+    except Exception as e:
+        print(f"进程查询失败: {e}")
+        return []
+
+def analyze_processes(processes):
+    """分析进程状态"""
+    if not processes:
+        return {"status": "no_data", "message": "无法获取进程信息"}
+    
+    total_mem = sum(p.get('Memory(K)', 0) for p in processes)
+    high_mem_procs = [p for p in processes if p.get('Memory(K)', 0) > 500000]
+    
+    return {
+        "total_processes": len(processes),
+        "total_memory_mb": round(total_mem / 1024, 1),
+        "high_memory_processes": len(high_mem_procs),
+        "high_memory_list": [p['Image Name'] for p in high_mem_procs[:5]],
+        "status": "analyzed"
+    }
+
+if __name__ == "__main__":
+    procs = get_processes()
+    result = analyze_processes(procs)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+'''
+
+        elif any(kw in goal_lower for kw in ["服务", "service", "守护进程"]):
+            return '''import subprocess
+
+def get_services():
+    """获取Windows服务状态"""
+    try:
+        result = subprocess.run(['sc', 'query', 'type=service', 'state=', '/fo', 'csv', '/nh'],
+                               capture_output=True, text=True, timeout=5)
+        lines = result.stdout.strip().split('\\n')
+        if len(lines) < 2:
+            return []
+        headers = [h.strip('"') for h in lines[0].split(',')]
+        services = []
+        for line in lines[1:]:
+            parts = [p.strip('"') for p in line.split(',')]
+            if len(parts) >= len(headers):
+                services.append(dict(zip(headers, parts)))
+        return services
+    except Exception as e:
+        print(f"服务查询失败: {e}")
+        return []
+
+def analyze_services(services):
+    """分析服务状态"""
+    if not services:
+        return {"status": "no_data", "message": "无法获取服务信息"}
+    
+    running = [s for s in services if s.get('STATE', '') == 'RUNNING']
+    stopped = [s for s in services if s.get('STATE', '') == 'STOPPED']
+    
+    return {
+        "total_services": len(services),
+        "running": len(running),
+        "stopped": len(stopped),
+        "status": "analyzed"
+    }
+
+if __name__ == "__main__":
+    svcs = get_services()
+    result = analyze_services(svcs)
+    print(result)
+'''
+
+        elif any(kw in goal_lower for kw in ["磁盘", "disk", "空间", "storage"]):
+            return '''import subprocess
+import json
+
+def get_disk_info():
+    """获取磁盘信息"""
+    try:
+        result = subprocess.run(['wmic', 'logicaldisk', 'get', 'size,freespace,caption', '/format:list'],
+                               capture_output=True, text=True, timeout=5)
+        disks = []
+        current_disk = {}
+        for line in result.stdout.split('\\n'):
+            line = line.strip()
+            if line:
+                if '=' in line:
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    if key and value:
+                        current_disk[key] = value
+            elif current_disk and 'Caption' in current_disk:
+                disks.append(current_disk)
+                current_disk = {}
+        
+        if current_disk:
+            disks.append(current_disk)
+        
+        return disks
+    except Exception as e:
+        print(f"磁盘查询失败: {e}")
+        return []
+
+def analyze_disks(disks):
+    """分析磁盘状态"""
+    if not disks:
+        return {"status": "no_data", "message": "无法获取磁盘信息"}
+    
+    disk_info = []
+    for disk in disks:
+        try:
+            size_gb = float(disk.get('Size', '0')) / (1024**3)
+            free_gb = float(disk.get('FreeSpace', '0')) / (1024**3)
+            usage_percent = ((size_gb - free_gb) / size_gb * 100) if size_gb > 0 else 0
+            disk_info.append({
+                "drive": disk.get('Caption', 'Unknown'),
+                "size_gb": round(size_gb, 2),
+                "free_gb": round(free_gb, 2),
+                "usage_percent": round(usage_percent, 1),
+                "status": "analyzed"
+            })
+        except:
+            pass
+    
+    return {
+        "disks": disk_info,
+        "status": "analyzed"
+    }
+
+if __name__ == "__main__":
+    disks = get_disk_info()
+    result = analyze_disks(disks)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+'''
+
+        elif any(kw in goal_lower for kw in ["网络", "network", "连接", "connection"]):
+            return '''import subprocess
+import json
+
+def get_network_info():
+    """获取网络信息"""
+    try:
+        result = subprocess.run(['ipconfig', '/all'], capture_output=True, text=True, timeout=5)
+        lines = result.stdout.split('\\n')
+        adapters = []
+        current_adapter = None
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith('Ethernet adapter') or line.startswith('无线网络连接'):
+                if current_adapter:
+                    adapters.append(current_adapter)
+                current_adapter = {"name": line, "ip": "", "subnet": "", "gateway": ""}
+            elif current_adapter and 'IPv4' in line:
+                parts = line.split(':')
+                if len(parts) > 1:
+                    ip_part = parts[1].strip()
+                    if 'Subnet' in ip_part:
+                        ip, subnet = ip_part.split('(')[0].strip(), ip_part.split('(')[1].rstrip(')')
+                        current_adapter["ip"] = ip
+                        current_adapter["subnet"] = subnet
+                    else:
+                        current_adapter["ip"] = ip_part.strip()
+        
+        if current_adapter:
+            adapters.append(current_adapter)
+        
+        return adapters
+    except Exception as e:
+        print(f"网络查询失败: {e}")
+        return []
+
+def analyze_network(adapters):
+    """分析网络状态"""
+    if not adapters:
+        return {"status": "no_data", "message": "无法获取网络信息"}
+    
+    active_adapters = [a for a in adapters if a.get('ip', '')]
+    
+    return {
+        "total_adapters": len(adapters),
+        "active_adapters": len(active_adapters),
+        "adapter_details": active_adapters[:3],
+        "status": "analyzed"
+    }
+
+if __name__ == "__main__":
+    adapters = get_network_info()
+    result = analyze_network(adapters)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+'''
+
+        else:
+            # 通用系统信息
+            return '''import subprocess
+import json
+from datetime import datetime
+
+def get_system_info():
+    """获取系统信息"""
+    info = {}
+    
+    # 系统基本信息
+    try:
+        result = subprocess.run(['systeminfo'], capture_output=True, text=True, timeout=5)
+        sys_info = result.stdout
+        info['system'] = sys_info
+    except:
+        info['system'] = 'systeminfo命令执行失败'
+    
+    # CPU信息
+    try:
+        result = subprocess.run(['wmic', 'cpu', 'get', 'name,numberofcores,maxclockspeed', '/format:list'],
+                               capture_output=True, text=True, timeout=5)
+        info['cpu'] = result.stdout
+    except:
+        info['cpu'] = 'CPU信息获取失败'
+    
+    # 内存信息
+    try:
+        result = subprocess.run(['wmic', 'OS', 'get', 'TotalVisibleMemorySize', 'FreePhysicalMemory', '/format:list'],
+                               capture_output=True=True text=True, timeout=5)
+        info['memory'] = result.stdout
+    except:
+        info['memory'] = '内存信息获取失败'
+    
+    return info
+
+if __name__ == "__main__":
+    print(get_system_info())
+'''
+
+    async def _solve_system_diagnosis(self, query: str) -> Dict:
+        """生成系统自检脚本"""
+        return '''import subprocess
+import json
+from datetime import datetime
+
+def check_service_status():
+    """检查服务状态"""
+    try:
+        result = subprocess.run(['sc', 'query', 'type=service', 'state=', '/fo', 'csv', '/nh'],
+                               capture_output=True, text=True, timeout=5)
+        lines = result.stdout.strip().split('\\n')
+        if len(lines) < 2:
+            return []
+        headers = [h.strip('"') for h in lines[0].split(',')]
+        services = []
+        for line in lines[1:]:
+            parts = [p.strip('"') for p in line.split(',')]
+            if len(parts) >= len(headers):
+                services.append(dict(zip(headers, parts)))
+        
+        running = [s for s in services if s.get('STATE', '') == 'RUNNING']
+        stopped = [s for s in services if s.get('STATE', '') == 'STOPPED']
+        
+        return {
+            "total": len(services),
+            "running": len(running),
+            "stopped": len(stopped),
+            "status": "checked"
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+def check_disk_space():
+    """检查磁盘空间"""
+    try:
+        result = subprocess.run(['wmic', 'logicaldisk', 'get', 'size,freespace,caption', '/format:list'],
+                               capture_output=True, text=True, timeout=5)
+        disks = []
+        current_disk = {}
+        for line in result.stdout.split('\\n'):
+            line = line.strip()
+            if line:
+                if '=' in line:
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    if key and value:
+                        current_disk[key] = value
+            elif current_disk and 'Caption' in current_disk:
+                disks.append(current_disk)
+                current_disk = {}
+        
+        if current_disk:
+            disks.append(current_disk)
+        
+        disk_info = []
+        for disk in disks:
+            try:
+                size_gb = float(disk.get('Size', '0')) / (1024**3)
+                free_gb = float(disk.get('FreeSpace', '0')) / (1024**3)
+                usage_percent = ((size_gb - free_gb) / size_gb * 100) if size_gb > 0 else 0
+                disk_info.append({
+                    "drive": disk.get('Caption', 'Unknown'),
+                    "size_gb": round(size_gb, 2),
+                    "free_gb": round(free_gb, 2),
+                    "usage_percent": round(usage_percent, 1),
+                    "status": "checked"
+                })
+            except:
+                pass
+        
+        return disk_info
+    except Exception as e:
+        return [{"status": "error", "error": str(e)}]
+
+def check_memory():
+    """检查内存使用"""
+    try:
+        result = subprocess.run(['wmic', 'OS', 'get', 'TotalVisibleMemorySize', 'FreePhysicalMemory', '/format:list'],
+                               capture_output=True, text=True, timeout=5)
+        lines = result.stdout.split('\\n')
+        mem_info = {}
+        for line in lines:
+            if '=' in line:
+                key, value = line.split('=', 1)
+                mem_info[key.strip()] = value.strip()
+        
+        total = float(mem_info.get('TotalVisibleMemorySize', '0'))
+        free = float(mem_info.get('FreePhysicalMemory', '0'))
+        used = total - free
+        usage_percent = (used / total * 100) if total > 0 else 0
+        
+        return {
+            "total_gb": round(total / (1024**3), 2),
+            "used_gb": round(used / (1024**3), 2),
+            "free_gb": round(free / (1024**3), 2),
+            "usage_percent": round(usage_percent, 1),
+            "status": "checked"
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+def check_processes():
+    """检查进程状态"""
+    try:
+        result = subprocess.run(['tasklist', '/fo', 'csv', '/nh'], capture_output=True, text=True, timeout=5)
+        lines = result.stdout.strip().split('\\n')
+        if len(lines) < 2:
+            return []
+        headers = [h.strip('"') for h in lines[0].split(',')]
+        processes = []
+        for line in lines[1:]:
+            parts = [p.strip('"') for p in line.split(',')]
+            if len(parts) >= len(headers):
+                proc = dict(zip(headers, parts))
+                try:
+                    proc['Memory(KB)'] = int(proc['Memory(K)'])
+                except:
+                    proc['Memory(K)'] = 0
+                processes.append(proc)
+        
+        total_mem = sum(p.get('Memory(K)', 0) for p in processes)
+        high_mem = [p['Image Name'] for p in processes if p.get('Memory(K)', 0) > 500000]
+        
+        return {
+            "total_processes": len(processes),
+            "total_memory_mb": round(total_mem / 1024, 1),
+            "high_memory_count": len(high_mem),
+            "high_memory_list": high_mem[:3],
+            "status": "checked"
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+def full_diagnosis():
+    """完整诊断"""
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "services": check_service_status(),
+        "disks": check_disk_space(),
+        "memory": check_memory(),
+        "processes": check_processes(),
+        "overall_status": "diagnosed"
+    }
+
+if __name__ == "__main__":
+    result = full_diagnosis()
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+'''
+
+    async def _solve_auto_repair(self, query: str) -> Dict:
+        """生成自动修复脚本"""
+        goal_lower = query.lower()
+        
+        if any(kw in goal_lower for kw in ["服务", "service", "启动", "start"]):
+            return '''import subprocess
+import json
+
+def start_service(service_name):
+    """启动服务"""
+    try:
+        result = subprocess.run(['sc', 'start', service_name], capture_output=True, text=True, timeout=10)
+        time.sleep(2)
+        status = subprocess.run(['sc', 'query', service_name], capture_output=True, text=True, timeout=5)
+        return {
+            "service": service_name,
+            "status": "started" if "RUNNING" in status.stdout else "failed",
+            "message": "服务启动成功" if "RUNNING" in status.stdout else "启动失败"
+        }
+    except Exception as e:
+        return {"service": service_name, "status": "error", "error": str(e)}
+
+def stop_service(service_name):
+    """停止服务"""
+    try:
+        result = subprocess.run(['sc', 'stop', service_name], capture_output=True, text=True, timeout=10)
+        time.sleep(2)
+        status = subprocess.run(['sc', 'query', service_name], capture_output=True, text=True, timeout=5)
+        return {
+            "service": service_name,
+            "status": "stopped" if "STOPPED" in status.stdout else "failed",
+            "message": "服务停止成功" if "STOPPED" in status.stdout else "停止失败"
+        }
+    except Exception as e:
+        return {"service": service_name, "status": "error", "error": str(e)}
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1:
+        action = sys.argv[1]
+        service = sys.argv[2] if len(sys.argv) > 2] else ""
+        if action == "start" and service:
+            result = start_service(service)
+        elif action == "stop" and service:
+            result = stop_service(service)
+        else:
+            result = {"error": f"未知操作: {action}"}
+    else:
+        result = {"error": "用法: python script.py start/stop 服务名"}
+    print(result)
+'''
+
+        elif any(kw in goal_lower for kw in ["清理", "clean", "temp", "临时", "cache", "缓存"]):
+            return '''import subprocess
+import os
+import shutil
+from datetime import datetime
+
+def get_temp_dirs():
+    """获取临时目录"""
+    temp_dirs = []
+    
+    # Windows临时目录
+    if os.name == 'nt':
+        temp_dirs.append(os.environ.get('TEMP', ''))
+        temp_dirs.append(os.environ.get('TMP', ''))
+        temp_dirs.append(os.path.join(os.environ.get('SystemDrive', 'C:'), 'Windows', 'Temp'))
+        temp_dirs.append(os.path.join(os.environ.get('SystemDrive', 'C:'), 'Users', os.get('USERNAME', ''), 'AppData', 'Local', 'Temp'))
+        temp_dirs.append(os.path.join(os.environ.get('SystemDrive', 'C:'), 'Users', os.get('USERNAME', ''), 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'Default', 'Cache'))
+    
+    return [d for d in temp_dirs if d and os.path.exists(d)]
+
+def clean_temp_dirs():
+    """清理临时目录"""
+    cleaned = []
+    errors = []
+    
+    for temp_dir in get_temp_dirs():
+        try:
+            size_before = sum(os.path.getsize(os.path.join(root, f)) 
+                            for root, dirs, files in os.walk(temp_dir) 
+                            for f in files if os.path.isfile(os.path.join(root, f)))
+            
+            # 清理文件
+            for root, dirs, files in os.walk(temp_dir):
+                for f in files:
+                    try:
+                        file_path = os.path.join(root, f)
+                        os.remove(file_path)
+                        cleaned.append(file_path)
+                    except:
+                        errors.append(file_path)
+            
+            # 清理空目录
+            for root, dirs, files in os.walk(temp_dir, topdown=True):
+                for d in dirs:
+                    try:
+                        dir_path = os.path.join(root, d)
+                        os.rmdir(dir_path)
+                        cleaned.append(dir_path)
+                    except:
+                        pass
+            
+        except Exception as e:
+            errors.append(f"{temp_dir}: {e}")
+    
+    return {
+        "cleaned_files": len(cleaned),
+        "errors": len(errors),
+        "error_details": errors[:5],
+        "status": "completed"
+    }
+
+if __name__ == "__main__":
+    result = clean_temp_dirs()
+    print(result)
+'''
+
+        elif any(kw in goal_lower for kw in ["注册表", "registry", "reg"]):
+            return '''import subprocess
+import json
+
+def check_registry_health():
+    """检查注册表健康状态"""
+    checks = []
+    
+    # 检查常见的恶意软件路径
+    malware_paths = [
+        "HKLM\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run",
+        "HKCU\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run",
+        "HKLM\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\RunOnce",
+        "HKCU\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\RunOnce"
+    ]
+    
+    for path in malware_paths:
+        try:
+            result = subprocess.run(['reg', 'query', path], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                checks.append({"path": path, "status": "exists", "entries": len(result.stdout.strip().split('\\n'))})
+            else:
+                checks.append({"path": path, "status": "ok"})
+        except:
+            checks.append({"path": path, "status": "ok"})
+    
+    return {"registry_health": checks, "status": "checked"}
+
+if __name__ == "__main__":
+    result = check_registry_health()
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+'''
+
+        else:
+            return '''import subprocess
+import json
+from datetime import datetime
+
+def quick_health_check():
+    """快速健康检查"""
+    health = {}
+    
+    # 进程数
+    try:
+        result = subprocess.run(['tasklist'], capture_output=True, text=True, timeout=5)
+        health['process_count'] = len(result.stdout.split('\\n')) - 1
+    except:
+        health['process_count'] = -1
+    
+    # 内存
+    try:
+        result = subprocess.run(['wmic', 'OS', 'get', 'FreePhysicalMemory', '/format:list'],
+                               capture_output=True, text=True, timeout=5)
+        free_mb = float(result.stdout.strip()) / (1024**2)
+        health['free_memory_mb'] = round(free_mb, 1)
+    except:
+        health['free_memory_mb'] = -1
+    
+    # 磁盘
+    try:
+        result = subprocess.run(['wmic', 'logicaldisk', 'get', 'freespace', '/format:list'],
+                               capture_output=True, text=True, timeout=5)
+        lines = result.stdout.strip().split('\\n')
+        if lines:
+            free_gb = float(lines[0]) / (1024**3)
+            health['disk_free_gb'] = round(free_gb, 2)
+    except:
+        health['disk_free_gb'] = -1
+    
+    health['timestamp'] = datetime.now().isoformat()
+    health['status'] = "checked"
+    
+    return health
+
+if __name__ == "__main__":
+    print(quick_health_check())
+'''
 
     def _record_execution(self, goal: str, success: bool, output: str,
                           attempts: int, code: str):
