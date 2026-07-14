@@ -122,9 +122,13 @@ class SelfModificationLoop:
         from core.self_modification.patch_sandbox_deployer import patch_sandbox, PatchDeployer
 
         deployer = PatchDeployer()
+        lesson_rules = self._load_lesson_rules()
 
         for defect in defects[:5]:
             defect_dict = self._defect_to_dict(defect)
+            matched_lesson = self._match_lesson(defect_dict, lesson_rules)
+            if matched_lesson:
+                logger.info(f"🔧 教训匹配: {matched_lesson.get('lesson', '')[:60]}")
             file_path = defect_dict.get("file", file_hint)
             if file_path in ("unknown", ""):
                 file_path = file_hint
@@ -228,6 +232,54 @@ class SelfModificationLoop:
     def _record_run(self) -> None:
         self._last_run = datetime.now()
         self._run_count += 1
+
+    def _load_lesson_rules(self) -> List[Dict[str, Any]]:
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get("data/learning_rules.db")
+            rows = db.query(
+                "SELECT condition, action, priority, metadata FROM learning_rules "
+                "WHERE source LIKE 'lesson:%' AND status='active' ORDER BY priority DESC"
+            )
+            rules = []
+            for r in rows:
+                d = dict(r) if hasattr(r, "keys") else {}
+                meta = {}
+                if d.get("metadata"):
+                    try:
+                        import json
+                        meta = json.loads(d["metadata"])
+                    except Exception:
+                        pass
+                rules.append({
+                    "condition": d.get("condition", ""),
+                    "action": d.get("action", ""),
+                    "priority": d.get("priority", 0),
+                    "lesson": meta.get("lesson", ""),
+                    "ref": meta.get("ref", ""),
+                })
+            return rules
+        except Exception:
+            return []
+
+    def _match_lesson(self, defect_dict: Dict[str, Any], lesson_rules: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        desc = defect_dict.get("description", "").lower()
+        category = defect_dict.get("category", "").lower()
+        file_path = defect_dict.get("file", "")
+
+        for rule in lesson_rules:
+            cond = rule["condition"].lower()
+            if "bypass_safety" in cond and ("绕过" in desc or "bypass" in desc or "直接写" in desc):
+                return rule
+            if "new_module" in cond and ("新建" in desc or "new module" in desc):
+                return rule
+            if "not_called" in cond and ("未调用" in desc or "not_called" in desc or "断裂" in desc):
+                return rule
+            if "not_driving" in cond and ("纯接收" in desc or "未驱动" in desc):
+                return rule
+            if "always_zero" in cond and ("始终为0" in desc or "never_triggered" in desc):
+                return rule
+        return None
 
 
 self_modification_loop = SelfModificationLoop()
