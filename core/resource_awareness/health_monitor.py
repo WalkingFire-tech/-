@@ -448,7 +448,7 @@ class SystemHealthMonitor:
         return 0.0, 0.0, 0.0
 
     def _get_amd_gpu(self) -> Tuple[float, float, float]:
-        """AMD GPU显存检测（通过WMI + Ollama估算）"""
+        """AMD GPU显存检测（通过WMI + Ollama估算 + 进程探测）"""
         vram_total = self.hardware.gpu_vram_gb
         if vram_total <= 0:
             return 0.0, 0.0, 0.0
@@ -462,7 +462,56 @@ class SystemHealthMonitor:
             ratio = used_gb / vram_total
             return ratio, used_gb, vram_total
 
+        probed_vram = self._probe_ollama_vram()
+        if probed_vram > 0:
+            used_gb = min(vram_total, probed_vram)
+            ratio = used_gb / vram_total
+            return ratio, used_gb, vram_total
+
         return 0.0, 0.0, vram_total
+
+    def _probe_ollama_vram(self) -> float:
+        """主动探测Ollama已加载模型的VRAM估算"""
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['ollama', 'ps'],
+                capture_output=True, text=True, timeout=3,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            if result.returncode != 0:
+                return 0.0
+            total_vram = 0.0
+            for line in result.stdout.strip().split('\n'):
+                line = line.strip()
+                if not line or line.startswith('NAME') or line.startswith('---'):
+                    continue
+                parts = line.split()
+                if parts:
+                    model_name = parts[0].lower()
+                    estimate = OLLAMA_MODEL_VRAM.get("default", 4.0)
+                    for key, val in OLLAMA_MODEL_VRAM.items():
+                        if key in model_name:
+                            estimate = val
+                            break
+                    total_vram += estimate
+            if total_vram > 0:
+                with self._ollama_lock:
+                    self._ollama_loaded_models.clear()
+                    for line in result.stdout.strip().split('\n'):
+                        line = line.strip()
+                        if not line or line.startswith('NAME') or line.startswith('---'):
+                            continue
+                        parts = line.split()
+                        if parts:
+                            self._ollama_loaded_models[parts[0]] = OLLAMA_MODEL_VRAM.get("default", 4.0)
+                            for key, val in OLLAMA_MODEL_VRAM.items():
+                                if key in parts[0].lower():
+                                    self._ollama_loaded_models[parts[0]] = val
+                                    break
+            return total_vram
+        except Exception:
+            return 0.0
 
     def register_ollama_model(self, model_name: str):
         """注册Ollama模型加载（估算VRAM消耗）"""
