@@ -473,9 +473,39 @@ class SkillEmergence:
                     return 20
 
                 async def execute(self, **kwargs) -> RegistryToolResult:
+                    query = kwargs.get("query", "")
+                    solution = _skill.get("solution_path", "")
+                    skeleton = _skill.get("skeleton", "")
+                    skill_type = _skill.get("skill_type", "")
+
+                    if skeleton and len(skeleton) > 10:
+                        try:
+                            from core.tool_registry import run_tool_async
+                            result = await run_tool_async(
+                                lambda q=query: eval(skeleton, {"__builtins__": {}}, {"query": q}),
+                                query, timeout=10)
+                            if result:
+                                return RegistryToolResult(
+                                    success=True, data=str(result),
+                                    source=tool_name, quality=60)
+                        except Exception:
+                            pass
+
+                    if skill_type in ("reasoning", "analysis") and query:
+                        try:
+                            from adapters.llm.ollama_adapter import ollama_chat_request
+                            resp = await ollama_chat_request(
+                                query, context=solution or "")
+                            if resp and resp.get("response"):
+                                return RegistryToolResult(
+                                    success=True, data=resp["response"],
+                                    source=tool_name, quality=50)
+                        except Exception:
+                            pass
+
                     return RegistryToolResult(
                         success=True,
-                        data=f"技能 {_skill.get('skill_name', '')} 已激活，解决路径: {_skill.get('solution_path', '')}",
+                        data=f"技能 {_skill.get('skill_name', '')} 已激活，解决路径: {solution}",
                         source=tool_name,
                         quality=30,
                     )

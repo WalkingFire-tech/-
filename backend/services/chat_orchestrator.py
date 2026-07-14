@@ -2083,6 +2083,7 @@ async def chat_stream(user_input: str, context: dict):
 
     # ========== 阶段7：反思学习 + 基因微调 ==========
     yield _emit("step", {"phase": "反思学习", "status": "running", "detail": "从本次交互中学习，微调系统基因..."})
+    _learning_outcomes = []  # 统一收集学习子流程结果
 
     # L5进化层(异步) + L6内省层：通过CognitivePlanner触发进化引擎和自我认知
     _bypass_side_effects_done = bool(_bypass_result_l2l3 and _bypass_result_l2l3.success)
@@ -2126,6 +2127,7 @@ async def chat_stream(user_input: str, context: dict):
                                 logger.warning("操作降级跳过")
                     if _synced_genes > 0:
                         logger.info(f"L5→基因池同步: {_synced_genes}个基因已通过mutate()写入gene_pool")
+                        _learning_outcomes.append({"name": "L5基因同步", "success": True, "count": _synced_genes})
 
                 if _l5_skills_count > 0 and hasattr(cp.l5, 'skills'):
                     from core.skill_emergence import skill_emergence
@@ -2144,6 +2146,7 @@ async def chat_stream(user_input: str, context: dict):
                                 logger.warning("操作降级跳过")
                     if _synced_skills > 0:
                         logger.info(f"L5→技能库同步: {_synced_skills}个技能已写入skill_emergence")
+                        _learning_outcomes.append({"name": "L5技能同步", "success": True, "count": _synced_skills})
         except Exception as e:
             logger.warning(f"进化岛结果反馈跳过: {e}")
         try:
@@ -2208,6 +2211,7 @@ async def chat_stream(user_input: str, context: dict):
         ExperienceAbstractor.settle_to_skill_db(_abstraction_result, user_input, intent_type)
         if _abstraction_result.get("key_insights"):
             reflection += f"; 🧬 抽象:{_abstraction_result['key_insights'][0][:60]}"
+            _learning_outcomes.append({"name": "经验抽象", "success": True, "insights": len(_abstraction_result.get("key_insights", []))})
     except Exception as e:
         logger.warning(f"经验抽象跳过: {e}")
 
@@ -2228,6 +2232,7 @@ async def chat_stream(user_input: str, context: dict):
             reflection += f"; 🧬 基因已微调(部分失败: {len(failed_steps)}步)"
         else:
             reflection += "; 🧬 基因已微调"
+        _learning_outcomes.append({"name": "基因微调", "success": True})
     except Exception as e:
         logger.error(f"基因微调异常: {e}")
 
@@ -2253,6 +2258,7 @@ async def chat_stream(user_input: str, context: dict):
                 logger.info(f"错误炼金: 从'{_step_name}'中提炼出{len(_result.patterns_found)}个学习信号")
         if _error_alchemy_signals:
             reflection += f"; 🔮 错误炼金提取{len(_error_alchemy_signals)}个信号({','.join(_error_alchemy_signals[:3])})"
+            _learning_outcomes.append({"name": "错误炼金", "success": True, "signals": len(_error_alchemy_signals)})
     except Exception as e:
         logger.warning(f"错误炼金跳过: {e}")
 
@@ -2281,6 +2287,7 @@ async def chat_stream(user_input: str, context: dict):
                     context=_meta_context
                 )
             reflection += f"; 📚 元学习推荐:{_recommendations[0].strategy.name}"
+            _learning_outcomes.append({"name": "元学习", "success": True, "strategy": str(_recommendations[0].strategy.name)})
     except Exception as e:
         logger.warning(f"元学习跳过: {e}")
 
@@ -2402,6 +2409,15 @@ async def chat_stream(user_input: str, context: dict):
                 reflection += f"; 违规记录: {len(violations)}条"
     except Exception as e:
         logger.warning(f"精神内核联动跳过: {e}")
+
+    # 学习效果汇总
+    if _learning_outcomes:
+        _learned = [o for o in _learning_outcomes if o.get("success")]
+        _failed = [o for o in _learning_outcomes if not o.get("success")]
+        logger.info(f"📖 反思学习汇总: {len(_learned)}/{len(_learning_outcomes)}成功, "
+                     f"学得={len(_learned)}项, 失败={len(_failed)}项")
+        yield _emit("step", {"phase": "反思学习", "status": "done",
+                              "detail": f"学习了{len(_learned)}项, {len(_failed)}项跳过"})
 
     # ========== 先发射最终响应（确保前端立即收到，不再被后续处理阻塞） ==========
     elapsed = time.time() - start_time
