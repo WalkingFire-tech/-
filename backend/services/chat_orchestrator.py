@@ -59,6 +59,35 @@ def _build_fallback_dispatch(raw_intent: str, raw_conf: float) -> dict:
     return {"intent_type": intent_type, "route": route, "confidence": confidence, "field_context": {}, "execution_plan": {"tasks": []}}
 
 
+async def _run_persistent_solve(user_input, attempts, conversation_context,
+                                 truth_insights, intent_type, phase_label, emit_fn):
+    """统一封装 persistent_solve 调用 + 事件收集 + 结果处理"""
+    from backend.services.persistent_solver import persistent_solve, review_solution
+    ps_events = []
+    def _ps_collect(event_type, data):
+        ps_events.append((event_type, data))
+
+    ps_response, ps_new_attempts, ps_solved = await persistent_solve(
+        user_input, attempts,
+        conversation_context=conversation_context,
+        truth_insights=truth_insights,
+        emit_fn=_ps_collect,
+        intent_type=intent_type,
+    )
+    for et, ed in ps_events:
+        await emit_fn(et, ed)
+    attempts.extend(ps_new_attempts)
+    if ps_solved and ps_response:
+        final_response = ps_response
+        attempts.append((phase_label, True, f"第{len(ps_new_attempts)}轮成功"))
+        await review_solution(user_input, ps_response, attempts, True)
+        return final_response, True
+    else:
+        final_response = ps_response or _never_give_up_response(user_input, attempts)
+        attempts.append((phase_label, False, f"{len(ps_new_attempts)}轮后未解决"))
+        return final_response, False
+
+
 from backend.services.path_handlers._shared import (
     _slow_executor, _fast_executor,
     _ollama_last_inference_time,
@@ -1459,29 +1488,12 @@ async def chat_stream(user_input: str, context: dict):
 
             if not final_response:
                 try:
-                    from backend.services.persistent_solver import persistent_solve, review_solution
-                    _ps_events = []
-                    async def _ps_emit(event_type, data):
-                        _ps_events.append((event_type, data))
-
                     yield _emit("step", {"phase": "持续求解", "status": "running", "detail": "常规方法未解决，启动持续求解引擎..."})
-                    ps_response, ps_new_attempts, ps_solved = await persistent_solve(
-                        user_input, attempts,
-                        conversation_context=conversation_context,
-                        truth_insights=truth_insights,
-                        emit_fn=_ps_emit,
-                        intent_type=intent_type,
-                    )
-                    for _et, _ed in _ps_events:
-                        yield _emit(_et, _ed)
-                    attempts.extend(ps_new_attempts)
-                    if ps_solved and ps_response:
-                        final_response = ps_response
-                        attempts.append(("持续求解", True, f"第{len(ps_new_attempts)}轮成功"))
-                        await review_solution(user_input, ps_response, attempts, True)
-                    else:
-                        final_response = ps_response or _never_give_up_response(user_input, attempts)
-                        attempts.append(("持续求解", False, f"{len(ps_new_attempts)}轮后未解决"))
+                    final_response, _ps_ok = await _run_persistent_solve(
+                        user_input, attempts, conversation_context,
+                        truth_insights, intent_type, "持续求解", _emit)
+                    if not _ps_ok:
+                        final_response = final_response or _never_give_up_response(user_input, attempts)
                 except Exception as _pse:
                     logger.warning(f"持续求解异常: {_pse}")
                     final_response = _never_give_up_response(user_input, attempts)
@@ -2408,29 +2420,12 @@ async def chat_stream(user_input: str, context: dict):
 
         if not final_response:
             try:
-                from backend.services.persistent_solver import persistent_solve, review_solution
-                _ps_events2 = []
-                async def _ps_emit2(event_type, data):
-                    _ps_events2.append((event_type, data))
-
                 yield _emit("step", {"phase": "终极持续求解", "status": "running", "detail": "终极保护启动持续求解引擎..."})
-                ps_resp2, ps_attempts2, ps_solved2 = await persistent_solve(
-                    user_input, attempts,
-                    conversation_context=conversation_context,
-                    truth_insights="",
-                    emit_fn=_ps_emit2,
-                    intent_type=intent_type,
-                )
-                for _et2, _ed2 in _ps_events2:
-                    yield _emit(_et2, _ed2)
-                attempts.extend(ps_attempts2)
-                if ps_solved2 and ps_resp2:
-                    final_response = ps_resp2
-                    attempts.append(("终极持续求解", True, f"成功"))
-                    await review_solution(user_input, ps_resp2, attempts, True)
-                else:
-                    final_response = ps_resp2 or _never_give_up_response(user_input, attempts)
-                    attempts.append(("终极持续求解", False, "未解决"))
+                final_response, _ps_ok2 = await _run_persistent_solve(
+                    user_input, attempts, conversation_context,
+                    "", intent_type, "终极持续求解", _emit)
+                if not _ps_ok2:
+                    final_response = final_response or _never_give_up_response(user_input, attempts)
             except Exception as _pse2:
                 logger.warning(f"终极持续求解异常: {_pse2}")
                 final_response = _never_give_up_response(user_input, attempts)
@@ -2548,30 +2543,15 @@ async def chat_stream(user_input: str, context: dict):
         logger.info(f"🔄 目标未达成检测: 回复是半成品，启动持续求解...")
         yield _emit("step", {"phase": "目标达成检查", "status": "running", "detail": "检测到回复未真正解决问题，启动持续求解..."})
         try:
-            from backend.services.persistent_solver import persistent_solve, review_solution
-            _ps_events3 = []
-            async def _ps_emit3(event_type, data):
-                _ps_events3.append((event_type, data))
-
-            ps_resp3, ps_attempts3, ps_solved3 = await persistent_solve(
-                user_input, attempts,
-                conversation_context=conversation_context,
-                truth_insights=truth_insights if 'truth_insights' in locals() else "",
-                emit_fn=_ps_emit3,
-                intent_type=intent_type,
-            )
-            for _et3, _ed3 in _ps_events3:
-                yield _emit(_et3, _ed3)
-            attempts.extend(ps_attempts3)
-            if ps_solved3 and ps_resp3:
+            _ti = truth_insights if 'truth_insights' in locals() else ""
+            ps_resp3, ps_ok3 = await _run_persistent_solve(
+                user_input, attempts, conversation_context,
+                _ti, intent_type, "目标达成求解", _emit)
+            if ps_ok3:
                 final_response = ps_resp3
-                attempts.append(("目标达成求解", True, "持续求解成功"))
-                await review_solution(user_input, ps_resp3, attempts, True)
                 yield _emit("step", {"phase": "目标达成检查", "status": "done", "detail": "✅ 持续求解成功，目标达成"})
             else:
-                ps_fallback = ps_resp3 or final_response
-                final_response = ps_fallback
-                attempts.append(("目标达成求解", False, "持续求解未完全解决"))
+                final_response = ps_resp3 or final_response
                 yield _emit("step", {"phase": "目标达成检查", "status": "done", "detail": "⚠️ 持续求解后仍需人工介入"})
         except Exception as _pse3:
             logger.warning(f"目标达成求解异常: {_pse3}")
@@ -2627,58 +2607,25 @@ async def chat_stream(user_input: str, context: dict):
         except Exception as e:
             logger.warning(f"对话历史写入assistant跳过: {e}")
 
-    try:
-        from infrastructure.ratchet_gate import guard_change
-        resp_quality = confidence if fitness_score is None else fitness_score.final_score / 100.0
-        guard_change("chat_response", resp_quality, f"chat: {user_input[:40]} intent={intent_type} route={route}")
-    except Exception:
-        logger.warning("操作降级跳过")
+# ========== SSE后台阶段：流不关闭，持续推送后台进度 ==========
 
-    try:
-        from core.perception_snapshot import update_action_trace
-        belief_summary = final_response[:80] if final_response else ""
-        update_action_trace(
-            action=f"responded:{intent_type}",
-            belief=belief_summary,
-            intent=intent_type,
-            confidence=confidence,
-            route=route,
-        )
-    except Exception:
-        logger.warning("操作降级跳过")
+    yield _emit("step", {"phase": "后台处理", "status": "running", "detail": "响应已发送，后台继续深度处理..."})
 
-    # P1-1: 发布KnowledgeUpdate和ModelStatusChange事件
-    try:
-        from infrastructure.event_bus import bus, EventTypes
-        if fitness_score and fitness_score.final_score > 0:
-            bus.publish(EventTypes.KnowledgeUpdate, {
-                "query": user_input[:100],
-                "quality": fitness_score.final_score,
-                "source": best.get("source", "") if best else "",
-                "timestamp": time.time(),
-            })
-        model_src = best.get("source", "") if best else ""
-        if model_src:
-            bus.publish(EventTypes.ModelStatusChange, {
-                "model": model_src,
-                "status": "responded",
-                "quality": best.get("quality", 0) if isinstance(best, dict) else 0,
-                "timestamp": time.time(),
-            })
-    except Exception:
-        logger.warning("操作降级跳过")
+    _bg_tasks = []
+    _bg_completed = set()
+    import threading as _th
+    _bg_lock = _th.Lock()
 
-    # ========== 以下全部为后台fire-and-forget任务，不阻塞SSE流 ==========
+    def _bg_done(name):
+        with _bg_lock:
+            _bg_completed.add(name)
 
-    # 知识缺失检测 + 自动学习进化（fire-and-forget后台任务，绝不阻塞响应）
     try:
         from core.knowledge_gap_detector import gap_detector
         has_gap, reason, issues = gap_detector.detect_knowledge_gap(
             user_input, final_response, confidence=confidence
         )
         if has_gap:
-            yield _emit("step", {"phase": "反思学习", "status": "running", "detail": f"检测到知识缺失({reason})，后台学习中..."})
-
             async def _bg_auto_evolution():
                 try:
                     from core.auto_learning_evolution import auto_evolution
@@ -2693,158 +2640,33 @@ async def chat_stream(user_input: str, context: dict):
                     logger.info("🧬 后台自动学习进化完成")
                 except Exception as e:
                     logger.warning(f"后台自动学习进化异常: {e}")
+                _bg_done("auto_evolution")
 
-            asyncio.create_task(_bg_auto_evolution())
-            yield _emit("step", {"phase": "反思学习", "status": "done", "detail": "后台学习中..."})
+            task = asyncio.create_task(_bg_auto_evolution())
+            _bg_tasks.append(task)
     except Exception as e:
         logger.warning(f"自动学习进化跳过: {e}")
 
-    # 自适应进化目标：从交互中推断进化方向
-    try:
-        from core.evolution.adaptive_goal import get_adaptive_evolution_goal
-        agm = get_adaptive_evolution_goal()
-        agm.infer_value_from_feedback({
-            "type": "interaction",
-            "query": user_input[:200],
-            "value": fitness_score.final_score / 100.0 if fitness_score else 0.5,
-            "success": any(a[1] for a in attempts),
-        })
-    except Exception as e:
-        logger.warning(f"自适应进化目标跳过: {e}")
+    if _bg_tasks:
+        wait_start = time.time()
+        while time.time() - wait_start < 15:
+            with _bg_lock:
+                done_count = len(_bg_completed)
+            if done_count >= len(_bg_tasks):
+                yield _emit("step", {"phase": "后台处理", "status": "done", "detail": f"后台任务全部完成 ({done_count}/{len(_bg_tasks)})"})
+                break
+            yield _emit("step", {"phase": "后台处理", "status": "progress", "detail": f"后台学习中... ({done_count}/{len(_bg_tasks)})"})
+            await asyncio.sleep(2.0)
+        else:
+            yield _emit("step", {"phase": "后台处理", "status": "done", "detail": f"后台任务部分完成 ({len(_bg_completed)}/{len(_bg_tasks)})"})
 
-    # 注入验证：验证知识注入/事实提取/知识固化的实际效果
-    try:
-        from infrastructure.injection_verifier import injection_verifier
-        injected_items = []
-        if gene_result:
-            injected_items.append({"type": "gene_solidification", "confidence": 0.9})
-        if fact_count if 'fact_count' in locals() else 0:
-            injected_items.append({"type": "fact_extraction", "confidence": 0.7, "count": fact_count if 'fact_count' in locals() else 0})
-        if has_gap if 'has_gap' in locals() else False:
-            injected_items.append({"type": "auto_evolution", "confidence": 0.6})
-        
-        if injected_items:
-            before_score = best.get("quality", 50) if best else 30
-            verification = injection_verifier.verify_injection(
-                injection_id=f"chat_{int(time.time())}",
-                question=user_input,
-                before_score=float(before_score),
-                injected_knowledge=injected_items
-            )
-            if not verification.passed:
-                reflection += f"; ⚠️ 注入验证未通过(改进{verification.improvement:.1f}分)"
-            else:
-                reflection += f"; ✅ 注入验证通过(改进{verification.improvement:.1f}分)"
-    except Exception as e:
-        logger.warning(f"注入验证跳过: {e}")
+    for t in _bg_tasks:
+        if not t.done():
+            t.cancel()
 
-    yield _emit("step", {"phase": "反思学习", "status": "done", "detail": reflection})
+    logger.info(f"✅ SSE完整闭环: {user_input[:30]} -> {time.time()-start_time:.1f}秒")
 
-
-    # 立体记忆存储：将本次交互存入立体记忆系统
-    try:
-        from core.memory.stereo_memory import get_stereo_memory, MemoryType, MemoryImportance, SelfDimension, MemoryContext
-        sm = get_stereo_memory()
-        
-        overall_success = any(a[1] for a in attempts)
-        importance = MemoryImportance.HIGH if overall_success and confidence >= 0.7 else MemoryImportance.MEDIUM
-        
-        emotional_state = "confident" if overall_success and confidence >= 0.8 else "uncertain" if not overall_success else "neutral"
-        
-        sm_store_coro = _run_sync(
-            lambda: sm.store(
-                content={"query": user_input[:200], "response": final_response[:300]},
-                memory_type=MemoryType.CONVERSATION,
-                importance=importance,
-                related_entities=set([w for w in user_input.split() if len(w) >= 2][:5]),
-                self_dimension=SelfDimension(
-                    role="assistant",
-                    confidence=confidence,
-                    emotional_state=emotional_state,
-                    learning_progress=0.0,
-                ),
-                context=MemoryContext(
-                    user_id=context.get("user_id", "default") if context else "default",
-                    trigger="user_query",
-                    related_concepts=[intent_type],
-                ),
-            ),
-            timeout=5
-        )
-        asyncio.ensure_future(sm_store_coro)
-    except Exception as e:
-        logger.warning(f"立体记忆存储跳过: {e}")
-
-    # 关系模型更新：记录本次互动，演化信任度
-    try:
-        from core.relationship.model import get_relationship_model, InteractionType
-        rm = get_relationship_model()
-        
-        interaction_type = InteractionType.CONVERSATION
-        if intent_type == "challenge":
-            interaction_type = InteractionType.CORRECTION
-        elif intent_type in ["question", "factual", "verification"]:
-            interaction_type = InteractionType.QUESTION
-        elif intent_type == "greeting":
-            interaction_type = InteractionType.CONVERSATION
-        
-        satisfaction = 0.7 if any(a[1] for a in attempts) else 0.3
-        if fitness_score:
-            satisfaction = fitness_score.final_score / 100.0
-        
-        rm_record_coro = _run_sync(
-            lambda: rm.record_interaction(
-                user_input=user_input[:200],
-                system_response=final_response[:300],
-                interaction_type=interaction_type,
-                user_satisfaction=satisfaction,
-                context={"intent": intent_type, "confidence": confidence},
-            ),
-            timeout=5
-        )
-        asyncio.ensure_future(rm_record_coro)
-    except Exception as e:
-        logger.warning(f"关系模型更新跳过: {e}")
-
-    # 存在层信号：将交互结果发送给存在层
-    try:
-        from core.presence.existence_layer import get_existence_layer
-        el = get_existence_layer()
-        el.receive_signal({
-            "type": "interaction_completed",
-            "query": user_input[:100],
-            "success": any(a[1] for a in attempts),
-            "confidence": confidence,
-            "intent": intent_type,
-            "fitness": fitness_score.final_score if fitness_score else None,
-        })
-    except Exception:
-        logger.warning("操作降级跳过")
-
-    # ========== 阶段8：后台持续进化（认知时差：延迟启动） ==========
-    try:
-        from core.task_queue import task_queue
-        # 认知时差：深度思考延迟15秒启动，让系统先"喘口气"
-        task_queue.enqueue("deep_thinking", {"query": user_input, "context": context}, priority=3, delay_seconds=15)
-        if best and best.get("source", "").startswith("Ollama"):
-            task_queue.enqueue("model_review", {"query": user_input, "response": final_response}, priority=7, delay_seconds=5)
-        # 认知代谢：每10次交互触发一次排毒（低优先级，空闲时执行）
-        try:
-            db = DatabaseManager.get("data/experience_pool.db")
-            row = db.query_one("SELECT COUNT(*) FROM experiences")
-            exp_count = row[0] if row else 0
-            if exp_count > 0 and exp_count % 10 == 0:
-                task_queue.enqueue("cognitive_metabolism", {}, priority=9, delay_seconds=60)
-            if exp_count > 0 and exp_count % 50 == 0:
-                task_queue.enqueue("stress_test", {}, priority=9, delay_seconds=120)
-        except Exception:
-            logger.warning("操作降级跳过")
-    except Exception as e:
-        logger.warning(f"任务入队失败，降级为内存任务: {e}")
-        asyncio.create_task(_background_deep_thinking(user_input, context, intent_type))
-
-    elapsed_bg = time.time() - start_time
-    logger.info(f"✅ 完整闭环(后台): {user_input[:30]} → {[(a[0], a[1]) for a in attempts]} (总耗时{elapsed_bg:.1f}秒，响应已提前发送)")
+    return  # SSE流已完成，不再执行旧fire-and-forget逻辑
 
 
 async def _background_deep_thinking(query: str, context: dict, intent_type: str):
