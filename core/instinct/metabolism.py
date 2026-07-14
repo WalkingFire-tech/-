@@ -161,7 +161,8 @@ class MetabolismOrchestrator:
     async def digest(self):
         """消化——处理待消化的信号"""
         try:
-            from core.presence.gap_growth import gap_growth_engine
+            from core.presence.gap_growth import get_gap_growth_engine
+            gap_growth_engine = get_gap_growth_engine()
             status = gap_growth_engine.get_queue_status()
             pending = status.get("pending", 0)
             if pending > 0:
@@ -172,7 +173,8 @@ class MetabolismOrchestrator:
     async def grow(self):
         """生长——睡眠巩固"""
         try:
-            from core.presence.sleep_consolidation import sleep_consolidation_engine
+            from core.presence.sleep_consolidation import get_sleep_engine
+            sleep_consolidation_engine = get_sleep_engine()
             summary = sleep_consolidation_engine.get_consolidation_summary()
             if summary:
                 logger.warning(f"代谢生长: 巩固摘要可用")
