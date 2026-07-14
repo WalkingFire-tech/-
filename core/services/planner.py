@@ -2742,6 +2742,8 @@ _感谢您的质疑，这帮助我发现了错误。_
                     last_applied = ?
                 WHERE id = ? AND status = 'trial'
             ''', (time.time(), rule_id))
+            from infrastructure.rule_trial_manager import rule_trial_manager
+            rule_trial_manager.record_trial_result(rule_id, success=True)
         except Exception as e:
             logger.error(f"记录trial匹配失败: {e}")
     

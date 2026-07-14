@@ -230,6 +230,20 @@ class GapGrowthEngine:
                 logger.error(f"间隙生长异常: {e}")
                 time.sleep(60)
 
+    def process_signals(self, signals: list = None) -> int:
+        """
+        处理信号队列（公开接口）
+
+        可接受外部信号列表，将其加入内部队列后处理。
+        如果不传参数，则处理内部队列中已有的信号。
+        """
+        if signals:
+            with self._lock:
+                for sig in signals:
+                    if hasattr(sig, 'id'):
+                        self._signal_queue.append(sig)
+        return self._process_signals()
+
     def _process_signals(self) -> int:
         """
         处理信号队列
