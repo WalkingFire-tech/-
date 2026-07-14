@@ -97,6 +97,7 @@ class CuriosityEngine:
         gaps.extend(self._discover_alignment_gaps())
         gaps.extend(self._discover_experience_gaps())
         gaps.extend(self._discover_defect_gaps())
+        gaps.extend(self._discover_strategy_gaps())
 
         gaps = self._deduplicate(gaps)
         gaps = self._rank_gaps(gaps)
@@ -397,6 +398,26 @@ class CuriosityEngine:
                     or (datetime.now() - self._last_question_time).total_seconds() >= self.MIN_QUESTION_INTERVAL_SEC
                 ),
             }
+
+    def _discover_strategy_gaps(self) -> List[KnowledgeGap]:
+        """从策略库中发现低置信度策略，作为好奇心探索目标"""
+        gaps = []
+        try:
+            from core.learning.strategy_library import strategy_library
+            low_conf = strategy_library.get_low_confidence_strategies(threshold=0.5)
+            for s in low_conf[:3]:
+                gaps.append(KnowledgeGap(
+                    topic=f"策略验证: {s.trigger_pattern[:60]}",
+                    gap_type="low_confidence",
+                    urgency=GapUrgency.MEDIUM if s.confidence < 0.3 else GapUrgency.LOW,
+                    frequency=s.fail_count,
+                    context=f"策略#{s.id}: {s.action_patch[:100]} (置信度{s.confidence:.2f})",
+                    source="strategy_library",
+                    learning_strategy="search_external",
+                ))
+        except Exception as e:
+            logger.debug(f"策略缺口发现跳过: {e}")
+        return gaps
 
 
 _curiosity_engine: Optional[CuriosityEngine] = None
