@@ -425,8 +425,12 @@ class ScheduledTaskManager:
             from core.perception_snapshot import get_snapshot
             snap = get_snapshot()
             for anomaly in report.anomalies[:5]:
-                category = anomaly.category.value if hasattr(anomaly.category, 'value') else str(anomaly.category)
-                title = anomaly.title if hasattr(anomaly, 'title') else str(anomaly)
+                if isinstance(anomaly, dict):
+                    category = anomaly.get("category", "")
+                    title = anomaly.get("title", str(anomaly))
+                else:
+                    category = anomaly.category.value if hasattr(anomaly.category, 'value') else str(anomaly.category)
+                    title = anomaly.title if hasattr(anomaly, 'title') else str(anomaly)
 
                 if category == "RESOURCE" and "内存" in title:
                     try:
