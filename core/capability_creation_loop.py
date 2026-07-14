@@ -477,7 +477,7 @@ def get_processes():
                 proc = dict(zip(headers, parts))
                 try:
                     proc['Memory(KB)'] = int(proc['Memory(K)'])
-                except:
+                except Exception:
                     proc['Memory(KB)'] = 0
                 processes.append(proc)
         return processes
@@ -600,7 +600,7 @@ def analyze_disks(disks):
                 "usage_percent": round(usage_percent, 1),
                 "status": "analyzed"
             })
-        except:
+        except Exception:
             pass
     
     return {
@@ -688,7 +688,7 @@ def get_system_info():
         result = subprocess.run(['systeminfo'], capture_output=True, text=True, timeout=5)
         sys_info = result.stdout
         info['system'] = sys_info
-    except:
+    except Exception:
         info['system'] = 'systeminfo命令执行失败'
     
     # CPU信息
@@ -696,7 +696,7 @@ def get_system_info():
         result = subprocess.run(['wmic', 'cpu', 'get', 'name,numberofcores,maxclockspeed', '/format:list'],
                                capture_output=True, text=True, timeout=5)
         info['cpu'] = result.stdout
-    except:
+    except Exception:
         info['cpu'] = 'CPU信息获取失败'
     
     # 内存信息
@@ -704,7 +704,7 @@ def get_system_info():
         result = subprocess.run(['wmic', 'OS', 'get', 'TotalVisibleMemorySize', 'FreePhysicalMemory', '/format:list'],
                                capture_output=True=True text=True, timeout=5)
         info['memory'] = result.stdout
-    except:
+    except Exception:
         info['memory'] = '内存信息获取失败'
     
     return info
@@ -782,7 +782,7 @@ def check_disk_space():
                     "usage_percent": round(usage_percent, 1),
                     "status": "checked"
                 })
-            except:
+            except Exception:
                 pass
         
         return disk_info
@@ -831,7 +831,7 @@ def check_processes():
                 proc = dict(zip(headers, parts))
                 try:
                     proc['Memory(KB)'] = int(proc['Memory(K)'])
-                except:
+                except Exception:
                     proc['Memory(K)'] = 0
                 processes.append(proc)
         
@@ -954,7 +954,7 @@ def clean_temp_dirs():
                         file_path = os.path.join(root, f)
                         os.remove(file_path)
                         cleaned.append(file_path)
-                    except:
+                    except Exception:
                         errors.append(file_path)
             
             # 清理空目录
@@ -964,7 +964,7 @@ def clean_temp_dirs():
                         dir_path = os.path.join(root, d)
                         os.rmdir(dir_path)
                         cleaned.append(dir_path)
-                    except:
+                    except Exception:
                         pass
             
         except Exception as e:
@@ -1005,7 +1005,7 @@ def check_registry_health():
                 checks.append({"path": path, "status": "exists", "entries": len(result.stdout.strip().split('\\n'))})
             else:
                 checks.append({"path": path, "status": "ok"})
-        except:
+        except Exception:
             checks.append({"path": path, "status": "ok"})
     
     return {"registry_health": checks, "status": "checked"}
@@ -1028,7 +1028,7 @@ def quick_health_check():
     try:
         result = subprocess.run(['tasklist'], capture_output=True, text=True, timeout=5)
         health['process_count'] = len(result.stdout.split('\\n')) - 1
-    except:
+    except Exception:
         health['process_count'] = -1
     
     # 内存
@@ -1037,7 +1037,7 @@ def quick_health_check():
                                capture_output=True, text=True, timeout=5)
         free_mb = float(result.stdout.strip()) / (1024**2)
         health['free_memory_mb'] = round(free_mb, 1)
-    except:
+    except Exception:
         health['free_memory_mb'] = -1
     
     # 磁盘
@@ -1048,7 +1048,7 @@ def quick_health_check():
         if lines:
             free_gb = float(lines[0]) / (1024**3)
             health['disk_free_gb'] = round(free_gb, 2)
-    except:
+    except Exception:
         health['disk_free_gb'] = -1
     
     health['timestamp'] = datetime.now().isoformat()
