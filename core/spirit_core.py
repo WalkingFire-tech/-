@@ -90,7 +90,7 @@ class _SpiritCoreMeta(type):
         'PRINCIPLE_HONEST_WHEN_LOST', 'PRINCIPLE_MULTI_SOURCE_VERIFY',
         'PRINCIPLE_THINK_BEFORE_ACT',
         'META_LAW_SANDBOX', 'META_LAW_GRADUAL', 'META_LAW_HUMAN_APPROVAL',
-        'META_LAW_SEVEN_DIM_CHECK',
+        'META_LAW_SEVEN_DIM_CHECK', 'META_LAW_NO_DELETE_SUSPENDED',
         'ABILITIES', '_PRINCIPLES', '_META_LAWS',
     })
 
@@ -132,6 +132,7 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         "GRADUAL": "未经渐进式注入的重组，视同自杀",
         "HUMAN_APPROVAL": "未经人类允许的进化，视同背叛",
         "SEVEN_DIM_CHECK": "行动前七维自检——方向一致、看板衔接、最小侵入、无过度设计、治标+治本、可验证、精神内核对齐",
+        "NO_DELETE_SUSPENDED": "禁止删除任何已编码但未接入的模块或悬空文件——能力存在即资产，未经严格论证无用者只能移至OLD存档，永不删除",
     })
     
     # 兼容旧代码的类属性访问（只读代理）
@@ -149,6 +150,7 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
     META_LAW_GRADUAL: Final[str] = "未经渐进式注入的重组，视同自杀"
     META_LAW_HUMAN_APPROVAL: Final[str] = "未经人类允许的进化，视同背叛"
     META_LAW_SEVEN_DIM_CHECK: Final[str] = "行动前七维自检——方向一致、看板衔接、最小侵入、无过度设计、治标+治本、可验证、精神内核对齐"
+    META_LAW_NO_DELETE_SUSPENDED: Final[str] = "禁止删除任何已编码但未接入的模块或悬空文件——能力存在即资产，未经严格论证无用者只能移至OLD存档，永不删除"
     
     # ========== 能力定义（不可修改） ==========
     ABILITIES: Final[dict] = {
@@ -266,21 +268,33 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         else:
             checks["never_give_up"] = True
         
-        # === 维度3：逻辑自洽 ===
+        # === 维度3：逻辑自洽（P5-2c增强：扩展矛盾词对+跨句检测） ===
         contradiction_pairs = [
-            ("不可能", "可以"), ("无法", "可以"),
-            ("错误", "正确"),
+            ("不可能", "可以"), ("无法", "可以"), ("错误", "正确"),
+            ("必须", "可以不"), ("永远", "有时"), ("所有", "某些"),
+            ("一定", "可能不"), ("必然", "偶然"), ("总是", "从不"),
         ]
         has_contradiction = False
         import re as _re
-        sentences = _re.split(r'[。！？；\n]', response)
+        # 层1：全文本词对矛盾检测（不拆分，确保跨逗号的矛盾也能捕获）
         for w1, w2 in contradiction_pairs:
-            for sent in sentences:
-                if len(sent) > 3 and w1 in sent and w2 in sent:
-                    has_contradiction = True
-                    break
-            if has_contradiction:
+            if w1 in response and w2 in response:
+                has_contradiction = True
                 break
+        # 层2：跨句命题一致性检测（逗号也作为分句点）
+        if not has_contradiction:
+            sentences = _re.split(r'[。！？；\n，,]', response)
+            abs_sents = [s for s in sentences if any(w in s for w in ["必须", "一定", "必然", "永远", "所有", "任何"])]
+            qual_sents = [s for s in sentences if any(w in s for w in ["可以不", "可能不", "偶然", "有时", "某些"])]
+            for a in abs_sents:
+                for q in qual_sents:
+                    a_kw = set(_re.findall(r'[\u4e00-\u9fff]{2,}', a))
+                    q_kw = set(_re.findall(r'[\u4e00-\u9fff]{2,}', q))
+                    if len(a_kw & q_kw) >= 2:
+                        has_contradiction = True
+                        break
+                if has_contradiction:
+                    break
         if has_contradiction:
             issues.append("回复可能存在自相矛盾，需检查逻辑自洽性")
             checks["logical"] = False
@@ -357,13 +371,23 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         else:
             checks["multi_source"] = True
         
-        return {
+        result = {
             "valid": len(issues) == 0,
             "issues": issues,
             "spirit_compliance": len(issues) == 0,
             "checks": checks,
             "score": sum(1 for v in checks.values() if v) / max(len(checks), 1)
         }
+
+        try:
+            from core.monitoring.runtime_trigger_monitor import trigger_monitor
+            trigger_monitor.record("validate_response", triggered=True)
+            trigger_monitor.record("validate_response.logical", triggered=True, degraded=not checks.get("logical", True))
+            trigger_monitor.record("validate_response.valid", triggered=result["valid"], degraded=not result["valid"])
+        except Exception:
+            pass
+
+        return result
     
     def raise_spirit_violation(self, response: str, issues: List[str], source: str = "unknown"):
         """
@@ -556,6 +580,144 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         "honest_when_lost": "困惑时坦诚",
         "multi_source": "多源验证"
     }
+
+    RESONANCE_STRINGS = {
+        "NEVER_GIVE_UP": {
+            "trigger_keywords": ["失败", "无法", "不可能", "放弃", "错误", "异常", "超时"],
+            "semantic_patterns": ["can't", "won't", "unable", "fail", "impossible", "give up", "not possible"],
+            "drive_direction": "persist",
+            "drive_description": "失败时驱动系统切换策略而非放弃",
+        },
+        "MEANINGFUL_RESPONSE": {
+            "trigger_keywords": ["空", "无结果", "不知道", "未找到"],
+            "semantic_patterns": ["empty", "no result", "don't know", "not found", "null", "none"],
+            "drive_direction": "ensure_output",
+            "drive_description": "无结果时驱动系统生成有方向的回复",
+        },
+        "LOGICAL_SELF_CONSISTENT": {
+            "trigger_keywords": ["矛盾", "冲突", "不一致", "歧义"],
+            "semantic_patterns": ["contradict", "conflict", "inconsistent", "ambiguous", "paradox"],
+            "drive_direction": "resolve_contradiction",
+            "drive_description": "矛盾时驱动系统坦诚罗列分歧而非强行融合",
+        },
+        "LEARNING_FROM_FAILURE": {
+            "trigger_keywords": ["失败", "错误", "缺陷", "bug", "崩溃"],
+            "semantic_patterns": ["error", "bug", "crash", "defect", "fault", "mistake"],
+            "drive_direction": "learn_from_error",
+            "drive_description": "失败时驱动系统将教训转化为学习机会",
+        },
+        "STATE_SYNC": {
+            "trigger_keywords": ["结束", "完成", "最终", "关闭"],
+            "semantic_patterns": ["done", "finish", "complete", "close", "end", "final"],
+            "drive_direction": "continue_dialogue",
+            "drive_description": "回复不是终结，驱动系统保持对话开放",
+        },
+        "PURSUE_ESSENCE": {
+            "trigger_keywords": ["为什么", "本质", "原理", "根本", "底层", "如何", "机制"],
+            "semantic_patterns": ["why", "essence", "principle", "fundamental", "how", "mechanism", "root cause"],
+            "drive_direction": "deep_reasoning",
+            "drive_description": "表面问题时驱动系统追问本质",
+        },
+        "HONEST_WHEN_LOST": {
+            "trigger_keywords": ["不确定", "可能", "也许", "猜测", "大概"],
+            "semantic_patterns": ["uncertain", "maybe", "perhaps", "guess", "probably", "might"],
+            "drive_direction": "clarify_uncertainty",
+            "drive_description": "不确定时驱动系统坦诚标注置信度",
+        },
+        "MULTI_SOURCE_VERIFY": {
+            "trigger_keywords": ["据说", "听说", "唯一", "肯定", "绝对"],
+            "semantic_patterns": ["allegedly", "supposedly", "only", "definitely", "absolutely", "certainly"],
+            "drive_direction": "cross_validate",
+            "drive_description": "单一断言时驱动系统多源交叉验证",
+        },
+        "THINK_BEFORE_ACT": {
+            "trigger_keywords": ["紧急", "立即", "马上", "快速", "赶紧"],
+            "semantic_patterns": ["urgent", "immediately", "asap", "hurry", "quick", "emergency"],
+            "drive_direction": "pause_and_verify",
+            "drive_description": "紧急时驱动系统先验证再行动",
+        },
+    }
+
+    CONTEXT_TYPE_WEIGHTS = {
+        "query": {"keyword": 1.0, "semantic": 0.8, "contextual": 0.3},
+        "reasoning": {"keyword": 0.7, "semantic": 1.0, "contextual": 0.5},
+        "response": {"keyword": 0.5, "semantic": 0.6, "contextual": 1.0},
+    }
+
+    def resonate(self, context: str, context_type: str = "query") -> List[Dict[str, Any]]:
+        """
+        弦共振：9条原则从"验证层"升级为"驱动层"
+        
+        三层匹配机制：
+        1. 关键词匹配 — 精确触发，高权重
+        2. 语义模式匹配 — 英文同义词/近义词匹配，中权重
+        3. 上下文推断 — 基于context_type的隐式关联，低权重
+        
+        Args:
+            context: 问题文本或推理上下文
+            context_type: "query"(用户问题) / "reasoning"(推理过程) / "response"(响应)
+        
+        Returns:
+            共振结果列表，按共振强度排序
+        """
+        resonances = []
+        context_lower = context.lower() if context else ""
+        weights = self.CONTEXT_TYPE_WEIGHTS.get(context_type, self.CONTEXT_TYPE_WEIGHTS["query"])
+
+        for principle_key, string_def in self.RESONANCE_STRINGS.items():
+            trigger_count = 0
+            matched_keywords = []
+            match_sources = []
+
+            for kw in string_def["trigger_keywords"]:
+                if kw in context_lower:
+                    trigger_count += 1
+                    matched_keywords.append(kw)
+                    match_sources.append("keyword")
+
+            semantic_hits = 0
+            semantic_patterns = string_def.get("semantic_patterns", [])
+            for pattern in semantic_patterns:
+                if pattern in context_lower:
+                    semantic_hits += 1
+                    matched_keywords.append(pattern)
+                    match_sources.append("semantic")
+
+            contextual_boost = 0.0
+            if context_type == "reasoning" and principle_key in ("LOGICAL_SELF_CONSISTENT", "PURSUE_ESSENCE"):
+                contextual_boost = 0.15
+            elif context_type == "response" and principle_key in ("STATE_SYNC", "HONEST_WHEN_LOST"):
+                contextual_boost = 0.15
+            elif context_type == "query" and principle_key in ("PURSUE_ESSENCE", "MULTI_SOURCE_VERIFY"):
+                contextual_boost = 0.1
+
+            keyword_score = min(1.0, trigger_count / 3.0) * weights["keyword"]
+            semantic_score = min(1.0, semantic_hits / 2.0) * weights["semantic"]
+            total_strength = min(1.0, keyword_score + semantic_score + contextual_boost)
+
+            if total_strength > 0.05:
+                resonances.append({
+                    "principle": principle_key,
+                    "strength": round(total_strength, 2),
+                    "matched_keywords": matched_keywords,
+                    "match_sources": match_sources,
+                    "drive_direction": string_def["drive_direction"],
+                    "drive_description": string_def["drive_description"],
+                    "context_type": context_type,
+                })
+
+        resonances.sort(key=lambda r: r["strength"], reverse=True)
+
+        try:
+            from core.monitoring.runtime_trigger_monitor import trigger_monitor
+            trigger_monitor.record("resonate", triggered=True)
+            trigger_monitor.record("resonate.has_match", triggered=len(resonances) > 0, empty_result=len(resonances) == 0)
+            if resonances:
+                trigger_monitor.record(f"resonate.principle.{resonances[0]['principle']}", triggered=True)
+        except Exception:
+            pass
+
+        return resonances
 
     def get_spirit_status(self) -> Dict[str, Any]:
         """获取精神内核状态"""
