@@ -3,9 +3,15 @@
 让系统主动分析自己的思考过程，找出可改进之处
 这是元认知循环的第一步
 """
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 from dataclasses import dataclass, field
+try:
+    from core.spirit_core import spirit_core
+    SPIRIT_CORE_AVAILABLE = True
+except ImportError:
+    SPIRIT_CORE_AVAILABLE = False
+    spirit_core = None
 
 try:
     from loguru import logger
@@ -24,6 +30,7 @@ class SelfReflectionResult:
     next_time_strategy: str
     confidence_level: float
     reflection_depth: str  # 'shallow', 'medium', 'deep'
+    spirit_resonances: List[Dict[str, Any]] = None  # 精神共振结果
 
 
 class SelfReflection:
@@ -62,6 +69,22 @@ class SelfReflection:
         """
         logger.info(f"🔍 开始自我复盘: {question[:50]}...")
         
+        # 精神共振检测：分析问题与精神内核的共鸣
+        spirit_resonances = []
+        if SPIRIT_CORE_AVAILABLE and question:
+            try:
+                resonances = spirit_core.resonate(question, context_type="reasoning")
+                for r in resonances[:3]:  # 只记录前3个共振原则
+                    spirit_resonances.append({
+                        "principle": r.get("principle"),
+                        "strength": r.get("strength"),
+                        "drive_direction": r.get("drive_direction")
+                    })
+                if spirit_resonances:
+                    logger.debug(f"自我复盘精神共振: {spirit_resonances}")
+            except Exception as e:
+                logger.debug(f"自我复盘精神共振检测失败: {e}")
+        
         # 分析做得好的地方
         what_i_did_well = self._analyze_strengths(
             question, response, decision_chain, knowledge_used, objective_score
@@ -84,7 +107,8 @@ class SelfReflection:
         
         # 制定下次策略
         next_time_strategy = self._formulate_next_strategy(
-            what_i_did_well, what_i_could_improve, alternative_approaches
+            what_i_did_well, what_i_could_improve, alternative_approaches,
+            context=context,
         )
         
         # 评估置信度
@@ -104,7 +128,8 @@ class SelfReflection:
             uncertainties=uncertainties,
             next_time_strategy=next_time_strategy,
             confidence_level=confidence_level,
-            reflection_depth=reflection_depth
+            reflection_depth=reflection_depth,
+            spirit_resonances=spirit_resonances
         )
         
         # 记录历史
@@ -113,6 +138,18 @@ class SelfReflection:
             'result': result,
             'timestamp': datetime.now().isoformat()
         })
+        
+        try:
+            from core.learning.meta_learning import MetaLearner
+            _ml = MetaLearner()
+            _ml.learn_from_experience("self_testing", {
+                "accuracy": confidence_level,
+                "speed": 1.0 if len(response) > 50 else 0.5,
+                "retention": min(1.0, len(knowledge_used or []) * 0.2 + 0.3),
+                "context": {"intent_type": (context or {}).get("intent_type", "unknown")},
+            })
+        except Exception:
+            pass
         
         logger.info(f"✅ 自我复盘完成: 置信度={confidence_level:.2f}, 深度={reflection_depth}")
         
@@ -259,23 +296,46 @@ class SelfReflection:
         self,
         what_i_did_well: List[str],
         what_i_could_improve: List[str],
-        alternative_approaches: List[str]
+        alternative_approaches: List[str],
+        context: Dict = None,
     ) -> str:
-        """制定下次策略"""
+        """制定下次策略 — 优先使用MetaLearner推荐，回退硬编码"""
+        try:
+            from core.learning.meta_learning import MetaLearner
+            _ml = MetaLearner()
+            ml_context = {
+                "task_type": context.get("intent_type", "unknown") if context else "unknown",
+                "recent_accuracy": context.get("objective_score", 50) / 100.0 if context else 0.5,
+                "weakness_count": len(what_i_could_improve),
+                "alternative_count": len(alternative_approaches),
+            }
+            recommendations = _ml.recommend_strategy(ml_context)
+            if recommendations and recommendations[0].confidence > 0.5:
+                top = recommendations[0]
+                strategy_parts = []
+                if what_i_could_improve:
+                    strategy_parts.append(f"重点改进: {what_i_could_improve[0]}")
+                strategy_parts.append(f"元学习推荐: {top.strategy.name}({top.reason}, 置信度={top.confidence:.2f})")
+                if what_i_did_well:
+                    strategy_parts.append(f"继续保持: {what_i_did_well[0]}")
+                return "；".join(strategy_parts)
+        except Exception as e:
+            logger.debug(f"MetaLearner推荐跳过: {e}")
+
         strategies = []
-        
+
         if what_i_could_improve:
             strategies.append(f"重点改进: {what_i_could_improve[0]}")
-        
+
         if alternative_approaches:
             strategies.append(f"尝试方法: {alternative_approaches[0]}")
-        
+
         if what_i_did_well:
             strategies.append(f"继续保持: {what_i_did_well[0]}")
-        
+
         if not strategies:
             strategies.append("保持当前策略，持续优化")
-        
+
         return "；".join(strategies)
     
     def _assess_confidence(
@@ -321,7 +381,8 @@ class SelfReflection:
             'uncertainties': result.uncertainties,
             'next_time_strategy': result.next_time_strategy,
             'confidence_level': result.confidence_level,
-            'reflection_depth': result.reflection_depth
+            'reflection_depth': result.reflection_depth,
+            'spirit_resonances': result.spirit_resonances or []
         }
 
 
