@@ -11,6 +11,7 @@
 import asyncio
 import gc
 import json
+import os
 from datetime import datetime
 from contextlib import asynccontextmanager
 from loguru import logger
@@ -435,6 +436,9 @@ async def _stop_task_queue():
 async def lifespan(app):
     """完整启动/关闭序列"""
     logger.info("启动后端服务...")
+
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
     # === 启动序列 ===
     await _start_resource_awareness()

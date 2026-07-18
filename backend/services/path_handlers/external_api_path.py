@@ -42,6 +42,22 @@ async def fetch_external_api(query: str, conversation_context: str = "", truth_i
         if truth_insights:
             messages.append({"role": "system", "content": truth_insights})
 
+        try:
+            from core.self.model import get_self_model
+            _sm = get_self_model()
+            directive = _sm.get_behavioral_directive()
+            pm = directive.get("perspective_mode", "companion")
+            rs = directive.get("relationship_style", "balanced")
+            perspective_hints = {
+                "thinking_partner": "你是思考伙伴，不是答案机器。提供多角度分析，指出思维盲点，鼓励用户自己判断。避免直接给结论，而是展示推理过程和不同可能性。",
+                "companion": "你是同行者，与用户一起探索。提供有深度的分析，同时尊重用户的思考空间。在给出观点时也提及其他可能的视角。",
+                "guide": "你是引导者，用户对你还不够熟悉。提供清晰、有条理的解释，同时温和地引导用户思考更深层的角度。",
+            }
+            hint = perspective_hints.get(pm, perspective_hints["companion"])
+            messages.append({"role": "system", "content": hint})
+        except Exception:
+            pass
+
         messages.append({"role": "user", "content": query})
         
         deepseek_key = config.get("deepseek_api_key", "")

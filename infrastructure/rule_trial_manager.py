@@ -115,21 +115,115 @@ class RuleTrialManager:
         
         return rules
     
+    def process_timeout_trials(self, timeout_days: int = 30) -> Dict:
+        """处理超时trial规则：根据置信度和匹配记录决定激活或过期
+
+        逻辑：
+        - 超时且trial_count>=5且成功率>=60%: 激活
+        - 超时且trial_count>=5但成功率<60%: 过期
+        - 超时且trial_count>0但<5: 给一次机会，提升置信度0.1
+        - 超时且trial_count==0且置信度>=0.5: 激活（高置信度但从未匹配到，可能是条件格式问题）
+        - 超时且trial_count==0且置信度<0.3: 过期（低质量规则）
+        - 超时且trial_count==0且0.3<=置信度<0.5: 尝试桥接条件格式后保留
+
+        Args:
+            timeout_days: 超时天数阈值
+
+        Returns:
+            处理统计
+        """
+        db = DatabaseManager.get(self.db_path)
+        cutoff = datetime.now().timestamp() - timeout_days * 86400
+
+        rows = db.query('''
+            SELECT id, condition, action, confidence, trial_count, trial_success, created_at
+            FROM learning_rules
+            WHERE status = 'trial'
+        ''')
+
+        activated = 0
+        expired = 0
+        bridged = 0
+        promoted = 0
+
+        for row in rows:
+            rule_id, condition, action, confidence, trial_count, trial_success, created_at = row
+
+            if not created_at:
+                continue
+
+            try:
+                created_ts = datetime.fromisoformat(created_at).timestamp()
+            except (ValueError, TypeError):
+                continue
+
+            if created_ts > cutoff:
+                continue
+
+            if trial_count >= self.trial_threshold:
+                success_ratio = trial_success / trial_count if trial_count > 0 else 0
+                if success_ratio >= self.success_ratio:
+                    db.execute("UPDATE learning_rules SET status='active' WHERE id=?", (rule_id,), commit=True)
+                    activated += 1
+                else:
+                    db.execute("UPDATE learning_rules SET status='expired' WHERE id=?", (rule_id,), commit=True)
+                    expired += 1
+            elif trial_count > 0:
+                new_conf = min(confidence + 0.1, 1.0)
+                db.execute("UPDATE learning_rules SET confidence=? WHERE id=?", (new_conf, rule_id), commit=True)
+                promoted += 1
+            elif confidence >= 0.5:
+                db.execute("UPDATE learning_rules SET status='active' WHERE id=?", (rule_id,), commit=True)
+                activated += 1
+            elif confidence < 0.3:
+                db.execute("UPDATE learning_rules SET status='expired' WHERE id=?", (rule_id,), commit=True)
+                expired += 1
+            else:
+                bridged_condition = self._bridge_condition_format(condition)
+                if bridged_condition != condition:
+                    db.execute("UPDATE learning_rules SET condition=? WHERE id=?", (bridged_condition, rule_id), commit=True)
+                    bridged += 1
+                else:
+                    db.execute("UPDATE learning_rules SET status='expired' WHERE id=?", (rule_id,), commit=True)
+                    expired += 1
+
+        result = {"activated": activated, "expired": expired, "promoted": promoted, "bridged": bridged}
+        if any(v > 0 for v in result.values()):
+            logger.info(f"⏰ 超时trial处理: 激活={activated}, 过期={expired}, 提升置信={promoted}, 条件桥接={bridged}")
+
+        return result
+
+    def _bridge_condition_format(self, condition: str) -> str:
+        """桥接归纳引擎的条件格式到RuleMatcher可匹配的格式
+
+        归纳引擎产出格式:
+        - "[模式]intent_type:query text" → "intent_type == 'intent_type'"
+        - "模式 keyword1 keyword2 ..." → 无法桥接，保持原样
+        - 纯自然语言问句 → 无法桥接，保持原样
+        """
+        if condition.startswith("[模式]"):
+            rest = condition[len("[模式]"):]
+            if ":" in rest:
+                intent_type = rest.split(":", 1)[0].strip()
+                if intent_type and not any(c in intent_type for c in " \t\n"):
+                    return f"intent_type == '{intent_type}'"
+        return condition
+
     def get_trial_stats(self) -> Dict:
         """获取试用期统计"""
         db = DatabaseManager.get(self.db_path)
         trial_count = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='trial'")[0]
-        
+
         activated_count = db.query_one('''
-            SELECT COUNT(*) FROM learning_rules 
+            SELECT COUNT(*) FROM learning_rules
             WHERE status='active' AND trial_count > 0
         ''')[0]
-        
+
         expired_count = db.query_one('''
-            SELECT COUNT(*) FROM learning_rules 
+            SELECT COUNT(*) FROM learning_rules
             WHERE status='expired' AND trial_count > 0
         ''')[0]
-        
+
         return {
             "trial_count": trial_count,
             "activated_count": activated_count,

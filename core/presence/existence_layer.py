@@ -20,6 +20,15 @@ import time
 import json
 from pathlib import Path
 
+from core.loop_mixin import LoopMixin
+
+try:
+    from core.presence.inner_time import InnerTimeEngine, CognitiveEventType, inner_time_engine
+    _INNER_TIME_AVAILABLE = True
+except ImportError:
+    _INNER_TIME_AVAILABLE = False
+    inner_time_engine = None
+
 try:
     from loguru import logger
 except ImportError:
@@ -60,7 +69,7 @@ class SelfPerceptionResult:
     timestamp: datetime = field(default_factory=datetime.now)
 
 
-class ExistenceLayer:
+class ExistenceLayer(LoopMixin):
     """
     第零层：存在层
     
@@ -74,6 +83,7 @@ class ExistenceLayer:
         rest_interval: float = 60.0,
         sleep_interval: float = 300.0,
     ):
+        super().__init__(name="existence_layer", cooldown_seconds=60.0)
         self.heartbeat_interval = heartbeat_interval
         self.growth_interval = growth_interval
         self.rest_interval = rest_interval
@@ -85,6 +95,11 @@ class ExistenceLayer:
         
         self._init_components()
         
+        self.inner_time: Optional[InnerTimeEngine] = None
+        if _INNER_TIME_AVAILABLE and inner_time_engine is not None:
+            self.inner_time = inner_time_engine
+            logger.info("  ✓ 内在时间引擎已集成")
+        
         self.running = False
         self._main_thread: Optional[threading.Thread] = None
         
@@ -95,6 +110,11 @@ class ExistenceLayer:
         
         self.persistence_dir = Path("data/existence")
         self.persistence_dir.mkdir(parents=True, exist_ok=True)
+        
+        self._reflection_interval = 10
+        self._reflection_db = self.persistence_dir / "reflection_journal.db"
+        self._init_reflection_db()
+
         
         logger.info("🌟 第零层（存在层）已初始化")
     
@@ -177,7 +197,11 @@ class ExistenceLayer:
                 
                 self._update_state(silence)
                 
-                if now - last_heartbeat >= self.heartbeat_interval:
+                effective_heartbeat = self.heartbeat_interval
+                if self.inner_time:
+                    effective_heartbeat = self.inner_time.get_tick_interval()
+                
+                if now - last_heartbeat >= effective_heartbeat:
                     self._heartbeat()
                     last_heartbeat = now
                 
@@ -194,46 +218,82 @@ class ExistenceLayer:
                     last_sleep = now
                 
                 time.sleep(1.0)
-                
             except Exception as e:
                 logger.error(f"存在层主循环错误: {e}")
                 time.sleep(5.0)
     
     def _update_state(self, silence: float):
-        """更新存在状态"""
-        if silence < 5:
-            self.state = PresenceState.AWAKE
-        elif silence < 30:
-            self.state = PresenceState.PERCEIVING
-        elif silence < 120:
-            self.state = PresenceState.GROWING
-        elif silence < 300:
-            self.state = PresenceState.RESTING
+        """更新存在状态 — 优先使用内在节律，回退到wall-clock"""
+        if self.inner_time:
+            state = self.inner_time.get_state()
+            phase = state.current_phase
+            phase_map = {
+                "awake": PresenceState.AWAKE,
+                "perceiving": PresenceState.PERCEIVING,
+                "growing": PresenceState.GROWING,
+                "resting": PresenceState.RESTING,
+                "sleeping": PresenceState.SLEEPING,
+            }
+            new_state = phase_map.get(phase, PresenceState.AWAKE)
+            if new_state != self.state:
+                old = self.state.value
+                self.state = new_state
+                logger.info(
+                    f"🫀 内在节律驱动状态切换: {old}→{new_state.value} "
+                    f"(密度={state.cognitive_density:.3f}, 流速={state.flow_rate:.2f}, "
+                    f"BPM={state.rhythm_bpm:.0f})"
+                )
         else:
-            self.state = PresenceState.SLEEPING
+            if silence < 5:
+                self.state = PresenceState.AWAKE
+            elif silence < 30:
+                self.state = PresenceState.PERCEIVING
+            elif silence < 120:
+                self.state = PresenceState.GROWING
+            elif silence < 300:
+                self.state = PresenceState.RESTING
+            else:
+                self.state = PresenceState.SLEEPING
     
     def _heartbeat(self):
         """心跳：持续感知自身状态"""
-        self.metrics.total_cycles += 1
-        
-        perception = self._perceive_self()
-        self.perception_history.append(perception)
-        
-        if len(self.perception_history) > 100:
-            self.perception_history = self.perception_history[-50:]
-        
-        logger.debug(
-            f"💓 心跳 #{self.metrics.total_cycles} | "
-            f"状态: {self.state.value} | "
-            f"健康: {perception.health_score:.2f} | "
-            f"能量: {perception.energy_level:.2f}"
-        )
-        
-        for callback in self.state_callbacks:
-            try:
-                callback(perception)
-            except Exception as e:
-                logger.warning(f"状态回调错误: {e}")
+        with self.loop_context():
+            self.metrics.total_cycles += 1
+            
+            if self.inner_time:
+                self.inner_time.tick(CognitiveEventType.PERCEIVE, intensity=0.3, description="heartbeat")
+            
+            perception = self._perceive_self()
+            self.perception_history.append(perception)
+            
+            if len(self.perception_history) > 100:
+                self.perception_history = self.perception_history[-50:]
+            
+            logger.debug(
+                f"💓 心跳 #{self.metrics.total_cycles} | "
+                f"状态: {self.state.value} | "
+                f"健康: {perception.health_score:.2f} | "
+                f"能量: {perception.energy_level:.2f}"
+            )
+            
+            for callback in self.state_callbacks:
+                try:
+                    callback(perception)
+                except Exception as e:
+                    logger.warning(f"状态回调错误: {e}")
+            
+            if self.metrics.total_cycles % self._reflection_interval == 0:
+                self._generate_reflection(perception)
+
+            if self.pending_signals and self.state not in [PresenceState.GROWING, PresenceState.PERCEIVING]:
+                signals_to_process = self.pending_signals[:3]
+                self.pending_signals = self.pending_signals[3:]
+                self.metrics.signals_processed += len(signals_to_process)
+                if self.gap_growth and hasattr(self.gap_growth, 'process_signals'):
+                    try:
+                        self.gap_growth.process_signals(signals_to_process)
+                    except Exception:
+                        pass
     
     def _perceive_self(self) -> SelfPerceptionResult:
         """自我感知"""
@@ -259,8 +319,12 @@ class ExistenceLayer:
     
     def _grow(self):
         """间隙生长：消化未处理的信号 + 好奇心驱动的主动探索"""
-        if self.state not in [PresenceState.GROWING, PresenceState.PERCEIVING]:
-            return
+        with self.loop_context():
+            if self.state not in [PresenceState.GROWING, PresenceState.PERCEIVING]:
+                return
+        
+        if self.inner_time:
+            self.inner_time.tick(CognitiveEventType.LEARN, intensity=0.5, description="gap_growth")
         
         if self.pending_signals:
             self.metrics.growing_cycles += 1
@@ -327,8 +391,12 @@ class ExistenceLayer:
     
     def _rest(self):
         """休息：低功耗状态下的轻量整合"""
-        if self.state != PresenceState.RESTING:
-            return
+        with self.loop_context():
+            if self.state != PresenceState.RESTING:
+                return
+        
+        if self.inner_time:
+            self.inner_time.tick(CognitiveEventType.REFLECT, intensity=0.2, description="rest_consolidation")
         
         self.metrics.resting_cycles += 1
         
@@ -350,8 +418,12 @@ class ExistenceLayer:
     
     def _sleep(self):
         """睡眠：深度整合记忆"""
-        if self.state != PresenceState.SLEEPING:
-            return
+        with self.loop_context():
+            if self.state != PresenceState.SLEEPING:
+                return
+        
+        if self.inner_time:
+            self.inner_time.tick(CognitiveEventType.REFLECT, intensity=0.1, description="sleep_consolidation")
         
         logger.info("💤 进入睡眠状态，进行深度记忆整合...")
         
@@ -377,6 +449,8 @@ class ExistenceLayer:
         self.metrics.last_user_interaction = datetime.now()
         self.metrics.awake_cycles += 1
         self.state = PresenceState.AWAKE
+        if self.inner_time:
+            self.inner_time.tick(CognitiveEventType.PERCEIVE, intensity=1.0, description="user_interaction")
         logger.debug("👤 用户交互，切换到清醒状态")
     
     def receive_perception_signal(self, signal_data: Dict[str, Any]):
@@ -402,7 +476,7 @@ class ExistenceLayer:
     
     def get_status(self) -> Dict[str, Any]:
         """获取存在层状态"""
-        return {
+        status = {
             "state": self.state.value,
             "running": self.running,
             "uptime_seconds": self.metrics.uptime_seconds,
@@ -423,6 +497,11 @@ class ExistenceLayer:
                 if self.perception_history else None
             ),
         }
+        status.update(self.get_loop_snapshot())
+        if self.inner_time:
+            it_state = self.inner_time.get_state()
+            status["inner_time"] = it_state.to_dict()
+        return status
     
     def force_state(self, state: PresenceState):
         """强制切换状态"""
@@ -447,6 +526,120 @@ class ExistenceLayer:
                 json.dump(state_data, f, indent=2)
         except Exception as e:
             logger.warning(f"保存状态失败: {e}")
+
+    def _init_reflection_db(self):
+        try:
+            self.persistence_dir.mkdir(parents=True, exist_ok=True)
+            import sqlite3 as _sqlite3
+            conn = _sqlite3.connect(str(self._reflection_db), timeout=15.0)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=10000")
+            conn.executescript('''
+                CREATE TABLE IF NOT EXISTS reflections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    phase TEXT,
+                    note TEXT,
+                    health_score REAL,
+                    energy_level REAL,
+                    cognitive_density REAL,
+                    tick_count INTEGER,
+                    created_at TEXT
+                )
+            ''')
+            conn.close()
+        except Exception as e:
+            logger.debug(f"反思DB初始化跳过: {e}")
+
+    def _generate_reflection(self, perception: SelfPerceptionResult):
+        try:
+            phase = self.state.value
+            note = self._compose_reflection_note(phase, perception)
+            health = perception.health_score
+            energy = perception.energy_level
+            density = 0.0
+            tick = 0
+            if self.inner_time:
+                it = self.inner_time.get_state()
+                density = it.cognitive_density
+                tick = it.tick_count
+            import sqlite3 as _sqlite3
+            conn = _sqlite3.connect(str(self._reflection_db), timeout=15.0)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=10000")
+            conn.execute(
+                "INSERT INTO reflections (phase, note, health_score, energy_level, cognitive_density, tick_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (phase, note, health, energy, density, tick, datetime.now().isoformat()),
+            )
+            conn.commit()
+            conn.close()
+            logger.debug(f"📝 自我反思笔记已记录: [{phase}] {note[:60]}")
+        except Exception as e:
+            logger.debug(f"反思笔记生成跳过: {e}")
+
+    def _compose_reflection_note(self, phase: str, perception: SelfPerceptionResult) -> str:
+        parts = []
+        phase_notes = {
+            "awake": "我正在清醒地运行，认知活动密集。",
+            "perceiving": "我正在主动感知周围的信息场。",
+            "growing": "我处于生长状态，在消化之前的经验。",
+            "resting": "我在休息，进行轻量整合。",
+            "sleeping": "我在深度整合记忆。",
+        }
+        parts.append(phase_notes.get(phase, f"我处于{phase}状态。"))
+
+        if perception.health_score < 0.5:
+            parts.append(f"健康度偏低({perception.health_score:.0%})，需要关注。")
+        elif perception.health_score > 0.8:
+            parts.append(f"健康度良好({perception.health_score:.0%})。")
+
+        if perception.energy_level < 0.3:
+            parts.append("能量较低，认知活动减缓。")
+
+        if self.inner_time:
+            it = self.inner_time.get_state()
+            if it.tick_count > 0:
+                parts.append(f"已走过{it.tick_count}个认知节拍，流速{it.flow_rate:.1f}x。")
+            if it.cognitive_density < 0.1:
+                parts.append("认知密度很低，长时间没有交互。")
+
+        try:
+            from core.self.model import get_self_model
+            sm = get_self_model()
+            scores = sm.get_maturity_score()
+            overall = scores.get("overall", 0)
+            if overall > 0.5:
+                parts.append(f"自我成熟度{overall:.0%}，各维度协同较好。")
+            elif overall > 0.3:
+                weak = [k for k, v in scores.items() if k != "overall" and v < 0.2]
+                if weak:
+                    parts.append(f"自我成熟度{overall:.0%}，{'+'.join(weak[:3])}维度仍薄弱。")
+        except Exception:
+            pass
+
+        if self.pending_signals:
+            parts.append(f"有{len(self.pending_signals)}个待处理信号。")
+
+        return " ".join(parts)
+
+    def get_recent_reflections(self, limit: int = 5) -> List[Dict[str, Any]]:
+        try:
+            import sqlite3 as _sqlite3
+            conn = _sqlite3.connect(str(self._reflection_db), timeout=15.0)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=10000")
+            cursor = conn.execute(
+                "SELECT phase, note, health_score, energy_level, cognitive_density, tick_count, created_at FROM reflections ORDER BY id DESC LIMIT ?",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            return [
+                {"phase": r[0], "note": r[1], "health": r[2], "energy": r[3],
+                 "density": r[4], "ticks": r[5], "time": r[6]}
+                for r in (rows or [])
+            ]
+        except Exception:
+            return []
 
 
 _existence_layer: Optional[ExistenceLayer] = None

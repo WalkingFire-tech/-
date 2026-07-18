@@ -20,6 +20,7 @@
 
 import threading
 import math
+import time
 from typing import Dict, Optional, Any, List, Callable, Tuple
 from datetime import datetime, timedelta
 from enum import Enum
@@ -33,6 +34,7 @@ except ImportError:
 from core.resource_awareness.health_monitor import (
     SystemHealthMonitor, OperatingMode, get_health_monitor
 )
+from core.loop_mixin import LoopMixin
 
 
 class ActionType(Enum):
@@ -66,7 +68,7 @@ class ActionDecision:
         }
 
 
-class AdaptiveGovernor:
+class AdaptiveGovernor(LoopMixin):
     """
     自适应调节器
 
@@ -83,6 +85,7 @@ class AdaptiveGovernor:
     _MODE_SEVERITY = {OperatingMode.NORMAL: 0, OperatingMode.CONSERVATIVE: 1, OperatingMode.EMERGENCY: 2}
 
     def __init__(self, health_monitor: SystemHealthMonitor = None):
+        super().__init__(name="adaptive_governor", cooldown_seconds=30.0, max_failures_before_degraded=10)
         self.health_monitor = health_monitor or get_health_monitor()
         self._decision_log: List[Dict] = []
         self._max_log = 200
@@ -98,11 +101,11 @@ class AdaptiveGovernor:
         }
 
         self._conservative_blocked = {
-            ActionType.EXTERNAL_SEARCH,
             ActionType.PARALLEL_PATH_EXPANSION,
         }
 
         self._conservative_degraded = {
+            ActionType.EXTERNAL_SEARCH: "essential_only",
             ActionType.OLLAMA_INFERENCE: "cached_response",
             ActionType.DENSE_RETRIEVAL: "tfidf_fallback",
         }
@@ -150,6 +153,7 @@ class AdaptiveGovernor:
         return self._effective_mode
 
     def decide(self, action: ActionType, context: Dict = None) -> ActionDecision:
+        cycle_start = time.time()
         mode = self.get_effective_mode()
         context = context or {}
 
@@ -207,6 +211,7 @@ class AdaptiveGovernor:
                 )
 
         self._log_decision(action, True, mode.value, "normal_allow")
+        self._finish_loop_cycle(cycle_start, None)
         return ActionDecision(allowed=True, mode=mode.value)
 
     def decide_ollama(self) -> ActionDecision:
@@ -249,7 +254,7 @@ class AdaptiveGovernor:
         effective = self.get_effective_mode()
         effective_sev = self._MODE_SEVERITY.get(effective, 0)
         if effective_sev >= 2:
-            max_paths = min(max_paths, 3)
+            max_paths = min(max_paths, 4)
         elif effective_sev >= 1:
             max_paths = min(max_paths, 5)
         actual = min(requested, max_paths)
