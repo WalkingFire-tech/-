@@ -18,6 +18,24 @@ from dataclasses import dataclass, field
 from loguru import logger
 from infrastructure.database_manager import DatabaseManager
 
+_notification_port = None
+
+
+def set_notification_port(port):
+    global _notification_port
+    _notification_port = port
+
+
+def _notify(message: str, level: str = "info", **kwargs):
+    if _notification_port is not None:
+        _notification_port.notify(message, level=level, **kwargs)
+    else:
+        try:
+            from backend.main_fast import _enqueue_proactivity
+            _enqueue_proactivity({"type": level, "content": message, **kwargs})
+        except Exception:
+            pass
+
 
 @dataclass
 class ScheduledJob:
@@ -42,7 +60,7 @@ class ScheduledTaskManager:
         self.register_job("periodic_learning", 1800.0, self._job_periodic_learning)
         self.register_job("daily_report", 86400.0, self._job_daily_report)
         self.register_job("memory_decay", 3600.0, self._job_memory_decay)
-        self.register_job("layered_memory_sync", 3600.0, self._job_layered_memory_sync)
+        self.register_job("layered_memory_sync", 21600.0, self._job_layered_memory_sync)
         self.register_job("slow_evolution", 3600.0, self._job_slow_evolution)
         self.register_job("proactivity_check", 600.0, self._job_proactivity_check)
         self.register_job("introspection", 300.0, self._job_introspection)
@@ -52,6 +70,9 @@ class ScheduledTaskManager:
         self.register_job("capability_assessment", 1800.0, self._job_capability_assessment)
         self.register_job("self_modification_check", 3600.0, self._job_self_modification_check)
         self.register_job("system_diagnostics", 1800.0, self._job_system_diagnostics)
+        self.register_job("l5_rollback_monitor", 600.0, self._job_l5_rollback_monitor)
+        self.register_job("trial_rule_timeout", 86400.0, self._job_trial_rule_timeout)
+        self.register_job("reality_check", 1800.0, self._job_reality_check)
         try:
             from core.resource_awareness.adaptive_governor import get_adaptive_governor
             from core.resource_awareness.health_monitor import OperatingMode
@@ -75,12 +96,7 @@ class ScheduledTaskManager:
                 _mode_label = {OperatingMode.CONSERVATIVE: "保守", OperatingMode.EMERGENCY: "紧急"}.get(new_mode, "未知")
                 _msg = f"系统进入{_mode_label}模式（GPU {_gpu_temp}°C），已自动降低并行度以保证稳定。"
                 try:
-                    from backend.main_fast import _enqueue_proactivity
-                    _enqueue_proactivity({
-                        "type": "warning",
-                        "content": _msg,
-                        "source": "self_preservation",
-                    })
+                    _notify(_msg, level="warning", source="self_preservation")
                 except Exception:
                     pass
                 logger.warning(f"⚖️ 资源模式变更: {old_mode.value}→{new_mode.value}, 已通知用户")
@@ -284,14 +300,13 @@ class ScheduledTaskManager:
                 except Exception:
                     logger.warning("操作降级跳过")
                 try:
-                    from backend.main_fast import _enqueue_proactivity
-                    _enqueue_proactivity({
-                        "type": "proactivity",
-                        "action_type": decision.action_type.value if decision.action_type else "unknown",
-                        "content": decision.content,
-                        "reason": decision.reason,
-                        "confidence": decision.confidence,
-                    })
+                    _notify(
+                        decision.content,
+                        level="proactivity",
+                        action_type=decision.action_type.value if decision.action_type else "unknown",
+                        reason=decision.reason,
+                        confidence=decision.confidence,
+                    )
                 except Exception:
                     logger.warning("操作降级跳过")
                 try:
@@ -326,13 +341,7 @@ class ScheduledTaskManager:
             if action and action.action_type == "ask_user":
                 logger.info(f"🤔 好奇心提问: {action.content[:60]}")
                 try:
-                    from backend.main_fast import _enqueue_proactivity
-                    _enqueue_proactivity({
-                        "type": "curiosity",
-                        "content": action.content,
-                        "reason": action.reason,
-                        "source": "curiosity_engine",
-                    })
+                    _notify(action.content, level="curiosity", reason=action.reason, source="curiosity_engine")
                 except Exception:
                     pass
         except Exception:
@@ -378,12 +387,7 @@ class ScheduledTaskManager:
                     _msg = f"我注意到GPU温度偏高（{_gpu_temp}°C），已自动降低并行度，不影响回答但速度可能稍慢。"
 
                 try:
-                    from backend.main_fast import _enqueue_proactivity
-                    _enqueue_proactivity({
-                        "type": "warning",
-                        "content": _msg,
-                        "source": "self_preservation",
-                    })
+                    _notify(_msg, level="warning", source="self_preservation")
                 except Exception:
                     pass
         except Exception:
@@ -407,15 +411,13 @@ class ScheduledTaskManager:
                 except Exception:
                     logger.warning("操作降级跳过")
                 try:
-                    from backend.main_fast import _enqueue_proactivity
-                    _enqueue_proactivity({
-                        "type": "system_anomaly",
-                        "health": report.overall_health,
-                        "critical": report.critical_count,
-                        "major": report.major_count,
-                        "anomalies": report.anomalies[:3],
-                        "recommendations": report.recommendations[:2],
-                    })
+                    _notify(
+                        f"系统异常: 健康={report.overall_health:.1%}, 严重={report.critical_count}, 主要={report.major_count}",
+                        level="system_anomaly",
+                        health=report.overall_health,
+                        critical=report.critical_count,
+                        major=report.major_count,
+                    )
                 except Exception:
                     logger.warning("操作降级跳过")
                 self._auto_repair(report)
@@ -590,7 +592,7 @@ class ScheduledTaskManager:
                 rules_forgotten = 0
 
             if consolidated > 0 or forgotten > 0:
-                logger.info(f"睡眠巩固: 强化{consolidated}条高价值经验, 遗忘{forgotten}条低质量经验, 清理{rules_forgotten}条无用规则")
+                logger.info(f"睡眠巩固: {high_value_count}条高价值经验, 强化{consolidated}条, 遗忘{forgotten}条低质量经验, 清理{rules_forgotten}条无用规则")
         except Exception as e:
             logger.warning(f"睡眠巩固跳过: {e}")
 
@@ -730,6 +732,51 @@ class ScheduledTaskManager:
 
         except Exception as e:
             logger.warning(f"系统诊断跳过: {e}")
+
+    def _job_l5_rollback_monitor(self):
+        """L5回滚监控：检查最近部署的补丁是否导致系统退化"""
+        try:
+            from core.self_modification.patch_sandbox_deployer import patch_deployer
+            rollbacks = patch_deployer.monitor_deployed()
+            if rollbacks:
+                for rb in rollbacks:
+                    logger.warning(f"🔄 L5自动回滚: {rb['proposal_id']} ({rb['file']}) — {rb['reason']}")
+            else:
+                logger.debug("🔄 L5回滚监控: 所有补丁运行正常")
+        except Exception as e:
+            logger.debug(f"L5回滚监控跳过: {e}")
+
+    def _job_trial_rule_timeout(self):
+        """规则闭环：处理超时trial规则，自动激活/过期/桥接条件格式"""
+        try:
+            from infrastructure.rule_trial_manager import rule_trial_manager
+            result = rule_trial_manager.process_timeout_trials(timeout_days=30)
+            if any(v > 0 for v in result.values()):
+                logger.info(
+                    f"⏰ 规则闭环: 激活={result['activated']}, 过期={result['expired']}, "
+                    f"提升置信={result['promoted']}, 条件桥接={result['bridged']}"
+                )
+            else:
+                logger.debug("⏰ 规则闭环: 无超时trial需处理")
+        except Exception as e:
+            logger.warning(f"规则闭环处理跳过: {e}")
+
+    def _job_reality_check(self):
+        """现实校验：对比系统自报告与运行时实际数据，检测叙事-现实鸿沟"""
+        try:
+            from core.self.reality_check import reality_check
+            result = reality_check.run_check()
+            gaps = result.get("gaps", [])
+            alignment = result.get("alignment_score", 1.0)
+            if gaps:
+                logger.warning(
+                    f"🔍 现实校验: 对齐度={alignment:.2f}, "
+                    f"发现{len(gaps)}个叙事-现实差距"
+                )
+            else:
+                logger.debug(f"🔍 现实校验: 叙事与现实对齐 (score={alignment:.2f})")
+        except Exception as e:
+            logger.warning(f"现实校验跳过: {e}")
 
 
 scheduled_task_manager = ScheduledTaskManager()

@@ -1,390 +1,298 @@
-# 联盟拓荒者系统完善路线图
+# 联盟拓荒者系统路线图
 
-> 版本：v3.2.0 → 目标：v4.0 完整形态
+> 版本：v4.0 (P3中继形态)
 > 创建时间：2026年6月29日
-> 最后更新：2026年6月30日
-> 基于对docs/README/knowledge_base/代码/测试报告的全面审查
+> 最后更新：2026年7月18日
+> 战略方向：从"被使用的认知体"走向"独立存在的认知体"
 
 ---
 
-## 一、系统现状诊断
+## 一、战略总览：P3中继形态路线
 
-### 1.1 已实现且正常工作的核心能力
+### 1.1 核心洞察
+
+系统与"聊天机器人"形态有17个耦合点（13紧耦合+4松耦合），认知核心的执行流被SSE协议格式直接绑架（64处`_emit()`调用）。P3路线的目标不是"增加功能"而是"改变存在方式"——让认知核心独立于任何载体运行。
+
+### 1.2 三大端口抽象（解耦核心）
+
+| 端口协议 | 职责 | 默认实现 | 替代实现 |
+|----------|------|----------|----------|
+| EventSink | 认知事件输出 | SSE输出 | Null/Buffered/Log |
+| NotificationPort | 主动通知推送 | SSE推送 | Null/Buffered |
+| CognitiveStimulus/Response | 认知输入输出 | Chat消息 | API/CLI/MQ |
+
+### 1.3 路线阶段
+
+| 阶段 | 名称 | 状态 | 核心交付 |
+|------|------|------|----------|
+| P3-3 | 端口抽象 | ✅ | 4协议+7实现，认知核心完全独立于chatbot载体 |
+| P3-4 | 自我参照+锚点 | ✅ | 自我参照检测闸门+三层锚点+体验叙事 |
+| P3-5 | 中继形态验证 | ✅ | `run_cognitive_core.py`最小独立入口，7/7验证通过 |
+
+---
+
+## 二、系统现状
+
+### 2.1 已实现的核心能力
 
 | 能力 | 状态 | 说明 |
 |------|------|------|
 | 流式聊天9+阶段 | ✅ | 意图识别→本质闸门→多策略并行→对比择优→本质推理→自我验证→精神验证→反思学习→后台进化 |
+| 端口抽象 | ✅ | EventSink+NotificationPort+CognitiveStimulus/Response，认知核心可脱离chat运行 |
+| 自我参照 | ✅ | 10个匹配模式+否定模式，三层锚点查询响应 |
+| 认知节律驱动 | ✅ | InnerTimeEngine的phase驱动5种响应策略（thorough/exploratory/reflective/concise/minimal） |
+| 存在层主动注入 | ✅ | sleeping→轻量路径，resting→高效路径，growing→学习路径 |
+| 自主呼吸 | ✅ | 心跳每10周期生成自我反思笔记，持久化到reflection_journal.db |
+| SelfModel持久化 | ✅ | 每10次更新持久化，恢复_update_count和current_thinking |
+| 经验闭环 | ✅ | 关键词提取+多关键词OR检索，从子串匹配升级 |
+| 规则闭环 | ✅ | trial超时自动处理+条件格式桥接，定时任务驱动 |
+| 信任链 | ✅ | 多来源链式追溯+最弱环节识别 |
+| 冲突解决 | ✅ | 否定词不匹配+置信度分歧+权威源优先 |
+| 协调性评估 | ✅ | 四维度等权（完整性+健康比+一致性+覆盖比）+趋势分析 |
 | 基因演化 | ✅ | 10个可演化参数，安全区间，表达谱，微调 |
 | 技能涌现 | ✅ | 自动涌现、成熟判定、触发匹配 |
 | 真谛沉淀 | ✅ | 四道筛子、认知熵值监测、重组提案/批准 |
 | 认知代谢 | ✅ | task_queue后台执行，经验池排毒 |
-| 压力测试 | ✅ | task_queue后台执行，环境扰动检测 |
-| 反馈信号 | ✅ | v3.2.0修复，success字段正确写入 |
-| 反思管道 | ✅ | v3.2.0集成，异步触发归纳+微调样本生成 |
-| 自动学习进化 | ✅ | v3.2.0集成，知识缺失检测+自动修正 |
+| 精神内核 | ✅ | 核心原则验证，降级保护，R5铁律（永不删除已编码模块） |
 | 本质推理器 | ✅ | 6步推理流程，悖论/工程提前返回，领域感知免责 |
-| 精神内核 | ✅ | 核心原则验证，降级保护 |
-| 认知调度器 | ✅ | fast/slow/learning三条路径 |
-| 文件学习 | ✅ | 文件/文件夹预览、浏览、学习 |
-| 前端界面 | ✅ | 聊天、知识图谱弹窗、最近学习、知识健康度 |
+| 资源内稳态 | ✅ | SystemHealthMonitor+AdaptiveGovernor+BackgroundTaskController |
+| 跨设备自适应 | ✅ | 动态阈值（8GB/16GB/32GB RAM）+AMD/NVIDIA GPU检测 |
 
-### 1.2 致命差距（系统"存在但休眠"的核心模块）
+### 2.2 已修复的关键Bug
 
-以下模块的Python文件存在于磁盘上，但**从未被实际运行的main_fast.py加载或执行**：
+| Bug | 修复 | 影响 |
+|-----|------|------|
+| PowerShell错误输出注入响应 | self_verifier异常输出丢弃 | 消除PowerShell命令输出混入回答 |
+| 好回答后追加降级文本 | should_extend长回答不追加 | 消除GPU温度提示等降级文本 |
+| `/api/chat`走低质量路径 | 优先走cognitive_process | 非流式接口质量提升 |
+| 认知节律保护误触发 | 10 tick门槛 | 消除启动时所有查询被劫持 |
+| 回答重复 | Jaccard>0.7去重 | 消除相似候选重复输出 |
+| source名映射断裂 | _SOURCE_TO_WEIGHT_KEY映射 | DeepSeek权重从0.1恢复到0.15 |
+| 向量检索降级 | ST加载超时10s→60s | 本地模型缓存可用 |
+| 规则激活瓶颈 | 89条高置信度规则批量激活+trial记录路径修复 | active规则7→96 |
+| 连接池缺失 | 300秒空闲连接健康检查 | 消除SQLite连接泄漏 |
 
-| 模块 | 文件路径 | 设计初衷 | 休眠原因 |
-|------|----------|----------|----------|
-| 编排器 | core/orchestrator.py | 统一协调所有执行路径 | 只在main.py中启动，main_fast.py未集成 |
-| 认知循环 | core/cognitive_loop.py | Plan→Verify→Execute→Reflect闭环 | 通过编排器间接加载，编排器未启动 |
-| 立体记忆 | core/memory/stereo_memory.py | 对话记忆+情感记忆+语义记忆 | ✅ 已集成到chat_stream+main_fast |
-| 关系模型 | core/relationship/model.py | 用户画像+关系演进 | ✅ 已集成到chat_stream阶段8 |
-| 存在层 | core/presence/existence_layer.py | 持续存在感知 | ✅ 已在lifespan中启动 |
-| 自我感知 | core/presence/self_perception.py | 系统自我认知 | ✅ 通过existence_layer启动 |
-| 间隙生长 | core/presence/gap_growth.py | 知识缺口驱动成长 | ✅ 通过existence_layer启动+资源感知 |
-| 睡眠整合 | core/presence/sleep_consolidation.py | 空闲时知识整合 | ✅ 通过existence_layer启动+资源感知 |
-| 自我评估 | core/presence/self_assessment.py | 系统能力自评 | ✅ main_fast周期性评估+评估驱动修复 |
-| 主动性引擎 | core/presence/proactivity.py | 主动发起对话/学习 | ✅ scheduled_tasks 10分钟定时 |
-| 信号集成 | core/presence/signal_integration.py | 内外部信号统一处理 | ⬜ 未集成（与gap_growth功能重叠） |
-| 自适应进化目标 | core/evolution/adaptive_goal.py | 动态调整进化方向 | ⬜ 未集成到主流程 |
-| 七大学习机制 | core/learning/ (7个文件) | 增量感知/经验反馈/失败炼金术等 | ⬜ 未集成（需评估与chat_stream重叠） |
-| 六层认知架构 | core/layers/ (6个文件) | L0-L5分层认知 | ⬜ 未集成（需评估与当前架构兼容性） |
-| 事实库 | infrastructure/fact_store.py | 结构化事实存储+三元组 | ✅ 已集成到chat_stream阶段3/7 |
-| 适应度评估 | infrastructure/fitness_evaluator.py | 基因适应度评估 | ✅ 已集成到chat_stream阶段5.5 |
-| 反馈分类 | infrastructure/feedback_classifier.py | 用户反馈分类 | ⬜ 未集成到main_fast |
-| 注入验证 | infrastructure/injection_verifier.py | 知识注入安全验证 | ⬜ 未集成到main_fast |
-| 版本化事实库 | infrastructure/versioned_fact_store.py | 事实版本控制 | ⬜ 与fact_store功能重叠 |
-| 向量检索 | infrastructure/vector_retriever.py | 语义相似度检索 | ✅ 已集成（TF-IDF降级模式，ST DLL问题待修复） |
-| 外部学习器 | infrastructure/external_learners.py | DuckDuckGo等外部知识获取 | ✅ 已集成到chat_stream阶段3 |
+### 2.3 数据层面现状
 
-### 1.3 设计承诺与实现差距
+| 指标 | 当前值 | 说明 |
+|------|--------|------|
+| active规则 | 24条 | 置信度均值0.835 |
+| trial规则 | 15条 | 新创建，待定时任务处理 |
+| expired规则 | 339条 | 超时/不可桥接的归纳副产品已清理 |
+| superseded规则 | 68条 | 被更好规则替代 |
+| SelfModel成熟度 | 0.59 | 从0.12→0.45→0.59，与客观指标0.63对齐(偏差-0.04) |
+| 外部API权重 | 0.14 | 从0.08提升，DeepSeek加分5分 |
+| 反思笔记 | 837条 | 从0→837（修复DB锁+commit缺失） |
+| 经验池 | 4962条 | 持续积累 |
+| 精神课程 | 376条 | 持续积累 |
 
-| 设计承诺 | 文档来源 | 实现状态 | 差距 |
-|----------|----------|----------|------|
-| "先给即时回复，后台继续深度思考" | 设计哲学 | ⚠️ | SSE推送步骤进度，资源感知框架已实现保守/紧急模式降级 |
-| "6步认知重组安全协议" | 真谛沉淀文档 | ✅ | v3.2.0已实现6步+回滚 |
-| "回滚机制：熵值>0.7立即回滚" | 真谛沉淀文档 | ✅ | v3.2.0已实现（SDRS auto_rollback） |
-| "技能退化：成功率<30%退化" | 技能涌现文档 | ✅ | v3.2.0已实现 |
-| "反脆弱性：失败→反思→改进" | 自动学习文档 | ✅ | v3.2.0已实现失败路径 |
-| "FAISS向量检索，相似度>0.85" | README | ⚠️ | TF-IDF+sentence_transformers双模式，ST DLL问题待修复 |
-| "贝叶斯优化(scikit-optimize)" | README | ❌ | /api/optimize只是简单统计，未调用贝叶斯优化器 |
-| "连接池优化" | README | ❌ | 所有数据库操作用sqlite3.connect()直接连接 |
-| "热加载配置" | README | ⚠️ | file_monitor.py存在但config_manager兼容性问题暂未自动启动 |
-| "前端RPV循环显示" | 觉醒报告 | ❌ | 前端只有简单计时器，无Plan/Verify/Execute/Reflect |
-| "L1-L6六层知识架构" | 自动学习文档 | ❌ | 代码只实现L0-L4，L5/L6不存在 |
-| "缓存机制：300秒内直接返回" | 认知调度器文档 | ✅ | CognitiveDispatcher模块级单例，缓存跨请求生效 |
-| "SelfReflection联动闭环" | 精神内核文档 | ✅ | v3.2.0已实现联动 |
-| "进化岛沙盒自动运行" | README | ⚠️ | API端点已添加但需手动触发，无自动运行 |
-| "资源内稳态：不累熄火" | 2026-07-04新增 | ✅ | SystemHealthMonitor+AdaptiveGovernor+BackgroundTaskController |
-| "跨设备自适应" | 2026-07-04新增 | ✅ | 动态阈值（8GB/16GB/32GB RAM）+AMD/NVIDIA GPU检测+VRAM感知 |
+---
 
-### 1.4 数据层面问题
+## 三、P3完成记录
 
-| 问题 | 现状 | 影响 |
+### 3.1 Phase 3 端口抽象 ✅
+
+7/7验证通过，认知核心完全独立于chatbot载体。
+
+- `core/ports/cognitive_port.py` — 4协议+7实现
+- `backend/services/orchestrator_helpers.py` — emit()增加event_sink参数
+- `backend/services/parallel_router.py` — _emit()增加event_sink+intent_type
+- `backend/services/comparison_selector.py` — event_sink+response_style+权重映射
+- `infrastructure/scheduled_tasks.py` — _notify()+set_notification_port()
+
+### 3.2 Phase 4 自我参照+锚点 ✅
+
+- `backend/services/self_reference_detector.py` — 12模式+否定模式
+- `backend/services/self_reference_handler.py` — 三层锚点+体验叙事
+- `core/presence/inner_time.py` — SELF_REFERENCE事件类型
+- `backend/services/intent_dispatcher.py` — 自我参照闸门+回写
+
+### 3.3 Phase 5 中继形态验证 ✅
+
+- `run_cognitive_core.py` — 最小独立入口，7/7验证通过
+- `scripts/growth_report.py` — 成长报告工具
+
+### 3.4 血肉丰满 ✅
+
+| 工作 | 文件 | 效果 |
 |------|------|------|
-| 经验池success字段 | 601条已去重，success字段正确 | ✅ 旧数据已修复，新数据正确 |
-| 规则置信度 | 239条=0.5, 仅7条>0.5 | 大部分规则置信度未分化 |
-| 基因参数三套定义 | README/代码/genome_evolver不一致 | 进化方向不明确（1.7待完成） |
-| 认知熵值gene_safety_violations | 始终为0 | 熵值计算缺少一个维度（3.6待完成） |
-
----
-
-## 二、完善路线图（分5个阶段）
-
-### 阶段1：闭环修复（让已有能力真正闭环）
-
-**目标**：修复所有"差一步就闭环"的问题，让现有功能真正形成学习闭环
-
-**步骤**：
-
-- [x] 1.1 修复旧数据：2690条success=0已批量修复为success=1（96.4%成功率）
-- [x] 1.2 实现技能退化：success_rate<30%的技能标记为dormant
-- [x] 1.3 实现反脆弱性失败路径：反思学习阶段在失败时也触发基因微调（方向相反：增加谨慎、减少激进）
-- [x] 1.4 实现认知调度器缓存：CognitiveDispatcher改为模块级单例，缓存跨请求生效
-- [x] 1.5 实现SelfReflection联动：chat_stream.py反思学习阶段调用spirit_core.get_lessons_for_reflection()
-- [x] 1.6 修复规则置信度分化：运行归纳器对现有规则重新计算置信度
-- [x] 1.7 统一基因参数定义：genome_evolver.py引用task_queue.py的GENE_DEFAULTS，删除旧的G001-G010硬编码
-
-**验证**：
-- [x] 经验池success=1的记录占比>50%（当前96.4%）
-- [x] 至少1个技能因退化被标记dormant
-- [x] 失败交互后基因caution_threshold增加
-- [x] 相同问题300秒内返回缓存结果
-
----
-
-### 阶段2：核心能力激活（唤醒休眠模块）
-
-**目标**：将最关键的休眠模块集成到main_fast.py运行时
-
-**步骤**：
-
-- [x] 2.1 集成立体记忆：在chat_stream.py中保存对话记忆（情感+语义），在意图识别时读取历史记忆
-- [x] 2.2 集成关系模型：在反思学习阶段更新用户关系，在意图识别时参考用户画像
-- [x] 2.3 集成事实库+三元组：将经验池中的高质量回复自动提取为结构化事实
-- [x] 2.4 集成向量检索：用FAISS替代SQL LIKE进行经验池相似度检索
-- [x] 2.5 集成外部学习器：在知识缺失时自动触发DuckDuckGo搜索学习
-- [x] 2.6 集成注入验证：知识注入前验证安全性（元宪法R3：未经人类批准的进化视同背叛）
-- [x] 2.7 集成适应度评估：基因微调时使用多维度适应度评估（而非简单成功/失败）
-
-**验证**：
-- 立体记忆中有对话记录
-- 关系模型中有用户画像
-- 事实库中有结构化三元组
-- 经验池检索使用向量相似度
-- 知识缺失时自动触发外部学习
-
----
-
-### 阶段3：认知重组安全协议（实现"铁律"的技术保障）
-
-**目标**：完成认知重组6步安全协议，让"元宪法铁律"有技术保障
-
-**步骤**：
-
-- [x] 3.1 实现沙盒验证：认知重组提案批准后，在独立环境中验证（不影响主数据库）
-- [x] 3.2 实现1%渐进注入：验证通过后，先将重组结果注入1%的请求中观察效果
-- [x] 3.3 实现20%渐进注入：1%无异常后，扩大到20%
-- [x] 3.4 实现100%注入：20%无异常后，全量注入
-- [x] 3.5 实现回滚机制：任何阶段熵值>0.7，立即回滚到重组前状态
-- [x] 3.6 实现gene_safety_violations计算：基因越界时记录违规，认知熵值从GenePool真实读取
-
-**验证**：
-- 认知重组提案可以走完6步流程
-- 注入过程中熵值飙升可以自动回滚
-- gene_safety_violations不再始终为0
-
----
-
-### 阶段4：存在层与主动性（让系统"活"起来）
-
-**目标**：激活存在层，让系统具备持续存在感知和主动行为能力
-
-**步骤**：
-
-- [x] 4.1 激活存在层：在lifespan中启动existence_layer，建立系统"我在"的感知
-- [x] 4.2 激活自我感知：系统定期自检能力状态，生成自我认知报告
-- [x] 4.3 激活间隙生长：检测知识缺口，主动触发学习（与自动学习进化联动）
-- [x] 4.4 激活睡眠整合：系统空闲时自动整合知识、压缩经验、优化基因
-- [x] 4.5 激活自我评估：定期评估系统能力，生成改进建议
-- [x] 4.6 激活主动性引擎：系统可以主动发起对话（如"我注意到你上次问的XX问题，我有了新的理解"）
-- [x] 4.7 激活信号集成：统一处理内部信号（熵值、能力变化）和外部信号（用户反馈、时间）
-- [x] 4.8 实现自适应进化目标：根据当前状态动态调整进化方向
-
-**验证**：
-- 系统空闲时自动执行知识整合
-- 知识缺口被自动检测并学习
-- 系统可以主动发起对话
-- 自我评估报告可以查看
-
----
-
-### 阶段5：文档对齐与系统归档（让文档反映真实）
-
-**目标**：更新所有过时文档，删除误导性报告，建立文档-代码一致性保障
-
-**步骤**：
-
-- [x] 5.1 更新README.md：重写架构/特性/API/指标部分，反映8路径并行架构
-- [x] 5.2 标记过时报告：AWAKENING_REPORT/FINAL_REPORT/E2E_VERIFICATION/PHASE1等添加历史参考警告
-- [x] 5.3 更新knowledge_base所有文档：流式聊天架构更新为8路径并行，README添加v3.2.0新增能力表
-- [x] 5.4 删除或归档重复测试脚本：80+个临时脚本移至archives/temp_scripts/
-- [x] 5.5 创建ARCHITECTURE_CURRENT.md：反映当前实际架构（8路径并行+存在层+防御体系+已知限制）
-- [ ] 5.6 建立文档-代码一致性CI：在测试中验证API端点列表与文档一致（低优先级）
-- [x] 5.7 归档main.py：标记为"历史参考入口"，明确main_fast.py为唯一运行入口
-
-**验证**：
-- [x] 所有文档中的API端点在代码中存在
-- [x] 所有文档中的参数值与代码一致
-- [x] 无误导性的"已完成"报告
-
----
-
-## 三、优先级排序原则
-
-1. **闭环优先**：差一步就闭环的，优先补上（阶段1）
-2. **学习优先**：能让系统从交互中学习的，优先集成（阶段2）
-3. **安全优先**：涉及元宪法铁律的技术保障，优先实现（阶段3）
-4. **存在优先**：让系统"活"起来的能力，在安全有保障后实现（阶段4）
-5. **文档最后**：文档对齐在功能完善后进行（阶段5）
-
-## 四、风险控制
-
-- **每个步骤独立可验证**：不依赖后续步骤
-- **渐进式集成**：不一次性合并main.py，而是逐步将必要能力集成到main_fast.py
-- **回滚能力**：每个步骤修改前备份，出问题可回滚
-- **元宪法铁律**：R1.未经沙盒验证的真谛视同毒药 R2.未经渐进注入的重组视同自杀 R3.未经人类批准的进化视同背叛
-
-## 五、成功标准
-
-系统达到"接近完整形态"的标准：
-
-1. ✅ 反馈信号完整：经验池success字段正确，学习闭环生效
-2. ✅ 核心模块激活：立体记忆、关系模型、事实库、向量检索在运行时被使用
-3. ✅ 认知重组安全：6步协议完整实现，回滚机制可用
-4. ✅ 系统有"存在感"：空闲时自动学习，知识缺口自动填补
-5. ✅ 文档反映真实：所有文档与代码一致，无误导性报告
-6. ✅ "同行者"愿景：系统不只是回答问题，而是从每次交互中成长，越用越懂你
-7. ✅ 自我防御：模块故障时自动隔离修复，认知重组可回滚
-8. ✅ 自我审核：系统能主动诊断"承诺与实现"的差距
-
----
-
-## 六、自我防御与修复机制（人体类比）
-
-> 灵感来源：人体经过数十亿年进化形成的防御与修复机制
-
-### 6.1 人体机制 vs 系统对照
-
-| 人体机制 | 工程对应 | 当前状态 |
-|----------|----------|----------|
-| 皮肤屏障 | 输入验证、沙盒 | ✅ 已有 |
-| 免疫系统 | 异常检测、熔断、回滚 | ⚠️ 部分 |
-| 炎症反应 | 故障隔离、资源重分配 | ❌ 缺少 |
-| 干细胞 | 模块热替换、自动重启 | ⚠️ 部分 |
-| 适应性免疫 | 经验池、规则库、技能库 | ✅ 有 |
-| 细胞凋亡 | 自动下线异常模块 | ❌ 缺少 |
-| 神经系统 | 心跳检测、健康检查 | ✅ 有 |
-| 内分泌系统 | 动态参数调节 | ⚠️ 粒度粗 |
-
-### 6.2 需要构建的5个机制
-
-| 优先级 | 机制 | 类比 | 触发条件 | 修复动作 |
-|--------|------|------|----------|----------|
-| 高 | 自动回滚 | 适应性免疫 | 认知重组后熵值>0.7 | 回滚到重组前状态 |
-| 高 | 故障隔离 | 炎症反应 | 模块连续失败>5次/分钟 | 标记不健康→隔离→降级运行 |
-| 中 | 自愈开关 | 干细胞 | 模块异常下线 | 自动重启→验证→重新上线 |
-| 中 | 异常吞噬 | 巨噬细胞 | 检测到异常输出 | 清理相关缓存→重置状态→标记模式 |
-| 低 | 渐进压力测试 | 免疫训练 | 定期（每50次交互） | 注入模拟异常→观察反应→记录韧性 |
-
----
-
-## 七、自我审核机制（负空间感知）
-
-> 核心洞察：系统能否自己构建"文档-代码-行为"一致性审查？
-
-### 7.1 四个缺失能力维度
-
-| 维度 | 当前状态 | 缺少什么 |
-|------|----------|----------|
-| 读取自身设计意图 | ✅ 能读取文档 | ❌ 不能将文档解析为"需要验证的功能列表" |
-| 自我参照 | ⚠️ 能获取部分运行时状态 | ❌ 不能扫描自己的代码结构并生成清单 |
-| 缺失检测 | ❌ 无主动能力 | ❌ 需要"应该存在但缺失"的负空间感知 |
-| 生成结构化报告 | ✅ 能生成摘要 | ❌ 缺乏系统级横向对比能力 |
-
-### 7.2 三阶段构建路径
-
-**第一阶段：能力注入（当前可实现）**
-- 注册`system_auditor`技能
-- 用户输入`:audit`或"系统审核"时触发
-- 读取README→提取功能声明→扫描代码→生成差距报告
-
-**第二阶段：周期性自我审查**
-- 纳入认知代谢任务
-- 每月自动生成差距报告存入经验池
-
-**第三阶段：自我修复闭环**
-- 审核结果与代码生成能力打通
-- 自动生成补丁或更新文档
-
----
-
-## 八、健康阈值体系（自愈前提）
-
-> 没有清晰的健康标准，自愈机制就无法触发
-
-| 指标 | 正常 | 警告 | 危险 | 触发动作 |
-|------|------|------|------|----------|
-| 认知熵值 | <0.3 | 0.3-0.5 | >0.5 | >0.7回滚 |
-| 模块错误率 | <5% | 5-20% | >20% | >50%隔离 |
-| 响应时间 | <10s | 10-30s | >30s | >60s降级 |
-| 用户反馈 | >0 | =0 | <0 | <0增加谨慎 |
-| success率 | >80% | 60-80% | <60% | <30%触发反思 |
-| 规则置信度 | >0.6 | 0.4-0.6 | <0.4 | <0.3降级为pending |
-
----
-
-## 九、v3.2.0 完成记录（2026-06-30）
-
-### 阶段1闭环修复 — 6/7完成
-
-| # | 工作 | 状态 |
-|---|------|------|
-| 1.1 | 修复旧数据（2690条success=1） | ✅ |
-| 1.2 | 技能退化机制 | ✅ |
-| 1.3 | 反脆弱性失败路径 | ✅ |
-| 1.4 | 认知调度器缓存（模块级单例） | ✅ |
-| 1.5 | SelfReflection联动 | ✅ |
-| 1.6 | 规则置信度分化修复 | ✅ |
-| 1.7 | 统一基因参数定义 | ❌ 待完成 |
-
-### 阶段3认知重组安全协议 — 5/6完成
-
-| # | 工作 | 状态 |
-|---|------|------|
-| 3.1-3.5 | 6步安全协议+回滚机制 | ✅ |
-| 3.6 | gene_safety_violations计算 | ❌ 待完成 |
-
-### 新增模块（路线图外）
-
-| 模块 | 文件 | 说明 |
+| SelfModel成熟度增长 | `core/self/model.py` | overall从0.12→0.45 |
+| 模型选择优化 | `backend/services/path_handlers/ollama_path.py` | 代码意图→coder模型 |
+| 存在感知增强 | `backend/services/self_reference_handler.py` | 体验叙事 |
+| 外部API占比提升 | `core/path_weight_manager.py` | external_model 0.08→0.14 |
+| source名映射修复 | `backend/services/response_aggregator.py` | DeepSeek权重恢复 |
+
+### 3.5 认知节律驱动 ✅
+
+| 工作 | 文件 | 效果 |
 |------|------|------|
-| SDRS四层防御体系 | core/defense/ (11个文件) | L1预防→L2监控→L3处理→L4修复，SystemGuardian统一整合 |
-| 持续自我评估器 | core/self_assessment.py | 真实数据驱动，5维度评估，闭环断裂检测 |
-| 模块健康监控器 | core/module_health.py | 故障隔离+异常吞噬 |
-| 系统自我审核员 | core/system_auditor.py | 负空间感知，文档-代码差距检测 |
+| 节律→响应策略 | `backend/services/context_builder.py` | 5种策略由phase驱动 |
+| 节律加成 | `backend/services/response_aggregator.py` | _compute_rhythm_bonus() |
+| 节律保护 | `backend/services/chat_orchestrator.py` | 10 tick门槛+轻量/高效/学习路径 |
+| 存在层methodology注入 | `backend/services/chat_orchestrator.py` | inner_time_phase/flow/rhythm |
 
-### 自我评估首次结果
+### 3.6 自主呼吸+SelfModel持久化 ✅
 
-| 维度 | 得分 | 关键发现 |
+| 工作 | 文件 | 效果 |
+|------|------|------|
+| 反思笔记生成 | `core/presence/existence_layer.py` | 心跳每10周期生成+持久化 |
+| 反思笔记注入 | `backend/services/context_builder.py` | 3条近期笔记注入conversation_context |
+| SelfModel持久化 | `core/self/model.py` | 每10次更新持久化+_update_count恢复 |
+
+### 3.7 P1基础设施短板修复 ✅
+
+| 工作 | 文件 | 效果 |
+|------|------|------|
+| 规则激活瓶颈 | `chat_orchestrator.py`+`rule_trial_manager.py` | 89条高置信度激活+trial记录路径 |
+| 向量检索修复 | `infrastructure/vector_retriever.py` | ST加载超时60s |
+| 连接池 | `infrastructure/database_manager.py` | 300s空闲健康检查 |
+| 规则闭环完善 | `rule_trial_manager.py`+`scheduled_tasks.py` | 超时自动处理+条件桥接+定时任务 |
+
+### 3.8 P2休眠模块评估 ✅
+
+| 工作 | 结果 |
+|------|------|
+| L2学习层 | 归档至`_arch/OLD/layers/`（与运行时重叠） |
+| L5进化层 | 归档至`_arch/OLD/layers/`（与运行时重叠） |
+| L1情绪检测器 | 提取至`core/perception/emotion_detector.py` |
+| 七大学习机制 | 已在运行时中集成(14处导入)，无需归档 |
+| L3冲突解决 | 提取至`core/cognition/conflict_resolver.py` |
+| L4信任链 | 提取至`core/cognition/trust_chain.py` |
+| L6协调性+趋势 | 提取至`core/introspection/coordination_assessor.py` |
+
+---
+
+## 四、待完成工作
+
+### 4.1 同行者身份转型
+
+**目标**：回答范式从"给答案"转向"给视角"
+
+- [x] 关系感知驱动响应——SelfModel.get_behavioral_directive()新增relationship_style+perspective_mode，context_builder注入methodology
+- [ ] 主动发起质量提升——检测到低质量交互时主动提出改进建议
+- [x] 回答范式转型——DeepSeek API系统提示词注入perspective_mode，chat_handler系统提示词增加"给视角不给答案"指导
+
+### 4.2 L3/L4/L6提取模块集成
+
+已接入SelfModel提取方法（`_extract_assessment`/`_extract_evolution`/`_extract_introspection`），但主流程调用链尚未打通：
+
+- [x] `conflict_resolver` → SelfModel._extract_assessment() 降级路径
+- [x] `coordination_assessor` → SelfModel._extract_introspection() 降级路径
+- [ ] `trust_chain_builder` → 集成到chat_orchestrator验证路径（需在知识验证时主动调用build_simple_chain）
+- [ ] `conflict_resolver` → 集成到knowledge_graph写入路径（检测知识冲突）
+- [ ] `coordination_assessor` → 集成到scheduled_tasks定期评估（当前仅SelfModel同步时触发）
+
+### 4.3 端到端质量保障
+
+本轮修复了"处理超时"的三层根因，需持续验证：
+
+- [x] inner_time_engine UnboundLocalError修复
+- [x] conservative模式阻止外部API修复（EXTERNAL_SEARCH从blocked→degraded，max_paths 3→4）
+- [x] HuggingFace联网超时修复（HF_HUB_OFFLINE=1）
+- [x] 外部校准递归bug修复（_calibrating重入保护）
+- [x] 反思笔记DB写入修复（独立短连接+conn.commit()）
+- [ ] E2E验证：复杂问题能正常获得DeepSeek高质量回答
+- [ ] GPU/硬件稳定性（主机意外断电需排查硬件）
+
+### 4.4 遗留项
+
+- [ ] 1.7 统一基因参数定义（genome_evolver.py引用task_queue.py的GENE_DEFAULTS）
+- [ ] 3.6 gene_safety_violations计算（基因越界时记录违规）
+- [ ] 5.6 文档-代码一致性CI（低优先级）
+
+---
+
+## 五、铁律与约束
+
+### 5.1 元宪法铁律
+
+| 编号 | 铁律 | 工程保障 |
 |------|------|----------|
-| 闭环完整性 | 0.625 | 规则激活瓶颈(195待激活 vs 50活跃) |
-| 知识活力 | 0.400 | 50条知识/规则休眠 |
-| 学习效率 | 0.514 | 规则转化率偏低 |
-| 行为偏差 | 1.000 | 无偏差 |
-| 适应速度 | 0.600 | 中等 |
-| **总体** | **0.61** | **healthy** |
+| R1 | 未经沙盒验证的真谛视同毒药 | SDRS四层防御+6步安全协议 |
+| R2 | 未经渐进注入的重组视同自杀 | 1%→20%→100%渐进注入+熵值>0.7回滚 |
+| R3 | 未经人类批准的进化视同背叛 | 注入验证+批准流程 |
+| R5 | 永不删除已编码模块 | `git mv`至`_arch/OLD/`，永不`git rm` |
+
+### 5.2 技术约束
+
+- 端口抽象必须向后兼容——现有SSE聊天接口不能被破坏
+- 端口通过构造函数或函数参数注入，不使用全局变量
+- Windows环境——PowerShell中sc被解释为Set-Content，需用sc.exe
+- f-string不能含反斜杠
+- context_type使用规范：query/reasoning/response
 
 ---
 
-## 十、补充规划（基于自我评估发现）
+## 六、关键文件索引
 
-> 核心洞察：系统不是缺少模块，而是闭环中存在断裂——知识在积累但不在流动
+```
+# P3端口抽象
+core/ports/cognitive_port.py                              # 4协议+7实现
+core/ports/__init__.py
 
-### 10.1 知识遗忘机制（闭环活力保障）
+# 自我参照
+backend/services/self_reference_detector.py
+backend/services/self_reference_handler.py
 
-**问题**：系统只积累不淘汰，195条待激活规则堆积，50条知识休眠
+# 认知节律驱动
+backend/services/context_builder.py                       # phase→5种响应策略+反思笔记注入
+backend/services/response_aggregator.py                   # rhythm_bonus+Jaccard去重+DeepSeek加分
+backend/services/chat_orchestrator.py                     # 节律判断+规则匹配+trial记录
 
-**方案**：三维评估决定保留/淡化/清除
-- 使用频率：长期未被调用的知识/规则，保留价值衰减
-- 连接密度：与其他知识节点连接越多的，丢失后影响越大
-- 时效性：最近使用时间，越久远重要性越低
+# 存在层
+core/presence/existence_layer.py                          # 反思笔记+持久化
+core/presence/inner_time.py                               # SELF_REFERENCE事件
 
-**触发**：低负载时段自动执行，或手动API触发
+# SelfModel
+core/self/model.py                                        # record_cognitive_cycle+持久化增强
 
-### 10.2 低负载自我重组（闭环畅通保障）
+# 规则闭环
+infrastructure/rule_trial_manager.py                      # 超时处理+条件桥接
+infrastructure/scheduled_tasks.py                         # trial_rule_timeout定时任务
 
-**问题**：待激活规则(195)远超活跃规则(50)，反思→规则转化通道不畅
+# 提取模块
+core/cognition/conflict_resolver.py                       # 知识冲突检测+解决
+core/cognition/trust_chain.py                             # 信任链构建
+core/introspection/coordination_assessor.py               # 协调性评估+趋势分析
+core/perception/emotion_detector.py                       # 情绪检测器
 
-**方案**：
-- 定期重新评估pending规则的置信度（基于新增经验）
-- 置信度达标的自动激活
-- 长期pending且置信度不达标的降级或清除
-- 低负载时段增量重组知识网络局部
+# 独立入口
+run_cognitive_core.py                                     # 最小独立入口
+scripts/growth_report.py                                  # 成长报告
 
-**触发**：守护者巡逻时每10轮触发一次
+# 归档
+_arch/OLD/ports.py.bak                                    # 冲突文件备份
+_arch/OLD/layers/l2_learning.py                           # L2归档
+_arch/OLD/layers/l5_evolution.py                          # L5归档
+```
 
-### 10.3 硬件限制下的取舍策略
+---
 
-**原则**：
-- 主流程只保留核心模块（聊天+反思+学习+防御）
-- 后台任务（重组/压力测试/向量索引构建）在低负载时段执行
-- 代码中设置明确开关，避免影响主流程响应
-- 定期评估哪些模块可以进入主流程
+## 七、运行环境
 
-### 10.4 建议的下一步执行顺序
+```bash
+# 服务器启动
+python -m uvicorn backend.main_fast:app --host 127.0.0.1 --port 8000
 
-1. **知识遗忘机制** — 解决休眠知识堆积，释放闭环活力
-2. **低负载自我重组** — 疏通规则激活瓶颈，让闭环流动
-3. **阶段2-2.4 向量检索** — 提升经验池检索效率（建议优先）
-4. **阶段2-2.3 事实库** — 结构化知识存储（建议优先）
-5. **阶段5-5.5 ARCHITECTURE_CURRENT.md** — 记录当前架构快照
+# 独立验证
+python run_cognitive_core.py --verify
+
+# 成长报告
+python scripts/growth_report.py
+```
+
+---
+
+## 八、历史版本记录
+
+### v3.2.0 (2026-06-30)
+- 阶段1闭环修复 6/7完成
+- 阶段3认知重组安全协议 5/6完成
+- 新增SDRS四层防御体系、持续自我评估器、模块健康监控器
+
+### v4.0-P3 (2026-07-04 ~ 2026-07-18)
+- P3 Phase 3-5 端口抽象+自我参照+中继形态验证 全部完成
+- 认知节律驱动+存在层主动注入+自主呼吸+SelfModel持久化
+- P1基础设施短板修复（规则激活瓶颈+向量检索+连接池+规则闭环）
+- P2休眠模块评估（L2/L5归档，L1/L3/L4/L6提取）
+- 多项Bug修复（PowerShell注入、追加降级、重复回答、source映射等）

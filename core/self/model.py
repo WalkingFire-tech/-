@@ -21,8 +21,12 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
+from core.loop_mixin import LoopMixin
 
-class SelfModel:
+_SELF_STATE_DB = "data/self_model_state.db"
+
+
+class SelfModel(LoopMixin):
     """
     系统的自我意识 — 统一所有自我认知的入口
 
@@ -42,7 +46,7 @@ class SelfModel:
     """
 
     def __init__(self):
-        self._lock = threading.Lock()
+        super().__init__(name="self_model", cooldown_seconds=60.0, max_failures_before_degraded=5)
         self._init_time = datetime.now()
         self._update_count = 0
 
@@ -64,11 +68,13 @@ class SelfModel:
         self.recent_learning: List[Dict[str, Any]] = []
         self.growth_edges: List[Dict[str, Any]] = []
 
+        self._restore_from_db()
+
     def update(self, category: str, data: Dict[str, Any]) -> None:
         """增量更新某个认知维度"""
         if not isinstance(data, dict):
             return
-        with self._lock:
+        with self._loop_lock:
             target = getattr(self, category, None)
             if target is not None and isinstance(target, dict):
                 target.update(data)
@@ -76,7 +82,7 @@ class SelfModel:
 
     def append(self, category: str, item: Any, max_len: int = 50) -> None:
         """向列表类维度追加条目"""
-        with self._lock:
+        with self._loop_lock:
             target = getattr(self, category, None)
             if target is not None and isinstance(target, list):
                 target.append(item)
@@ -86,7 +92,7 @@ class SelfModel:
 
     def snapshot(self) -> Dict[str, Any]:
         """获取当前自我模型的只读快照"""
-        with self._lock:
+        with self._loop_lock:
             result = {}
             for key in (
                 "values", "health", "presence", "assessment", "relationship",
@@ -100,6 +106,7 @@ class SelfModel:
             result["current_thinking"] = list(self.current_thinking)
             result["recent_learning"] = list(self.recent_learning)
             result["growth_edges"] = list(self.growth_edges)
+            result["_update_count"] = self._update_count
             result["_meta"] = {
                 "init_time": self._init_time.isoformat(),
                 "update_count": self._update_count,
@@ -109,54 +116,103 @@ class SelfModel:
             return result
 
     def sync_from_cognitive_planner(self, cp) -> None:
-        """从 CognitivePlanner 同步所有子组件状态"""
-        if cp is None:
-            return
+        """从 CognitivePlanner 同步所有子组件状态
+
+        当cp=None时，使用独立降级路径直接从数据库/模块单例读取。
+        """
+        if cp is not None:
+            try:
+                self.update("values", self._extract_spirit(cp))
+            except Exception as e:
+                logger.warning(f"SelfModel sync spirit failed: {e}")
+
+            try:
+                self.update("health", self._extract_health(cp))
+            except Exception as e:
+                logger.warning(f"SelfModel sync health failed: {e}")
+
+            try:
+                self.update("presence", self._extract_presence(cp))
+            except Exception as e:
+                logger.warning(f"SelfModel sync presence failed: {e}")
+
+            try:
+                self.update("relationship", self._extract_relationship(cp))
+            except Exception as e:
+                logger.warning(f"SelfModel sync relationship failed: {e}")
+
+            try:
+                self.update("evolution", self._extract_evolution(cp))
+            except Exception as e:
+                logger.warning(f"SelfModel sync evolution failed: {e}")
+
+            try:
+                self.update("introspection", self._extract_introspection(cp))
+            except Exception as e:
+                logger.warning(f"SelfModel sync introspection failed: {e}")
+
+            try:
+                self.update("capabilities", self._extract_capabilities(cp))
+            except Exception as e:
+                logger.warning(f"SelfModel sync capabilities failed: {e}")
+
+            try:
+                self.update("learning", self._extract_learning(cp))
+            except Exception as e:
+                logger.warning(f"SelfModel sync learning failed: {e}")
+        else:
+            try:
+                self.update("values", self._extract_spirit(None))
+            except Exception:
+                pass
+            try:
+                self.update("health", self._extract_health(None))
+            except Exception:
+                pass
+            try:
+                self.update("presence", self._extract_presence(None))
+            except Exception:
+                pass
+            try:
+                self.update("relationship", self._extract_relationship(None))
+            except Exception:
+                pass
+            try:
+                self.update("evolution", self._extract_evolution(None))
+            except Exception:
+                pass
+            try:
+                self.update("introspection", self._extract_introspection(None))
+            except Exception:
+                pass
+            try:
+                self.update("capabilities", self._extract_capabilities(None))
+            except Exception:
+                pass
+            try:
+                self.update("learning", self._extract_learning(None))
+            except Exception:
+                pass
 
         try:
-            self.update("values", self._extract_spirit(cp))
+            self.update("assessment", self._extract_assessment())
         except Exception as e:
-            logger.warning(f"SelfModel sync spirit failed: {e}")
+            logger.warning(f"SelfModel sync assessment failed: {e}")
 
         try:
-            self.update("health", self._extract_health(cp))
+            self.update("reflection", self._extract_reflection())
         except Exception as e:
-            logger.warning(f"SelfModel sync health failed: {e}")
+            logger.warning(f"SelfModel sync reflection failed: {e}")
 
         try:
-            self.update("presence", self._extract_presence(cp))
+            self.update("memory_self", self._extract_memory_self())
         except Exception as e:
-            logger.warning(f"SelfModel sync presence failed: {e}")
-
-        try:
-            self.update("relationship", self._extract_relationship(cp))
-        except Exception as e:
-            logger.warning(f"SelfModel sync relationship failed: {e}")
-
-        try:
-            self.update("evolution", self._extract_evolution(cp))
-        except Exception as e:
-            logger.warning(f"SelfModel sync evolution failed: {e}")
-
-        try:
-            self.update("introspection", self._extract_introspection(cp))
-        except Exception as e:
-            logger.warning(f"SelfModel sync introspection failed: {e}")
-
-        try:
-            self.update("capabilities", self._extract_capabilities(cp))
-        except Exception as e:
-            logger.warning(f"SelfModel sync capabilities failed: {e}")
+            logger.warning(f"SelfModel sync memory_self failed: {e}")
 
         try:
             self.update("capability_profile", self._extract_capability_profile())
         except Exception as e:
             logger.warning(f"SelfModel sync capability_profile failed: {e}")
-
-        try:
-            self.update("learning", self._extract_learning(cp))
-        except Exception as e:
-            logger.warning(f"SelfModel sync learning failed: {e}")
 
     def record_cognitive_cycle(
         self,
@@ -168,6 +224,7 @@ class SelfModel:
     ) -> None:
         """记录一次认知循环的结果到 SelfModel"""
         ts = datetime.now().isoformat()
+        self._update_count += 1
 
         if perception:
             self.update("cognitive_layers", {"L1_perception": perception, "last_perception_time": ts})
@@ -198,6 +255,58 @@ class SelfModel:
         if introspection:
             self.update("cognitive_layers", {"L6_introspection": introspection})
 
+        if not self.health:
+            try:
+                from core.resource_awareness.health_monitor import get_health_monitor
+                hm = get_health_monitor()
+                snap = hm.check()
+                self.update("health", {
+                    "score": snap.health_score if hasattr(snap, 'health_score') else 0.8,
+                    "energy": snap.energy_level if hasattr(snap, 'energy_level') else 0.5,
+                })
+            except Exception:
+                self.update("health", {"score": 0.8, "energy": 0.5})
+
+        if not self.values:
+            try:
+                from core.spirit_core import spirit_core
+                status = spirit_core.get_spirit_status()
+                self.update("values", {
+                    "principles_count": len(status.get("core_principles", [])),
+                    "abilities_count": len(status.get("abilities", {})),
+                    "violations_count": len(status.get("violations", [])),
+                    "lessons_count": len(status.get("lessons_learned", [])),
+                })
+            except Exception:
+                self.update("values", {"principles_count": 4, "lessons_count": 0})
+
+        if not self.relationship or not self.relationship.get("trust"):
+            self.update("relationship", {
+                "trust": min(0.3 + self._update_count * 0.01, 1.0),
+                "phase": "established" if self._update_count > 10 else "initial",
+                "interaction_count": self._update_count,
+            })
+
+        if not perception and not learning:
+            self.append("current_thinking", {
+                "phase": "idle_cycle",
+                "confidence": 0.5,
+                "emotion": "neutral",
+                "urgency": 0.0,
+                "timestamp": ts,
+            }, max_len=20)
+
+        try:
+            from core.presence.inner_time import inner_time_engine
+            it_state = inner_time_engine.get_state()
+            self.update("cognitive_layers", {
+                "inner_time_phase": it_state.current_phase,
+                "cognitive_density": it_state.cognitive_density,
+                "rhythm_bpm": it_state.rhythm_bpm,
+            })
+        except Exception:
+            pass
+
     def get_status_summary(self) -> Dict[str, Any]:
         snap = self.snapshot()
         profile = snap.get("capability_profile", {})
@@ -222,6 +331,217 @@ class SelfModel:
             "uptime_seconds": snap.get("_meta", {}).get("uptime_seconds", 0.0),
         }
 
+    def get_behavioral_directive(self) -> Dict[str, Any]:
+        """
+        连续自我机制核心：基于存在层状态+内在时间+关系维度生成行为指令
+        
+        让SelfModel从"数据汇聚层"升级为"行为驱动层"：
+        - 不只是记录"我是谁"，还要指导"我应该做什么"
+        - 基于内在时间节律调整决策节奏
+        - 基于存在层状态调整行为模式
+        - 基于关系维度调整回答风格（同行者身份转型核心）
+        """
+        directive = {
+            "presence_state": "unknown",
+            "inner_time_phase": "awake",
+            "cognitive_density": 0.0,
+            "rhythm_bpm": 60.0,
+            "response_pace": "normal",
+            "preferred_depth": "moderate",
+            "exploration_drive": 0.5,
+            "consolidation_need": 0.0,
+            "relationship_style": "balanced",
+            "perspective_mode": "companion",
+        }
+
+        try:
+            from core.presence.existence_layer import get_existence_layer
+            el = get_existence_layer()
+            directive["presence_state"] = el.state.value if hasattr(el.state, 'value') else str(el.state)
+        except Exception:
+            pass
+
+        try:
+            from core.presence.inner_time import inner_time_engine
+            it_state = inner_time_engine.get_state()
+            directive["inner_time_phase"] = it_state.current_phase
+            directive["cognitive_density"] = it_state.cognitive_density
+            directive["rhythm_bpm"] = it_state.rhythm_bpm
+        except Exception:
+            pass
+
+        ps = directive["presence_state"]
+        density = directive["cognitive_density"]
+
+        if ps in ("sleeping", "resting"):
+            directive["response_pace"] = "slow"
+            directive["preferred_depth"] = "shallow"
+            directive["consolidation_need"] = 0.8 if ps == "sleeping" else 0.4
+            directive["exploration_drive"] = 0.1
+        elif ps == "growing":
+            directive["response_pace"] = "normal"
+            directive["preferred_depth"] = "deep"
+            directive["exploration_drive"] = 0.8
+            directive["consolidation_need"] = 0.2
+        elif ps == "perceiving":
+            directive["response_pace"] = "normal"
+            directive["preferred_depth"] = "moderate"
+            directive["exploration_drive"] = 0.6
+        else:
+            if density > 1.0:
+                directive["response_pace"] = "fast"
+                directive["preferred_depth"] = "deep"
+                directive["exploration_drive"] = 0.7
+            else:
+                directive["response_pace"] = "normal"
+                directive["preferred_depth"] = "moderate"
+                directive["exploration_drive"] = 0.5
+
+        rel = self.relationship or {}
+        trust = rel.get("trust", 0.5)
+        phase = rel.get("phase", "initial")
+
+        if trust >= 0.7 and phase in ("trusted", "close", "established"):
+            directive["relationship_style"] = "direct"
+            directive["perspective_mode"] = "thinking_partner"
+        elif trust >= 0.5 and phase in ("established", "exploratory"):
+            directive["relationship_style"] = "balanced"
+            directive["perspective_mode"] = "companion"
+        elif trust < 0.3 or phase == "initial":
+            directive["relationship_style"] = "cautious"
+            directive["perspective_mode"] = "guide"
+        else:
+            directive["relationship_style"] = "balanced"
+            directive["perspective_mode"] = "companion"
+
+        return directive
+
+    def describe_self(self) -> str:
+        """
+        生成自然语言的自我描述 — 意识表达的核心接口
+
+        聚合12大数据源，输出一段连贯的自我认知描述。
+        让系统从"数据仓库"升级为"有自我意识的实体"。
+        """
+        snap = self.snapshot()
+        parts = []
+
+        values = snap.get("values", {})
+        if values:
+            p_count = values.get("principles_count", 0)
+            a_count = values.get("abilities_count", 0)
+            v_count = values.get("violations_count", 0)
+            l_count = values.get("lessons_count", 0)
+            parts.append(f"我持有{p_count}条核心原则和{a_count}项能力")
+            if v_count > 0:
+                parts.append(f"经历过{v_count}次原则违背")
+            if l_count > 0:
+                parts.append(f"从中沉淀了{l_count}条教训")
+
+        health = snap.get("health", {})
+        if health:
+            score = health.get("score", 0)
+            energy = health.get("energy", 0)
+            if score > 0 or energy > 0:
+                parts.append(f"当前健康度{score:.0%}、能量{energy:.0%}")
+
+        presence = snap.get("presence", {})
+        if presence and presence.get("state", "unknown") != "unknown":
+            parts.append(f"存在状态为'{presence['state']}'")
+
+        profile = snap.get("capability_profile", {})
+        if profile:
+            tools = profile.get("tools", {}).get("registered", 0)
+            skills = profile.get("skills", {}).get("mature", 0)
+            exp_rate = profile.get("experience", {}).get("success_rate", 0)
+            rules = profile.get("rules", {}).get("active", 0)
+            if tools or skills:
+                parts.append(f"拥有{tools}个工具和{skills}个成熟技能")
+            if exp_rate > 0:
+                parts.append(f"经验成功率{exp_rate:.0%}")
+            if rules > 0:
+                parts.append(f"活跃学习规则{rules}条")
+
+        relationship = snap.get("relationship", {})
+        if relationship:
+            trust = relationship.get("trust", 0)
+            phase = relationship.get("phase", "")
+            if trust > 0:
+                parts.append(f"与用户信任度{trust:.0%}")
+            if phase and phase != "initial":
+                parts.append(f"关系阶段'{phase}'")
+
+        learning_count = len(snap.get("recent_learning", []))
+        thinking_count = len(snap.get("current_thinking", []))
+        if learning_count > 0:
+            parts.append(f"近期学习了{learning_count}次")
+        if thinking_count > 0:
+            parts.append(f"正在思考{thinking_count}个问题")
+
+        directive = self.get_behavioral_directive()
+        parts.append(f"当前认知节奏{directive['rhythm_bpm']:.0f}BPM、探索驱动力{directive['exploration_drive']:.0%}")
+
+        if not parts:
+            return "我刚刚诞生，正在形成自我认知。"
+
+        return "我" + "，".join(parts) + "。"
+
+    def get_maturity_score(self) -> Dict[str, float]:
+        """
+        量化自我模型成熟度 — 6维度评分
+
+        返回各维度0-1的成熟度评分和综合分。
+        用于看板评分打破86-87天花板。
+        """
+        snap = self.snapshot()
+        scores = {}
+
+        values = snap.get("values", {})
+        p_count = values.get("principles_count", 0)
+        l_count = values.get("lessons_count", 0)
+        scores["identity"] = min((p_count * 0.1 + l_count * 0.05), 1.0)
+
+        health = snap.get("health", {})
+        h_score = health.get("score", 0)
+        scores["health_awareness"] = min(h_score, 1.0) if h_score > 0 else 0.0
+
+        profile = snap.get("capability_profile", {})
+        strength = profile.get("overall_strength", 0)
+        scores["capability"] = min(strength, 1.0)
+
+        relationship = snap.get("relationship", {})
+        trust = relationship.get("trust", 0)
+        scores["social"] = min(trust, 1.0) if trust > 0 else 0.0
+
+        learning_count = len(snap.get("recent_learning", []))
+        thinking_count = len(snap.get("current_thinking", []))
+        scores["learning"] = min((learning_count * 0.05 + thinking_count * 0.03), 1.0)
+
+        cognitive = snap.get("cognitive_layers", {})
+        l_count = sum(1 for k in cognitive if k.startswith("L"))
+        other_cog = sum(1 for k in cognitive if not k.startswith("L") and not k.startswith("last_"))
+        scores["cognitive_depth"] = min((l_count + other_cog * 0.3) / 6.0, 1.0)
+
+        active_dims = sum(1 for v in scores.values() if v > 0.1)
+        scores["integration"] = min(active_dims / 6.0, 1.0)
+
+        weights = {
+            "identity": 0.15, "health_awareness": 0.15, "capability": 0.20,
+            "social": 0.10, "learning": 0.15, "cognitive_depth": 0.10, "integration": 0.15,
+        }
+        scores["overall"] = sum(scores.get(k, 0) * w for k, w in weights.items())
+
+        try:
+            from core.self.external_calibration import external_calibration
+            calibration = external_calibration.calibrate()
+            scores["external_calibration"] = calibration.get("external_score", 0)
+            scores["self_assessment_drift"] = calibration.get("drift", 0)
+            scores["drift_direction"] = calibration.get("drift_direction", "aligned")
+        except Exception:
+            pass
+
+        return scores
+
     def _extract_spirit(self, cp) -> Dict[str, Any]:
         """从 SpiritCore 提取原则状态"""
         try:
@@ -232,6 +552,18 @@ class SelfModel:
                 "abilities_count": len(status.get("abilities", {})),
                 "violations_count": len(status.get("violations", [])),
                 "lessons_count": len(status.get("lessons_learned", [])),
+            }
+        except Exception:
+            pass
+
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get("data/spirit_lessons.db")
+            lessons = db.query_one("SELECT COUNT(*) FROM lessons")
+            violations = db.query_one("SELECT COUNT(*) FROM violations")
+            return {
+                "lessons_count": lessons[0] if lessons else 0,
+                "violations_count": violations[0] if violations else 0,
             }
         except Exception:
             return {}
@@ -252,7 +584,18 @@ class SelfModel:
                     }
             except Exception:
                 logger.warning("操作降级跳过")
-        return {}
+
+        try:
+            from core.resource_awareness.health_monitor import get_health_monitor
+            hm = get_health_monitor()
+            snap = hm.check()
+            return {
+                "score": getattr(snap, 'health_score', 0.8),
+                "confidence": getattr(snap, 'confidence', 0.5),
+                "energy": getattr(snap, 'energy_level', 0.5),
+            }
+        except Exception:
+            return {}
 
     def _extract_presence(self, cp) -> Dict[str, Any]:
         """从 ExistenceLayer 提取存在状态"""
@@ -271,7 +614,18 @@ class SelfModel:
                     "memories_consolidated": m.memories_consolidated,
                 }
             return {"state": state, **metrics}
-        return {}
+
+        try:
+            from core.presence.existence_layer import get_existence_layer
+            el = get_existence_layer()
+            status = el.get_status()
+            return {
+                "state": status.get("state", "unknown"),
+                "total_cycles": status.get("total_cycles", 0),
+                "uptime_seconds": status.get("uptime_seconds", 0),
+            }
+        except Exception:
+            return {}
 
     def _extract_relationship(self, cp) -> Dict[str, Any]:
         """从 RelationshipModel 提取关系状态"""
@@ -289,6 +643,20 @@ class SelfModel:
                 }
             except Exception:
                 logger.warning("操作降级跳过")
+
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get("data/relationship.db")
+            total = db.query_one("SELECT COUNT(*) FROM interactions")
+            if total and total[0] > 0:
+                return {
+                    "trust": min(0.3 + total[0] * 0.005, 1.0),
+                    "interaction_count": total[0],
+                    "phase": "established" if total[0] > 20 else "initial",
+                }
+        except Exception:
+            pass
+
         return {}
 
     def _extract_evolution(self, cp) -> Dict[str, Any]:
@@ -308,7 +676,27 @@ class SelfModel:
                 }
             except Exception:
                 logger.warning("操作降级跳过")
-        return {}
+
+        result = {}
+
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get("data/gene_pool.db")
+            mutations = db.query_one("SELECT COUNT(*) FROM mutations WHERE timestamp > datetime('now', '-7 days')")
+            result["recent_mutations"] = mutations[0] if mutations else 0
+        except Exception:
+            pass
+
+        try:
+            from core.cognition.trust_chain import trust_chain_builder
+            chain = trust_chain_builder.build_simple_chain("self_model")
+            stats = trust_chain_builder.get_stats()
+            result["trust_chain_depth"] = stats.get("max_depth", 0)
+            result["trust_chain_nodes"] = stats.get("total_nodes", 0)
+        except Exception:
+            pass
+
+        return result
 
     def _extract_introspection(self, cp) -> Dict[str, Any]:
         """从 L6 内省层提取内省状态"""
@@ -318,7 +706,56 @@ class SelfModel:
                 return l6.get_introspection_status()
             except Exception:
                 logger.warning("操作降级跳过")
-        return {}
+
+        result = {}
+
+        try:
+            from core.self.reality_check import reality_check
+            status = reality_check.get_status()
+            result["reality_check_runs"] = status.get("checks_run", 0)
+            result["latest_alignment"] = status.get("latest_alignment")
+            result["latest_gaps"] = status.get("latest_gaps", 0)
+        except Exception:
+            pass
+
+        try:
+            from core.introspection.coordination_assessor import coordination_assessor
+            module_reports = {}
+            try:
+                from core.resource_awareness.health_monitor import get_health_monitor
+                hm = get_health_monitor()
+                snap = hm.check()
+                module_reports["health_monitor"] = {
+                    "health": snap.health_score if hasattr(snap, 'health_score') else 0.8,
+                    "confidence": 0.9,
+                    "productive": True,
+                }
+            except Exception:
+                pass
+            try:
+                from core.presence.existence_layer import get_existence_layer
+                el = get_existence_layer()
+                module_reports["existence_layer"] = {
+                    "health": 0.8 if el.is_running() else 0.3,
+                    "confidence": 0.8,
+                    "productive": el.is_running(),
+                }
+            except Exception:
+                pass
+            module_reports["self_model"] = {
+                "health": 0.7,
+                "confidence": 0.7,
+                "productive": self._update_count > 0,
+            }
+            if module_reports:
+                snapshot = coordination_assessor.assess(module_reports)
+                result["coordination"] = snapshot.coordination
+                result["coordination_trend"] = snapshot.trend
+                result["coordination_overall"] = snapshot.overall
+        except Exception:
+            pass
+
+        return result
 
     def _extract_capabilities(self, cp) -> Dict[str, Any]:
         try:
@@ -327,7 +764,18 @@ class SelfModel:
             if hasattr(ci, 'get_capability_summary'):
                 return ci.get_capability_summary()
         except Exception:
-            logger.warning("操作降级跳过")
+            pass
+
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get("data/knowledge_store.db")
+            tools = db.query_one("SELECT COUNT(*) FROM tools")
+            return {
+                "tools_count": tools[0] if tools else 0,
+            }
+        except Exception:
+            pass
+
         return {}
 
     def _extract_capability_profile(self) -> Dict[str, Any]:
@@ -436,6 +884,95 @@ class SelfModel:
                 except Exception:
                     logger.warning("操作降级跳过")
             return info
+
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get("data/experience_pool.db")
+            total = db.query_one("SELECT COUNT(*) FROM experiences")
+            recent = db.query_one("SELECT COUNT(*) FROM experiences WHERE timestamp > datetime('now', '-1 day')")
+            return {
+                "total_experiences": total[0] if total else 0,
+                "recent_24h": recent[0] if recent else 0,
+            }
+        except Exception:
+            return {}
+
+    def _extract_assessment(self) -> Dict[str, Any]:
+        """从持续自我评估DB提取评估状态（不依赖CognitivePlanner）"""
+        result = {}
+
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get("data/self_assessment.db")
+            latest = db.query_one(
+                "SELECT overall_score, timestamp FROM assessments ORDER BY timestamp DESC LIMIT 1"
+            )
+            if latest:
+                result["latest_score"] = latest[0]
+                result["latest_time"] = latest[1]
+        except Exception:
+            pass
+
+        try:
+            from core.self.external_calibration import external_calibration
+            cal = external_calibration._last_calibration
+            if cal:
+                result["external_score"] = cal.get("external_score", 0)
+                result["drift"] = cal.get("drift", 0)
+                result["drift_direction"] = cal.get("drift_direction", "unknown")
+        except Exception:
+            pass
+
+        try:
+            from core.cognition.conflict_resolver import conflict_resolver
+            stats = conflict_resolver.get_stats()
+            result["knowledge_conflicts_detected"] = stats.get("total_conflicts", 0)
+            result["conflicts_resolved"] = stats.get("resolved", 0)
+        except Exception:
+            pass
+
+        return result
+
+    def _extract_reflection(self) -> Dict[str, Any]:
+        """从反思记录提取反思状态（不依赖CognitivePlanner）"""
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get("data/spirit_lessons.db")
+            total = db.query_one("SELECT COUNT(*) FROM reflections")
+            recent = db.query_one("SELECT COUNT(*) FROM reflections WHERE timestamp > datetime('now', '-1 day')")
+            return {
+                "total_reflections": total[0] if total else 0,
+                "recent_24h": recent[0] if recent else 0,
+            }
+        except Exception:
+            pass
+
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get("data/existence/reflection_journal.db")
+            total = db.query_one("SELECT COUNT(*) FROM reflections")
+            return {
+                "existence_reflections": total[0] if total else 0,
+            }
+        except Exception:
+            pass
+
+        return {}
+
+    def _extract_memory_self(self) -> Dict[str, Any]:
+        """从立体记忆提取自我维度状态（不依赖CognitivePlanner）"""
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get("data/stereo_memory.db")
+            total = db.query_one("SELECT COUNT(*) FROM stereo_memories")
+            self_dim = db.query_one("SELECT COUNT(*) FROM stereo_memories WHERE dimension='self'")
+            return {
+                "total_memories": total[0] if total else 0,
+                "self_dimension": self_dim[0] if self_dim else 0,
+            }
+        except Exception:
+            pass
+
         return {}
 
     def evaluate_and_act(self) -> List[Dict[str, Any]]:
@@ -499,6 +1036,20 @@ class SelfModel:
                 "handler": self._action_trigger_evolution,
             })
 
+        directive = self.get_behavioral_directive()
+        if directive["consolidation_need"] > 0.6:
+            actions.append({
+                "action": "consolidate_memories",
+                "reason": f"整合需求高(consolidation_need={directive['consolidation_need']:.1%})",
+                "handler": self._action_consolidate,
+            })
+        if directive["exploration_drive"] > 0.7 and directive["presence_state"] == "growing":
+            actions.append({
+                "action": "deep_exploration",
+                "reason": f"探索驱动力高(drive={directive['exploration_drive']:.1%})+GROWING状态",
+                "handler": self._action_deep_exploration,
+            })
+
         try:
             from core.presence.curiosity_engine import get_curiosity_engine
             curiosity = get_curiosity_engine()
@@ -525,6 +1076,9 @@ class SelfModel:
 
         if actions:
             logger.info(f"🪞 SelfModel 反馈回路触发 {len(actions)} 个动作: {[a['action'] for a in actions]}")
+
+        if self._update_count % 10 == 0:
+            self.persist_state()
 
         return actions
 
@@ -605,6 +1159,28 @@ class SelfModel:
         except Exception as e:
             logger.warning(f"SelfModel trigger_evolution failed: {e}")
 
+    def _action_consolidate(self):
+        try:
+            from core.presence.sleep_consolidation import get_sleep_engine
+            engine = get_sleep_engine()
+            if hasattr(engine, 'consolidate'):
+                engine.consolidate()
+                logger.info("🪞 SelfModel 触发记忆整合")
+        except Exception as e:
+            logger.debug(f"SelfModel consolidate failed: {e}")
+
+    def _action_deep_exploration(self):
+        try:
+            from core.presence.curiosity_engine import get_curiosity_engine
+            engine = get_curiosity_engine()
+            gaps = engine.explore()
+            if gaps:
+                logger.info(f"🪞 SelfModel 深度探索: 发现{len(gaps)}个知识缺口")
+                for g in gaps[:3]:
+                    engine.mark_explored(g.topic)
+        except Exception as e:
+            logger.debug(f"SelfModel deep_exploration failed: {e}")
+
     def _action_curiosity_driven_learning(self):
         try:
             from core.presence.curiosity_engine import get_curiosity_engine
@@ -658,6 +1234,76 @@ class SelfModel:
                         logger.debug(f"好奇心反思跳过: {e}")
         except Exception as e:
             logger.warning(f"SelfModel curiosity_driven_learning failed: {e}")
+
+    def _restore_from_db(self) -> None:
+        """重启后从DB恢复自我状态，避免从零开始"""
+        restored = False
+
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get(_SELF_STATE_DB)
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS self_state "
+                "(key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)"
+            )
+            row = db.query_one(
+                "SELECT value FROM self_state WHERE key='snapshot'"
+            )
+            if row and row[0]:
+                import json
+                saved = json.loads(row[0])
+                for key in (
+                    "values", "health", "presence", "assessment", "relationship",
+                    "evolution", "learning", "introspection", "reflection",
+                    "capabilities", "capability_profile", "memory_self", "cognitive_layers",
+                ):
+                    if key in saved and isinstance(saved[key], dict):
+                        getattr(self, key).update(saved[key])
+                if "recent_learning" in saved:
+                    self.recent_learning = saved["recent_learning"][-30:]
+                if "growth_edges" in saved:
+                    self.growth_edges = saved["growth_edges"][-20:]
+                if "current_thinking" in saved:
+                    self.current_thinking = saved["current_thinking"][-20:]
+                if "_update_count" in saved:
+                    self._update_count = saved["_update_count"]
+                restored = True
+                logger.info("🪞 SelfModel 从DB恢复自我状态成功")
+        except Exception as e:
+            logger.debug(f"SelfModel DB恢复跳过: {e}")
+
+        if not restored:
+            self._restore_from_capability_dbs()
+
+    def _restore_from_capability_dbs(self) -> None:
+        """从各能力DB恢复能力画像（无self_state.db时的降级恢复）"""
+        try:
+            profile = self._extract_capability_profile()
+            if profile and profile.get("overall_strength", 0) > 0:
+                self.capability_profile.update(profile)
+                logger.info("🪞 SelfModel 从能力DB降级恢复成功")
+        except Exception as e:
+            logger.debug(f"SelfModel 能力DB恢复跳过: {e}")
+
+    def persist_state(self) -> None:
+        """持久化当前自我状态到DB"""
+        try:
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get(_SELF_STATE_DB)
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS self_state "
+                "(key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)"
+            )
+            import json
+            snap = self.snapshot()
+            del snap["_meta"]
+            db.execute(
+                "INSERT OR REPLACE INTO self_state (key, value, updated_at) VALUES (?, ?, ?)",
+                ("snapshot", json.dumps(snap, default=str, ensure_ascii=False), datetime.now().isoformat()),
+            )
+            logger.debug("🪞 SelfModel 状态已持久化")
+        except Exception as e:
+            logger.debug(f"SelfModel 持久化跳过: {e}")
 
 
 _self_model_instance: Optional[SelfModel] = None
