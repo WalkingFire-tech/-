@@ -489,6 +489,29 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
         cognitive_validation=_cognitive_validation if '_cognitive_validation' in locals() else None,
     )
 
+    # ========== 终极保护：全路径失败 → 永不放弃引擎 ==========
+    if not final_response or len(final_response.strip()) < 20:
+        try:
+            from core.never_give_up import NeverGiveUpEngine
+            _ngu = NeverGiveUpEngine()
+            _ngu_result = _ngu.solve(
+                question=user_input,
+                context={
+                    "intent_type": intent_type,
+                    "route": route,
+                    "failed_paths": [a[0] for a in attempts if not a[1]][-5:],
+                    "attempt_count": len(attempts),
+                }
+            )
+            if isinstance(_ngu_result, dict) and _ngu_result.get("response"):
+                _ngu_response = _ngu_result["response"]
+                if len(str(_ngu_response)) > 50:
+                    final_response = str(_ngu_response)
+                    attempts.append(("永不放弃引擎", True, "终极兜底"))
+                    logger.info(f"🧩 永不放弃引擎启用: {len(final_response)}字")
+        except Exception as _ngu_e:
+            logger.warning(f"永不放弃引擎失败: {_ngu_e}")
+
     # ========== 阶段R：最终响应组装（提取到response_assembler.py） ==========
     from backend.services.response_assembler import assemble_and_emit as _assemble_and_emit
     _ra_result = await _assemble_and_emit(
