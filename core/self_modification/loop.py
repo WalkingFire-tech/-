@@ -417,8 +417,8 @@ class SelfModificationLoop(LoopMixin):
             try:
                 from core.self_modification.strategy_evolver import strategy_evolver
                 strategy_evolver.evolve_modification_strategy()
-        except Exception as e:
-            logger.warning(f"自修改审计记录DB写入失败: {e}")
+            except Exception as e:
+                logger.warning(f"自修改审计记录DB写入失败: {e}")
 
     def _load_lesson_rules(self) -> List[Dict[str, Any]]:
         try:
