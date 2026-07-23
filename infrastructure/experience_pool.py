@@ -83,6 +83,9 @@ class ExperiencePool:
                 "model_name": model_name,
                 "success": success,
                 "quality_score": quality_score,
+                "plan": plan,
+                "duration": duration,
+                "user_feedback": user_feedback,
             })
         except Exception:
             logger.warning("操作降级跳过")

@@ -274,7 +274,7 @@ class VectorRetriever:
         try:
             th = threading.Thread(target=_load_st_model, daemon=True)
             th.start()
-            th.join(timeout=10)
+            th.join(timeout=60)
             if _ST_AVAILABLE:
                 logger.info("sentence_transformers语义检索已启用")
             else:

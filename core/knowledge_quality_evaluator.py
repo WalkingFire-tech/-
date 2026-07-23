@@ -9,7 +9,7 @@
 
 from typing import Dict, Tuple, List
 from dataclasses import dataclass
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 from pathlib import Path
 import re
 
@@ -245,7 +245,7 @@ class KnowledgeQualityEvaluator:
             if not db_path.exists():
                 return 0.95
             
-            db = DatabaseManager.get(str(db_path))
+            db = get_storage_port(str(db_path))
             
             table_row = db.query_one("""
                 SELECT name FROM sqlite_master 

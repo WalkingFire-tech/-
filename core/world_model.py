@@ -20,7 +20,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -87,7 +87,7 @@ class WorldModel:
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
 
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS causal_nodes (
                 id TEXT PRIMARY KEY,
@@ -134,7 +134,7 @@ class WorldModel:
         ''')
 
     def add_causal_node(self, node_id: str, node_type: str, content: str, properties: Dict = None) -> bool:
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         now = datetime.now().isoformat()
         db.execute(
             'INSERT OR REPLACE INTO causal_nodes (id, node_type, content, properties, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -146,7 +146,7 @@ class WorldModel:
     def add_causal_edge(self, source_id: str, target_id: str,
                         edge_type: CausalEdgeType = CausalEdgeType.CAUSES,
                         probability: float = 0.5, confidence: float = 0.3) -> bool:
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         now = datetime.now().isoformat()
         db.execute(
             'INSERT OR REPLACE INTO causal_edges (source_id, target_id, edge_type, probability, confidence, evidence_count, last_verified, created_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)',
@@ -205,7 +205,7 @@ class WorldModel:
 
     def _save_prediction(self, query_hash: str, prediction: Prediction):
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute(
                 'INSERT INTO predictions (query_hash, predicted_state, probability, confidence, causal_path, created_at) VALUES (?, ?, ?, ?, ?, ?)',
                 (query_hash, json.dumps(prediction.predicted_state, ensure_ascii=False),
@@ -310,7 +310,7 @@ class WorldModel:
 
     def save_counterfactual(self, intent: str, actual_action: str, alternative_action: str,
                             actual_score: float, alt_score: float, would_be_better: bool, lesson: str) -> bool:
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute(
             'INSERT INTO counterfactuals (intent, actual_action, alternative_action, actual_score, alternative_score, would_have_been_better, lesson, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             (intent, actual_action, alternative_action, actual_score, alt_score, would_be_better, lesson, datetime.now().isoformat()),
@@ -325,7 +325,7 @@ class WorldModel:
         return result
 
     def verify(self, query_hash: str, actual_outcome: Dict) -> PredictionResult:
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one(
             'SELECT id, predicted_state, probability, confidence, causal_path FROM predictions WHERE query_hash = ? ORDER BY created_at DESC LIMIT 1',
             (query_hash,)
@@ -366,32 +366,63 @@ class WorldModel:
         action = experience.get("model_name", "")
         success = experience.get("success", False)
         quality = experience.get("quality_score", 50)
+        plan = experience.get("plan", "")
+        duration = experience.get("duration", 0.0)
+        user_feedback = experience.get("user_feedback", 0)
 
         if not intent:
             return False
 
         action = action if action and action != "unknown" else "internal"
 
+        strategy = self._extract_strategy(plan, action)
+
         source_id = f"intent:{intent}"
         method_id = f"method:{action}"
+        strategy_id = f"strategy:{strategy}" if strategy and strategy != action else None
         target_id = f"outcome:{'success' if success else 'failure'}"
 
         self.add_causal_node(source_id, "intent", intent)
         self.add_causal_node(method_id, "method", action)
+        if strategy_id:
+            self.add_causal_node(strategy_id, "strategy", strategy)
         self.add_causal_node(target_id, "outcome", "成功" if success else "失败")
 
-        # Edge 1: intent → method (ENABLES)
         self._upsert_edge(source_id, method_id, CausalEdgeType.ENABLES, 0.5, 0.3)
 
-        # Edge 2: method → outcome (CAUSES/PREVENTS)
+        if strategy_id:
+            self._upsert_edge(method_id, strategy_id, CausalEdgeType.ENABLES, 0.6, 0.3)
+            self._upsert_edge(strategy_id, target_id, CausalEdgeType.CAUSES if success else CausalEdgeType.PREVENTS,
+                              quality / 100.0 if success else 1.0 - quality / 100.0, 0.3)
+
         edge_type = CausalEdgeType.CAUSES if success else CausalEdgeType.PREVENTS
         prob = quality / 100.0 if success else 1.0 - quality / 100.0
-        self._upsert_edge(method_id, target_id, edge_type, prob, 0.3)
 
-        # Edge 3: intent → outcome (direct, for quick lookup)
+        if duration > 0:
+            prob = prob * max(0.3, 1.0 - duration / 30.0)
+
+        if user_feedback and user_feedback < 0:
+            edge_type = CausalEdgeType.PREVENTS
+            prob = max(prob, 0.6)
+
+        self._upsert_edge(method_id, target_id, edge_type, prob, 0.3)
         self._upsert_edge(source_id, target_id, edge_type, prob * 0.8, 0.2)
 
         return True
+
+    def _extract_strategy(self, plan: str, fallback: str) -> str:
+        if not plan or plan == "{}":
+            return fallback
+        try:
+            import json
+            p = json.loads(plan) if isinstance(plan, str) else plan
+            if isinstance(p, dict):
+                return p.get("strategy", p.get("approach", p.get("method", fallback)))
+        except Exception:
+            pass
+        if len(plan) < 30:
+            return plan
+        return fallback
 
     def _upsert_edge(self, source_id: str, target_id: str,
                      edge_type: CausalEdgeType, prob: float, base_conf: float):
@@ -399,7 +430,7 @@ class WorldModel:
         if existing:
             new_prob = (existing.probability * existing.evidence_count + prob) / (existing.evidence_count + 1)
             new_conf = min(1.0, existing.confidence + 0.1)
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute(
                 'UPDATE causal_edges SET probability=?, confidence=?, evidence_count=evidence_count+1, last_verified=? WHERE source_id=? AND target_id=? AND edge_type=?',
                 (new_prob, new_conf, datetime.now().isoformat(), source_id, target_id, edge_type.value),
@@ -408,8 +439,285 @@ class WorldModel:
         else:
             self.add_causal_edge(source_id, target_id, edge_type, prob, base_conf)
 
+    def get_related_nodes(self, node_id: str, max_depth: int = 2, max_results: int = 10) -> List[Dict]:
+        discovered = []
+        visited = {node_id}
+        frontier = [node_id]
+        db = get_storage_port(self.db_path)
+
+        for depth in range(max_depth):
+            next_frontier = []
+            placeholders = ','.join(['?' for _ in frontier])
+            rows = db.query(
+                f'SELECT source_id, target_id, edge_type, probability, confidence FROM causal_edges WHERE source_id IN ({placeholders}) OR target_id IN ({placeholders})',
+                frontier + frontier
+            )
+            for row in rows:
+                src, tgt, etype, prob, conf = row
+                neighbor = tgt if src in visited else src
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    next_frontier.append(neighbor)
+                    node = self._get_node(neighbor)
+                    discovered.append({
+                        "id": neighbor,
+                        "content": node.content if node else neighbor,
+                        "node_type": node.node_type if node else "unknown",
+                        "relation": etype,
+                        "probability": prob,
+                        "confidence": conf,
+                        "depth": depth + 1,
+                    })
+                    if len(discovered) >= max_results:
+                        return discovered
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        return discovered
+
+    def simulate(self, current_state: Dict, hypothetical_changes: Dict, intent: str = "") -> Dict:
+        original_edges = self._find_relevant_edges(current_state, intent)
+        original_pred = self.predict(current_state, intent)
+
+        modified_state = dict(current_state)
+        modified_state.update(hypothetical_changes)
+
+        override_edges = []
+        for key, value in hypothetical_changes.items():
+            source_id = f"intent:{key}" if not key.startswith(("intent:", "method:", "outcome:")) else key
+            target_id = f"outcome:{value}" if not str(value).startswith(("intent:", "method:", "outcome:")) else str(value)
+            override_edges.append({
+                "source_id": source_id,
+                "target_id": target_id,
+                "edge_type": "causes",
+                "probability": 0.7,
+                "confidence": 0.5,
+            })
+
+        modified_pred = self.predict(modified_state, intent)
+
+        delta_prob = modified_pred.probability - original_pred.probability
+        delta_conf = modified_pred.confidence - original_pred.confidence
+
+        return {
+            "original_prediction": {
+                "outcome": original_pred.predicted_state,
+                "probability": original_pred.probability,
+                "confidence": original_pred.confidence,
+            },
+            "simulated_prediction": {
+                "outcome": modified_pred.predicted_state,
+                "probability": modified_pred.probability,
+                "confidence": modified_pred.confidence,
+            },
+            "hypothetical_changes": hypothetical_changes,
+            "delta_probability": round(delta_prob, 4),
+            "delta_confidence": round(delta_conf, 4),
+            "improves_outcome": delta_prob > 0 and delta_conf > 0,
+            "risk_level": "low" if delta_prob >= -0.1 else ("medium" if delta_prob >= -0.3 else "high"),
+            "override_edges_applied": len(override_edges),
+        }
+
+    def find_causal_paths(self, source_id: str, target_id: str, max_depth: int = 4) -> List[Dict]:
+        paths = []
+        visited_edges = set()
+        db = get_storage_port(self.db_path)
+
+        def _bfs(current_path, current_prob, current_conf):
+            current_node = current_path[-1]
+            if len(current_path) > max_depth + 1:
+                return
+            if current_node == target_id and len(current_path) > 1:
+                paths.append({
+                    "path": list(current_path),
+                    "probability": round(current_prob, 4),
+                    "confidence": round(current_conf, 4),
+                    "score": round(current_prob * current_conf, 4),
+                    "length": len(current_path) - 1,
+                })
+                return
+
+            rows = db.query(
+                'SELECT target_id, edge_type, probability, confidence FROM causal_edges WHERE source_id = ?',
+                (current_node,)
+            )
+            for row in rows:
+                next_node, etype, prob, conf = row
+                edge_key = (current_node, next_node, etype)
+                if edge_key in visited_edges:
+                    continue
+                if next_node in current_path:
+                    continue
+                visited_edges.add(edge_key)
+                mult = prob if etype in ("causes", "enables") else (1.0 - prob)
+                _bfs(current_path + [next_node], current_prob * mult, current_conf * conf)
+                visited_edges.discard(edge_key)
+
+        _bfs([source_id], 1.0, 1.0)
+        paths.sort(key=lambda p: p["score"], reverse=True)
+        return paths[:5]
+
+    def trace_with_spirit(self, query: str, context_type: str = "query") -> Dict:
+        """
+        P5-3a: 精神共振驱动的因果追溯
+        
+        当共振检测到PURSUE_ESSENCE/LOGICAL_SELF_CONSISTENT时，
+        自动触发深层因果链追溯，而非停留在表面预测。
+        
+        Returns:
+            {"resonances": list, "causal_paths": list, "deep_trace": dict, "truth_feedback": dict}
+        """
+        spirit_resonances = []
+        try:
+            from core.spirit_core import spirit_core
+            spirit_resonances = spirit_core.resonate(query, context_type=context_type)
+        except Exception:
+            pass
+
+        top_principles = [r["principle"] for r in spirit_resonances[:3]] if spirit_resonances else []
+
+        deep_trace = None
+        causal_paths = []
+        search_terms = self._extract_causal_seeds(query)
+
+        if "PURSUE_ESSENCE" in top_principles:
+            for seed in search_terms[:3]:
+                paths = self.find_causal_paths(seed, f"outcome:success", max_depth=4)
+                causal_paths.extend(paths)
+            if causal_paths:
+                best = max(causal_paths, key=lambda p: p["score"]) if causal_paths else None
+                deep_trace = {
+                    "trigger": "PURSUE_ESSENCE",
+                    "seed_nodes": search_terms[:3],
+                    "best_path": best,
+                    "total_paths_found": len(causal_paths),
+                }
+            else:
+                deep_trace = {
+                    "trigger": "PURSUE_ESSENCE",
+                    "seed_nodes": search_terms[:3],
+                    "best_path": None,
+                    "total_paths_found": 0,
+                    "guidance": self._generate_essence_guidance(query, search_terms),
+                }
+
+        if "LOGICAL_SELF_CONSISTENT" in top_principles and not deep_trace:
+            contradictions = []
+            for seed in search_terms[:2]:
+                success_paths = self.find_causal_paths(seed, f"outcome:success", max_depth=3)
+                failure_paths = self.find_causal_paths(seed, f"outcome:failure", max_depth=3)
+                if success_paths and failure_paths:
+                    contradictions.append({
+                        "seed": seed,
+                        "success_path": success_paths[0]["path"],
+                        "failure_path": failure_paths[0]["path"],
+                    })
+            if contradictions:
+                deep_trace = {
+                    "trigger": "LOGICAL_SELF_CONSISTENT",
+                    "contradictions": contradictions,
+                }
+            else:
+                deep_trace = {
+                    "trigger": "LOGICAL_SELF_CONSISTENT",
+                    "contradictions": [],
+                    "guidance": self._generate_consistency_guidance(query),
+                }
+
+        if not deep_trace and spirit_resonances:
+            deep_trace = {
+                "trigger": spirit_resonances[0]["principle"],
+                "seed_nodes": search_terms[:3],
+                "best_path": None,
+                "total_paths_found": 0,
+                "guidance": f"共振原则'{spirit_resonances[0]['principle']}'建议方向: {spirit_resonances[0]['drive_direction']}",
+            }
+
+        truth_feedback = self._compute_truth_feedback(spirit_resonances, causal_paths)
+
+        try:
+            from core.monitoring.runtime_trigger_monitor import trigger_monitor
+            trigger_monitor.record("trace_with_spirit", triggered=True)
+            trigger_monitor.record("trace_with_spirit.deep_trace", triggered=deep_trace is not None)
+            trigger_monitor.record("trace_with_spirit.causal_paths", triggered=len(causal_paths) > 0, empty_result=len(causal_paths) == 0)
+            trigger_monitor.record("trace_with_spirit.guidance", triggered=deep_trace is not None and "guidance" in (deep_trace or {}), degraded=deep_trace is not None and deep_trace.get("best_path") is None)
+        except Exception:
+            pass
+
+        return {
+            "resonances": spirit_resonances[:3],
+            "causal_paths": causal_paths[:5],
+            "deep_trace": deep_trace,
+            "truth_feedback": truth_feedback,
+        }
+
+    def _extract_causal_seeds(self, query: str) -> List[str]:
+        """从查询中提取因果追溯种子节点ID"""
+        seeds = []
+        stop_words = {"为什么", "怎么", "如何", "什么", "哪里", "哪个", "怎样", "的是", "可以", "应该", "需要", "能够", "已经", "可能", "就是", "因为", "所以", "但是", "而且", "或者", "如果", "那么", "虽然", "不过", "然而"}
+        try:
+            import re
+            for match in re.finditer(r'[\u4e00-\u9fff]{2,}', query):
+                word = match.group()
+                if word not in stop_words:
+                    seeds.append(f"intent:{word}")
+        except Exception:
+            seeds.append(f"intent:{query[:10]}")
+        return seeds[:5]
+
+    def _generate_essence_guidance(self, query: str, seeds: List[str]) -> str:
+        """P5-3a: 因果图为空时，基于追求本质原则生成方向性指引"""
+        keywords = "、".join(s.replace("intent:", "") for s in seeds[:3])
+        return f"因果图尚无'{keywords}'的因果链数据。建议追溯方向：从'{keywords}'的根因出发，分析其与成功/失败结果的因果关系，并将经验注入因果图"
+
+    def _generate_consistency_guidance(self, query: str) -> str:
+        """P5-3a: 因果图为空时，基于逻辑自洽原则生成方向性指引"""
+        return f"因果图尚无矛盾路径数据。建议检测方向：对比查询中涉及的因果路径是否存在成功路径与失败路径的矛盾，若发现矛盾则坦诚标注"
+
+    def _compute_truth_feedback(self, resonances: list, causal_paths: list) -> Dict:
+        """
+        P5-3a: 因果验证结果反馈到真谛权重
+        
+        当因果路径的累积置信度高于阈值时，增强相关真谛的证据计数。
+        """
+        if not causal_paths:
+            resonance_boost = False
+            if resonances:
+                top = resonances[0]
+                if top.get("strength", 0) >= 0.4:
+                    resonance_boost = True
+            return {
+                "action": "resonance_guided" if resonance_boost else "none",
+                "reason": "no_causal_paths" + ("_but_resonance_suggests_direction" if resonance_boost else ""),
+                "resonance_principle": resonances[0]["principle"] if resonance_boost else None,
+            }
+
+        best_path = max(causal_paths, key=lambda p: p.get("score", 0))
+        path_confidence = best_path.get("confidence", 0)
+
+        if path_confidence >= 0.7:
+            return {
+                "action": "boost_evidence",
+                "reason": "high_confidence_causal_path",
+                "path_confidence": path_confidence,
+                "path": best_path.get("path", []),
+            }
+        elif path_confidence >= 0.4:
+            return {
+                "action": "neutral",
+                "reason": "moderate_confidence",
+                "path_confidence": path_confidence,
+            }
+        else:
+            return {
+                "action": "flag_uncertainty",
+                "reason": "low_confidence_causal_path",
+                "path_confidence": path_confidence,
+            }
+
     def get_stats(self) -> Dict:
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         node_count = db.query_one('SELECT COUNT(*) FROM causal_nodes')[0]
         edge_count = db.query_one('SELECT COUNT(*) FROM causal_edges')[0]
         pred_count = db.query_one('SELECT COUNT(*) FROM predictions')[0]
@@ -433,24 +741,25 @@ class WorldModel:
     def _find_relevant_edges(self, state: Dict, intent: str = "") -> List[CausalEdge]:
         edges = []
         search_terms = []
-        
+
         if intent:
             search_terms.append(f"intent:{intent}")
         for k, v in state.items():
             if isinstance(v, str) and len(v) > 0:
                 search_terms.append(f"intent:{v}")
                 search_terms.append(f"outcome:{v}")
-        
+
         if not search_terms:
             return edges
-        
-        db = DatabaseManager.get(self.db_path)
+
+        db = get_storage_port(self.db_path)
         placeholders = ' OR '.join(['source_id LIKE ?' for _ in search_terms])
         params = [f'%{t}%' for t in search_terms]
         rows = db.query(
             f'SELECT source_id, target_id, edge_type, probability, confidence, evidence_count, last_verified FROM causal_edges WHERE {placeholders} ORDER BY probability * confidence DESC LIMIT 20',
             params
         )
+        direct_targets = set()
         for row in rows:
             edges.append(CausalEdge(
                 source_id=row[0], target_id=row[1],
@@ -458,18 +767,38 @@ class WorldModel:
                 probability=row[3], confidence=row[4],
                 evidence_count=row[5], last_verified=row[6]
             ))
+            direct_targets.add(row[1])
+
+        if direct_targets and len(edges) < 10:
+            ph = ','.join(['?' for _ in direct_targets])
+            indirect_rows = db.query(
+                f'SELECT source_id, target_id, edge_type, probability, confidence, evidence_count, last_verified FROM causal_edges WHERE source_id IN ({ph}) ORDER BY probability * confidence DESC LIMIT 10',
+                list(direct_targets)
+            )
+            existing = {(e.source_id, e.target_id, e.edge_type) for e in edges}
+            for row in indirect_rows:
+                key = (row[0], row[1], row[2])
+                if key not in existing:
+                    edges.append(CausalEdge(
+                        source_id=row[0], target_id=row[1],
+                        edge_type=CausalEdgeType(row[2]),
+                        probability=row[3] * 0.8,
+                        confidence=row[4] * 0.8,
+                        evidence_count=row[5], last_verified=row[6]
+                    ))
+                    existing.add(key)
 
         return edges
 
     def _get_node(self, node_id: str) -> Optional[CausalNode]:
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one('SELECT id, node_type, content, properties FROM causal_nodes WHERE id = ?', (node_id,))
         if row:
             return CausalNode(id=row[0], node_type=row[1], content=row[2], properties=json.loads(row[3]) if row[3] else {})
         return None
 
     def _get_edge(self, source_id: str, target_id: str, edge_type: CausalEdgeType) -> Optional[CausalEdge]:
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one(
             'SELECT source_id, target_id, edge_type, probability, confidence, evidence_count, last_verified FROM causal_edges WHERE source_id=? AND target_id=? AND edge_type=?',
             (source_id, target_id, edge_type.value)
@@ -483,7 +812,7 @@ class WorldModel:
         self._update_edge_confidence_in_conn(source_id, target_id, was_correct)
 
     def _update_edge_confidence_in_conn(self, source_id: str, target_id: str, was_correct: bool):
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one(
             'SELECT probability, confidence, evidence_count FROM causal_edges WHERE source_id=? AND target_id=?',
             (source_id, target_id)
@@ -514,8 +843,7 @@ class WorldModel:
             return True
         if pred_outcome in actual_outcome or actual_outcome in pred_outcome:
             return True
-        if predicted.get("edge_type") == actual.get("edge_type"):
-            return True
+
         return False
 
     def _hash_state(self, state: Dict, intent: str = "") -> str:

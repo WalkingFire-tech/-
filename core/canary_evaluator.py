@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 import json
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class CanaryEvaluator:
     
     def is_canary(self, rule_id: int) -> bool:
         """判断某个规则是否处于金丝雀模式"""
-        db = DatabaseManager.get(self.rules_db)
+        db = get_storage_port(self.rules_db)
         
         try:
             row = db.query_one(
@@ -90,7 +90,7 @@ class CanaryEvaluator:
             }
         """
         try:
-            db = DatabaseManager.get(self.rules_db)
+            db = get_storage_port(self.rules_db)
             
             rule_row = db.query_one(
                 'SELECT created_at FROM learning_rules WHERE id = ?',
@@ -108,7 +108,7 @@ class CanaryEvaluator:
                         "delta": 0.0
                     }
             
-            db2 = DatabaseManager.get(self.reflection_db)
+            db2 = get_storage_port(self.reflection_db)
             
             time_threshold = (datetime.utcnow() - timedelta(days=self.observation_days)).isoformat()
             
@@ -183,7 +183,7 @@ class CanaryEvaluator:
     
     def _promote_rule(self, rule_id: int):
         """将规则晋升为全量"""
-        db = DatabaseManager.get(self.rules_db)
+        db = get_storage_port(self.rules_db)
         
         try:
             db.execute('''
@@ -199,7 +199,7 @@ class CanaryEvaluator:
     
     def _reject_rule(self, rule_id: int, delta: float):
         """拒绝规则"""
-        db = DatabaseManager.get(self.rules_db)
+        db = get_storage_port(self.rules_db)
         
         try:
             db.execute('''
@@ -234,7 +234,7 @@ class CanaryEvaluator:
             "details": []
         }
         
-        db = DatabaseManager.get(self.rules_db)
+        db = get_storage_port(self.rules_db)
         
         try:
             canary_rules = db.query('''
@@ -285,7 +285,7 @@ class CanaryEvaluator:
         
         新规则默认进入canary状态，等待验证
         """
-        db = DatabaseManager.get(self.rules_db)
+        db = get_storage_port(self.rules_db)
         
         try:
             cur = db.execute('''
@@ -304,7 +304,7 @@ class CanaryEvaluator:
     
     def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""
-        db = DatabaseManager.get(self.rules_db)
+        db = get_storage_port(self.rules_db)
         
         try:
             total = db.query_one('SELECT COUNT(*) FROM learning_rules')[0]

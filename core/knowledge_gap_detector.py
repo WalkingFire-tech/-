@@ -20,7 +20,7 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class KnowledgeGapDetector:
@@ -66,7 +66,7 @@ class KnowledgeGapDetector:
         """初始化数据库（存储学习到的规则）"""
         Path(self.db_path).parent.mkdir(exist_ok=True)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS domain_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -187,7 +187,7 @@ class KnowledgeGapDetector:
             return True
         
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query(
                 "SELECT keywords FROM domain_rules WHERE confidence_threshold >= 0.8"
             )
@@ -239,7 +239,7 @@ class KnowledgeGapDetector:
     def _check_error_patterns(self, user_query: str, response: str) -> Tuple[bool, str]:
         """检查已知错误模式"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query(
                 "SELECT pattern_type, pattern, correction FROM error_patterns WHERE confidence >= 0.7"
             )
@@ -256,7 +256,7 @@ class KnowledgeGapDetector:
                            correction: str, confidence: float = 0.8):
         """学习新的错误模式"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute(
                 "INSERT INTO error_patterns (pattern_type, pattern, correction, confidence, created_at) VALUES (?, ?, ?, ?, ?)",
                 (pattern_type, pattern, correction, confidence, datetime.now().isoformat()),
@@ -270,7 +270,7 @@ class KnowledgeGapDetector:
                        confidence_threshold: float = 0.8):
         """添加领域规则"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute(
                 "INSERT INTO domain_rules (domain, keywords, confidence_threshold, created_at, source) VALUES (?, ?, ?, ?, ?)",
                 (domain, json.dumps(keywords, ensure_ascii=False), confidence_threshold, datetime.now().isoformat(), "user_added"),
@@ -304,7 +304,7 @@ class KnowledgeGapDetector:
         """记录验证历史"""
         try:
             query_hash = str(hash(query))[:12]
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute(
                 "INSERT INTO validation_history (query_hash, has_gap, reason, confidence, validated_at) VALUES (?, ?, ?, ?, ?)",
                 (query_hash, int(has_gap), reason, confidence, datetime.now().isoformat()),

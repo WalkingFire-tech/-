@@ -7,7 +7,7 @@ from datetime import datetime
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -44,7 +44,7 @@ class MethodologyExtractor:
     
     def _init_database(self):
         """初始化数据库"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             CREATE TABLE IF NOT EXISTS methodologies (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -203,7 +203,7 @@ class MethodologyExtractor:
     
     def _save_methodology(self, method: Methodology):
         """保存方法论"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO methodologies
             (name, description, trigger_conditions, application_steps,
@@ -229,7 +229,7 @@ class MethodologyExtractor:
         Returns:
             相关方法论列表
         """
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         rows = db.query('''
             SELECT * FROM methodologies
             ORDER BY effectiveness_score DESC, use_count DESC
@@ -253,7 +253,7 @@ class MethodologyExtractor:
     
     def record_methodology_use(self, methodology_name: str):
         """记录方法论使用"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             UPDATE methodologies
             SET use_count = use_count + 1, last_used = CURRENT_TIMESTAMP
@@ -262,7 +262,7 @@ class MethodologyExtractor:
     
     def get_statistics(self) -> Dict:
         """获取统计信息"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         total_row = db.query_one('SELECT COUNT(*) as cnt FROM methodologies')
         total = total_row['cnt'] if total_row else 0
         avg_row = db.query_one('SELECT AVG(effectiveness_score) as avg FROM methodologies')

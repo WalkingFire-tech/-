@@ -66,7 +66,7 @@ async def fetch_tool_results(query: str, intent_type: str = "", methodology: dic
 
 
 def query_needs_tools(query: str) -> bool:
-    """判断用户查询是否需要工具调用（代码/文件/项目分析/硬件/系统命令相关）"""
+    """判断用户查询是否需要工具调用（代码/文件/项目分析/硬件/系统命令/时间/计算/搜索相关）"""
     ql = query.lower()
     tool_triggers = [
         "读取", "打开", "查看文件", "文件内容", "看看文件", "读一下",
@@ -83,6 +83,10 @@ def query_needs_tools(query: str) -> bool:
         "检测硬件", "扫描设备", "获取数据", "读取数据",
         "ch340", "cp210", "ft232", "arduino", "stm32", "esp32",
         "单片机", "传感器", "usb设备",
+        "几点", "时间", "现在几点", "几点了", "日期", "星期几",
+        "计算", "求值", "等于多少", "算一下", "加起来",
+        "搜索", "查一下", "搜一下", "查找", "搜索一下", "帮我查",
+        "百度", "google", "bing", "搜搜",
     ]
     if any(t in ql for t in tool_triggers):
         return True

@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Dict, List
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class ActiveScheduler:
@@ -106,7 +106,7 @@ class ActiveScheduler:
         decay_rate = 0.99
         days_threshold = 30
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             UPDATE knowledge_items
             SET quality_score = quality_score * ?
@@ -121,7 +121,7 @@ class ActiveScheduler:
         """清理低质量知识"""
         min_quality = 10.0
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         cursor = db.execute('''
             DELETE FROM knowledge_items
             WHERE quality_score < ?
@@ -266,10 +266,10 @@ class ActiveScheduler:
                 logger.error(f"基因演化失败: {e}")
     
     def _collect_fitness_stats(self) -> Dict:
-        """收集适应度统计"""
+        """收集适应度统计 - 从experience_pool获取真实数据"""
         try:
-            db = DatabaseManager.get(self.db_path)
-            
+            db = get_storage_port(self.db_path)
+
             like_rate_row = db.query_one('''
                 SELECT 
                     AVG(CASE WHEN access_count > 1 THEN 1.0 ELSE 0.5 END) as like_rate
@@ -295,12 +295,44 @@ class ActiveScheduler:
                 WHERE knowledge_type = 'qa'
             ''')
             efficiency = ((eff_row['avg_quality'] if eff_row and eff_row['avg_quality'] is not None else 50) or 50) / 100.0
+
+            dialog_reduction = 0.1
+            external_reduction = 0.05
+
+            try:
+                from pathlib import Path
+                exp_db_path = Path("data/experience_pool.db")
+                if exp_db_path.exists():
+                    exp_db = get_storage_port(str(exp_db_path))
+                    recent = exp_db.query_one('''
+                        SELECT 
+                            AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) as success_rate,
+                            AVG(quality_score) as avg_quality,
+                            COUNT(*) as total,
+                            SUM(CASE WHEN intent_type != 'autonomous_reflection' THEN 1 ELSE 0 END) as real_queries,
+                            SUM(CASE WHEN intent_type = 'external_api' THEN 1 ELSE 0 END) as external_calls
+                        FROM experiences
+                        WHERE timestamp > datetime('now', '-24 hours')
+                    ''')
+                    if recent and recent['total'] and recent['total'] > 0:
+                        success_rate = recent['success_rate'] or 0.5
+                        avg_q = (recent['avg_quality'] or 50) / 100.0
+                        like_rate = success_rate
+                        hit_rate = avg_q
+                        efficiency = avg_q
+                        real_q = recent['real_queries'] or 0
+                        ext_calls = recent['external_calls'] or 0
+                        total_q = recent['total'] or 1
+                        dialog_reduction = min(1.0, real_q / max(1, total_q))
+                        external_reduction = min(1.0, ext_calls / max(1, total_q))
+            except Exception:
+                pass
             
             return {
                 "like_rate": like_rate,
                 "hit_rate": hit_rate,
-                "dialog_reduction": 0.1,
-                "external_reduction": 0.05,
+                "dialog_reduction": dialog_reduction,
+                "external_reduction": external_reduction,
                 "efficiency": efficiency
             }
         except Exception as e:
@@ -420,7 +452,7 @@ class ActiveScheduler:
     def _import_evolved_skills(self, skills: List[Dict]):
         """导入进化后的技能"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             for skill in skills:
                 name = skill.get('name', f"evolved_skill_{hash(str(skill)) % 10000}")
                 code = skill.get('code', '')

@@ -12,7 +12,7 @@
 - 两者形成闭环：归因结果反馈给权重管理器
 """
 
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import time
 import json
 from typing import Dict, List, Tuple
@@ -28,7 +28,7 @@ class ContribAttributor:
     def _init_db(self):
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS attributions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,7 +127,7 @@ class ContribAttributor:
     def _save_attribution(self, query: str, final_source: str,
                            contributions: Dict, top_source: str, entropy: float):
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute('''
                 INSERT INTO attributions (query, final_source, contributions, top_source, entropy, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -139,7 +139,7 @@ class ContribAttributor:
 
     def get_recent_attributions(self, limit: int = 20) -> List[Dict]:
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query(
                 "SELECT query, final_source, contributions, top_source, entropy, created_at FROM attributions ORDER BY id DESC LIMIT ?",
                 (limit,)

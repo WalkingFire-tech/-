@@ -36,7 +36,7 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class SleepStage(Enum):
@@ -124,7 +124,7 @@ class SleepConsolidationEngine:
         try:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
             
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS consolidation_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -396,20 +396,29 @@ class SleepConsolidationEngine:
             from core.cognition.failure_classifier import FailureClassifier
             audit_failures = AuditLogger.get_recent_failures(limit=10)
             if audit_failures:
+                consumed = 0
                 for af in audit_failures:
                     try:
                         intent = af.get("detected_intent", "unknown")
                         reason = af.get("reflection_reason", "")
                         lesson_type = f"audit_{intent}"
-                        db = DatabaseManager.get("data/spirit_lessons.db")
+                        lesson_text = f"审计发现: {reason}"
+                        db = get_storage_port("data/spirit_lessons.db")
+                        existing = db.query_one(
+                            'SELECT id FROM spirit_lessons WHERE lesson_type = ? AND lesson_text = ? LIMIT 1',
+                            (lesson_type, lesson_text)
+                        )
+                        if existing:
+                            continue
                         db.execute(
                             'INSERT INTO spirit_lessons (lesson_type, lesson_text, severity, context) VALUES (?, ?, ?, ?)',
-                            (lesson_type, f"审计发现: {reason}", "medium", json.dumps(af, ensure_ascii=False, default=str)[:500]),
+                            (lesson_type, lesson_text, "medium", json.dumps(af, ensure_ascii=False, default=str)[:500]),
                             commit=True
                         )
+                        consumed += 1
                     except Exception:
                         pass
-                details['audit_failures_consumed'] = len(audit_failures)
+                details['audit_failures_consumed'] = consumed
                 logger.info(f"📋 睡眠整合消费审计日志: {len(audit_failures)}条")
         except Exception as e:
             logger.warning(f"审计日志消费跳过: {e}")
@@ -504,7 +513,7 @@ class SleepConsolidationEngine:
         try:
             from core.learning.feedback_loop import LearningFeedbackLoop, Feedback, FeedbackType
             fbl = LearningFeedbackLoop()
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             rows = db.query("SELECT skill_name, occurrence_count, importance FROM solidified_skills WHERE importance >= 0.5 LIMIT 20")
             validated_count = 0
             for row in (rows or []):
@@ -641,7 +650,7 @@ class SleepConsolidationEngine:
     def _record_skill_candidate(self, topic: str, count: int) -> int:
         """记录技能候选"""
         try:
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             row = db.query_one(
                 'SELECT occurrence_count FROM solidified_skills WHERE skill_name = ?',
                 (topic,)
@@ -669,7 +678,7 @@ class SleepConsolidationEngine:
     def _solidify_skill(self, topic: str, count: int, importance: float = 0.7) -> int:
         """固化技能"""
         try:
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             row = db.query_one(
                 'SELECT occurrence_count, importance FROM solidified_skills WHERE skill_name = ?',
                 (topic,)
@@ -717,7 +726,7 @@ class SleepConsolidationEngine:
         """从数据库重组知识结构（纯SQL，不调Ollama）"""
         reorganized = 0
         try:
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             rows = db.query('''
                 SELECT skill_name, occurrence_count, importance
                 FROM solidified_skills
@@ -737,7 +746,7 @@ class SleepConsolidationEngine:
     def _save_consolidation_result(self, result: ConsolidationResult) -> None:
         """保存整合结果"""
         try:
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             db.execute('''
                 INSERT INTO consolidation_history
                 (timestamp, stage, consolidated_memories, solidified_skills,
@@ -798,7 +807,7 @@ class SleepConsolidationEngine:
     def get_solidified_skills(self) -> List[Dict]:
         """获取已固化的技能"""
         try:
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             rows = db.query('''
                 SELECT skill_name, topic, occurrence_count, importance, last_updated
                 FROM solidified_skills

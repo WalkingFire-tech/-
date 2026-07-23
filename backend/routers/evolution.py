@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from fastapi import APIRouter
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 router = APIRouter()
 
@@ -311,7 +311,7 @@ async def get_tool_stats():
 async def get_tool_history(limit: int = 20):
     try:
         db_path = str(ROOT_DIR / "data" / "tool_cache.db")
-        db = DatabaseManager.get(db_path)
+        db = get_storage_port(db_path)
         rows = db.query(
             "SELECT tool_name, params_hash, created_at, quality_score, hit_count FROM tool_cache ORDER BY created_at DESC LIMIT ?",
             (limit,),
@@ -424,7 +424,7 @@ async def agent_status():
 async def get_evolution_injection_status():
     try:
         from core.genome_evolver import genome_evolver
-        db = DatabaseManager.get(genome_evolver.db_path)
+        db = get_storage_port(genome_evolver.db_path)
         rows = db.query(
             "SELECT proposal_id, status, fitness_score, source, created_at, completed_at FROM evolution_injections ORDER BY created_at DESC LIMIT 10"
         )

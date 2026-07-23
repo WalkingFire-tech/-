@@ -7,7 +7,7 @@ L2 监控感知层 - 健康指标采集 (Health Metrics Collector)
 - 预警机制（阈值触发）
 """
 import time
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 from typing import Dict, List, Optional
 from loguru import logger
 from datetime import datetime
@@ -30,7 +30,7 @@ class HealthMetricsCollector:
 
     def _init_db(self):
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS metrics (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,7 +59,7 @@ class HealthMetricsCollector:
             self._metrics[metric_name] = self._metrics[metric_name][-self.WINDOW_SIZE:]
         self._check_threshold(metric_name, value)
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute("INSERT INTO metrics (metric_name, value, timestamp) VALUES (?, ?, ?)",
                          (metric_name, value, datetime.now().isoformat()), commit=True)
         except Exception:
@@ -80,7 +80,7 @@ class HealthMetricsCollector:
                 self._alerts = self._alerts[-200:]
             logger.warning(alert["message"])
             try:
-                db = DatabaseManager.get(self.db_path)
+                db = get_storage_port(self.db_path)
                 db.execute("INSERT INTO alerts (metric_name, value, threshold, message, timestamp) VALUES (?, ?, ?, ?, ?)",
                              (metric_name, value, threshold, alert["message"], alert["timestamp"]), commit=True)
             except Exception:

@@ -9,11 +9,26 @@ router = APIRouter()
 
 @router.get("/health")
 async def health(request: Request):
-    """健康检查 — 仅在所有子系统初始化完成后返回 ready: true"""
+    """健康检查 — 区分基础就绪和完全就绪"""
     initialized = getattr(request.app.state, "initialized", False)
+
+    subsystems = {}
+    cp = getattr(request.app.state, "cognitive_planner", None)
+    subsystems["cognitive_planner"] = cp is not None
+
+    try:
+        from infrastructure.vector_retriever import vector_retriever
+        subsystems["vector_index"] = len(vector_retriever._texts) > 0
+    except Exception:
+        subsystems["vector_index"] = False
+
+    fully_ready = initialized and all(subsystems.values())
+
     return {
-        "status": "ok" if initialized else "starting",
+        "status": "ok" if fully_ready else ("degraded" if initialized else "starting"),
         "ready": initialized,
+        "fully_ready": fully_ready,
+        "subsystems": subsystems,
         "version": "4.0.0",
     }
 

@@ -167,8 +167,8 @@ class CognitivePlanner:
         self.review_engine = None
         
         try:
-            from core.presence.existence_layer import ExistenceLayer
-            self.existence = ExistenceLayer()
+            from core.presence.existence_layer import get_existence_layer
+            self.existence = get_existence_layer()
             logger.info("  ✓ 存在层已加载")
         except Exception as e:
             logger.warning(f"存在层加载失败: {e}")
@@ -181,8 +181,8 @@ class CognitivePlanner:
             logger.warning(f"自我感知引擎加载失败: {e}")
         
         try:
-            from core.presence.gap_growth import GapGrowthEngine
-            self.gap_growth = GapGrowthEngine()
+            from core.presence.gap_growth import get_gap_growth_engine
+            self.gap_growth = get_gap_growth_engine()
             logger.info("  ✓ 间隙生长引擎已加载")
         except Exception as e:
             logger.warning(f"间隙生长引擎加载失败: {e}")
@@ -195,15 +195,15 @@ class CognitivePlanner:
             logger.warning(f"睡眠整合引擎加载失败: {e}")
         
         try:
-            from core.presence.proactivity import ProactivityEngine
-            self.proactivity = ProactivityEngine()
+            from core.presence.proactivity import get_proactivity_engine
+            self.proactivity = get_proactivity_engine()
             logger.info("  ✓ 主动性引擎已加载")
         except Exception as e:
             logger.warning(f"主动性引擎加载失败: {e}")
         
         try:
-            from core.presence.self_review import SelfReviewEngine
-            self.review_engine = SelfReviewEngine()
+            from core.presence.self_review import get_self_review_engine
+            self.review_engine = get_self_review_engine()
             logger.info("  ✓ 自我评估引擎已加载")
         except Exception as e:
             logger.warning(f"自我评估引擎加载失败: {e}")
@@ -223,6 +223,10 @@ class CognitivePlanner:
         """初始化横向机制"""
         self.collector = None
         self.heartbeat = None
+        self.meta_governor = None
+        self.active_learner = None
+        self.self_reflector = None
+        self.trigger_monitor = None
         
         try:
             from core.reporting.state_collector import StateCollector
@@ -237,6 +241,45 @@ class CognitivePlanner:
             logger.info("  ✓ 心跳管理器已加载")
         except Exception as e:
             logger.warning(f"心跳管理器加载失败: {e}")
+        
+        try:
+            from meta.governor import meta_governor
+            self.meta_governor = meta_governor
+            logger.info("  ✓ 元控制治理器已接线")
+        except Exception as e:
+            logger.warning(f"元控制治理器接线失败: {e}")
+        
+        try:
+            from meta.active_learner_v2 import ActiveLearner
+            adapters = {}
+            if self.planner and hasattr(self.planner, 'adapters'):
+                adapters = self.planner.adapters or {}
+            self.active_learner = ActiveLearner(adapters)
+            logger.info("  ✓ 主动学习器已接线")
+        except Exception as e:
+            logger.warning(f"主动学习器接线失败: {e}")
+        
+        try:
+            from meta.self_reflector_v2 import SelfReflector
+            adapters = {}
+            if self.planner and hasattr(self.planner, 'adapters'):
+                adapters = self.planner.adapters or {}
+            self.self_reflector = SelfReflector(adapters)
+            logger.info("  ✓ 自我反思器已接线")
+        except Exception as e:
+            logger.warning(f"自我反思器接线失败: {e}")
+        
+        try:
+            from infrastructure.trigger_rate_monitor import trigger_rate_monitor
+            self.trigger_monitor = trigger_rate_monitor
+            self.trigger_monitor.register("cognitive_cycle.complete", 1.0, "认知循环完成率")
+            self.trigger_monitor.register("active_learning.ask", 0.15, "主动学习提问率")
+            self.trigger_monitor.register("self_reflection.trigger", 0.08, "自我反思触发率")
+            self.trigger_monitor.register("plan_template.reuse", 0.40, "计划模板重用率")
+            self.trigger_monitor.register("meta_governor.throttle", 0.05, "治理器节流率")
+            logger.info("  ✓ 触发率监控已接线")
+        except Exception as e:
+            logger.warning(f"触发率监控接线失败: {e}")
     
     def _start_all_components(self):
         """启动所有组件"""
@@ -351,7 +394,53 @@ class CognitivePlanner:
         
         try:
             perception = self._perceive(user_input, context)
-            
+
+            try:
+                from core.services.subtask_executor import SubTaskExecutor
+                _ste = SubTaskExecutor()
+                _subtasks = _ste.decompose(user_input, perception)
+                if _subtasks and len(_subtasks) > 1:
+                    logger.info(f"子任务拆解: {len(_subtasks)}个子任务")
+                    perception["subtasks"] = _subtasks
+            except Exception:
+                pass
+
+            intent_type = perception.get("intent", "general")
+
+            try:
+                from infrastructure.plan_templates import PlanTemplateLibrary
+                _ptl = PlanTemplateLibrary()
+                _template = _ptl.find_matching(intent_type)
+                if _template:
+                    logger.debug(f"使用计划模板: {_template.name}")
+                    perception["plan_template"] = _template.to_dict()
+                    if self.trigger_monitor:
+                        self.trigger_monitor.record("plan_template.reuse", triggered=True)
+                elif self.trigger_monitor:
+                    self.trigger_monitor.record("plan_template.reuse", triggered=False)
+            except Exception:
+                pass
+
+            if self.active_learner and self.meta_governor:
+                try:
+                    if self.meta_governor.can_run("active_learner"):
+                        should_ask = self.active_learner.should_ask_user(
+                            perception.get("intent_type", "unknown"),
+                            session_id=conversation_id,
+                        )
+                        if should_ask:
+                            perception["active_learning_question"] = True
+                            if self.trigger_monitor:
+                                self.trigger_monitor.record("active_learning.ask", triggered=True)
+                        elif self.trigger_monitor:
+                            self.trigger_monitor.record("active_learning.ask", triggered=False)
+                    else:
+                        if self.trigger_monitor:
+                            self.trigger_monitor.record("active_learning.ask", triggered=False)
+                except Exception:
+                    if self.trigger_monitor:
+                        self.trigger_monitor.record("active_learning.ask", triggered=False)
+
             learning = self._learn(user_input, perception)
             
             integration = self._integrate(learning)
@@ -368,10 +457,28 @@ class CognitivePlanner:
             
             self._save_memory(user_input, response, perception, validation)
             
+            self._save_plan_template(intent_type, perception, validation)
+            
             self._update_relationship(user_input, response, perception, validation)
             
             self._submit_signals(perception, validation)
             
+            if self.self_reflector and validation.get("status") != "pass":
+                try:
+                    self.self_reflector.reflect_on_failures(limit=5)
+                    if self.trigger_monitor:
+                        self.trigger_monitor.record("self_reflection.trigger", triggered=True)
+                except Exception:
+                    if self.trigger_monitor:
+                        self.trigger_monitor.record("self_reflection.trigger", triggered=False)
+            elif self.trigger_monitor:
+                self.trigger_monitor.record("self_reflection.trigger", triggered=False)
+            
+            if self.trigger_monitor:
+                self.trigger_monitor.record("cognitive_cycle.complete", triggered=True)
+            
+            self._update_governor_health(validation, perception)
+
             self._trigger_async_review(
                 conversation_id, user_input, response, perception, validation
             )
@@ -413,7 +520,7 @@ class CognitivePlanner:
             )
     
     def _perceive(self, user_input: str, context: Dict = None) -> Dict:
-        """L1: 感知层"""
+        """L1: 感知层 — 根据治理器状态调整感知参数"""
         if self.emotion_detector and hasattr(self.emotion_detector, 'detect'):
             try:
                 emotion_result = self.emotion_detector.detect(user_input)
@@ -425,11 +532,30 @@ class CognitivePlanner:
         else:
             emotion = "neutral"
             emotion_intensity = 0.3
-        
+
+        base_confidence = 0.7
+        uncertainty = False
+        caution_level = "none"
+
+        if self.meta_governor:
+            state = self.meta_governor.current_state
+            if state == "frozen":
+                base_confidence = 0.3
+                uncertainty = True
+                caution_level = "frozen"
+            elif state == "cautious":
+                base_confidence = 0.5
+                uncertainty = True
+                caution_level = "cautious"
+            elif state == "recovering":
+                base_confidence = 0.6
+                caution_level = "recovering"
+
         return {
             "intent": self._detect_intent(user_input),
-            "confidence": 0.7,
-            "uncertainty": False,
+            "confidence": base_confidence,
+            "uncertainty": uncertainty,
+            "caution_level": caution_level,
             "emotion": emotion,
             "emotion_intensity": emotion_intensity,
             "urgency": 0.5,
@@ -467,14 +593,26 @@ class CognitivePlanner:
                 target = {
                     "name": user_input[:100],
                     "keywords": perception.get("keywords", []),
-                    "intent": perception.get("intent", "unknown")
+                    "intent": perception.get("intent", "unknown"),
+                    "cbnr_uncertainty": perception.get("cbnr_context", {}).get("l1_uncertainty", 0.5),
+                    "cbnr_prediction_error": perception.get("cbnr_context", {}).get("l1_prediction_error", 0.5),
+                    "cbnr_info_retention": perception.get("cbnr_context", {}).get("l1_info_retention", 1.0),
+                    "cbnr_attention_fidelity": perception.get("cbnr_context", {}).get("l1_attention_fidelity", 0.5),
                 }
                 result = self.l2.learn(target)
+                _cbnr_unc = target.get("cbnr_uncertainty")
+                _cbnr_pe = target.get("cbnr_prediction_error")
+                _cbnr_ir = target.get("cbnr_info_retention")
+                _cbnr_af = target.get("cbnr_attention_fidelity")
                 return {
                     "success": result.success if hasattr(result, 'success') else True,
                     "knowledge_gained": result.knowledge_gained if hasattr(result, 'knowledge_gained') else 0,
                     "sources": result.sources_used if hasattr(result, 'sources_used') else [],
-                    "confidence": result.confidence if hasattr(result, 'confidence') else 0.7
+                    "confidence": result.confidence if hasattr(result, 'confidence') else 0.7,
+                    "cbnr_uncertainty": _cbnr_unc,
+                    "cbnr_prediction_error": _cbnr_pe,
+                    "cbnr_info_retention": _cbnr_ir,
+                    "cbnr_attention_fidelity": _cbnr_af,
                 }
             except Exception as e:
                 logger.warning(f"L2学习层异常: {e}")
@@ -492,8 +630,8 @@ class CognitivePlanner:
                 knowledge_items = []
                 if knowledge_ids:
                     try:
-                        from infrastructure.database_manager import DatabaseManager
-                        db = DatabaseManager.get("data/knowledge_store.db")
+                        from core.ports.adapters import get_storage_port
+                        db = get_storage_port("data/knowledge_store.db")
                         placeholders = ",".join(["?" for _ in knowledge_ids])
                         rows = db.query(
                             f"SELECT id, question, answer, quality_score, created_at FROM knowledge_items WHERE id IN ({placeholders})",
@@ -502,6 +640,11 @@ class CognitivePlanner:
                         knowledge_items = [dict(row) for row in rows]
                     except Exception as e:
                         logger.warning(f"查询knowledge_items失败: {e}")
+                
+                _cbnr_ctx = learning.get("cbnr_uncertainty")
+                if _cbnr_ctx is not None:
+                    for item in knowledge_items:
+                        item.setdefault("cbnr_uncertainty", _cbnr_ctx)
                 
                 result = self.l3.integrate(knowledge_items)
                 return {
@@ -515,24 +658,41 @@ class CognitivePlanner:
     
     def _validate_and_respond(self, integration: Dict, user_input: str,
                               perception: Dict) -> tuple:
-        """L4: 校验层 + 生成响应"""
+        """L4: 校验层 + 生成响应 — 根据治理器状态调整验证阈值"""
         try:
+            confidence_threshold = 0.5
+            if self.meta_governor:
+                state = self.meta_governor.current_state
+                if state == "frozen":
+                    confidence_threshold = 0.9
+                elif state == "cautious":
+                    confidence_threshold = 0.7
+                elif state == "recovering":
+                    confidence_threshold = 0.6
+
             response = self._generate_response(user_input, perception)
-            
+
+            if self.meta_governor and self.meta_governor.current_state == "frozen":
+                response = self._safe_degraded_response(user_input, perception, response)
+
             validation_status = "pass"
             confidence = 0.7
-            
+
             if not integration.get("success"):
                 confidence = 0.5
-            
+
+            if confidence < confidence_threshold:
+                validation_status = "cautious_pass" if confidence >= confidence_threshold * 0.8 else "fail"
+
             validation = {
                 "status": validation_status,
                 "confidence": confidence,
-                "doubts": []
+                "doubts": [],
+                "confidence_threshold": confidence_threshold,
             }
-            
+
             return validation, response
-        
+
         except Exception as e:
             logger.warning(f"L4校验层异常: {e}")
             return {"status": "pass", "confidence": 0.5, "doubts": []}, "我理解了你的意思。让我认真思考一下，给你一个有帮助的回应。"
@@ -601,6 +761,19 @@ class CognitivePlanner:
         }
         
         return templates.get(intent, templates["general"])
+
+    def _safe_degraded_response(self, user_input: str, perception: Dict,
+                                 original_response: str) -> str:
+        """安全降级响应 — FROZEN状态下使用"""
+        intent = perception.get("intent", "general")
+        safe_templates = {
+            "reflection": "我现在无法进行深度反思，系统处于保护模式。请稍后再试。",
+            "recommendation": "抱歉，我暂时无法给出推荐建议，系统处于保护模式。",
+            "challenge": "你的质疑我听到了，但我现在无法深入分析，系统处于保护模式。",
+            "question": "我目前无法完整回答这个问题，系统处于保护模式。请稍后再试。",
+            "general": "抱歉，我暂时无法正常回应，系统处于保护模式。请稍后再试。",
+        }
+        return safe_templates.get(intent, safe_templates["general"])
     
     def _trigger_async_evolution(self, conversation_id: str, user_input: str,
                                  response: str, perception: Dict, validation: Dict):
@@ -618,7 +791,8 @@ class CognitivePlanner:
                         "response": response,
                         "validation_result": validation,
                         "perception": perception,
-                        "conversation_id": conversation_id
+                        "conversation_id": conversation_id,
+                        "learning_result": {"knowledge_gained": 0, "avg_knowledge_quality": 0, "knowledge_reuse_rate": 0},
                     }
                     self.l5.record_experience(experience)
             
@@ -641,29 +815,59 @@ class CognitivePlanner:
         """保存立体记忆"""
         if self.stereo_store and hasattr(self.stereo_store, 'save'):
             try:
-                from core.memory.stereo_memory import StereoMemoryEntry, MemoryImportance
-                
-                memory = StereoMemoryEntry(
-                    id=hashlib.md5(f"{user_input}{datetime.now().isoformat()}".encode()).hexdigest()[:12],
-                    user_content=user_input,
-                    system_content=response,
-                    intent=perception.get("intent", "unknown"),
-                    topic=self._extract_topic(user_input),
-                    trust_change=self._calculate_trust_change(validation),
-                    intimacy_change=perception.get("emotion_intensity", 0) * 0.1,
-                    dependency_change=0,
-                    self_state_before={},
-                    self_state_after=self._get_current_state(),
-                    skills_used=[],
-                    skills_formed=[],
-                    timestamp=datetime.now().isoformat(),
-                    importance=MemoryImportance.MEDIUM,
-                    user_emotion=perception.get("emotion", "neutral"),
-                    system_emotion="neutral"
-                )
+                from core.memory.stereo_memory import MemoryImportance
+
+                memory = {
+                    "id": hashlib.md5(f"{user_input}{datetime.now().isoformat()}".encode()).hexdigest()[:12],
+                    "content": user_input,
+                    "user_content": user_input,
+                    "system_content": response,
+                    "intent": perception.get("intent", "unknown"),
+                    "topic": self._extract_topic(user_input),
+                    "trust_change": self._calculate_trust_change(validation),
+                    "intimacy_change": perception.get("emotion_intensity", 0) * 0.1,
+                    "dependency_change": 0,
+                    "self_state_before": {},
+                    "self_state_after": self._get_current_state(),
+                    "skills_used": [],
+                    "skills_formed": [],
+                    "timestamp": datetime.now().isoformat(),
+                    "importance": MemoryImportance.MEDIUM,
+                    "user_emotion": perception.get("emotion", "neutral"),
+                    "system_emotion": "neutral",
+                    "memory_type": MemoryImportance.MEDIUM,
+                    "self_role": "assistant",
+                    "self_confidence": perception.get("confidence", 0.5),
+                    "self_emotional_state": perception.get("emotion", "neutral"),
+                    "self_learning_progress": 0.0,
+                    "self_intentions": [],
+                }
                 self.stereo_store.save(memory)
             except Exception as e:
                 logger.error(f"保存立体记忆失败: {e}")
+    
+    def _save_plan_template(self, intent_type: str, perception: Dict, validation: Dict):
+        """成功执行后保存计划模板"""
+        try:
+            subtasks = perception.get("subtasks", [])
+            if not subtasks or len(subtasks) < 2:
+                return
+            success = validation.get("status") == "pass"
+            quality = int(validation.get("quality_score", 50))
+            if not success and quality < 40:
+                return
+            from infrastructure.plan_templates import PlanTemplateLibrary
+            ptl = PlanTemplateLibrary()
+            steps = [{"action": s.get("action", ""), "description": s.get("description", "")} for s in subtasks]
+            ptl.save_template(
+                intent_type=intent_type,
+                steps=steps,
+                quality=quality,
+                success=success,
+                tags=[intent_type],
+            )
+        except Exception as e:
+            logger.warning(f"保存计划模板失败: {e}")
     
     def _update_relationship(self, user_input: str, response: str,
                              perception: Dict, validation: Dict):
@@ -733,9 +937,12 @@ class CognitivePlanner:
     
     def _calculate_trust_change(self, validation: Dict) -> float:
         """计算信任变化"""
-        if validation.get("status") == "pass":
+        status = validation.get("status")
+        if status == "pass":
             return 0.05
-        elif validation.get("status") == "partial":
+        elif status == "cautious_pass":
+            return 0.02
+        elif status == "partial":
             return 0.0
         else:
             return -0.05
@@ -748,6 +955,22 @@ class CognitivePlanner:
             except Exception:
                 logger.warning("操作降级跳过")
         return {}
+
+    def _update_governor_health(self, validation: Dict, perception: Dict):
+        """根据验证结果更新治理器健康指标"""
+        if not self.meta_governor:
+            return
+        try:
+            success = validation.get("status") == "pass"
+            confidence = validation.get("confidence", 0.5)
+            satisfaction = 1.0 if success else 0.3
+            if not success and confidence > 0.6:
+                satisfaction = 0.5
+            satisfaction = min(satisfaction, confidence)
+            success_rate = 1.0 if success else 0.0
+            self.meta_governor.update_system_health(success_rate, satisfaction)
+        except Exception as e:
+            logger.warning(f"更新治理器健康度失败: {e}")
     
     def get_system_status(self) -> Dict:
         """获取系统整体状态"""
@@ -775,6 +998,12 @@ class CognitivePlanner:
         
         if self.proactivity:
             status["components"]["proactivity"] = getattr(self.proactivity, '_running', False)
+
+        if self.meta_governor:
+            try:
+                status["governor"] = self.meta_governor.get_status()
+            except Exception:
+                status["governor"] = {"state": "unknown"}
         
         if self.relationship_model and hasattr(self.relationship_model, 'get_metrics'):
             try:

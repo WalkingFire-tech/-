@@ -17,7 +17,7 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 @dataclass
@@ -66,7 +66,7 @@ class TriggerFeedbackLoop:
         """初始化数据库"""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         db.executescript('''
             CREATE TABLE IF NOT EXISTS trigger_events (
@@ -104,7 +104,7 @@ class TriggerFeedbackLoop:
     def record_decision(self, event: TriggerEvent):
         """记录触发决策"""
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         db.execute('''
             INSERT INTO trigger_events
@@ -138,7 +138,7 @@ class TriggerFeedbackLoop:
             actual_need: 实际应该如何处理
         """
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         db.execute('''
             UPDATE trigger_events
@@ -170,7 +170,7 @@ class TriggerFeedbackLoop:
     
     def _get_event(self, event_id: str) -> Optional[TriggerEvent]:
         """获取事件"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one(
             "SELECT * FROM trigger_events WHERE id = ?",
             (event_id,)
@@ -220,7 +220,7 @@ class TriggerFeedbackLoop:
         
         patterns = defaultdict(lambda: {'count': 0, 'false_positives': 0, 'false_negatives': 0})
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         rows = db.query('''
             SELECT * FROM trigger_events
@@ -266,7 +266,7 @@ class TriggerFeedbackLoop:
     def _record_adjustment(self, pattern: str, old_value: float, new_value: float):
         """记录调整历史"""
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         db.execute('''
             INSERT INTO adjustment_history

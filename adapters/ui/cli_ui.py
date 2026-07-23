@@ -483,7 +483,7 @@ class EnhancedCliUI(UIPort):
             return
         
         try:
-            from tools.registry import registry
+            from core.tool_registry import tool_registry as registry
             from pathlib import Path
             
             parts = args.split(maxsplit=1)

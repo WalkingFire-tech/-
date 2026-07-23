@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from collections import Counter
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import re
 from pathlib import Path
 
@@ -105,7 +105,7 @@ class CapabilityGapDiagnoser:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS interactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,7 +153,7 @@ class CapabilityGapDiagnoser:
         """
         import json
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO interactions
             (timestamp, question, response, success, failure_type, confidence, metadata)
@@ -190,7 +190,7 @@ class CapabilityGapDiagnoser:
             start_time = now - timedelta(weeks=1)
         
         # 查询交互记录
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         interactions = [dict(row) for row in db.query('''
             SELECT * FROM interactions
             WHERE timestamp >= ?
@@ -322,7 +322,7 @@ class CapabilityGapDiagnoser:
         """保存报告"""
         import json
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO gap_reports
             (period, generated_at, total_interactions, failed_interactions,

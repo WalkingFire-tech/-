@@ -316,8 +316,8 @@ class VisibleClosedLoop:
         for result in tool_results:
             if result.get("success") and result.get("output"):
                 try:
-                    from infrastructure.database_manager import DatabaseManager
-                    DatabaseManager.get("data/knowledge_store.db").execute('''
+                    from core.ports.adapters import get_storage_port
+                    get_storage_port("data/knowledge_store.db").execute('''
                         INSERT INTO knowledge_items 
                         (question, answer, source, knowledge_type, quality_score, created_at)
                         VALUES (?, ?, ?, 'closed_loop', 60.0, ?)
@@ -337,8 +337,8 @@ class VisibleClosedLoop:
         """能力提升"""
         # 记录经验
         try:
-            from infrastructure.database_manager import DatabaseManager
-            DatabaseManager.get("data/knowledge_store.db").execute('''
+            from core.ports.adapters import get_storage_port
+            get_storage_port("data/knowledge_store.db").execute('''
                 INSERT INTO experiences 
                 (timestamp, intent_type, success, quality_score, context)
                 VALUES (?, ?, ?, ?, ?)

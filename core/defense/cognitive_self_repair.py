@@ -6,7 +6,7 @@ L4 自修复层 - 认知自修复 (Cognitive Self-Repair)
 - 自动修复：合并矛盾、补全断裂
 - 修复后验证一致性
 """
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 from typing import Dict, List, Optional
 from loguru import logger
 from datetime import datetime
@@ -27,8 +27,8 @@ class CognitiveSelfRepair:
             "timestamp": datetime.now().isoformat(),
         }
         try:
-            db = DatabaseManager.get("data/learning_rules.db")
-            rules = db.query("SELECT id, pattern, action, confidence, status FROM learning_rules WHERE status='active'")
+            db = get_storage_port("data/learning_rules.db")
+            rules = db.query("SELECT id, condition, action, confidence, status FROM learning_rules WHERE status='active'")
             pattern_map: Dict[str, List] = {}
             for rule in rules:
                 rid, pattern, action, confidence, status = rule
@@ -51,7 +51,7 @@ class CognitiveSelfRepair:
             logger.error(f"规则诊断失败: {e}")
 
         try:
-            db = DatabaseManager.get("data/essence_reasoning.db")
+            db = get_storage_port("data/essence_reasoning.db")
             rows = db.query("SELECT id, query, consistency_score FROM reasoning_chains WHERE consistency_score < 0.5 ORDER BY timestamp DESC LIMIT 10")
             for row in rows:
                 diagnosis["broken_chains"].append({
@@ -65,7 +65,7 @@ class CognitiveSelfRepair:
     def repair_contradictions(self, contradictions: List[dict]) -> int:
         repaired = 0
         try:
-            db = DatabaseManager.get("data/learning_rules.db")
+            db = get_storage_port("data/learning_rules.db")
             for contra in contradictions:
                 rules = contra["rules"]
                 best = max(rules, key=lambda r: r["confidence"])
@@ -89,7 +89,7 @@ class CognitiveSelfRepair:
     def repair_low_confidence(self, rules: List[dict]) -> int:
         demoted = 0
         try:
-            db = DatabaseManager.get("data/learning_rules.db")
+            db = get_storage_port("data/learning_rules.db")
             for rule in rules:
                 cur = db.execute("UPDATE learning_rules SET status='dormant' WHERE id=? AND confidence < ?",
                           (rule["id"], self.MIN_RULE_CONFIDENCE), commit=True)

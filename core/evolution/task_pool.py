@@ -1,7 +1,7 @@
 """
 任务池构建器 - 从主系统历史对话构建进化任务
 """
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import json
 import re
 from typing import List, Dict
@@ -34,7 +34,7 @@ def build_task_pool(main_db_path: str,
     tasks = []
     
     try:
-        rows = DatabaseManager.get(main_db_path).query('''
+        rows = get_storage_port(main_db_path).query('''
             SELECT question, answer, salience, access_count, quality_score
             FROM knowledge_items
             WHERE knowledge_type = 'qa' 
@@ -103,7 +103,7 @@ def load_existing_skills(main_db_path: str) -> List[Dict]:
     skills = []
     
     try:
-        rows = DatabaseManager.get(main_db_path).query('''
+        rows = get_storage_port(main_db_path).query('''
             SELECT name, code, description, triggers, usage_count
             FROM tools
             WHERE code IS NOT NULL

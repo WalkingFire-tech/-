@@ -3,7 +3,7 @@ meta:
   adjustment_factor: 0.1
   optimization_interval_days: 7
   success_rate_threshold: 0.6
-min_confidence: 0.8999999999999999
+min_confidence: 0.9
 min_support: 2
 quality_threshold: 50
 rule_types:
@@ -15,7 +15,7 @@ rule_types:
     priority: 4
   prefer_model:
     enabled: true
-    priority: 3
+    priority: 1
   reroute:
     enabled: true
     priority: 6

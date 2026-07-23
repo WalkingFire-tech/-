@@ -14,7 +14,7 @@
 import json
 from typing import Dict, List, Any, Optional
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 from datetime import datetime
 
 
@@ -27,7 +27,7 @@ class SkillEmergence:
 
     def _init_db(self):
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute('''CREATE TABLE IF NOT EXISTS skills (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 skill_name TEXT UNIQUE NOT NULL,
@@ -76,7 +76,7 @@ class SkillEmergence:
         返回dict表示匹配到本能，包含solution_path和skeleton。
         """
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query(
                 "SELECT skill_name, skill_type, trigger_patterns, solution_path, skeleton, confidence, automation_level, success_count FROM skills WHERE is_active=1 AND automation_level IN ('learned', 'reflex') ORDER BY confidence DESC"
             )
@@ -93,8 +93,9 @@ class SkillEmergence:
                 overlap_ratio = matched / max(len(triggers), 1)
                 effective_confidence = row[5] * (0.5 + 0.5 * overlap_ratio)
                 
-                if effective_confidence >= 0.7:
+                if effective_confidence >= 0.4:
                     logger.info(f"⚡ 本能触发: {row[0]} (置信度{effective_confidence:.2f}, 级别{row[6]})")
+                    self._record_application(row[0], query, True, 0.0)
                     return {
                         "skill_name": row[0],
                         "solution_path": row[3],
@@ -234,7 +235,7 @@ class SkillEmergence:
     def _find_matching_skill(self, trigger: str, skill_type: str) -> Optional[dict]:
         """查找匹配的已有技能"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query(
                 "SELECT skill_name, skill_type, trigger_patterns, solution_path, success_count, fail_count, success_rate FROM skills WHERE skill_type=? AND is_active=1",
                 (skill_type,)
@@ -261,7 +262,7 @@ class SkillEmergence:
     def _update_skill(self, skill: dict, was_successful: bool, elapsed: float):
         """更新技能统计 + 本能升级"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             new_success = skill["success_count"] + (1 if was_successful else 0)
             new_fail = skill["fail_count"] + (0 if was_successful else 1)
             new_rate = new_success / max(new_success + new_fail, 1)
@@ -298,7 +299,7 @@ class SkillEmergence:
     def _create_skill(self, skill_name: str, skill_type: str, trigger: str, solution_path: str, skeleton: str = ""):
         """创建新技能"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute(
                 "INSERT OR IGNORE INTO skills (skill_name, skill_type, trigger_patterns, solution_path, success_count, fail_count, success_rate, last_used, created_at, skeleton, confidence, automation_level) VALUES (?, ?, ?, ?, 1, 0, 1.0, ?, ?, ?, 0.5, 'manual')",
                 (skill_name, skill_type, trigger, solution_path, datetime.now().isoformat(), datetime.now().isoformat(), skeleton),
@@ -335,7 +336,7 @@ class SkillEmergence:
                 if name and name not in ("规则推理", "本质推理"):
                     failed_names.add(name)
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query("SELECT skill_name, success_count, fail_count FROM skills WHERE is_active=1")
             for row in rows:
                 skill_name, succ, fail = row
@@ -354,7 +355,7 @@ class SkillEmergence:
     def get_applicable_skills(self, query: str) -> List[dict]:
         """获取适用于当前问题的技能（按成功率排序）"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query(
                 "SELECT skill_name, skill_type, trigger_patterns, solution_path, success_count, success_rate FROM skills WHERE is_active=1 AND success_count >= 2 ORDER BY success_rate DESC, success_count DESC LIMIT 5"
             )
@@ -378,7 +379,7 @@ class SkillEmergence:
 
     def get_skill_stats(self) -> dict:
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             total_row = db.query_one("SELECT COUNT(*) FROM skills WHERE is_active=1")
             total = total_row[0] if total_row else 0
             mature_row = db.query_one("SELECT COUNT(*) FROM skills WHERE success_count >= 3 AND success_rate >= 0.7 AND is_active=1")
@@ -419,7 +420,7 @@ class SkillEmergence:
             skill_name = f"need_learn_{gap_type}"
             existing = self._find_matching_skill(query[:30], gap_type)
             if existing:
-                db = DatabaseManager.get("data/skill_emergence.db")
+                db = get_storage_port(self.db_path)
                 db.execute(
                     "UPDATE skills SET fail_count=fail_count+1 WHERE skill_name=?",
                     (skill_name,),
@@ -427,7 +428,7 @@ class SkillEmergence:
                 )
                 return None
 
-            db = DatabaseManager.get("data/skill_emergence.db")
+            db = get_storage_port(self.db_path)
             db.execute(
                 "INSERT OR REPLACE INTO skills (skill_name, skill_type, trigger_patterns, solution_path, success_count, fail_count, success_rate, is_active, created_at) VALUES (?,?,?,?,?,?,?,?,datetime('now'))",
                 (skill_name, gap_type, query[:50], "待学习", 0, 1, 0.0, 1),
@@ -517,6 +518,57 @@ class SkillEmergence:
                 logger.warning(f"自检失败: {tool_name} 注册后无法被get()发现")
         except Exception as e:
             logger.error(f"成熟技能注册失败: {e}")
+
+    def _record_application(self, skill_name: str, query: str, was_successful: bool, elapsed: float):
+        """记录技能应用——形成技能使用的闭环数据"""
+        try:
+            db = get_storage_port(self.db_path)
+            db.execute(
+                "INSERT INTO skill_applications (skill_name, query, was_successful, elapsed, timestamp) VALUES (?,?,?,?,datetime('now'))",
+                (skill_name, query[:200], 1 if was_successful else 0, elapsed),
+                commit=True,
+            )
+        except Exception as e:
+            logger.debug(f"技能应用记录跳过: {e}")
+
+    def promote_skills(self):
+        """技能晋升：将成熟技能从manual升级为learned/reflex
+        
+        晋升规则：
+        - success_count >= 5 且 automation_level=manual → learned
+        - success_count >= 20 且 automation_level=learned → reflex
+        """
+        try:
+            db = get_storage_port(self.db_path)
+            promoted = 0
+            
+            rows = db.query(
+                "SELECT skill_name, success_count, automation_level FROM skills WHERE is_active=1"
+            )
+            for row in rows:
+                name, count, level = row[0], row[1], row[2]
+                new_level = None
+                
+                if level == "manual" and count >= 5:
+                    new_level = "learned"
+                elif level == "learned" and count >= 20:
+                    new_level = "reflex"
+                
+                if new_level:
+                    db.execute(
+                        "UPDATE skills SET automation_level=? WHERE skill_name=?",
+                        (new_level, name),
+                        commit=True,
+                    )
+                    promoted += 1
+                    logger.info(f"技能晋升: {name} {level}→{new_level} (成功{count}次)")
+            
+            if promoted > 0:
+                logger.info(f"技能晋升完成: {promoted}个技能升级")
+            return promoted
+        except Exception as e:
+            logger.error(f"技能晋升失败: {e}")
+            return 0
 
 
 skill_emergence = SkillEmergence()

@@ -32,7 +32,9 @@ class CalculatorTool(ToolInterface):
         return 80
 
     def can_handle(self, query: str, intent_type: str = "") -> bool:
-        calc_keywords = ["计算", "求值", "等于多少", "π", "圆周率", "算"]
+        calc_keywords = ["计算", "求值", "等于多少", "π", "圆周率", "算",
+                         "多少", "几加几", "等于几", "加起来", "乘以",
+                         "算一下", "等于", "加", "减", "乘", "除"]
         math_patterns = [
             r'\d+\s*[\+\-\*/\^%]\s*\d+',
             r'(sin|cos|tan|log|sqrt|exp|abs|factorial)\s*\(',
@@ -40,7 +42,7 @@ class CalculatorTool(ToolInterface):
         ]
         if any(kw in query for kw in calc_keywords):
             return True
-        return any(re.search(p, query) for p in math_patterns)
+        return any(re.search(p, query) for p in math_patterns) or intent_type == "simple_query"
 
     async def execute(self, **kwargs) -> ToolResult:
         query = kwargs.get("query", "")

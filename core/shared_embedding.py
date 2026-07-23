@@ -13,7 +13,7 @@ _model = None
 _model_name = None
 
 def get_embedding_model():
-    """获取共享的嵌入模型实例"""
+    """获取共享的嵌入模型实例（带超时保护，失败立即降级）"""
     global _model, _model_name
     
     if _model is not None:
@@ -34,8 +34,31 @@ def get_embedding_model():
         
         cache_folder = os.path.expanduser('~/.cache/huggingface/hub')
         
-
-        _model = SentenceTransformer(model_name, cache_folder=cache_folder)
+        import threading
+        load_result = {"model": None, "error": None}
+        
+        def _load():
+            try:
+                load_result["model"] = SentenceTransformer(model_name, cache_folder=cache_folder)
+            except Exception as e:
+                load_result["error"] = str(e)
+        
+        load_thread = threading.Thread(target=_load, daemon=True)
+        load_thread.start()
+        load_thread.join(timeout=15)
+        
+        if load_thread.is_alive():
+            logger.warning(f"嵌入模型加载超时(15s)，降级跳过")
+            _model = None
+            _model_name = None
+            return None
+        
+        if load_result["error"]:
+            logger.warning(f"嵌入模型加载失败: {load_result['error'][:100]}")
+            _model = None
+            return None
+        
+        _model = load_result["model"]
         _model_name = model_name
         
         logger.info("✓ 共享嵌入模型已加载")

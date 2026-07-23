@@ -2,7 +2,7 @@
 外部学习模块 - 主动向搜索引擎和更强AI请教
 """
 import json
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import hashlib
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -112,7 +112,7 @@ class ExternalLearner:
         try:
             for db_name, label in [("data/knowledge_base.db", "知识库"), ("data/experience_pool.db", "经验池")]:
                 try:
-                    db = DatabaseManager.get(db_name)
+                    db = get_storage_port(db_name)
                     tables = [row[0] for row in db.query("SELECT name FROM sqlite_master WHERE type='table'")]
                     
                     if "knowledge_entries" in tables:
@@ -410,7 +410,7 @@ class ExternalLearner:
         """保存外部学习结果到知识库"""
         
         saved_count = 0
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         for item in items:
             try:
                 question_hash = hashlib.md5(item["question"].lower().encode()).hexdigest()

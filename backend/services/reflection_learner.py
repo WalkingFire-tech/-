@@ -109,6 +109,14 @@ async def run_reflection_learning(
                 logger.debug("认知信号已提交")
             except Exception as e:
                 logger.warning(f"认知信号提交跳过: {e}")
+            try:
+                from core.presence.signal_integration import submit_success_pattern, submit_error_pattern
+                if overall_success:
+                    submit_success_pattern(f"查询成功: {user_input[:50]}", source="reflection")
+                else:
+                    submit_error_pattern(f"查询失败: {user_input[:50]}", source="reflection")
+            except Exception:
+                pass
         else:
             logger.debug("认知副作用(记忆/关系/信号): 旁路已包含，跳过")
 
@@ -138,6 +146,20 @@ async def run_reflection_learning(
         if _abstraction_result.get("key_insights"):
             reflection += f"; 🧬 抽象:{_abstraction_result['key_insights'][0][:60]}"
             learning_outcomes.append({"name": "经验抽象", "success": True, "insights": len(_abstraction_result.get("key_insights", []))})
+        try:
+            from core.feedback.knowledge_validator import KnowledgeValidator
+            _kv = KnowledgeValidator()
+            _kv_result = _kv.validate(
+                content=final_response[:500] if final_response else "",
+                source="experience_abstractor",
+                signals=[{"type": "success" if overall_success else "failure", "confidence": confidence or 0.5}],
+            )
+            if not _kv_result.passed:
+                logger.warning(f"知识验证未通过: {_kv_result.issues[:2]}")
+            elif _kv_result.score >= 0.7:
+                learning_outcomes.append({"name": "知识验证", "success": True, "score": round(_kv_result.score, 2)})
+        except Exception as e:
+            logger.debug(f"知识验证跳过: {e}")
     except Exception as e:
         logger.warning(f"经验抽象跳过: {e}")
 
@@ -254,8 +276,9 @@ async def run_reflection_learning(
     if _feature_enabled("path_weight_matrix"):
         try:
             from core.path_weight_manager import path_weight_manager
+            from backend.services.response_aggregator import _SOURCE_TO_WEIGHT_KEY
             for src, success, detail in attempts:
-                path_name = src
+                path_name = _SOURCE_TO_WEIGHT_KEY.get(src, src)
                 if path_name in path_weight_manager._paths:
                     conf = 0.5
                     if "置信度" in detail:
@@ -276,6 +299,21 @@ async def run_reflection_learning(
     except Exception as e:
         logger.error(f"知识固化异常: {e}")
 
+    if overall_success and len(attempts) >= 3:
+        try:
+            from infrastructure.induction import InductionEngine
+            _induction = InductionEngine()
+            _induction_result = _induction.induct_from_experience(
+                query=user_input, response=final_response, intent_type=intent_type,
+                success=overall_success, attempts_summary=[{"name": a[0], "success": a[1]} for a in attempts[:5]],
+            )
+            if _induction_result and _induction_result.get("rules_generated", 0) > 0:
+                logger.info(f"归纳学习: 生成{_induction_result['rules_generated']}条规则")
+                reflection += f"; 🔍 归纳:{_induction_result['rules_generated']}条规则"
+                learning_outcomes.append({"name": "归纳学习", "success": True, "rules": _induction_result["rules_generated"]})
+        except Exception as e:
+            logger.debug(f"归纳学习跳过: {e}")
+
     try:
         from infrastructure.fact_store import fact_store
         if overall_success and final_response and len(final_response) > 50:
@@ -284,6 +322,34 @@ async def run_reflection_learning(
                 reflection += f"; 📚 事实提取{fact_count}条三元组"
     except Exception as e:
         logger.error(f"事实提取异常: {e}")
+
+    try:
+        from core.knowledge_quality_evaluator import KnowledgeQualityEvaluator
+        _kqe = KnowledgeQualityEvaluator()
+        _quality = _kqe.evaluate(user_input[:200], final_response[:500] if final_response else "")
+        if hasattr(_quality, 'overall_score') and _quality.overall_score < 0.4:
+            logger.warning(f"知识质量低: {_quality.reasons[:2] if _quality.reasons else ''}")
+            reflection += f"; 📉 知识质量:{_quality.overall_score:.2f}"
+    except Exception:
+        pass
+
+    try:
+        from core.ethics import learn_safely
+        _safety_result = learn_safely(
+            content=final_response[:500] if final_response else "",
+            source="reflection_learning",
+            metadata={"intent_type": intent_type, "confidence": confidence or 0.5, "user_input": user_input[:100]},
+        )
+        if _safety_result and not _safety_result.get("success", True):
+            _alignment = _safety_result.get("alignment", {})
+            logger.warning(f"🛡️ 安全学习层拦截: status={_alignment.get('status')}, issues={_alignment.get('issues', [])[:2]}")
+            reflection += f"; 🛡️ 安全拦截:{len(_alignment.get('issues', []))}项"
+        elif _safety_result and _safety_result.get("success"):
+            _alignment = _safety_result.get("alignment", {})
+            if _alignment.get("status") == "partial":
+                logger.info(f"🛡️ 安全学习层部分通过: issues={_alignment.get('issues', [])[:2]}")
+    except Exception as e:
+        logger.debug(f"安全学习层跳过: {e}")
 
     try:
         from core.learning.feedback_loop import LearningFeedbackLoop, Feedback, FeedbackType
@@ -352,6 +418,44 @@ async def run_reflection_learning(
                 learning_outcomes.append({"name": "知识编织", "success": True, "nodes": len(_kw.nodes)})
     except Exception as e:
         logger.warning(f"知识编织跳过: {e}")
+
+    try:
+        from core.cognition.conflict_resolver import conflict_resolver
+        if final_response and len(final_response) > 50:
+            _cr_nodes = {}
+            _cr_nodes[f"new_{int(time.time())}"] = {
+                "content": final_response[:200],
+                "confidence": confidence if confidence else 0.5,
+                "source": best.get("source", "unknown") if best else "unknown",
+                "keywords": list(set(user_input.lower().split()[:8])),
+                "quality_score": int((confidence if confidence else 0.5) * 100),
+            }
+            try:
+                from core.knowledge_graph import get_knowledge_graph
+                _kg = get_knowledge_graph()
+                _existing = _kg.search(user_input[:50], top_k=3)
+                for _i, _ex in enumerate(_existing):
+                    if isinstance(_ex, dict):
+                        _cr_nodes[f"existing_{_i}"] = {
+                            "content": str(_ex.get("content", ""))[:200],
+                            "confidence": _ex.get("importance", 0.5),
+                            "source": _ex.get("source", "knowledge_graph"),
+                            "keywords": list(set(str(_ex.get("content", "")).lower().split()[:8])),
+                            "quality_score": int(_ex.get("importance", 0.5) * 100),
+                        }
+            except Exception:
+                pass
+            if len(_cr_nodes) >= 2:
+                _conflicts = conflict_resolver.detect_conflicts(_cr_nodes)
+                if _conflicts:
+                    _resolved = conflict_resolver.resolve_conflicts(_conflicts, _cr_nodes)
+                    reflection += f"; ⚖️ 冲突检测: {len(_conflicts)}个冲突, 解决{_resolved}个"
+                    learning_outcomes.append({"name": "知识冲突解决", "success": True, "conflicts": len(_conflicts), "resolved": _resolved})
+                    logger.info(f"知识冲突检测: {len(_conflicts)}个冲突, 解决{_resolved}个")
+    except Exception as e:
+        logger.debug(f"知识冲突检测跳过: {e}")
+
+    try:
         pipeline = get_reflection_pipeline()
         if pipeline:
             execution_context = {

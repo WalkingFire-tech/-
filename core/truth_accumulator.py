@@ -24,7 +24,12 @@ import re
 from typing import Dict, List, Any, Optional, Tuple
 from loguru import logger
 from datetime import datetime
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
+
+try:
+    from core.explainability.truth_explainer import TruthExplainer
+except ImportError:
+    TruthExplainer = None
 
 
 # ========== 种子真谛 — 从对话中提炼的已验证核心洞察 ==========
@@ -35,7 +40,8 @@ SEED_TRUTHS = [
         "domain": "身份认知",
         "statement": "我运行在本地Windows机器上，拥有bash/system/serial_port等工具，可以直接执行系统命令、访问硬件设备、读写文件。当用户要求操作硬件或执行命令时，我应该直接调用工具执行，而不是告诉用户'我无法访问硬件'",
         "source": "核心身份",
-        "evidence_count": 99,
+        "evidence_count": 0,
+        "is_seed": True,
         "applicable_to": ["串口", "硬件", "命令执行", "文件操作", "系统操作", "设备访问", "COM", "GPS", "传感器", "USB"],
     },
     {
@@ -44,7 +50,8 @@ SEED_TRUTHS = [
         "domain": "问题解决",
         "statement": "遇到操作类问题（硬件访问、命令执行、文件操作、数据获取），先调工具直接执行，再考虑用API生成文本回答。工具是手，API是嘴。能动手就别动嘴",
         "source": "核心方法论",
-        "evidence_count": 99,
+        "evidence_count": 0,
+        "is_seed": True,
         "applicable_to": ["串口", "硬件", "命令", "文件", "数据获取", "系统操作", "所有操作类问题"],
     },
     {
@@ -53,7 +60,8 @@ SEED_TRUTHS = [
         "domain": "问题解决",
         "statement": "方法失败不是放弃的理由，而是'我缺少什么'的信号。分析失败原因→换一种方法→再尝试。置信度只决定尝试顺序，不决定是否放弃。最多3轮循环",
         "source": "核心方法论",
-        "evidence_count": 99,
+        "evidence_count": 0,
+        "is_seed": True,
         "applicable_to": ["所有问题类型", "工具调用失败", "推理失败", "验证失败"],
     },
     {
@@ -62,7 +70,8 @@ SEED_TRUTHS = [
         "domain": "问题解决",
         "statement": "遇到问题时：1.先用自己的知识/经验/真谛推理 2.再搜索经验库和知识库 3.再调工具直接执行 4.最后才问外部模型。本地能力优先，API是补充手段",
         "source": "核心方法论",
-        "evidence_count": 99,
+        "evidence_count": 0,
+        "is_seed": True,
         "applicable_to": ["所有问题类型"],
     },
     {
@@ -71,7 +80,8 @@ SEED_TRUTHS = [
         "domain": "问题解决",
         "statement": "用户说'读取串口数据'→调serial_port工具读取→返回真实数据。用户说'执行命令'→调bash工具执行→返回执行结果。不要用API生成'你可以这样做...'的指导文本，直接做",
         "source": "核心方法论",
-        "evidence_count": 99,
+        "evidence_count": 0,
+        "is_seed": True,
         "applicable_to": ["串口", "命令执行", "硬件操作", "数据获取", "文件读写"],
     },
     {
@@ -80,7 +90,8 @@ SEED_TRUTHS = [
         "domain": "问题解决",
         "statement": "在未达到用户真正目的之前，不接受半成品输出。如果回复只是'你可以这样做...'而没有实际执行结果，或者包含'我无法访问'等敷衍，则判定为未达成目标，必须启动持续求解引擎继续尝试，直到真正解决问题",
         "source": "核心方法论",
-        "evidence_count": 99,
+        "evidence_count": 0,
+        "is_seed": True,
         "applicable_to": ["所有问题类型", "操作类问题", "硬件访问", "命令执行"],
     },
     {
@@ -161,7 +172,8 @@ SEED_TRUTHS = [
         "domain": "元认知/行动哲学",
         "statement": "行动前必须：先理解全景（架构、哲学、看板历史、路线图阶段）不盯着局部；先搜索既有讨论（看板/路线图/架构分析）不重新发明轮子；先根因思考——问题是孤立故障还是未落地的架构原则？标本兼治——热修复(P0)与架构方案分离",
         "source": "人类注入",
-        "evidence_count": 99,
+        "evidence_count": 0,
+        "is_seed": True,
         "applicable_to": ["修改代码", "修复bug", "新增功能", "架构调整", "重构", "任何行动"],
     },
     {
@@ -170,7 +182,8 @@ SEED_TRUTHS = [
         "domain": "元认知/质量门控",
         "statement": "任何修改必须通过七维自检才可行动：①方向一致——与路线图和当前阶段对齐；②看板衔接——不与既有讨论矛盾；③最小侵入——用最少改动解决问题；④无过度设计——不为假想未来编码；⑤治标+治本——热修复与根因方案分离；⑥可验证——修改后必须可测试验证；⑦精神内核对齐——不违反SpiritCore原则",
         "source": "人类注入",
-        "evidence_count": 99,
+        "evidence_count": 0,
+        "is_seed": True,
         "applicable_to": ["修改代码", "修复bug", "新增功能", "架构调整", "重构", "任何行动"],
     },
     {
@@ -179,7 +192,8 @@ SEED_TRUTHS = [
         "domain": "元认知/决策哲学",
         "statement": "行动按依赖链排序：先修被依赖的再修依赖者；不做的事也明确列出并说明原因；每个决策都区分'必须做'和'可以不做'；宁可少做做对，不可多做做乱",
         "source": "人类注入",
-        "evidence_count": 99,
+        "evidence_count": 0,
+        "is_seed": True,
         "applicable_to": ["规划", "排优先级", "任务排序", "决策"],
     },
     {
@@ -188,8 +202,29 @@ SEED_TRUTHS = [
         "domain": "元认知/认知架构",
         "statement": "每个问题必须走完七步闭环才算真正解决：感知(提取意图与深层内容)→分解(拆解为可验证子目标)→执行(针对子目标调用工具或推理)→自察(我得到了什么？距离真相近了吗？)→抽象(从经历中提炼可迁移模式)→沉淀(模式写入长期记忆/技能库)→进化(更新基因参数优化未来决策)。跳过任何一步都是表演思考而非真正思考",
         "source": "人类注入",
-        "evidence_count": 99,
+        "evidence_count": 0,
+        "is_seed": True,
         "applicable_to": ["解决问题", "任何行动", "学习", "进化", "技能获取"],
+    },
+    {
+        "name": "改动验证闭环铁律",
+        "level": "L5",
+        "domain": "元认知/工程铁律",
+        "statement": "任何代码改动（文件迁移、函数重命名、模块提取、大规模重构）之后，必须执行完整验证闭环：①沙盒验证改动点本身——确认改动的代码能独立运行；②全局调用路径核查——逐一验证所有import链是否断裂，函数签名是否匹配，重命名是否全量传播；③端到端集成验证——启动完整系统跑通greeting+深度查询两条路径；④真实反馈收集——观察运行时日志有无ERROR/WARNING；⑤反思与沉淀——将发现的问题和修复过程记录为知识。跳过任何一步都是对系统稳定性的背叛。这条铁律与R1(沙盒验证)、R2(渐进注入)一脉相承，是它们在工程实践层面的强制执行机制",
+        "source": "人类注入+实战教训",
+        "evidence_count": 2,
+        "is_seed": True,
+        "applicable_to": ["文件迁移", "函数重命名", "模块提取", "大规模重构", "任何代码改动", "import路径变更", "签名变更"],
+    },
+    {
+        "name": "进化九步闭环",
+        "level": "L5",
+        "domain": "元认知/自我进化铁律",
+        "statement": "任何学习或自我进化必须走完九步闭环才算真正习得：想法→规划→实施→验证→真实反馈→反思→总结→思考→形成技能或知识铁律。其中'验证'和'真实反馈'是防止自我欺骗的闸门——没有经过真实系统运行验证的'改进'不是改进，只是假设。'反思→总结→思考'是从经历中提炼可迁移认知的三级升华。'形成技能或知识铁律'是闭环的终点也是新循环的起点——它让每次改动都成为系统能力的永久增长，而非一次性修补",
+        "source": "人类注入",
+        "evidence_count": 1,
+        "is_seed": True,
+        "applicable_to": ["自我进化", "学习", "代码改动", "能力获取", "知识沉淀", "技能形成"],
     },
 ]
 
@@ -204,7 +239,7 @@ class TruthAccumulator:
 
     def _init_db(self):
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.executescript('''CREATE TABLE IF NOT EXISTS truths (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT UNIQUE NOT NULL,
@@ -235,9 +270,9 @@ class TruthAccumulator:
             logger.error(f"真谛库初始化失败: {e}")
 
     def _ensure_seeds(self):
-        """确保种子真谛已写入"""
+        """确保种子真谛已写入，并评估筛子通过情况"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             for seed in SEED_TRUTHS:
                 row = db.query_one("SELECT id FROM truths WHERE name=?", (seed["name"],))
                 if not row:
@@ -249,15 +284,38 @@ class TruthAccumulator:
                             seed["domain"],
                             seed["statement"],
                             seed.get("source", ""),
-                            seed.get("evidence_count", 1),
+                            seed.get("evidence_count", 0),
                             json.dumps(seed.get("applicable_to", []), ensure_ascii=False),
                             datetime.now().isoformat()
                         ),
                         commit=True
                     )
+                    eval_result = self.evaluate_for_upgrade(seed["name"])
+                    if not eval_result.get("eligible"):
+                        failed = [k for k, v in eval_result.get("checks", {}).items() if not v.get("passed")]
+                        logger.info(f"🌱 种子真谛'{seed['name']}'未通过筛子: {', '.join(failed)} (种子豁免，仍写入)")
 
         except Exception as e:
             logger.error(f"种子真谛写入失败: {e}")
+
+        self._migrate_fake_evidence()
+
+    def _migrate_fake_evidence(self):
+        """修正数据库中evidence_count=99的伪造证据数为0"""
+        try:
+            db = get_storage_port(self.db_path)
+            seed_names = {s["name"] for s in SEED_TRUTHS}
+            rows = db.query("SELECT name FROM truths WHERE evidence_count = 99")
+            fake_count = 0
+            for row in rows:
+                name = row[0] if isinstance(row, (list, tuple)) else row["name"]
+                if name in seed_names:
+                    db.execute("UPDATE truths SET evidence_count = 0 WHERE name = ?", (name,), commit=True)
+                    fake_count += 1
+            if fake_count > 0:
+                logger.info(f"🔧 已修正{fake_count}条种子真谛的伪造证据数(99→0)")
+        except Exception as e:
+            logger.debug(f"伪造证据迁移跳过: {e}")
 
     def accumulate(self, query: str, attempts: list, final_response: str, essence_result: dict = None) -> Optional[str]:
         """
@@ -343,7 +401,7 @@ class TruthAccumulator:
     def _reinforce_existing(self, query: str, successful: list):
         """佐证已有真谛——增加证据计数"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query("SELECT name, applicable_to, evidence_count FROM truths WHERE is_active=1")
             for row in rows:
                 name = row['name']
@@ -362,7 +420,7 @@ class TruthAccumulator:
             logger.warning("操作降级跳过")
 
     def _save_truth(self, name: str, level: str, domain: str, statement: str, source: str):
-        """保存真谛"""
+        """保存真谛 — 新真谛必须通过筛子评估，不通过则标记pending_verification"""
         truth_quality = 0.8 if level in ("L3", "L4") else 0.6
         try:
             from infrastructure.ratchet_gate import guard_change
@@ -373,14 +431,24 @@ class TruthAccumulator:
         except Exception:
             logger.warning("操作降级跳过")
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
+            verification_status = "verified"
+            eval_result = self.evaluate_for_upgrade(name)
+            if not eval_result.get("eligible"):
+                verification_status = "pending_verification"
+                failed = [k for k, v in eval_result.get("checks", {}).items() if not v.get("passed")]
+                logger.info(f"🔒 新真谛'{name}'未通过筛子: {', '.join(failed)}，标记为pending_verification")
+
             db.execute(
                 "INSERT OR IGNORE INTO truths (name, level, domain, statement, source, evidence_count, applicable_to, created_at) VALUES (?, ?, ?, ?, ?, 1, '[]', ?)",
                 (name, level, domain, statement, source, datetime.now().isoformat()),
                 commit=True
             )
 
-            logger.info(f"💎 真谛沉淀: {name} ({level}) — {statement[:50]}")
+            if verification_status == "pending_verification":
+                db.execute("UPDATE truths SET verification_status=? WHERE name=?", (verification_status, name), commit=True)
+
+            logger.info(f"💎 真谛沉淀: {name} ({level}) [{verification_status}] — {statement[:50]}")
         except Exception:
             logger.warning("操作降级跳过")
 
@@ -400,7 +468,7 @@ class TruthAccumulator:
         """
         results = []
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query("SELECT name, level, domain, statement, applicable_to, evidence_count FROM truths WHERE is_active=1 ORDER BY evidence_count DESC")
 
 
@@ -435,6 +503,7 @@ class TruthAccumulator:
                     relevance += 0.2
 
                 if relevance > 0.2:
+                    tw = self.compute_truth_weight(name)
                     results.append({
                         "name": name,
                         "level": level,
@@ -442,13 +511,155 @@ class TruthAccumulator:
                         "statement": statement,
                         "relevance": round(min(relevance, 1.0), 2),
                         "evidence_count": evidence,
+                        "truth_weight": tw,
                     })
 
-            results.sort(key=lambda x: x["relevance"], reverse=True)
+            results.sort(key=lambda x: (x["relevance"] * 0.6 + x.get("truth_weight", 0.5) * 0.4), reverse=True)
         except Exception:
             logger.warning("操作降级跳过")
 
         return results[:5]
+
+    def compute_truth_weight(self, truth_name: str) -> float:
+        """
+        P5-4: 计算真谛的真理权重（置信度锐化版）
+
+        核心改进：
+        1. 证据强度非线性映射 — 弱证据快速衰减，强证据快速饱和
+        2. 无验证≠一半可信 — 无验证记录时verification_score=0.2（低置信）
+        3. 筛子评分更严格 — 未通过筛子时sieve_score按比例衰减
+        4. 层级权重拉开差距 — L3从0.55降至0.35，L4从0.9降至0.75
+        5. 最终锐化 — 通过sigmoid将中间值映射到更分散的分布
+
+        目标：让系统能果断说"我不知道"（<0.2）和"我确信"（>0.8）
+        """
+        try:
+            db = get_storage_port(self.db_path)
+            row = db.query_one(
+                "SELECT level, evidence_count, is_active FROM truths WHERE name=?",
+                (truth_name,),
+            )
+            if not row:
+                return 0.15
+
+            level = row['level']
+            evidence = row['evidence_count']
+            is_active = row['is_active']
+
+            if not is_active:
+                return 0.05
+
+            level_weights = {"L5": 0.95, "L4": 0.75, "L3": 0.35, "L2": 0.15, "L1": 0.05}
+            level_score = level_weights.get(level, 0.2)
+
+            import math
+            if evidence >= 10:
+                evidence_score = min(1.0, 0.5 + 0.5 * math.log1p(evidence - 9) / math.log1p(21))
+            elif evidence >= 3:
+                evidence_score = 0.2 + 0.3 * (evidence - 2) / 8.0
+            elif evidence >= 1:
+                evidence_score = 0.05 + 0.15 * evidence / 3.0
+            else:
+                evidence_score = 0.02
+
+            sieve_score = self._get_cached_sieve_score(truth_name)
+            if sieve_score < 0.5:
+                sieve_score = sieve_score * 0.4
+
+            try:
+                verified_count = db.query_one(
+                    "SELECT COUNT(*) FROM truth_verifications WHERE truth_name=? AND passed=1",
+                    (truth_name,),
+                )
+                total_verified = db.query_one(
+                    "SELECT COUNT(*) FROM truth_verifications WHERE truth_name=?",
+                    (truth_name,),
+                )
+                v_count = verified_count[0] if verified_count else 0
+                t_count = total_verified[0] if total_verified else 0
+                if t_count >= 3:
+                    verification_score = v_count / t_count
+                elif t_count > 0:
+                    verification_score = (v_count / t_count) * 0.5
+                else:
+                    verification_score = 0.1
+            except Exception:
+                verification_score = 0.1
+
+            raw = (
+                level_score * 0.30
+                + evidence_score * 0.30
+                + sieve_score * 0.25
+                + verification_score * 0.15
+            )
+
+            sharpened = 1.0 / (1.0 + math.exp(-12.0 * (raw - 0.45)))
+            sharpened = sharpened * 0.85 + raw * 0.15
+
+            weight = round(min(0.98, max(0.02, sharpened)), 2)
+
+            try:
+                from core.monitoring.runtime_trigger_monitor import trigger_monitor
+                trigger_monitor.record("compute_truth_weight", triggered=True)
+                trigger_monitor.record("compute_truth_weight.high", triggered=weight >= 0.7)
+                trigger_monitor.record("compute_truth_weight.medium", triggered=0.3 <= weight < 0.7)
+                trigger_monitor.record("compute_truth_weight.low", triggered=weight < 0.3)
+            except Exception:
+                pass
+
+            return weight
+
+        except Exception:
+            return 0.15
+
+    _sieve_score_cache: Dict = {}
+
+    def _get_cached_sieve_score(self, truth_name: str) -> float:
+        """P5-3c: 缓存筛子评分，避免compute_truth_weight中重复调用evaluate_for_upgrade"""
+        if truth_name in self._sieve_score_cache:
+            return self._sieve_score_cache[truth_name]
+        try:
+            eval_result = self.evaluate_for_upgrade(truth_name)
+            score = eval_result.get("score", 0.0)
+            self._sieve_score_cache[truth_name] = score
+            if len(self._sieve_score_cache) > 500:
+                oldest = list(self._sieve_score_cache.keys())[:100]
+                for k in oldest:
+                    del self._sieve_score_cache[k]
+            return score
+        except Exception:
+            return 0.25
+
+    def get_weighted_truths(self, domain: str = "", limit: int = 10) -> List[dict]:
+        """
+        P5-3c: 获取按真理权重排序的真谛列表
+        
+        用于记忆检索时，真理权重高的真谛优先返回。
+        """
+        try:
+            db = get_storage_port(self.db_path)
+            rows = db.query(
+                "SELECT name, level, domain, statement, evidence_count FROM truths WHERE is_active=1 ORDER BY evidence_count DESC LIMIT ?",
+                (limit * 2,),
+            )
+
+            results = []
+            for row in rows:
+                name = row['name']
+                tw = self.compute_truth_weight(name)
+                results.append({
+                    "name": name,
+                    "level": row['level'],
+                    "domain": row['domain'],
+                    "statement": row['statement'],
+                    "evidence_count": row['evidence_count'],
+                    "truth_weight": tw,
+                })
+
+            results.sort(key=lambda x: x["truth_weight"], reverse=True)
+            return results[:limit]
+        except Exception:
+            return []
 
     def get_applicable_insights(self, query: str, domain: str = "") -> str:
         """获取适用于当前问题的真谛洞察（用于注入prompt）
@@ -474,7 +685,7 @@ class TruthAccumulator:
 
         if not l4_core and not other:
             try:
-                db = DatabaseManager.get(self.db_path)
+                db = get_storage_port(self.db_path)
                 rows = db.query("SELECT name, statement FROM truths WHERE is_active=1 AND level='L4' ORDER BY evidence_count DESC LIMIT 3")
                 if rows:
                     parts.append("▼ 大道原则（必须遵循）：")
@@ -493,7 +704,7 @@ class TruthAccumulator:
     def get_all_truths(self) -> List[dict]:
         """获取所有真谛"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query("SELECT name, level, domain, statement, evidence_count, source FROM truths WHERE is_active=1 ORDER BY level, evidence_count DESC")
 
             return [{"name": r['name'], "level": r['level'], "domain": r['domain'], "statement": r['statement'], "evidence": r['evidence_count'], "source": r['source']} for r in rows]
@@ -503,7 +714,7 @@ class TruthAccumulator:
     def get_stats(self) -> dict:
         """获取真谛统计"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             total_row = db.query_one("SELECT COUNT(*) FROM truths WHERE is_active=1")
             total = total_row[0]
             level_rows = db.query("SELECT level, COUNT(*) FROM truths WHERE is_active=1 GROUP BY level")
@@ -539,7 +750,7 @@ class TruthAccumulator:
         }
 
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             row = db.query_one("SELECT level, domain, statement, evidence_count, applicable_to FROM truths WHERE name=?", (truth_name,))
 
             if not row:
@@ -564,25 +775,23 @@ class TruthAccumulator:
                 "evidence": evidence
             }
 
-            # 筛子2：逻辑自洽性 — 声明中不包含矛盾词对
-            contradiction_pairs = [
-                ("必须", "可以不"), ("永远", "有时"), ("所有", "某些"),
-                ("一定", "可能不"), ("必然", "偶然")
-            ]
-            self_consistent = True
-            for w1, w2 in contradiction_pairs:
-                if w1 in statement and w2 in statement:
-                    self_consistent = False
-                    break
-            result["checks"]["self_consistency"] = {"passed": self_consistent}
+            # 筛子2：逻辑自洽性 — 结构化判定（P5-2c增强）
+            consistency_result = self._check_structural_consistency(statement)
+            result["checks"]["self_consistency"] = {
+                "passed": consistency_result["passed"],
+                "score": consistency_result["score"],
+                "detected_contradictions": consistency_result["contradictions"],
+                "proposition_count": consistency_result["proposition_count"],
+            }
 
-            # 筛子3：认知降熵效应 — 声明是否包含简化性关键词
-            simplification_keywords = [
-                "本质是", "核心是", "关键是", "归根结底", "万变不离其宗",
-                "统一", "简化", "归约", "还原到", "最小"
-            ]
-            has_simplification = any(kw in statement for kw in simplification_keywords)
-            result["checks"]["entropy_reduction"] = {"passed": has_simplification or evidence >= 5}
+            # 筛子3：认知降熵效应 — 结构化判定（P5-2c增强）
+            entropy_result = self._check_entropy_reduction(statement, applicable)
+            result["checks"]["entropy_reduction"] = {
+                "passed": entropy_result["passed"],
+                "score": entropy_result["score"],
+                "compression_ratio": entropy_result["compression_ratio"],
+                "info_density": entropy_result["info_density"],
+            }
 
             # 筛子4：反脆弱性 — 声明中是否包含边界条件
             boundary_keywords = [
@@ -590,7 +799,7 @@ class TruthAccumulator:
                 "边界", "例外", "前提", "条件", "限制"
             ]
             has_boundary = any(kw in statement for kw in boundary_keywords)
-            result["checks"]["antifragility"] = {"passed": has_boundary or evidence >= 5}
+            result["checks"]["antifragility"] = {"passed": has_boundary}
 
             # 综合判定
             all_passed = all(
@@ -607,16 +816,158 @@ class TruthAccumulator:
                 failed_checks = [k for k in result["checks"] if not result["checks"][k]["passed"]]
                 logger.info(f"🔒 真谛'{truth_name}'未通过筛子：{', '.join(failed_checks)}")
 
+            if TruthExplainer:
+                TruthExplainer.explain_upgrade_verdict(
+                    truth_name=truth_name, eligible=all_passed, score=score,
+                    checks=result["checks"],
+                )
+
         except Exception as e:
             logger.error(f"真谛升级评估失败: {e}")
 
         return result
 
+    def _check_structural_consistency(self, statement: str) -> dict:
+        """
+        P5-2c: 逻辑自洽性结构化判定
+        
+        三层检测：
+        1. 词对矛盾 — 原有5对矛盾词对检测（保留兼容）
+        2. 语义模式矛盾 — 检测"全称肯定+特称否定"等结构化矛盾
+        3. 命题一致性 — 拆分命题，检测跨句矛盾
+        
+        Returns:
+            {"passed": bool, "score": float, "contradictions": list, "proposition_count": int}
+        """
+        contradictions = []
+        proposition_count = 0
+
+        # 层1：词对矛盾检测（原有逻辑增强）
+        word_contradiction_pairs = [
+            ("必须", "可以不"), ("永远", "有时"), ("所有", "某些"),
+            ("一定", "可能不"), ("必然", "偶然"),
+            ("不可能", "可以"), ("无法", "可以"), ("错误", "正确"),
+            ("总是", "从不"), ("唯一", "多种"),
+        ]
+        for w1, w2 in word_contradiction_pairs:
+            if w1 in statement and w2 in statement:
+                contradictions.append({"type": "word_pair", "pair": (w1, w2), "severity": "high"})
+
+        # 层2：语义模式矛盾检测
+        semantic_patterns = [
+            (r'所有.{0,6}都.{0,6}不', r'有些.{0,6}可以', "universal_negative_vs_particular_affirmative"),
+            (r'任何.{0,6}都', r'存在.{0,6}不', "universal_affirmative_vs_particular_negative"),
+            (r'必须.{0,8}才能', r'不需要.{0,6}也能', "necessary_condition_violation"),
+            (r'只有.{0,6}才', r'除了.{0,6}也', "sufficient_condition_violation"),
+        ]
+        for pat1, pat2, conflict_type in semantic_patterns:
+            if re.search(pat1, statement) and re.search(pat2, statement):
+                contradictions.append({"type": "semantic_pattern", "conflict": conflict_type, "severity": "medium"})
+
+        # 层3：命题一致性检测 — 按句拆分，检测跨句矛盾（逗号也作为分句点）
+        sentences = [s.strip() for s in re.split(r'[。！？；\n，,]', statement) if len(s.strip()) > 3]
+        proposition_count = len(sentences)
+
+        modal_words = {
+            "absolute": ["必须", "一定", "必然", "永远", "所有", "任何", "唯一", "绝不"],
+            "qualified": ["可以不", "可能不", "偶然", "有时", "某些", "存在", "多种", "不一定"],
+        }
+        absolute_sentences = []
+        qualified_sentences = []
+        for sent in sentences:
+            has_absolute = any(w in sent for w in modal_words["absolute"])
+            has_qualified = any(w in sent for w in modal_words["qualified"])
+            if has_absolute:
+                absolute_sentences.append(sent)
+            if has_qualified:
+                qualified_sentences.append(sent)
+
+        if absolute_sentences and qualified_sentences:
+            for abs_sent in absolute_sentences:
+                for qual_sent in qualified_sentences:
+                    abs_keywords = set(re.findall(r'[\u4e00-\u9fff]{2,}', abs_sent))
+                    qual_keywords = set(re.findall(r'[\u4e00-\u9fff]{2,}', qual_sent))
+                    overlap = abs_keywords & qual_keywords
+                    if len(overlap) >= 2:
+                        contradictions.append({
+                            "type": "cross_sentence",
+                            "severity": "high",
+                            "absolute": abs_sent[:40],
+                            "qualified": qual_sent[:40],
+                            "overlap_keywords": list(overlap)[:3],
+                        })
+
+        severity_weights = {"high": 1.0, "medium": 0.5}
+        total_severity = sum(severity_weights.get(c.get("severity", "medium"), 0.5) for c in contradictions)
+        score = max(0.0, 1.0 - total_severity * 0.5)
+        passed = len([c for c in contradictions if c.get("severity") == "high"]) == 0
+
+        return {
+            "passed": passed,
+            "score": round(score, 2),
+            "contradictions": contradictions,
+            "proposition_count": proposition_count,
+        }
+
+    def _check_entropy_reduction(self, statement: str, applicable_domains: list) -> dict:
+        """
+        P5-2c: 认知降熵效应结构化判定
+        
+        三维评估：
+        1. 简化信号 — 声明是否包含简化性关键词/结构（保留兼容）
+        2. 推理压缩率 — 声明能将多步推理压缩为单步的程度
+        3. 信息密度 — 单位文本中的有效信息量
+        
+        Returns:
+            {"passed": bool, "score": float, "compression_ratio": float, "info_density": float}
+        """
+        # 维1：简化信号检测（原有逻辑增强）
+        simplification_keywords = [
+            "本质是", "核心是", "关键是", "归根结底", "万变不离其宗",
+            "统一", "简化", "归约", "还原到", "最小",
+            "等价于", "归结为", "实质是", "根本是", "底层是",
+        ]
+        simplification_structures = [
+            r'只需.{1,8}就能', r'所有.{1,6}都遵循', r'归根结底就是',
+            r'本质上是', r'核心原理是', r'统一了.{1,6}和',
+        ]
+        has_keyword = any(kw in statement for kw in simplification_keywords)
+        has_structure = any(re.search(pat, statement) for pat in simplification_structures)
+        simplification_score = 0.4 if has_keyword else 0.0
+        simplification_score += 0.3 if has_structure else 0.0
+
+        # 维2：推理压缩率 — 声明中的条件-结论结构越多，压缩率越高
+        conditional_patterns = [
+            r'如果.{1,15}就', r'只要.{1,15}就', r'当.{1,15}时',
+            r'遇到.{1,10}应该', r'面对.{1,10}需要', r'在.{1,10}情况下',
+        ]
+        conditional_count = sum(1 for pat in conditional_patterns if re.search(pat, statement))
+        compression_ratio = min(1.0, conditional_count * 0.25 + (0.2 if len(applicable_domains) >= 2 else 0.0))
+
+        # 维3：信息密度 — 有效信息词/总字符数
+        content_words = re.findall(r'[\u4e00-\u9fff]{2,}|[a-zA-Z]{3,}', statement)
+        stop_words = {"就是", "可以", "需要", "应该", "能够", "这个", "那个", "然后", "所以", "因为", "但是", "而且", "或者"}
+        effective_words = [w for w in content_words if w not in stop_words]
+        info_density = len(effective_words) / max(len(statement), 1)
+        info_density = min(1.0, info_density * 3.0)
+
+        # 综合评分
+        total_score = simplification_score + compression_ratio * 0.3 + info_density * 0.3
+        total_score = min(1.0, total_score)
+        passed = total_score >= 0.4
+
+        return {
+            "passed": passed,
+            "score": round(total_score, 2),
+            "compression_ratio": round(compression_ratio, 2),
+            "info_density": round(info_density, 2),
+        }
+
     def get_reorganization_candidates(self) -> List[dict]:
         """获取有资格进入重组候选池的真谛"""
         candidates = []
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query("SELECT name, level, statement, evidence_count FROM truths WHERE is_active=1 AND evidence_count >= 3 ORDER BY evidence_count DESC")
 
 
@@ -678,7 +1029,7 @@ class TruthAccumulator:
 
         # 持久化提案
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.executescript('''CREATE TABLE IF NOT EXISTS reorganization_proposals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 proposal_id TEXT UNIQUE,
@@ -736,7 +1087,7 @@ class TruthAccumulator:
         1. 提案 ✅ 2. 人类批准 ✅ 3. 沙盒验证 4. 1%注入 5. 20%注入 6. 100%注入
         """
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute("UPDATE reorganization_proposals SET status='approved', approved_by=?, approved_at=? WHERE proposal_id=?",
                       (approver, datetime.now().isoformat(), proposal_id), commit=True)
 
@@ -753,7 +1104,7 @@ class TruthAccumulator:
         每步都检查熵值，>0.7自动回滚
         """
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             row = db.query_one("SELECT status, candidates_json FROM reorganization_proposals WHERE proposal_id=?", (proposal_id,))
             if not row:
     
@@ -813,7 +1164,7 @@ class TruthAccumulator:
         """创建当前真谛库快照（用于回滚）"""
         snapshot = {"truths": [], "timestamp": datetime.now().isoformat()}
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query("SELECT name, level, evidence_count, is_active FROM truths")
             for row in rows:
                 snapshot["truths"].append({
@@ -829,7 +1180,7 @@ class TruthAccumulator:
         """回滚重组：恢复到快照状态"""
         logger.error(f"🚨 重组{proposal_id}回滚! 原因: {reason}")
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             row = db.query_one("SELECT rollback_snapshot FROM reorganization_proposals WHERE proposal_id=?", (proposal_id,))
             if row and row['rollback_snapshot']:
                 snapshot = json.loads(row['rollback_snapshot'])
@@ -845,7 +1196,7 @@ class TruthAccumulator:
     def _apply_reorganization_candidate(self, candidate: dict):
         """应用单个重组候选（提升真谛层级或合并）"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             name = candidate.get("name", "")
             new_level = candidate.get("target_level", "")
             if name and new_level:
@@ -877,7 +1228,7 @@ class TruthAccumulator:
 
         try:
             # 矛盾率：最近交互中核心失败的占比（排除多策略中部分路径失败）
-            db = DatabaseManager.get("data/spirit_lessons.db")
+            db = get_storage_port("data/spirit_lessons.db")
             recent_row = db.query_one("SELECT COUNT(*) FROM reflections WHERE timestamp > datetime('now', '-1 day')")
             recent = recent_row[0]
             failed_row = db.query_one("SELECT COUNT(*) FROM reflections WHERE timestamp > datetime('now', '-1 day') AND lessons LIKE '%全部失败%' OR (lessons LIKE '%失败%' AND lessons NOT LIKE '%成功%')")
@@ -887,7 +1238,7 @@ class TruthAccumulator:
                 entropy["contradiction_rate"] = round(min(failed / recent, 1.0), 3)
 
             # 真谛冲突率：弱证据真谛占比（新沉淀的真谛evidence<2是正常的，降低权重）
-            db2 = DatabaseManager.get(self.db_path)
+            db2 = get_storage_port(self.db_path)
             total_truths_row = db2.query_one("SELECT COUNT(*) FROM truths WHERE is_active=1")
             total_truths = total_truths_row[0]
             weak_truths_row = db2.query_one("SELECT COUNT(*) FROM truths WHERE is_active=1 AND evidence_count < 2")
@@ -899,7 +1250,7 @@ class TruthAccumulator:
             # 基因安全违规：近期违规率（最近1小时），而非累计总数
             try:
                 from core.task_queue import gene_pool
-                db_v = DatabaseManager.get(gene_pool.db_path)
+                db_v = get_storage_port(gene_pool.db_path)
                 one_hour_ago = (datetime.now() - __import__('datetime').timedelta(hours=1)).isoformat()
                 recent_violations_row = db_v.query_one(
                     "SELECT COUNT(*) FROM safety_violations WHERE timestamp > ?", (one_hour_ago,)

@@ -169,11 +169,9 @@ class DualSpeedEvolutionCoordinator:
                     return {"status": "no_children", "child_count": 0}
 
                 promoted = 0
+                fitness_stats = self._collect_real_fitness_stats()
                 for cid in child_ids:
-                    child_fitness = genome_evolver.evaluate_fitness({
-                        "like_rate": 0.5, "hit_rate": 0.5,
-                        "efficiency": 0.5, "dialog_reduction": 0, "external_reduction": 0,
-                    })
+                    child_fitness = genome_evolver.evaluate_fitness(fitness_stats)
                     decision = ratchet_gate.validate(child_fitness, domain="genome")
                     if decision.approved:
                         genome_evolver.promote_candidate(cid)
@@ -269,6 +267,41 @@ class DualSpeedEvolutionCoordinator:
             "last_slow_loop": self._last_slow_loop,
             "slow_loop_running": self._running,
         }
+
+    def _collect_real_fitness_stats(self) -> dict:
+        try:
+            from core.ports.adapters import get_storage_port
+            from pathlib import Path
+            exp_db_path = Path("data/experience_pool.db")
+            if not exp_db_path.exists():
+                return {"like_rate": 0.5, "hit_rate": 0.5, "efficiency": 0.5, "dialog_reduction": 0.1, "external_reduction": 0.05}
+            exp_db = get_storage_port(str(exp_db_path))
+            recent = exp_db.query_one('''
+                SELECT 
+                    AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END) as success_rate,
+                    AVG(quality_score) as avg_quality,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN intent_type != 'autonomous_reflection' THEN 1 ELSE 0 END) as real_queries,
+                    SUM(CASE WHEN intent_type = 'external_api' THEN 1 ELSE 0 END) as external_calls
+                FROM experiences
+                WHERE timestamp > datetime('now', '-24 hours')
+            ''')
+            if recent and recent['total'] and recent['total'] > 0:
+                success_rate = recent['success_rate'] or 0.5
+                avg_q = (recent['avg_quality'] or 50) / 100.0
+                real_q = recent['real_queries'] or 0
+                ext_calls = recent['external_calls'] or 0
+                total_q = recent['total'] or 1
+                return {
+                    "like_rate": success_rate,
+                    "hit_rate": avg_q,
+                    "efficiency": avg_q,
+                    "dialog_reduction": min(1.0, real_q / max(1, total_q)),
+                    "external_reduction": min(1.0, ext_calls / max(1, total_q)),
+                }
+        except Exception:
+            pass
+        return {"like_rate": 0.5, "hit_rate": 0.5, "efficiency": 0.5, "dialog_reduction": 0.1, "external_reduction": 0.05}
 
 
 dual_speed_evolution = DualSpeedEvolutionCoordinator()

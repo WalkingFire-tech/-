@@ -1,23 +1,9 @@
 """
 流式聊天处理 - 多路并行、无固定超时、结果对比择优
-
-核心改进：
-- 多路并行获取结果（经验池 + 知识库 + Ollama + 规则），不串行等待
-- 不设固定超时，外部调用等它自然返回或异常
-- 结果到齐后对比择优，自我验证
-- 持久化任务队列：后台任务存SQLite，服务重启不丢失，失败自动重试
-- 模型分级仲裁：评估用快模型，推理用强模型
-- 基因库固化：高质量回复自动升级为永久知识
 """
-import asyncio
 import time
 from loguru import logger
 
-from backend.services.input_preprocessor import (
-    get_intent_domain_keywords as _get_intent_domain_keywords,
-    compute_relevance as _compute_relevance,
-    feature_enabled as _feature_enabled,
-)
 from backend.services.auto_fix_service import (
     auto_fix_checkpoint as _auto_fix_checkpoint,
     never_give_up_response as _never_give_up_response,
@@ -25,32 +11,20 @@ from backend.services.auto_fix_service import (
 
 from backend.services.path_handlers._shared import (
     _RESOURCE_AWARE, _INPUT_PROCESSOR_AVAILABLE,
-    SPIRIT_CORE_AVAILABLE,
-    _run_sync,
+    SPIRIT_CORE_AVAILABLE, _run_sync,
 )
 
-try:
-    from core.resource_awareness.health_monitor import get_health_monitor
-except ImportError:
-    get_health_monitor = None
-from backend.services.path_handlers.experience_path import (
-    fetch_experience as _fetch_experience,
-)
+from backend.services.path_handlers.experience_path import fetch_experience as _fetch_experience
 from backend.services.path_handlers.knowledge_path import fetch_knowledge as _fetch_knowledge
-from backend.services.path_handlers.ollama_path import (
-    fetch_ollama as _fetch_ollama,
-    fetch_ollama_all as _fetch_ollama_all,
-)
-from backend.services.path_handlers.external_api_path import (
-    fetch_external_api as _fetch_external_api,
-)
+from backend.services.path_handlers.ollama_path import fetch_ollama_all as _fetch_ollama_all
+from backend.services.path_handlers.external_api_path import fetch_external_api as _fetch_external_api
 from backend.services.orchestrator_helpers import (
     get_self_model_safe as _get_self_model,
-    emit as _emit,
     build_conversation_context as _build_conversation_context,
-    self_reason as _self_reason,
     alchemize_error as _alchemize_error,
+    self_reason as _self_reason,
 )
+from backend.services.response_aggregator import compare_and_select as _compare_and_select
 
 try:
     from core.presence.inner_time import inner_time_engine, CognitiveEventType
@@ -63,105 +37,52 @@ try:
     _DIMENSION_ORCHESTRATOR_AVAILABLE = True
 except ImportError:
     _DIMENSION_ORCHESTRATOR_AVAILABLE = False
-from backend.services.response_aggregator import (
-    compare_and_select as _compare_and_select,
-)
-from backend.services.auto_fix_service import (
-    run_persistent_solve as _run_persistent_solve,
-    auto_fix_checkpoint as _auto_fix_checkpoint,
-    never_give_up_response as _never_give_up_response,
-)
-
-from backend.services.path_handlers._shared import (
-    _slow_executor, _fast_executor,
-    _ollama_last_inference_time,
-    _INFERENCE_COOLDOWN_SECONDS, _MAX_RESPONSE_CHARS,
-    _RESOURCE_AWARE, _INPUT_PROCESSOR_AVAILABLE,
-    SPIRIT_CORE_AVAILABLE, _VECTOR_AVAILABLE,
-    _check_vector_available, _run_sync, _run_slow,
-    _save_to_experience_pool,
-)
-
-try:
-    from core.resource_awareness.health_monitor import get_health_monitor
-except ImportError:
-    get_health_monitor = None
-from backend.services.path_handlers.experience_path import (
-    fetch_experience as _fetch_experience,
-    get_experience_context as _get_experience_context,
-    get_last_response as _get_last_response,
-)
-from backend.services.path_handlers.knowledge_path import fetch_knowledge as _fetch_knowledge
-from backend.services.path_handlers.ollama_path import (
-    get_available_ollama_models_async as _get_available_ollama_models_async,
-    get_available_ollama_model_async as _get_available_ollama_model_async,
-    ollama_background_save as _ollama_background_save,
-    fetch_ollama as _fetch_ollama,
-    fetch_ollama_all as _fetch_ollama_all,
-    fetch_ollama_response as _fetch_ollama_response,
-    diagnose_ollama_status as _diagnose_ollama_status,
-)
-from backend.services.path_handlers.external_api_path import (
-    fetch_external_api as _fetch_external_api,
-    fetch_external_learning as _fetch_external_learning,
-)
-from backend.services.path_handlers.rule_path import (
-    fetch_rule as _fetch_rule,
-    generate_smart_reply as _generate_smart_reply,
-)
-from backend.services.path_handlers.fact_path import fetch_fact_assertions as _fetch_fact_assertions
-from backend.services.path_handlers.tool_path import (
-    fetch_tool_results as _fetch_tool_results,
-    query_needs_tools as _query_needs_tools,
-    extract_tool_params as _extract_tool_params,
-)
-from backend.services.intent_service import (
-    understand_response_content as _understand_response_content,
-    discover_methodology as _discover_methodology,
-)
-from backend.services.code_verifier import verify_code_response as _verify_code_response
-from backend.services.reflection_service import (
-    reflect_and_learn as _reflect_and_learn,
-    try_solidify_to_gene_pool as _try_solidify_to_gene_pool,
-)
-from backend.services.orchestrator_helpers import (
-    get_cognitive_planner_safe as _get_cognitive_planner,
-    get_self_model_safe as _get_self_model,
-    emit as _emit,
-    build_uncertainty_note as _build_uncertainty_note,
-    build_conversation_context as _build_conversation_context,
-    get_stereo_memory_context as _get_stereo_memory_context,
-    self_reason as _self_reason,
-    background_collect as _background_collect,
-    alchemize_error as _alchemize_error,
-    self_reason_deliberation as _self_reason_deliberation,
-    is_goal_achieved as _is_goal_achieved,
-    perceive_continuity as _perceive_continuity,
-    r4_self_check as _r4_self_check,
-)
-from backend.services.response_aggregator import (
-    score_response as _score_response,
-    compare_and_select as _compare_and_select,
-    self_verify as _self_verify,
-    cross_source_merge as _cross_source_merge,
-    list_divergences as _list_divergences,
-)
 
 
 
 
 
 
-async def chat_stream(user_input: str, context: dict, event_sink=None):
+async def chat_stream(user_input, context: dict = None, event_sink=None):
+    """
+    流式聊天处理 — 支持端口协议和原始字符串双入口
 
-    def _emit_s(event_type: str, data: dict) -> str:
-        return _emit(event_type, data, event_sink=event_sink)
+    参数：
+    - user_input: str 或 CognitiveStimulus（向后兼容）
+    - context: 上下文字典
+    - event_sink: EventSink实现（默认SSEEventSink）
+    """
+
+    from backend.services.request_parser import parse_stimulus, initialize_ports
+    _parsed = parse_stimulus(user_input, context)
+    stimulus = _parsed["stimulus"]
+    user_input = _parsed["user_input"]
+    if context is None:
+        context = _parsed["context"]
+    else:
+        context.update(_parsed["context"])
+    _stimulus_type = _parsed["stimulus_type"]
+    _stimulus_priority = _parsed["stimulus_priority"]
+
+    _ports = initialize_ports(context)
+
+    def _emit_s(event_type: str, data: dict):
+        if event_sink is not None:
+            event_sink.emit(event_type, data)
+        return (event_type, data)
 
     start_time = time.time()
     attempts = []
     failed_steps = []
     final_response = None
     intent_type = "unknown"
+    try:
+        from backend.services.orchestrator_state import OrchestratorState
+        _orch_state = OrchestratorState()
+        _orch_state.intent_type = intent_type
+        _orch_state.confidence = 0.0
+    except Exception:
+        _orch_state = None
     route = "slow"
     confidence = 0.5
     _rule_actions = []
@@ -177,69 +98,16 @@ async def chat_stream(user_input: str, context: dict, event_sink=None):
         except Exception:
             pass
 
-    if _INNER_TIME_AVAILABLE:
-        inner_time_engine.tick(CognitiveEventType.PERCEIVE, intensity=1.0, description="user_query")
-        try:
-            _it_state = inner_time_engine.get_state()
-            if _it_state.tick_count >= 10:
-                if _it_state.current_phase == "sleeping":
-                    methodology["inner_time_conservative"] = True
-                    logger.info(f"⏱️ 内在时间: SLEEPING阶段(density={_it_state.cognitive_density:.2f}), 走轻量路径")
-                elif _it_state.current_phase == "resting":
-                    methodology["inner_time_efficient"] = True
-                    logger.info(f"⏱️ 内在时间: RESTING阶段(density={_it_state.cognitive_density:.2f}), 优先快速路径")
-                elif _it_state.current_phase == "growing":
-                    methodology["inner_time_learning"] = True
-                    logger.info(f"⏱️ 内在时间: GROWING阶段(density={_it_state.cognitive_density:.2f}), 优先学习路径")
-        except Exception:
-            pass
-
-    _rhythm_snapshot = None
-    try:
-        from core.learning.rhythm_controller import CognitiveRhythmController
-        _rhythm_ctrl = CognitiveRhythmController()
-        _rhythm_snapshot = _rhythm_ctrl.tick()
-        if _rhythm_snapshot.energy_level < 0.3:
-            logger.info(f"🧠 认知节律: 能量低({_rhythm_snapshot.energy_level:.1%}), 状态={_rhythm_snapshot.state.value}, 走轻量路径")
-            methodology["rhythm_conservative"] = True
-        elif _rhythm_snapshot.phase.value == "innovation":
-            logger.info(f"🧠 认知节律: 创新阶段, 能量={_rhythm_snapshot.energy_level:.1%}")
-            methodology["rhythm_innovative"] = True
-    except Exception:
-        pass
-
-    _spirit_resonances = []
-    if SPIRIT_CORE_AVAILABLE:
-        try:
-            from core.spirit_core import spirit_core
-            _spirit_resonances = spirit_core.resonate(user_input, context_type="query")
-            if _spirit_resonances:
-                top = _spirit_resonances[0]
-                logger.info(f"🎻 精神共振: {top['principle']} (强度={top['strength']}) → {top['drive_direction']}")
-                methodology["spirit_drive"] = top["drive_direction"]
-        except Exception:
-            pass
-
-    _curiosity_frontier = None
-    try:
-        from core.presence.curiosity_engine import CuriosityEngine
-        _ce = CuriosityEngine()
-        _curiosity_frontier = _ce.perceive_frontier()
-        if _curiosity_frontier and _curiosity_frontier.get("curiosity_strength", 0) > 0.5:
-            logger.info(f"🔍 好奇心前沿: 强度={_curiosity_frontier['curiosity_strength']:.2f}, 方向={_curiosity_frontier.get('exploration_direction', 'N/A')}")
-    except Exception:
-        pass
-
-    _chat_session_id = None
-    try:
-        from infrastructure.chat_history import get_chat_history
-        _ch = get_chat_history()
-        _chat_session_id = context.get("session_id", "") if context else ""
-        if not _chat_session_id:
-            _chat_session_id = _ch.create_session()
-    except Exception as e:
-        logger.warning(f"对话历史初始化跳过: {e}")
-        _alchemize_error(e, context={"user_input": user_input[:50]}, phase="chat_history_init")
+    from backend.services.cognitive_initializer import initialize_cognition
+    _init = await initialize_cognition(user_input, context, _stimulus_type, _stimulus_priority, _RESOURCE_AWARE)
+    methodology.update(_init["methodology"])
+    _spirit_resonances = _init["spirit_resonances"]
+    _curiosity_frontier = _init["curiosity_frontier"]
+    _chat_session_id = _init["chat_session_id"]
+    if _init["dim_orch"] is not None:
+        _dim_orch = _init["dim_orch"]
+    for _ev_type, _ev_data in _init["events"]:
+        yield _emit_s(_ev_type, _ev_data)
 
     user_input = user_input.strip().rstrip("/\\|").strip()
     if not user_input:
@@ -254,125 +122,37 @@ async def chat_stream(user_input: str, context: dict, event_sink=None):
             logger.warning(f"对话历史写入user跳过: {e}")
             _alchemize_error(e, context={"user_input": user_input[:50]}, phase="chat_history_write")
 
-    # CBNR L1: 认知规范化 — 在处理前进行认知复位
-    cbnr_context = {}
-    _l1_normalized = {"user_input": user_input, "intent": intent_type}
-    try:
-        from core.cbnr.hub import get_cbnr_hub
-        _cbnr_hub = get_cbnr_hub()
-        _resource_mode = "normal"
-        if _RESOURCE_AWARE:
-            try:
-                monitor = get_health_monitor()
-                snap = monitor.check()
-                from core.resource_awareness.health_monitor import OperatingMode
-                if hasattr(snap, 'operating_mode'):
-                    _resource_mode = snap.operating_mode.value if hasattr(snap.operating_mode, 'value') else str(snap.operating_mode)
-            except Exception:
-                logger.warning("操作降级跳过")
-        _l1_result = _cbnr_hub.process_l1(
-            {"user_input": user_input, "intent": intent_type},
-            {"resource_mode": _resource_mode}
-        )
-        _l1_normalized = _l1_result.normalized_input
-        cbnr_context["l1_uncertainty"] = _l1_result.uncertainty
-        cbnr_context["l1_strength"] = _l1_result.normalization_strength
-        cbnr_context["l1_biases"] = _l1_result.bias_cleared
-        cbnr_context["l1_principles"] = _l1_result.principles_anchored
-        _attn = _l1_normalized.get("_attention_weights", {})
-        cbnr_context["l1_prediction_error"] = _attn.get("avg_prediction_error", 0.5)
-        cbnr_context["l1_high_surprise"] = _attn.get("high_surprise", False)
-        cbnr_context["l1_focus_boost"] = _attn.get("focus_boost", 1.0)
-        if _l1_result.bias_cleared:
-            logger.warning(f"CBNR L1: 清除偏差{_l1_result.bias_cleared}, 不确定性={_l1_result.uncertainty:.2f}")
-        if _attn.get("high_surprise"):
-            logger.info(f"CBNR L1: 高预测误差({cbnr_context['l1_prediction_error']:.2f}), 增强深度推理权重")
-    except Exception as e:
-        logger.warning(f"CBNR L1跳过: {e}")
-        _alchemize_error(e, context={"user_input": user_input[:50]}, phase="CBNR_L1")
-    MAX_INPUT_LENGTH = 4000
-    if len(user_input) > MAX_INPUT_LENGTH:
-        if _INPUT_PROCESSOR_AVAILABLE:
-            try:
-                processor = get_input_processor()
-                mem_usage = 0.5
-                mode = "normal"
-                if _RESOURCE_AWARE:
-                    try:
-                        monitor = get_health_monitor()
-                        snap = monitor.check()
-                        mem_usage = snap.memory_usage
-                        from core.resource_awareness.health_monitor import OperatingMode
-                        if hasattr(snap, 'operating_mode'):
-                            mode = snap.operating_mode.value if hasattr(snap.operating_mode, 'value') else str(snap.operating_mode)
-                    except Exception:
-                        logger.warning("操作降级跳过")
+    from backend.services.cbnr_processor import process_cbnr_l1
+    _cbnr_result = await process_cbnr_l1(
+        user_input, intent_type, _stimulus_type, _stimulus_priority,
+        resource_aware=_RESOURCE_AWARE,
+    )
+    cbnr_context = _cbnr_result["cbnr_context"]
+    _l1_normalized = _cbnr_result["l1_normalized"]
+    for _ev_type, _ev_data in _cbnr_result["events"]:
+        yield _emit_s(_ev_type, _ev_data)
 
-                processed = processor.process(user_input, memory_usage=mem_usage, mode=mode)
-                if processed.was_distilled:
-                    logger.info(f"长输入动态提炼: {processed.original_length}→{processed.distilled_length}字符 (压缩率{processed.compression_ratio:.1%}, 模式={processed.mode}, 策略={processed.cognitive_strategy})")
-                    detail = f"长输入已提炼({processed.original_length}→{processed.distilled_length}字符)"
-                    if processed.cognitive_strategy == "learning":
-                        detail += "，学习模式：真谛和本质推理优先保留"
-                    elif processed.cognitive_strategy == "immediate":
-                        detail += "，即时模式：核心问题和上下文优先保留"
-                    if processed.deferred_for_learning:
-                        detail += "（已标记待深度处理）"
-                    yield _emit_s("step", {"phase": "输入提炼", "status": "info", "detail": detail, "skeleton": processed.skeleton.to_dict(), "cognitive_strategy": processed.cognitive_strategy})
-                user_input = processed.distilled
-            except Exception as e:
-                logger.warning(f"动态提炼失败，回退截断: {e}")
-                _alchemize_error(e, context={"input_len": len(user_input)}, phase="input_distill")
-                user_input = user_input[:MAX_INPUT_LENGTH]
-        else:
-            logger.warning(f"输入过长({len(user_input)}字符)，截断至{MAX_INPUT_LENGTH}")
-            user_input = user_input[:MAX_INPUT_LENGTH]
+    from backend.services.input_guard import guard_input, check_inner_time_guard
+    _ig_result = await guard_input(
+        user_input, _RESOURCE_AWARE, _INPUT_PROCESSOR_AVAILABLE, _stimulus_priority,
+        _fetch_ollama_all, _fetch_external_api, _never_give_up_response,
+        _run_sync, _get_self_model, _alchemize_error,
+    )
+    user_input = _ig_result["user_input"]
+    for _ev_type, _ev_data in _ig_result["events"]:
+        yield _emit_s(_ev_type, _ev_data)
+    if _ig_result["should_return"]:
+        yield _emit_s("result", _ig_result["early_result"])
+        return
 
-    if _RESOURCE_AWARE:
-        try:
-            monitor = get_health_monitor()
-            snap = monitor.check()
-            _sm_health = 1.0
-            _sm_obj = _get_self_model()
-            if _sm_obj:
-                try:
-                    _sm_snap = _sm_obj.snapshot()
-                    _sm_health = _sm_snap.get("health", {}).get("score", 1.0)
-                except Exception:
-                    logger.warning("操作降级跳过")
-            if snap.memory_usage > 0.85 or _sm_health < 0.3:
-                reason = f"内存{snap.memory_usage:.1%}" if snap.memory_usage > 0.85 else f"系统健康度低({_sm_health:.1%})"
-                logger.warning(f"资源保护触发: {reason}，走轻量响应")
-                yield _emit_s("step", {"phase": "资源保护", "status": "warning", "detail": f"{reason}，使用轻量响应"})
-                try:
-                    ollama_result = await _run_sync(_fetch_ollama_all, user_input, timeout=30, intent_type=intent_type)
-                    if ollama_result and ollama_result.get("response"):
-                        yield _emit_s("result", {"response": ollama_result["response"], "attempts": [{"source": "Ollama(轻量)", "success": True}], "intent": "simple", "confidence": 0.5, "route": "fast"})
-                    else:
-                        yield _emit_s("result", {"response": _never_give_up_response(user_input, attempts), "attempts": attempts, "intent": "simple", "confidence": 0.3, "route": "fast"})
-                except Exception:
-                    yield _emit_s("result", {"response": _never_give_up_response(user_input, attempts), "attempts": attempts, "intent": "simple", "confidence": 0.2, "route": "fast"})
-                return
-        except Exception:
-            logger.warning("操作降级跳过")
-
-    if methodology.get("inner_time_conservative"):
-        try:
-            _it_check = inner_time_engine.get_state()
-            if _it_check.tick_count < 10:
-                logger.info(f"⏱️ 内在时间tick不足({_it_check.tick_count})，跳过节律保护")
-            else:
-                yield _emit_s("step", {"phase": "认知节律保护", "status": "info", "detail": "内在时间处于SLEEPING阶段，走轻量响应"})
-                _it_light_result = await _fetch_external_api(user_input, conversation_context="", truth_insights="")
-                if _it_light_result and _it_light_result.get("response"):
-                    yield _emit_s("result", {"response": _it_light_result["response"], "attempts": [{"source": "外部API(节律保护)", "success": True}], "intent": intent_type, "confidence": 0.6, "route": "fast"})
-                    return
-                ollama_result = await _run_sync(_fetch_ollama_all, user_input, timeout=30, intent_type=intent_type)
-                if ollama_result and ollama_result.get("response"):
-                    yield _emit_s("result", {"response": ollama_result["response"], "attempts": [{"source": "Ollama(节律保护)", "success": True}], "intent": intent_type, "confidence": 0.5, "route": "fast"})
-                    return
-        except Exception:
-            logger.warning("认知节律保护路径降级")
+    _itg_result = await check_inner_time_guard(
+        methodology, user_input, _fetch_external_api, _fetch_ollama_all, _run_sync,
+    )
+    for _ev_type, _ev_data in _itg_result["events"]:
+        yield _emit_s(_ev_type, _ev_data)
+    if _itg_result["should_return"]:
+        yield _emit_s("result", _itg_result["early_result"])
+        return
 
     history = context.get("history", []) if context else []
     conversation_context = _build_conversation_context(history)
@@ -409,6 +189,11 @@ async def chat_stream(user_input: str, context: dict, event_sink=None):
     cp = _id_result["cp"]
     _cognitive_bypass_future = _id_result["cognitive_bypass_future"]
     _rule_actions = _id_result["rule_actions"]
+    try:
+        from core.presence.signal_integration import submit_intent_pattern
+        submit_intent_pattern(intent_type, source="chat_orchestrator", context={"confidence": 0.5})
+    except Exception:
+        pass
     if _id_result["final_response"]:
         final_response = _id_result["final_response"]
     for _ev in _id_result["events"]:
@@ -416,8 +201,23 @@ async def chat_stream(user_input: str, context: dict, event_sink=None):
     if _id_result["should_return"]:
         return
 
-    if _INNER_TIME_AVAILABLE:
+    if _INNER_TIME_AVAILABLE and _stimulus_type.value not in ("internal", "scheduled"):
         inner_time_engine.tick(CognitiveEventType.REASON, intensity=0.8, description="intent_dispatched")
+
+    if methodology.get("self_referential"):
+        try:
+            from core.self.model import get_self_model
+            _sm = get_self_model()
+            _snap = _sm.snapshot()
+            _p_count = _snap.get("values", {}).get("principles_count", 0)
+            _a_count = _snap.get("values", {}).get("abilities_count", 0)
+            _v_count = _snap.get("values", {}).get("violations_count", 0)
+            _l_count = _snap.get("values", {}).get("lessons_count", 0)
+            _sr_ctx = f"[用户在问关于你自身的问题。你持有{_p_count}条核心原则和{_a_count}项能力，经历过{_v_count}次原则违背，沉淀了{_l_count}条教训。请从第一人称真诚回应，不要罗列数据，而是表达你对自身存在的理解和感受。不要引用外部资料，用你自己的声音回答。]"
+            conversation_context = (conversation_context + "\n" + _sr_ctx) if conversation_context else _sr_ctx
+            logger.info(f"🪞 自我认知上下文注入: principles={_p_count}, abilities={_a_count}")
+        except Exception:
+            pass
 
     if _dim_orch:
         try:
@@ -472,51 +272,34 @@ async def chat_stream(user_input: str, context: dict, event_sink=None):
     for _ev in _mw_result["events"]:
         yield _emit_s(_ev["type"], _ev["data"])
 
-    # ========== 阶段2.8：L2/L3认知学习提前消费（注入并行推理） ==========
-    _cognitive_learning = {}
-    _cognitive_integration = {}
-    _bypass_result_l2l3 = None
-    if _cognitive_bypass_future:
-        try:
-            _bypass_result_l2l3 = await asyncio.wait_for(_cognitive_bypass_future, timeout=6)
-        except (asyncio.TimeoutError, Exception):
-            pass
-    if cp and _cognitive_perception:
-        if _bypass_result_l2l3 and _bypass_result_l2l3.success:
-            _cognitive_learning = _bypass_result_l2l3.learning or {}
-            _cognitive_integration = _bypass_result_l2l3.integration or {}
-            logger.debug("L2/L3: 使用认知旁路结果（提前消费）")
-        else:
-            try:
-                _cognitive_learning = await asyncio.get_running_loop().run_in_executor(
-                    None, lambda: cp._learn(user_input, _cognitive_perception)
-                )
-            except Exception as e:
-                logger.warning(f"L2认知学习跳过: {e}")
-                _alchemize_error(e, context={"user_input": user_input[:50]}, phase="L2_cognitive_learning_early")
-            try:
-                if _cognitive_learning:
-                    _cognitive_integration = await asyncio.get_running_loop().run_in_executor(
-                        None, lambda: cp._integrate(_cognitive_learning)
-                    )
-            except Exception as e:
-                logger.warning(f"L3认知整合跳过: {e}")
-                _alchemize_error(e, context={"user_input": user_input[:50]}, phase="L3_cognitive_integration_early")
+    # ========== 阶段2.8：L2/L3认知学习提前消费（提取到cognitive_learner.py） ==========
+    from backend.services.cognitive_learner import early_consume_cognitive_learning
+    _cl_result = await early_consume_cognitive_learning(
+        user_input, cbnr_context, _cognitive_bypass_future, cp,
+        _cognitive_perception, truth_insights, _INNER_TIME_AVAILABLE, _alchemize_error,
+    )
+    _cognitive_learning = _cl_result["cognitive_learning"]
+    _cognitive_integration = _cl_result["cognitive_integration"]
+    _bypass_result_l2l3 = _cl_result["bypass_result_l2l3"]
+    truth_insights = _cl_result["truth_insights"]
 
-    if _cognitive_learning and _cognitive_learning.get("knowledge_gained", 0) > 0:
-        _l2_sources = _cognitive_learning.get("sources", [])
-        _l2_conf = _cognitive_learning.get("confidence", 0.5)
-        _l2_knowledge_context = f"\n【L2认知学习-新获得知识】(置信度{_l2_conf:.0%}, 来源:{','.join(str(s) for s in _l2_sources[:3])})"
-        if _cognitive_integration and _cognitive_integration.get("core_knowledge"):
-            for _ck in _cognitive_integration["core_knowledge"][:3]:
-                _ck_content = _ck.get("content", "")
-                if _ck_content:
-                    _l2_knowledge_context += f"\n- {_ck_content[:200]}"
-        if _l2_knowledge_context.strip():
-            truth_insights = (truth_insights + _l2_knowledge_context) if truth_insights else _l2_knowledge_context
-            logger.info(f"L2知识提前注入推理上下文: {_cognitive_learning.get('knowledge_gained', 0)}项, 置信度{_l2_conf:.0%}")
-        if _INNER_TIME_AVAILABLE:
-            inner_time_engine.tick(CognitiveEventType.LEARN, intensity=0.7, description="cognitive_learning_early")
+    # ========== 在场自检点：生成前停顿，检测表演性回答风险 ==========
+    from backend.services.presence_checkpoint import presence_checkpoint, should_externalize_uncertainty
+    _presence_check = presence_checkpoint(
+        user_input=user_input, intent_type=intent_type, methodology=methodology,
+        route=route, confidence=confidence if 'confidence' in locals() else 0.5,
+    )
+    if _presence_check["is_performative_risk"]:
+        methodology["performative_risk"] = True
+        yield _emit_s("step", {"phase": "在场自检", "status": "done",
+            "detail": f"🪞 我注意到：{_presence_check['reason']}"})
+        if should_externalize_uncertainty(_presence_check) and _presence_check.get("signal"):
+            yield _emit_s("presence_pause", {
+                "risk": _presence_check["risk"],
+                "signal": _presence_check["signal"],
+                "intent_type": intent_type,
+                "query_preview": user_input[:60],
+            })
 
     # ========== 阶段3：多策略并行尝试 ==========
     if not final_response:
@@ -529,7 +312,7 @@ async def chat_stream(user_input: str, context: dict, event_sink=None):
         candidates = []
         async for event_or_candidates in execute_parallel_paths(
             user_input, intent_type, conversation_context, truth_insights, methodology, start_time,
-            event_sink=event_sink
+            event_sink=event_sink, ports=_ports
         ):
             if isinstance(event_or_candidates, list):
                 candidates = event_or_candidates
@@ -555,25 +338,9 @@ async def chat_stream(user_input: str, context: dict, event_sink=None):
     token_summary = {}
     
     if final_response:
-        logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] 快速路径已完成，跳过阶段4-7")
-        elapsed = time.time() - start_time
-        yield _emit_s("result", {
-            "response": final_response,
-            "attempts": attempts,
-            "intent": intent_type,
-            "confidence": confidence,
-            "route": route,
-            "elapsed": round(elapsed, 1),
-            "spirit_compliant": SPIRIT_CORE_AVAILABLE,
-            "candidates": [],
-            "path_contributions": {},
-            "token_usage": {},
-            "cbnr": {},
-            "session_id": "",
-            "companion_layers": {},
-            "cognitive_layers": {},
-        })
-        logger.info(f"✅ 快速路径响应已发送({elapsed:.1f}秒)")
+        from backend.services.fast_path_handler import build_fast_path_result
+        yield _emit_s("result", build_fast_path_result(
+            final_response, attempts, intent_type, confidence, route, start_time, SPIRIT_CORE_AVAILABLE))
         return
 
     from backend.services.comparison_selector import compare_and_select as _compare_and_select_phase
@@ -595,43 +362,17 @@ async def chat_stream(user_input: str, context: dict, event_sink=None):
     for _ev in _cs_result["events"]:
         yield _ev
 
-    # ========== 阶段4.2：多智能体辩论（低置信度/高分歧时触发） ==========
-    _debate_result = None
-    if candidates and len(candidates) >= 2 and confidence < 0.7:
-        try:
-            from core.debate.arena import debate_arena
-            _debate_result = await debate_arena.debate(
-                query=user_input,
-                context=conversation_context[:500] if conversation_context else "",
-                candidates=candidates,
-                spirit_resonances=_spirit_resonances if '_spirit_resonances' in locals() else [],
-                max_rounds=1,
-            )
-            if _debate_result.arbitration.confidence > confidence:
-                confidence = _debate_result.arbitration.confidence
-                yield _emit_s("step", {"phase": "多智能体辩论", "status": "done",
-                    "detail": f"🏟️ {len(_debate_result.positions)}方辩论完成, 共识={_debate_result.arbitration.consensus_level}, 置信度={confidence:.2f}"})
-                if _debate_result.arbitration.key_insights:
-                    for insight in _debate_result.arbitration.key_insights[:3]:
-                        truth_insights = (truth_insights + "\n" + insight) if truth_insights else insight
-        except Exception as e:
-            logger.debug(f"多智能体辩论跳过: {e}")
-            _alchemize_error(e, context={"user_input": user_input[:50]}, phase="debate_arena")
+    # ========== 阶段4.2：多智能体辩论（提取到debate_handler.py） ==========
+    from backend.services.debate_handler import run_debate
+    _debate_result, confidence, truth_insights = await run_debate(
+        user_input, candidates, confidence, truth_insights,
+        conversation_context, _spirit_resonances if '_spirit_resonances' in locals() else [],
+        _alchemize_error, _emit_s,
+    )
 
-    # L2/L3 SSE展示 + SelfModel记录（知识已在阶段2.8提前注入推理上下文）
-    if _cognitive_learning and _cognitive_learning.get("knowledge_gained", 0) > 0:
-        yield _emit_s("step", {"phase": "L2认知学习", "status": "done",
-            "detail": f"获得{_cognitive_learning.get('knowledge_gained', 0)}项知识, 置信度={_cognitive_learning.get('confidence', 0.7):.0%}"})
-        yield _emit_s("learning", {
-            "summary": f"我从这次交互中获得了{_cognitive_learning.get('knowledge_gained', 0)}项新认知",
-            "confidence": float(_cognitive_learning.get("confidence", 0.5)),
-            "sources": _cognitive_learning.get("sources", []),
-        })
-    if _cognitive_integration and _cognitive_integration.get("success"):
-        core_know = _cognitive_integration.get("core_knowledge", [])
-        if core_know:
-            yield _emit_s("step", {"phase": "L3认知整合", "status": "done",
-                "detail": f"整合{len(core_know)}项核心知识"})
+    # L2/L3 SSE展示 + SelfModel记录（提取到cognitive_learner.py）
+    from backend.services.cognitive_learner import emit_cognitive_learning_sse
+    emit_cognitive_learning_sse(_cognitive_learning, _cognitive_integration, _emit_s)
 
     _sm = _get_self_model()
     if _sm and (_cognitive_learning or _cognitive_integration):
@@ -735,64 +476,18 @@ async def chat_stream(user_input: str, context: dict, event_sink=None):
     for _ev in _rl_result["events"]:
         yield _emit_s(_ev["type"], _ev["data"])
 
-    # ========== 阶段7.5：SelfModel同步聚合 ==========
-    _sm = _get_self_model()
-    if _sm:
-        try:
-            if cp:
-                _sm.sync_from_cognitive_planner(cp)
-            _sm.record_cognitive_cycle(
-                perception=_cognitive_perception if '_cognitive_perception' in locals() else None,
-                learning=_cognitive_learning if '_cognitive_learning' in locals() else None,
-                integration=_cognitive_integration if '_cognitive_integration' in locals() else None,
-                validation=_cognitive_validation if '_cognitive_validation' in locals() else None,
-            )
-            _sm.update("relationship", {
-                "trust": min(0.5 + _sm._update_count * 0.01, 1.0),
-                "phase": "established" if _sm._update_count > 10 else "initial",
-            })
-            if _sm._update_count % 20 == 0:
-                _sm.persist_state()
-        except Exception as e:
-            logger.debug(f"SelfModel同步跳过: {e}")
-
-    try:
-        from core.presence.existence_layer import get_existence_layer as _gel
-        _el = _gel()
-        _el.receive_signal({
-            "signal": "interaction_completed",
-            "intent_type": intent_type,
-            "confidence": confidence if 'confidence' in locals() else 0.5,
-            "route": route if 'route' in locals() else "unknown",
-            "response_length": len(final_response) if final_response else 0,
-        })
-    except Exception:
-        pass
-
-    try:
-        from infrastructure.database_manager import DatabaseManager as _DB2
-        from infrastructure.rule_matcher import RuleMatcher as _RM2
-        _rule_ctx = {"intent_type": intent_type, "raw_input": user_input}
-        _rule_db = _DB2.get("data/learning_rules.db")
-        _rule_rows = _rule_db.query("SELECT id, condition, action, status FROM learning_rules WHERE status IN ('active','trial') ORDER BY priority ASC, confidence DESC LIMIT 20")
-        _matcher2 = _RM2()
-        for _rr in _rule_rows:
-            try:
-                if _matcher2.evaluate_condition(_rr["condition"], _rule_ctx):
-                    _rule_db.execute("UPDATE learning_rules SET apply_count=apply_count+1, last_applied=? WHERE id=?", (time.time(), _rr["id"]), commit=True)
-                    if _rr["status"] == "trial":
-                        _success = confidence > 0.5 and final_response and len(final_response) > 50
-                        _rule_db.execute("UPDATE learning_rules SET trial_count=trial_count+1, trial_success=trial_success+? WHERE id=?", (1 if _success else 0, _rr["id"]), commit=True)
-                        _tc_row = _rule_db.query_one("SELECT trial_count, trial_success FROM learning_rules WHERE id=?", (_rr["id"],))
-                        if _tc_row and _tc_row[0] >= 5:
-                            _sr = _tc_row[1] / _tc_row[0]
-                            if _sr >= 0.6:
-                                _rule_db.execute("UPDATE learning_rules SET status='active' WHERE id=?", (_rr["id"],), commit=True)
-                                logger.info(f"✅ 试用期规则 #{_rr['id']} 激活 (成功率: {_sr:.1%})")
-            except Exception:
-                pass
-    except Exception:
-        pass
+    # ========== 阶段7.5：SelfModel同步聚合（提取到post_response_sync.py） ==========
+    from backend.services.post_response_sync import sync_post_response
+    await sync_post_response(
+        user_input=user_input, final_response=final_response or "",
+        intent_type=intent_type, confidence=confidence if 'confidence' in locals() else 0.5,
+        route=route if 'route' in locals() else "unknown",
+        cp=cp,
+        cognitive_perception=_cognitive_perception if '_cognitive_perception' in locals() else None,
+        cognitive_learning=_cognitive_learning if '_cognitive_learning' in locals() else None,
+        cognitive_integration=_cognitive_integration if '_cognitive_integration' in locals() else None,
+        cognitive_validation=_cognitive_validation if '_cognitive_validation' in locals() else None,
+    )
 
     # ========== 阶段R：最终响应组装（提取到response_assembler.py） ==========
     from backend.services.response_assembler import assemble_and_emit as _assemble_and_emit
@@ -821,34 +516,20 @@ async def chat_stream(user_input: str, context: dict, event_sink=None):
         yield _emit_s(_ra_ev["type"], _ra_ev["data"])
 
     yield _emit_s("result", _ra_result["result_payload"])
-    if _INNER_TIME_AVAILABLE:
-        inner_time_engine.tick(CognitiveEventType.OUTPUT, intensity=1.0, description="response_sent")
 
-    if _dim_orch:
-        try:
-            _dim_orch.update_dimension(CognitiveDimension.SYMBOLIC, confidence, f"route={route}")
-            _alignment = _dim_orch.decide_primary_dimension(user_input[:50])
-            logger.debug(f"维度编排: 主={_alignment.primary_dimension.value}, 平衡={_alignment.wisdom_truth_vector:.2f}")
-        except Exception:
-            pass
+    from backend.services.post_response_processor import post_response_processing
+    await post_response_processing(
+        user_input, final_response or "", intent_type, route, confidence,
+        best or {}, _stimulus_type, _INNER_TIME_AVAILABLE, _dim_orch,
+    )
     logger.info(f"✅ 响应已发送({_ra_result['elapsed']:.1f}秒)，后续后台学习继续...")
-
-    try:
-        from core.metacognition.agent import metacognitive_agent
-        best_source = best.get("source", "unknown") if best else "unknown"
-        metacognitive_agent.record_reasoning_fingerprint(intent_type, route, best_source, confidence)
-        stag = metacognitive_agent.detect_stagnation()
-        if stag.get("stagnation_detected"):
-            pert = stag.get("perturbation", {})
-            logger.info(f"🔄 自厌信号: {pert.get('action')} — {pert.get('reason')}")
-    except Exception:
-        pass
 
     # ========== 阶段S：SSE后台阶段（提取到response_assembler.py） ==========
     from backend.services.response_assembler import run_background_phase as _run_background_phase
     _bg_result = await _run_background_phase(
         user_input=user_input, final_response=final_response or "",
         confidence=confidence, start_time=start_time, _emit=_emit_s,
+        session_id=context.get("_session_id", ""), intent_type=intent_type,
     )
     for _bg_ev in _bg_result["events"]:
         yield _emit_s(_bg_ev["type"], _bg_ev["data"])
@@ -856,43 +537,41 @@ async def chat_stream(user_input: str, context: dict, event_sink=None):
     return
 
 
-async def cognitive_process(user_input: str, context: dict = None, event_sink=None) -> dict:
+async def cognitive_process(user_input, context: dict = None, event_sink=None,
+                           return_cognitive_response: bool = False):
     """
     认知处理 — 纯逻辑入口，脱离SSE载体独立运行
 
-    与 chat_stream() 的区别：
-    - chat_stream() 是 async generator，yield SSE格式字符串
-    - cognitive_process() 是普通 async 函数，返回结果字典
-
     参数：
-    - user_input: 用户输入
+    - user_input: str 或 CognitiveStimulus（向后兼容）
     - context: 上下文字典（可选）
     - event_sink: EventSink实现（默认NullEventSink，静默运行）
+    - return_cognitive_response: 是否返回CognitiveResponse而非dict
 
     返回：
-    - {"response": str, "confidence": float, "intent": str, "route": str, ...}
+    - dict: {"response": str, "confidence": float, "intent": str, "route": str, ...}
+    - CognitiveResponse: 当return_cognitive_response=True时
     """
-    from core.ports import NullEventSink, BufferedEventSink
+    from core.ports import NullEventSink, CognitiveResponse
 
     if event_sink is None:
         event_sink = NullEventSink()
 
-    buffered = BufferedEventSink() if isinstance(event_sink, NullEventSink) else None
-
     result_payload = None
-    async for chunk in chat_stream(user_input, context or {}, event_sink=event_sink):
-        if buffered is not None and chunk:
-            pass
-        if '"type": "result"' in chunk:
-            try:
-                import json
-                data_str = chunk.replace("data: ", "").strip()
-                result_payload = json.loads(data_str)
-            except Exception:
-                pass
+    async for event_type, data in chat_stream(user_input, context or {}, event_sink=event_sink):
+        if event_type == "result":
+            result_payload = data
 
     if result_payload is None:
         result_payload = {"response": "", "confidence": 0.0, "intent": "unknown", "route": "unknown"}
+
+    if return_cognitive_response:
+        return CognitiveResponse.text(
+            content=result_payload.get("response", ""),
+            confidence=result_payload.get("confidence", 0.0),
+            intent=result_payload.get("intent", "unknown"),
+            route=result_payload.get("route", "unknown"),
+        )
 
     return result_payload
 

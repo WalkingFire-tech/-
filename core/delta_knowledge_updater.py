@@ -18,7 +18,7 @@ import math
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class DeltaKnowledgeUpdater:
@@ -31,7 +31,7 @@ class DeltaKnowledgeUpdater:
     def _init_db(self):
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS knowledge_base (
                 topic TEXT PRIMARY KEY,
@@ -107,7 +107,7 @@ class DeltaKnowledgeUpdater:
 
     def get_delta_stats(self, topic: str = "", limit: int = 20) -> List[Dict]:
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             if topic:
                 rows = db.query(
                     "SELECT topic, delta_size, total_size, compression_ratio, version, timestamp FROM delta_history WHERE topic=? ORDER BY id DESC LIMIT ?",
@@ -135,7 +135,7 @@ class DeltaKnowledgeUpdater:
 
     def _load_topic(self, topic: str) -> Optional[Dict]:
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             row = db.query_one("SELECT content FROM knowledge_base WHERE topic=?", (topic,))
             if row:
                 return json.loads(row[0])
@@ -145,7 +145,7 @@ class DeltaKnowledgeUpdater:
 
     def _save_topic(self, topic: str, knowledge: Dict, version: int = 1):
         now = datetime.now().isoformat()
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT OR REPLACE INTO knowledge_base (topic, content, version, last_updated, created_at)
             VALUES (?, ?, ?, ?, ?)
@@ -153,7 +153,7 @@ class DeltaKnowledgeUpdater:
 
     def _get_version(self, topic: str) -> int:
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             row = db.query_one("SELECT version FROM knowledge_base WHERE topic=?", (topic,))
             return row[0] if row else 0
         except Exception:
@@ -164,7 +164,7 @@ class DeltaKnowledgeUpdater:
         delta_size = len(delta)
         total_size = delta_size
         compression = delta_size / max(1, total_size)
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO delta_history (topic, delta_size, total_size, compression_ratio, version, timestamp)
             VALUES (?, ?, ?, ?, ?, ?)

@@ -23,6 +23,13 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from loguru import logger
 
+try:
+    from infrastructure.config_manager import config as _config
+except ImportError:
+    _config = None
+
+from core.loop_mixin import AsyncLoopMixin
+
 
 @dataclass
 class Doubt:
@@ -63,11 +70,7 @@ class ReActResult:
     total_duration_ms: float = 0.0
 
 
-class ReActEngine:
-    MAX_ITERATIONS = 2
-    FITNESS_THRESHOLD = 60.0
-    MIN_IMPROVEMENT = 3.0
-    MAX_TOTAL_SECONDS = 20.0
+class ReActEngine(AsyncLoopMixin):
 
     STRATEGY_ORDER = [
         "model_switch",
@@ -95,6 +98,12 @@ class ReActEngine:
     }
 
     def __init__(self):
+        super().__init__(name="react_engine", cooldown_seconds=30.0, max_failures_before_degraded=3)
+        _c = _config if _config else {}
+        self.MAX_ITERATIONS = _c.get("react.max_iterations", 3) if _c else 3
+        self.FITNESS_THRESHOLD = _c.get("react.fitness_threshold", 60.0) if _c else 60.0
+        self.MIN_IMPROVEMENT = _c.get("react.min_improvement", 3.0) if _c else 3.0
+        self.MAX_TOTAL_SECONDS = _c.get("react.max_total_seconds", 45.0) if _c else 45.0
         self._iteration_count = 0
 
     def _self_doubt(
@@ -320,6 +329,7 @@ class ReActEngine:
         )
 
         self._record_to_trajectory(query, result, intent_type, initial_quality)
+        self._finish_loop_cycle(start_time, None if result.improved else "no_improvement")
 
         return result
 

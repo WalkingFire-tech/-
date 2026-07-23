@@ -1,6 +1,12 @@
 from enum import Enum
 from typing import Dict, Any, Optional, List
 from loguru import logger
+try:
+    from core.spirit_core import spirit_core
+    SPIRIT_CORE_AVAILABLE = True
+except ImportError:
+    SPIRIT_CORE_AVAILABLE = False
+    spirit_core = None
 
 
 class FailureCategory(Enum):
@@ -307,6 +313,63 @@ class FailureClassifier:
         return FailureCategory.SEMANTIC_MISMATCH
 
     @classmethod
+    def classify_with_spirit(cls, reflection: Dict, execution_error: Exception = None, user_query: str = "") -> Dict[str, Any]:
+        """
+        分类失败并关联精神共振，为修复策略提供原则指导。
+        
+        Args:
+            reflection: 自察结果
+            execution_error: 执行异常
+            user_query: 用户原始问题（用于共振检测）
+        
+        Returns:
+            包含分类、共振信息和原则指导的字典
+        """
+        category = cls.classify(reflection, execution_error)
+        spirit_resonances = []
+        if SPIRIT_CORE_AVAILABLE and user_query:
+            try:
+                resonances = spirit_core.resonate(user_query, context_type="reasoning")
+                for r in resonances[:3]:  # 只记录前3个共振原则
+                    spirit_resonances.append({
+                        "principle": r.get("principle"),
+                        "strength": r.get("strength"),
+                        "drive_direction": r.get("drive_direction")
+                    })
+            except Exception as e:
+                logger.debug(f"失败分类精神共振检测失败: {e}")
+        
+        # 根据共振原则调整修复策略优先级
+        spirit_guided_fix = {}
+        if spirit_resonances:
+            top_resonance = spirit_resonances[0]
+            principle = top_resonance.get("principle")
+            if principle == "NEVER_GIVE_UP":
+                spirit_guided_fix["priority"] = "high"
+                spirit_guided_fix["suggestion"] = "失败时驱动系统切换策略而非放弃"
+            elif principle == "HONEST_WHEN_LOST":
+                spirit_guided_fix["priority"] = "medium"
+                spirit_guided_fix["suggestion"] = "不确定时坦诚标注置信度，避免强行修复"
+            elif principle == "PURSUE_ESSENCE":
+                spirit_guided_fix["priority"] = "high"
+                spirit_guided_fix["suggestion"] = "深入分析失败的根本原因，而非表面症状"
+            elif principle == "MULTI_SOURCE_VERIFY":
+                spirit_guided_fix["priority"] = "medium"
+                spirit_guided_fix["suggestion"] = "多源验证失败原因，避免单一归因"
+            else:
+                spirit_guided_fix["priority"] = "normal"
+                spirit_guided_fix["suggestion"] = "按标准修复流程处理"
+        
+        taxonomy_info = cls.get_taxonomy_info(category)
+        return {
+            "category": category,
+            "category_name": category.value,
+            "taxonomy_info": taxonomy_info,
+            "spirit_resonances": spirit_resonances,
+            "spirit_guided_fix": spirit_guided_fix,
+        }
+
+    @classmethod
     def get_taxonomy_info(cls, category: FailureCategory) -> Dict:
         return FailureTaxonomy._TAXONOMY.get(category, {
             "layer": "未知",
@@ -387,8 +450,8 @@ class FailureClassifier:
     @classmethod
     def record_failure(cls, category: FailureCategory, user_query: str, context: Dict = None):
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/failure_classifier.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/failure_classifier.db")
             db.execute('''CREATE TABLE IF NOT EXISTS failures (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category TEXT, user_query TEXT, context TEXT,
@@ -441,9 +504,9 @@ class FailureClassifier:
         auto_fix_result = await AutoFixExecutor.execute(category, user_query, context)
 
         try:
-            from infrastructure.database_manager import DatabaseManager
+            from core.ports.adapters import get_storage_port
             import json
-            db = DatabaseManager.get("data/failure_classifier.db")
+            db = get_storage_port("data/failure_classifier.db")
             db.execute(
                 'UPDATE failures SET auto_fix_applied=?, auto_fix_detail=? WHERE rowid=(SELECT MAX(rowid) FROM failures)',
                 (1 if auto_fix_result.get("fix_applied") else 0,
@@ -497,9 +560,9 @@ class FailureClassifier:
             auto_fix_result = {"fix_applied": False, "detail": "需async上下文执行修复策略，已记录待后续消费"}
 
         try:
-            from infrastructure.database_manager import DatabaseManager
+            from core.ports.adapters import get_storage_port
             import json
-            db = DatabaseManager.get("data/failure_classifier.db")
+            db = get_storage_port("data/failure_classifier.db")
             db.execute(
                 'UPDATE failures SET auto_fix_applied=?, auto_fix_detail=? WHERE rowid=(SELECT MAX(rowid) FROM failures)',
                 (1 if auto_fix_result.get("fix_applied") else 0,
@@ -518,8 +581,8 @@ class FailureClassifier:
     @classmethod
     def get_failure_patterns(cls, limit: int = 20) -> List[Dict]:
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/failure_classifier.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/failure_classifier.db")
             rows = db.query(
                 "SELECT category, COUNT(*) as cnt, severity, layer FROM failures GROUP BY category ORDER BY cnt DESC LIMIT ?",
                 (limit,)
@@ -532,8 +595,8 @@ class FailureClassifier:
     @classmethod
     def get_recent_failures(cls, limit: int = 10) -> List[Dict]:
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/failure_classifier.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/failure_classifier.db")
             rows = db.query(
                 "SELECT * FROM failures ORDER BY id DESC LIMIT ?",
                 (limit,)
@@ -546,8 +609,8 @@ class FailureClassifier:
     @classmethod
     def get_severity_summary(cls) -> Dict:
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/failure_classifier.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/failure_classifier.db")
             rows = db.query(
                 "SELECT severity, COUNT(*) as cnt FROM failures GROUP BY severity"
             )

@@ -35,6 +35,9 @@ class RatchetDecision:
 class RatchetGate:
     MIN_IMPROVEMENT_RATIO = 1.02
     MAX_REGRESSION_TOLERANCE = 0.03
+    MAX_RATCHET_LEVEL = 0.85
+    DECAY_RATE = 0.02
+    DECAY_COOLDOWN_HOURS = 6
 
     def __init__(self, db_path: str = "data/ratchet_gate.db"):
         self.db_path = db_path
@@ -77,13 +80,29 @@ class RatchetGate:
     def get_ratchet_level(self, domain: str = "global") -> float:
         db = DatabaseManager.get(self.db_path)
         row = db.query_one(
-            "SELECT ratchet_level FROM ratchet_baseline WHERE domain = ? ORDER BY promoted_at DESC LIMIT 1",
+            "SELECT ratchet_level, promoted_at FROM ratchet_baseline WHERE domain = ? ORDER BY promoted_at DESC LIMIT 1",
             (domain,)
         )
         if row:
-            return row[0]
+            ratchet_level = row[0]
+            promoted_at = row[1]
+            ratchet_level = min(ratchet_level, self.MAX_RATCHET_LEVEL)
+            try:
+                from datetime import datetime as _dt
+                promoted_dt = _dt.fromisoformat(promoted_at)
+                hours_since = (_dt.now() - promoted_dt).total_seconds() / 3600
+                if hours_since > self.DECAY_COOLDOWN_HOURS:
+                    decay_steps = int(hours_since / self.DECAY_COOLDOWN_HOURS)
+                    decayed = ratchet_level - self.DECAY_RATE * decay_steps
+                    ratchet_level = max(decayed, 0.3)
+                    if decayed < ratchet_level + self.DECAY_RATE * decay_steps:
+                        logger.info(f"棘轮衰减: {domain} {ratchet_level + self.DECAY_RATE * decay_steps:.4f} -> {ratchet_level:.4f} (闲置{hours_since:.0f}h)")
+            except Exception:
+                pass
+            return ratchet_level
 
         baseline = self._compute_baseline(domain)
+        baseline = min(baseline, self.MAX_RATCHET_LEVEL)
         if baseline > 0:
             db.execute(
                 "INSERT INTO ratchet_baseline (domain, ratchet_level, previous_level, promoted_at, promotion_count) VALUES (?, ?, 0, ?, 1)",
@@ -155,11 +174,15 @@ class RatchetGate:
 
         return decision
 
-    def promote(self, domain: str = "global") -> bool:
+    def promote(self, domain: str = "global", candidate_score: float = None) -> bool:
         ratchet_level = self.get_ratchet_level(domain)
-        current_score = self._compute_baseline(domain)
 
-        if current_score <= ratchet_level:
+        if candidate_score is not None:
+            new_level = candidate_score
+        else:
+            new_level = self._compute_baseline(domain)
+
+        if new_level <= ratchet_level:
             return False
 
         db = DatabaseManager.get(self.db_path)
@@ -171,9 +194,9 @@ class RatchetGate:
         db.execute('''
             INSERT INTO ratchet_baseline (domain, ratchet_level, previous_level, promoted_at, promotion_count)
             VALUES (?, ?, ?, ?, 1)
-        ''', (domain, current_score, ratchet_level, datetime.now().isoformat()), commit=True)
+        ''', (domain, new_level, ratchet_level, datetime.now().isoformat()), commit=True)
 
-        logger.info(f"棘轮门提升: {domain} {ratchet_level:.4f} -> {current_score:.4f}")
+        logger.info(f"棘轮门提升: {domain} {ratchet_level:.4f} -> {new_level:.4f}")
         return True
 
     def create_snapshot(self, domain: str, snapshot_type: str, data: Dict, fitness_score: float):
@@ -220,6 +243,7 @@ class RatchetGate:
 
 ratchet_gate = RatchetGate()
 
+_promotion_cooldown = {}
 
 def guard_change(domain: str, quality_score: float, description: str = "",
                  block_on_reject: bool = False) -> Tuple[bool, RatchetDecision]:
@@ -245,5 +269,11 @@ def guard_change(domain: str, quality_score: float, description: str = "",
             logger.info(f"棘轮守卫影子记录: {domain} | {description[:60]} | {decision.reason}")
             return True, decision
     
-    ratchet_gate.promote(domain)
+    import time as _time
+    now = _time.time()
+    last_promotion = _promotion_cooldown.get(domain, 0)
+    if decision.delta > 0.05 and (now - last_promotion) > 3600:
+        ratchet_gate.promote(domain, candidate_score=decision.candidate_score)
+        _promotion_cooldown[domain] = now
+    
     return True, decision

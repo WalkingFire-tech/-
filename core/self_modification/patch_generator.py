@@ -32,10 +32,9 @@ class Patch:
     validated: bool = False
 
 
-IMMUTABLE_FILES = {
-    "core/spirit_core.py",
-    "core/resource_awareness/health_monitor.py",
-}
+def _get_immutable_files():
+    from core.self_modification import IMMUTABLE_FILES
+    return IMMUTABLE_FILES
 
 PATCH_TEMPLATES = {
     "exception_handling": {
@@ -55,6 +54,16 @@ PATCH_TEMPLATES = {
 class PatchGenerator:
 
     def generate_patch(self, defect: Dict, source: str) -> Optional[Patch]:
+        file_path = defect.get("file", "")
+        original_code = defect.get("original", "")
+        try:
+            from core.hashline_editor import HashlineEditor
+            _hle = HashlineEditor()
+            _hash_loc = _hle.locate(file_path, original_code)
+            if _hash_loc:
+                logger.debug(f"Hashline定位成功: hash={_hash_loc.content_hash[:8]}")
+        except Exception:
+            pass
         category = defect.get("category", "")
         description = defect.get("description", "")
 
@@ -74,7 +83,7 @@ class PatchGenerator:
 
     def generate_llm_patch(self, defect: Dict, source: str) -> Optional[Patch]:
         file_path = defect.get("file", "")
-        if file_path in IMMUTABLE_FILES:
+        if file_path in _get_immutable_files():
             logger.warning(f"不可变文件，跳过补丁生成: {file_path}")
             return None
 
@@ -143,7 +152,7 @@ class PatchGenerator:
         return Patch(
             file=defect.get("file", ""),
             original="import sqlite3",
-            replacement="from infrastructure.database_manager import DatabaseManager",
+            replacement="from core.ports.adapters import get_storage_port",
             description="sqlite3迁移到DatabaseManager（需手动调整连接代码）",
             defect_category="database",
             confidence=0.3,

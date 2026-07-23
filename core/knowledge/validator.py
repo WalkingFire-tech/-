@@ -15,7 +15,7 @@ import hashlib
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 from datetime import datetime
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -38,7 +38,7 @@ class KnowledgeBasedValidator:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(exist_ok=True)
 
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS category_mapping (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,7 +77,7 @@ class KnowledgeBasedValidator:
 
     def _load_initial_knowledge(self):
         """从外部配置文件加载初始知识"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one("SELECT COUNT(*) FROM category_mapping")
         if row[0] > 0:
             return
@@ -193,7 +193,7 @@ class KnowledgeBasedValidator:
         """从知识库查询需求类型（纯 Python 匹配，无 SQL 拼接）"""
         categories = []
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query("SELECT category, keyword FROM category_mapping")
             for row in rows:
                 if row['keyword'] in query:
@@ -205,7 +205,7 @@ class KnowledgeBasedValidator:
     def _identify_entity_type(self, text: str) -> Optional[str]:
         """从知识库识别实体类型"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query("SELECT entity_type, pattern, confidence FROM entity_mapping")
             best_type = None
             best_score = 0.0
@@ -227,7 +227,7 @@ class KnowledgeBasedValidator:
             return True
 
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             row = db.query_one('''
                 SELECT confidence FROM type_compatibility
                 WHERE (type_a = ? AND type_b = ?)
@@ -296,7 +296,7 @@ class KnowledgeBasedValidator:
         """记录验证历史"""
         try:
             query_hash = hashlib.sha256(query.encode()).hexdigest()[:16]
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute('''
                 INSERT INTO validation_history
                 (query_hash, recommendation, is_valid, issues, confidence, validated_at)
@@ -314,7 +314,7 @@ class KnowledgeBasedValidator:
 
     def add_category_keyword(self, category: str, keyword: str):
         """添加类别关键词映射"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute(
             "INSERT OR IGNORE INTO category_mapping (category, keyword, created_at) VALUES (?, ?, ?)",
             (category, keyword, datetime.now().isoformat()),
@@ -324,7 +324,7 @@ class KnowledgeBasedValidator:
 
     def add_entity_pattern(self, entity_type: str, pattern: str, confidence: float = 0.9):
         """添加实体模式"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute(
             "INSERT INTO entity_mapping (entity_type, pattern, confidence, created_at) VALUES (?, ?, ?, ?)",
             (entity_type, pattern, confidence, datetime.now().isoformat()),
@@ -334,7 +334,7 @@ class KnowledgeBasedValidator:
 
     def learn_compatibility(self, type_a: str, type_b: str):
         """学习类型兼容性"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one(
             "SELECT id, occurrences FROM type_compatibility WHERE type_a = ? AND type_b = ?",
             (type_a, type_b)

@@ -31,6 +31,13 @@ import time
 import asyncio
 from typing import Dict, List, Any, Optional, Tuple, TypedDict
 
+try:
+    from core.spirit_core import spirit_core
+    SPIRIT_CORE_AVAILABLE = True
+except ImportError:
+    SPIRIT_CORE_AVAILABLE = False
+    spirit_core = None
+
 
 class FieldContextDict(TypedDict, total=False):
     topic_continuity: float
@@ -62,7 +69,7 @@ from datetime import datetime
 from loguru import logger
 from pathlib import Path
 import threading
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class CognitiveDispatcher:
@@ -113,7 +120,7 @@ class CognitiveDispatcher:
     def _init_dispatch_history_db(self):
         """初始化调度决策历史数据库"""
         try:
-            db = DatabaseManager.get("data/dispatch_history.db")
+            db = get_storage_port("data/dispatch_history.db")
             db.execute('''
                 CREATE TABLE IF NOT EXISTS dispatch_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -165,7 +172,7 @@ class CognitiveDispatcher:
             existing.add(w)
             added += 1
             try:
-                db = DatabaseManager.get("data/dispatch_history.db")
+                db = get_storage_port("data/dispatch_history.db")
                 db.execute(
                     "INSERT OR IGNORE INTO learned_keywords (keyword, intent_type, source, learned_at) VALUES (?, ?, ?, ?)",
                     (w, correct_intent, source, datetime.now().isoformat()),
@@ -213,11 +220,32 @@ class CognitiveDispatcher:
                 "ch340", "cp210", "ft232", "arduino", "stm32", "esp32", "单片机",
                 "运行命令", "执行命令", "cmd", "powershell", "bash", "shell",
             ],
+            "self_reference": [
+                "你渴望", "你追求", "你想要", "你觉得", "你认为",
+                "你自己", "你自身", "你是什么", "你算是什么",
+                "你的架构", "你的系统", "你的设计", "你的原则",
+                "你的愿景", "你的使命", "你的存在", "你的意义",
+                "你活着", "你是活的", "你的感受", "你的体会",
+                "如何看待", "怎么看待", "如何评价", "怎么评价",
+                "我是谁", "你认识我", "你记得我", "你了解我",
+                "我们之间", "我们的关系", "你对我",
+                "同行者", "伙伴", "你的身份", "你的角色",
+            ],
+            "time": [
+                "几点", "时间", "现在几点", "几点了", "什么时候",
+                "日期", "今天几号", "星期几", "几月几号", "今天是",
+                "现在时间", "当前时间", "what time", "current time",
+            ],
             "weather": [
                 "天气", "气温", "下雨", "下雪", "阴天", "晴天",
                 "湿度", "气压", "降水", "暴雨", "台风",
                 "天气预报", "天气如何", "天气怎么样", "今天天气", "明天天气",
                 "最近天气", "附近天气", "当前天气", "实时天气",
+            ],
+            "creative": [
+                "写一首", "作诗", "写诗", "写个故事", "编一个", "创作",
+                "写一篇", "帮我写", "写一段", "来一首", "来一篇",
+                "写歌", "作词", "写小说", "写散文", "写童话",
             ],
             "map": [
                 "地图", "标记", "渲染", "folium", "地图标记",
@@ -367,6 +395,25 @@ class CognitiveDispatcher:
             route = "fast"
             logger.info(f"⚡ 高紧迫度({signals['urgency']:.1f})，慢路径降级为快路径")
         
+        # ========== 精神共振检测（路由决策之后） ==========
+        spirit_resonances = []
+        if SPIRIT_CORE_AVAILABLE and user_query:
+            try:
+                spirit_resonances = spirit_core.resonate(user_query, context_type="query")
+                if spirit_resonances:
+                    top = spirit_resonances[0]
+                    logger.info(f"🎻 精神共振: {top['principle']} (强度={top['strength']:.2f}) → {top['drive_direction']}")
+                    if top['principle'] == "THINK_BEFORE_ACT":
+                        if route == "fast" and intent_type not in ("time", "weather", "confirmation", "greeting"):
+                            route = "slow"
+                            logger.info(f"⚖️ 精神共振触发路由调整: {top['principle']} → 慢路径")
+                    elif top['principle'] == "NEVER_GIVE_UP":
+                        if context is None:
+                            context = {}
+                        context['retry_aggressiveness'] = context.get('retry_aggressiveness', 0) + 1
+            except Exception as e:
+                logger.debug(f"认知调度器精神共振检测失败: {e}")
+        
         logger.info(f"🔀 路由决策: {route}")
         
         # ========== 快速路径：立即返回 ==========
@@ -454,9 +501,17 @@ class CognitiveDispatcher:
         if re.search(r'COM\d+', query, re.IGNORECASE):
             return "hardware", 0.9
 
-        # 匹配优先级：hardware > challenge > complex > simple > 其他
+        # 自我参照检测（优先级高于所有外部查询）
+        try:
+            from backend.services.self_reference_detector import is_self_referential
+            if is_self_referential(query):
+                return "self_reference", 0.9
+        except Exception:
+            pass
+
+        # 匹配优先级：self_reference > hardware > challenge > complex > simple > 其他
         # hardware优先于challenge：当用户说"时间不对"时更可能是要求重新执行硬件操作
-        match_order = ["weather", "map", "hardware", "challenge", "complex_query", "learning_trigger", "simple_query", "history_query", "greeting", "confirmation"]
+        match_order = ["self_reference", "time", "weather", "map", "hardware", "challenge", "creative", "complex_query", "learning_trigger", "simple_query", "history_query", "greeting", "confirmation"]
         short_match_intents = {"greeting", "confirmation", "challenge"}
         
         for intent_type in match_order:
@@ -479,7 +534,11 @@ class CognitiveDispatcher:
         try:
             similarity_result = self._vector_intent_match(query)
             if similarity_result:
-                return similarity_result
+                sim_intent, sim_conf = similarity_result
+                if sim_intent == "greeting" and len(query_clean_all) <= 4:
+                    pass
+                else:
+                    return similarity_result
         except Exception as e:
             logger.error(f"向量意图匹配失败: {e}")
         
@@ -548,6 +607,12 @@ class CognitiveDispatcher:
             return "simple_query", 0.65
         
         if len(query) < 6 and not has_question_mark:
+            topic_indicators = re.search(r'[\u4e00-\u9fa5]{2,}', query)
+            en_topic = re.search(r'[a-zA-Z]{2,}', query)
+            if topic_indicators and len(topic_indicators.group()) >= 2:
+                return "complex_query", 0.55
+            if en_topic and len(en_topic.group()) >= 2:
+                return "complex_query", 0.55
             return "greeting", 0.6
         
         return None
@@ -573,6 +638,8 @@ class CognitiveDispatcher:
             "hardware": 0.6,
             "map": 0.65,
             "weather": 0.5,
+            "time": 0.2,
+            "creative": 0.6,
         }
         complexity = base_complexity.get(intent_type, 0.5)
         
@@ -581,7 +648,7 @@ class CognitiveDispatcher:
         if len(query) > 100:
             complexity += 0.1
         
-        tool_dependent_intents = {"hardware", "map", "weather", "complex_query"}
+        tool_dependent_intents = {"hardware", "map", "weather", "complex_query", "time", "simple_query"}
         if intent_type in tool_dependent_intents:
             complexity += 0.05
         
@@ -604,8 +671,12 @@ class CognitiveDispatcher:
         此处专注于slow/learning路径决策
         """
         # 简单意图走fast路径
-        if intent_type in ["greeting", "confirmation", "simple_query", "history_query"]:
+        if intent_type in ["greeting", "confirmation", "history_query", "time", "weather"]:
             return "fast"
+
+        # 自我参照走自省路径（self_reflect）——不走搜索/Ollama
+        if intent_type == "self_reference":
+            return "self_reflect"
         
         if intent_type == "hardware":
             return "slow"
@@ -662,7 +733,7 @@ class CognitiveDispatcher:
     def _get_reflection_lessons(self, query: str, intent_type: str) -> List[Dict]:
         """P1-7: 从spirit_lessons.db读取相关反思教训，回流到规划"""
         try:
-            db = DatabaseManager.get("data/spirit_lessons.db")
+            db = get_storage_port("data/spirit_lessons.db")
             rows = db.query(
                 "SELECT lesson_type, lesson_text, severity, context FROM spirit_lessons "
                 "WHERE lesson_text LIKE ? OR context LIKE ? "
@@ -851,7 +922,7 @@ class CognitiveDispatcher:
     def _record_dispatch(self, result: Dict, query: str):
         """记录调度决策历史（同步写入，为自进化提供数据）"""
         try:
-            db = DatabaseManager.get("data/dispatch_history.db")
+            db = get_storage_port("data/dispatch_history.db")
             db.execute(
                 """INSERT INTO dispatch_history 
                    (query, intent_type, confidence, complexity, route, execution_plan, reasoning, elapsed_ms, timestamp)
@@ -875,7 +946,7 @@ class CognitiveDispatcher:
     def get_dispatch_history(self, limit: int = 10) -> List[Dict]:
         """获取调度决策历史"""
         try:
-            db = DatabaseManager.get("data/dispatch_history.db")
+            db = get_storage_port("data/dispatch_history.db")
             rows = db.query(
                 "SELECT * FROM dispatch_history ORDER BY id DESC LIMIT ?",
                 (limit,)
@@ -888,7 +959,7 @@ class CognitiveDispatcher:
     def analyze_dispatch_patterns(self) -> Dict:
         """分析调度决策模式（为自进化提供洞察）"""
         try:
-            db = DatabaseManager.get("data/dispatch_history.db")
+            db = get_storage_port("data/dispatch_history.db")
             
             total_row = db.query_one("SELECT COUNT(*) as cnt FROM dispatch_history")
             total = total_row['cnt'] if total_row else 0

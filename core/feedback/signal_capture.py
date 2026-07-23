@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Any
 from enum import Enum
 import json
 from pathlib import Path
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -66,7 +66,7 @@ class FeedbackSignalCapture:
         """初始化数据库"""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         db.execute("""
             CREATE TABLE IF NOT EXISTS feedback_signals (
                 id TEXT PRIMARY KEY,
@@ -87,7 +87,7 @@ class FeedbackSignalCapture:
     
     def capture(self, signal: FeedbackSignal) -> str:
         """捕获一个反馈信号"""
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         db.execute("""
             INSERT INTO feedback_signals
             (id, conversation_id, turn_id, feedback_type, value, context,
@@ -112,7 +112,7 @@ class FeedbackSignalCapture:
     
     def get_signals_by_conversation(self, conversation_id: str) -> List[Dict]:
         """获取一个对话的所有反馈信号"""
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         rows = db.query(
             "SELECT * FROM feedback_signals WHERE conversation_id = ? ORDER BY timestamp",
             (conversation_id,)
@@ -121,7 +121,7 @@ class FeedbackSignalCapture:
     
     def get_unprocessed_signals(self, limit: int = 100) -> List[Dict]:
         """获取未处理的信号（用于后台处理）"""
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         rows = db.query(
             "SELECT * FROM feedback_signals WHERE processed = 0 ORDER BY timestamp LIMIT ?",
             (limit,)
@@ -130,7 +130,7 @@ class FeedbackSignalCapture:
     
     def mark_processed(self, signal_id: str):
         """标记信号为已处理"""
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         db.execute(
             "UPDATE feedback_signals SET processed = 1 WHERE id = ?",
             (signal_id,),

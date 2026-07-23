@@ -192,6 +192,9 @@ class EvolutionIsland:
         
         logger.info(f"进化完成: 最优适应度={best.fitness:.3f}, 耗时={elapsed:.1f}s")
         
+        if best.fitness > 0.5:
+            self._inject_to_gene_pool(best.genome.to_dict())
+
         return {
             'best_agent': best,
             'best_genome': best.genome.to_dict(),
@@ -210,6 +213,32 @@ class EvolutionIsland:
     def get_best_agent(self) -> SimulatedAgent:
         """获取最优智能体"""
         return max(self.agents, key=lambda a: a.fitness)
+
+    def _inject_to_gene_pool(self, genome: Dict):
+        """将进化岛产出的基因组注入GenePool（快进化层）"""
+        genome_to_gene = {
+            "retrieval_threshold": "caution_threshold",
+            "external_threshold": "depth_preference",
+            "memory_decay": "confidence_bias",
+            "exploration": "curiosity_weight",
+            "social": "self_doubt_frequency",
+            "answer_style": "wisdom_truth_balance",
+        }
+        try:
+            from core.task_queue import gene_pool
+            injected = 0
+            for gkey, gene_name in genome_to_gene.items():
+                val = genome.get(gkey)
+                if val is not None:
+                    current = gene_pool.get(gene_name)
+                    if current is not None:
+                        delta = (val - current) * 0.1
+                        gene_pool.mutate(gene_name, delta)
+                        injected += 1
+            if injected > 0:
+                logger.info(f"进化岛→GenePool注入: {injected}个基因微调")
+        except Exception as e:
+            logger.warning(f"进化岛GenePool注入失败: {e}")
     
     def export_results(self, output_path: str):
         """导出进化结果"""

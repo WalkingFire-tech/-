@@ -28,6 +28,13 @@ from .sleep_consolidation import (
     ConsolidationResult,
     get_sleep_engine,
 )
+from .inner_time import (
+    InnerTimeEngine,
+    CognitiveEventType,
+    CognitiveTick,
+    SubjectiveTimeState,
+    inner_time_engine,
+)
 
 __all__ = [
     # 存在层
@@ -51,4 +58,10 @@ __all__ = [
     'SleepStage',
     'ConsolidationResult',
     'get_sleep_engine',
+    # 内在时间
+    'InnerTimeEngine',
+    'CognitiveEventType',
+    'CognitiveTick',
+    'SubjectiveTimeState',
+    'inner_time_engine',
 ]

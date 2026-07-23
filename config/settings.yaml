@@ -317,3 +317,60 @@ feature_flags:
   persistent_solver_intent: true
   # 自动pip install缺失依赖
   auto_pip_install: true
+
+# ========== P0: 并行路由决策参数 ==========
+routing:
+  max_parallel_paths: 9
+  local_first_window_seconds: 1.5
+  local_quality_threshold: 75
+  path_weight_skip_threshold: 0.3
+
+# ========== P0: 闭环调度参数 ==========
+orchestrator:
+  confidence_threshold: 0.6
+  quality_threshold: 50.0
+  ollama_timeout_seconds: 30.0
+
+# ========== P1: ReAct引擎参数 ==========
+react:
+  max_iterations: 3
+  fitness_threshold: 60.0
+  min_improvement: 3.0
+  max_total_seconds: 45.0
+
+# ========== P1: 防御层参数 ==========
+defense:
+  rollback_entropy_threshold: 0.7
+  zscore_threshold: 2.5
+  rate_spike_threshold: 3.0
+  apoptosis_threshold: 10
+  regeneration_cooldown_seconds: 120
+  max_regeneration_attempts: 3
+  isolation_cooldown_seconds: 300
+  max_isolated_modules: 20
+
+# ========== P1: 元认知超时参数 ==========
+metacognitive:
+  phase0_timeout_seconds: 3.0
+  phase1_timeout_seconds: 5.0
+  phase3_timeout_seconds: 2.0
+
+# ========== P0: 认知主干道工具超时 ==========
+cognitive_highway:
+  execution_timeout_seconds: 3.0
+
+# ========== P2: 知识管理参数 ==========
+knowledge:
+  fade_threshold: 0.3
+  prune_threshold: 0.1
+  dormant_days: 30
+  long_unused_days: 60
+  similarity_threshold: 0.7
+  delta_threshold: 0.3
+
+# ========== P2: 输入守卫参数 ==========
+input_guard:
+  memory_threshold_high: 0.85
+  memory_threshold_low: 0.75
+  health_threshold_high: 0.3
+  health_threshold_low: 0.4

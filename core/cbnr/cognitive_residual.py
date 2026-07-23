@@ -27,7 +27,7 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class NodeType(Enum):
@@ -353,7 +353,7 @@ class CognitiveResidual:
             return semantic_result
 
         try:
-            db = DatabaseManager.get("data/experience_pool.db")
+            db = get_storage_port("data/experience_pool.db")
             row = db.query_one(
                 "SELECT raw_input, response, quality_score FROM experiences WHERE raw_input LIKE ? ORDER BY quality_score DESC LIMIT 1",
                 (f"%{topic[:30]}%",)
@@ -400,7 +400,7 @@ class CognitiveResidual:
             }
 
         try:
-            db = DatabaseManager.get("data/experience_pool.db")
+            db = get_storage_port("data/experience_pool.db")
             rows = db.query(
                 "SELECT raw_input, response, quality_score FROM experiences ORDER BY quality_score DESC LIMIT 50"
             )
@@ -508,7 +508,7 @@ class CognitiveResidual:
 
     def _load_search_tree(self):
         try:
-            db = DatabaseManager.get(self._db_path)
+            db = get_storage_port(self._db_path)
             db.executescript('''CREATE TABLE IF NOT EXISTS search_nodes (
                 node_id TEXT PRIMARY KEY,
                 node_type TEXT,
@@ -543,7 +543,7 @@ class CognitiveResidual:
 
     def _save_search_tree(self):
         try:
-            db = DatabaseManager.get(self._db_path)
+            db = get_storage_port(self._db_path)
             db.executescript('''CREATE TABLE IF NOT EXISTS search_nodes (
                 node_id TEXT PRIMARY KEY,
                 node_type TEXT,

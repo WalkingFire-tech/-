@@ -29,8 +29,8 @@ class ReactEnhancer:
     def _init_db(self):
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
-        from infrastructure.database_manager import DatabaseManager
-        DatabaseManager.get(self.db_path).execute('''
+        from core.ports.adapters import get_storage_port
+        get_storage_port(self.db_path).execute('''
             CREATE TABLE IF NOT EXISTS gap_analysis (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query TEXT,
@@ -111,8 +111,8 @@ class ReactEnhancer:
 
     def _save_gap(self, gap: Dict, query: str, iteration: int):
         try:
-            from infrastructure.database_manager import DatabaseManager
-            DatabaseManager.get(self.db_path).execute('''
+            from core.ports.adapters import get_storage_port
+            get_storage_port(self.db_path).execute('''
                 INSERT INTO gap_analysis (query, gap_type, focus, severity, iteration, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (query[:200], gap.get("gap_type", ""), gap.get("focus", ""),

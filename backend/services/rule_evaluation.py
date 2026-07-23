@@ -2,7 +2,7 @@ import time
 from loguru import logger
 
 from backend.services.path_handlers._shared import _run_sync
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 _RULES_DB = "data/learning_rules.db"
 
@@ -26,7 +26,7 @@ def evaluate_rules(user_input: str, intent_type: str, model_name: str = "unknown
             "model": model_name,
         }
         matcher = RuleMatcher()
-        db = DatabaseManager.get(_RULES_DB)
+        db = get_storage_port(_RULES_DB)
         rows = db.query(
             "SELECT id, condition, action, status FROM learning_rules "
             "WHERE status IN ('active','trial') ORDER BY priority ASC, confidence DESC"

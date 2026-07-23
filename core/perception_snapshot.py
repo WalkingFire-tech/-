@@ -14,7 +14,7 @@ import time
 import threading
 from typing import Dict, Any, Optional
 from dataclasses import dataclass, field
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -123,13 +123,13 @@ def _collect_resource() -> Dict[str, Any]:
 def _collect_knowledge() -> Dict[str, Any]:
     result = {}
     try:
-        db = DatabaseManager.get("data/experience_pool.db")
+        db = get_storage_port("data/experience_pool.db")
         result["experience_count"] = db.query_one("SELECT COUNT(*) FROM experiences")[0]
         result["recent_experiences"] = db.query_one("SELECT COUNT(*) FROM experiences WHERE timestamp > datetime('now', '-7 days')")[0]
     except Exception:
         logger.warning("操作降级跳过")
     try:
-        db = DatabaseManager.get("data/truths.db")
+        db = get_storage_port("data/truths.db")
         result["truth_count"] = db.query_one("SELECT COUNT(*) FROM truths")[0]
     except Exception:
         logger.warning("操作降级跳过")
@@ -142,7 +142,7 @@ def _collect_knowledge() -> Dict[str, Any]:
     except Exception:
         logger.warning("操作降级跳过")
     try:
-        db = DatabaseManager.get("data/knowledge_store.db")
+        db = get_storage_port("data/knowledge_store.db")
         result["knowledge_items"] = db.query_one("SELECT COUNT(*) FROM knowledge_items")[0]
     except Exception:
         logger.warning("操作降级跳过")
@@ -197,7 +197,7 @@ def _collect_health() -> Dict[str, Any]:
 def _collect_identity() -> Dict[str, Any]:
     result = {}
     try:
-        db = DatabaseManager.get("data/alignment_violations.db")
+        db = get_storage_port("data/alignment_violations.db")
         result["open_deviations"] = db.query_one("SELECT COUNT(*) FROM deviations WHERE status='open'")[0]
         result["corrected_deviations"] = db.query_one("SELECT COUNT(*) FROM deviations WHERE status='corrected'")[0]
     except Exception:

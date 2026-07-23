@@ -117,13 +117,13 @@ class UnifiedReader:
         table: str = None
     ) -> Dict[str, Any]:
         """读取SQLite数据库"""
-        from infrastructure.database_manager import DatabaseManager
+        from core.ports.adapters import get_storage_port
         
         db_path = Path(path)
         if not db_path.exists():
             return {"type": "error", "content": "", "error": "数据库不存在"}
         
-        db = DatabaseManager.get(path)
+        db = get_storage_port(path)
         
         try:
             if query:

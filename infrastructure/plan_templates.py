@@ -12,15 +12,61 @@ from infrastructure.database_manager import DatabaseManager
 
 class PlanTemplate:
     """计划模板"""
-    
+    STALE_DAYS = 60
+    DEAD_DAYS = 180
+
     def __init__(self, template_id: str, intent_type: str, steps: List[Dict],
-                 success_rate: float, avg_quality: float, use_count: int):
+                 success_rate: float, avg_quality: float, use_count: int,
+                 created_at: str = "", last_used_at: str = "",
+                 tags: List[str] = None):
         self.template_id = template_id
         self.intent_type = intent_type
         self.steps = steps
         self.success_rate = success_rate
         self.avg_quality = avg_quality
         self.use_count = use_count
+        self.created_at = created_at
+        self.last_used_at = last_used_at
+        self.tags = tags or []
+
+    @property
+    def name(self) -> str:
+        return f"{self.intent_type}_{len(self.steps)}步"
+
+    @property
+    def is_stale(self) -> bool:
+        if not self.last_used_at:
+            return False
+        try:
+            last = datetime.fromisoformat(self.last_used_at)
+            return (datetime.now() - last).days > self.STALE_DAYS
+        except (ValueError, TypeError):
+            return False
+
+    @property
+    def is_dead(self) -> bool:
+        if not self.last_used_at:
+            return False
+        try:
+            last = datetime.fromisoformat(self.last_used_at)
+            return (datetime.now() - last).days > self.DEAD_DAYS
+        except (ValueError, TypeError):
+            return False
+
+    def to_dict(self) -> Dict:
+        return {
+            "template_id": self.template_id,
+            "intent_type": self.intent_type,
+            "steps": self.steps,
+            "success_rate": self.success_rate,
+            "avg_quality": self.avg_quality,
+            "use_count": self.use_count,
+            "created_at": self.created_at,
+            "last_used_at": self.last_used_at,
+            "tags": self.tags,
+            "is_stale": self.is_stale,
+            "is_dead": self.is_dead,
+        }
 
 
 class PlanTemplateLibrary:
@@ -52,6 +98,15 @@ class PlanTemplateLibrary:
             CREATE INDEX IF NOT EXISTS idx_intent ON plan_templates(intent_type);
             CREATE INDEX IF NOT EXISTS idx_success ON plan_templates(success_count)
         ''')
+        for col in ["expired_at", "stale_at"]:
+            try:
+                db.execute(f"ALTER TABLE plan_templates ADD COLUMN {col} TEXT", commit=True)
+            except Exception:
+                pass
+        try:
+            db.execute("CREATE INDEX IF NOT EXISTS idx_expired ON plan_templates(expired_at)", commit=True)
+        except Exception:
+            pass
     
     def save_template(self, intent_type: str, steps: List[Dict], 
                      quality: int, success: bool, tags: List[str] = None):
@@ -129,14 +184,16 @@ class PlanTemplateLibrary:
                 WHERE template_id = ?
             ''', (datetime.now().isoformat(), template_id), commit=True)
     
-    def retrieve_template(self, intent_type: str) -> Optional[PlanTemplate]:
-        """检索最佳模板"""
+    def retrieve_template(self, intent_type: str, skip_expired: bool = True) -> Optional[PlanTemplate]:
+        """检索最佳模板（过滤已过期和陈旧模板）"""
         db = DatabaseManager.get(self.db_path)
+        now_iso = datetime.now().isoformat()
         row = db.query_one('''
             SELECT *
             FROM plan_templates
             WHERE intent_type = ?
               AND success_count > failure_count
+              AND (expired_at IS NULL OR expired_at = '')
             ORDER BY 
                 (success_count * 1.0 / (success_count + failure_count)) DESC,
                 total_quality DESC,
@@ -147,50 +204,81 @@ class PlanTemplateLibrary:
         if not row:
             return None
         
-        # 计算成功率
-        total = row["success_count"] + row["failure_count"]
-        success_rate = row["success_count"] / total if total > 0 else 0
-        avg_quality = row["total_quality"] / row["use_count"] if row["use_count"] > 0 else 0
+        r = dict(row)
+        total = r["success_count"] + r["failure_count"]
+        success_rate = r["success_count"] / total if total > 0 else 0
+        avg_quality = r["total_quality"] / r["use_count"] if r["use_count"] > 0 else 0
         
-        return PlanTemplate(
-            template_id=row["template_id"],
-            intent_type=row["intent_type"],
-            steps=json.loads(row["steps"]),
+        template = PlanTemplate(
+            template_id=r["template_id"],
+            intent_type=r["intent_type"],
+            steps=json.loads(r["steps"]),
             success_rate=success_rate,
             avg_quality=avg_quality,
-            use_count=row["use_count"]
+            use_count=r["use_count"],
+            created_at=r.get("created_at", ""),
+            last_used_at=r.get("last_used_at", ""),
+            tags=json.loads(r.get("tags", "[]")),
         )
+
+        if skip_expired and template.is_dead:
+            logger.warning(f"模板已死亡(>{PlanTemplate.DEAD_DAYS}天未用): {template.template_id}")
+            self.mark_expired(template.template_id)
+            return None
+
+        if template.is_stale:
+            logger.info(f"模板陈旧(>{PlanTemplate.STALE_DAYS}天未用)，降权使用: {template.template_id}")
+            template.success_rate *= 0.7
+
+        return template
+    
+    def find_matching(self, intent_type: str) -> Optional[PlanTemplate]:
+        """兼容接口：检索最佳模板"""
+        return self.retrieve_template(intent_type)
+    
+    def mark_expired(self, template_id: str):
+        """标记模板为已过期"""
+        db = DatabaseManager.get(self.db_path)
+        db.execute('''
+            UPDATE plan_templates SET expired_at = ? WHERE template_id = ?
+        ''', (datetime.now().isoformat(), template_id), commit=True)
+        logger.info(f"模板已标记过期: {template_id}")
     
     def get_templates_for_intent(self, intent_type: str, limit: int = 5) -> List[PlanTemplate]:
-        """获取意图类型的所有模板"""
+        """获取意图类型的所有模板（排除已过期）"""
         db = DatabaseManager.get(self.db_path)
         rows = db.query('''
             SELECT *
             FROM plan_templates
             WHERE intent_type = ?
+              AND (expired_at IS NULL OR expired_at = '')
             ORDER BY success_count DESC, total_quality DESC
             LIMIT ?
         ''', (intent_type, limit))
         
         templates = []
         for row in rows:
-            total = row["success_count"] + row["failure_count"]
-            success_rate = row["success_count"] / total if total > 0 else 0
-            avg_quality = row["total_quality"] / row["use_count"] if row["use_count"] > 0 else 0
+            r = dict(row)
+            total = r["success_count"] + r["failure_count"]
+            success_rate = r["success_count"] / total if total > 0 else 0
+            avg_quality = r["total_quality"] / r["use_count"] if r["use_count"] > 0 else 0
             
             templates.append(PlanTemplate(
-                template_id=row["template_id"],
-                intent_type=row["intent_type"],
-                steps=json.loads(row["steps"]),
+                template_id=r["template_id"],
+                intent_type=r["intent_type"],
+                steps=json.loads(r["steps"]),
                 success_rate=success_rate,
                 avg_quality=avg_quality,
-                use_count=row["use_count"]
+                use_count=r["use_count"],
+                created_at=r.get("created_at", ""),
+                last_used_at=r.get("last_used_at", ""),
+                tags=json.loads(r.get("tags", "[]")),
             ))
         
         return templates
     
     def cleanup_low_quality_templates(self, min_uses: int = 5):
-        """清理低质量模板"""
+        """清理低质量模板 + 过期标记 + 陈旧降权"""
         db = DatabaseManager.get(self.db_path)
         cursor = db.execute('''
             DELETE FROM plan_templates
@@ -208,8 +296,21 @@ class PlanTemplateLibrary:
         ''', (cutoff,), commit=True)
         
         deleted += cursor.rowcount
+
+        stale_cutoff = (datetime.now() - timedelta(days=PlanTemplate.STALE_DAYS)).isoformat()
+        db.execute('''
+            UPDATE plan_templates SET stale_at = ?
+            WHERE last_used_at < ? AND (stale_at IS NULL OR stale_at = '')
+        ''', (datetime.now().isoformat(), stale_cutoff), commit=True)
+
+        dead_cutoff = (datetime.now() - timedelta(days=PlanTemplate.DEAD_DAYS)).isoformat()
+        cursor = db.execute('''
+            UPDATE plan_templates SET expired_at = ?
+            WHERE last_used_at < ? AND (expired_at IS NULL OR expired_at = '')
+        ''', (datetime.now().isoformat(), dead_cutoff), commit=True)
+        expired = cursor.rowcount
         
-        logger.info(f"清理了{deleted}个低质量模板")
+        logger.info(f"模板清理: 删除{deleted}个低质量, 标记{expired}个已过期")
     
     def get_statistics(self) -> Dict:
         """获取统计信息"""

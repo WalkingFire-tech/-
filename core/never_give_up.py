@@ -194,8 +194,8 @@ class NeverGiveUpEngine:
     async def _try_knowledge_retrieval(self, question: str) -> Dict:
         """尝试知识检索"""
         try:
-            from infrastructure.database_manager import DatabaseManager
-            row = DatabaseManager.get("data/knowledge_store.db").query_one("SELECT answer FROM knowledge_items WHERE answer LIKE ? LIMIT 1", (f"%{question[:30]}%",))
+            from core.ports.adapters import get_storage_port
+            row = get_storage_port("data/knowledge_store.db").query_one("SELECT answer FROM knowledge_items WHERE answer LIKE ? LIMIT 1", (f"%{question[:30]}%",))
             if row:
                 return {"success": True, "answer": row[0], "confidence": 0.8}
         except Exception:
@@ -244,7 +244,7 @@ class NeverGiveUpEngine:
     async def _try_tool_execution(self, question: str) -> Dict:
         """尝试工具调用"""
         try:
-            from tools.registry import registry
+            from core.tool_registry import tool_registry as registry
             question_lower = question.lower()
             
             if any(kw in question_lower for kw in ["计算", "数学"]):
@@ -263,8 +263,8 @@ class NeverGiveUpEngine:
     async def _try_experience_recall(self, question: str) -> Dict:
         """尝试经验回顾"""
         try:
-            from infrastructure.database_manager import DatabaseManager
-            row = DatabaseManager.get("data/experience_pool.db").query_one("SELECT response FROM experiences WHERE query LIKE ? ORDER BY timestamp DESC LIMIT 1", (f"%{question[:20]}%",))
+            from core.ports.adapters import get_storage_port
+            row = get_storage_port("data/experience_pool.db").query_one("SELECT response FROM experiences WHERE query LIKE ? ORDER BY timestamp DESC LIMIT 1", (f"%{question[:20]}%",))
             if row:
                 return {"success": True, "answer": row[0], "confidence": 0.6}
         except Exception:

@@ -259,6 +259,31 @@ async function sendMessage() {
                             stepsContainer.appendChild(learnEl);
                             stepsContainer.scrollTop = stepsContainer.scrollHeight;
                         }
+                    } else if (event.type === 'awareness') {
+                        const parts = [];
+                        if (event.presence) parts.push(`存在:${event.presence}`);
+                        if (event.inner_phase) parts.push(`节律:${event.inner_phase}`);
+                        if (event.perspective_mode) parts.push(`视角:${event.perspective_mode}`);
+                        if (event.cbnr_attention_fidelity !== undefined) parts.push(`注意力保真:${(event.cbnr_attention_fidelity*100).toFixed(0)}%`);
+                        if (event.cbnr_uncertainty !== undefined) parts.push(`不确定性:${(event.cbnr_uncertainty*100).toFixed(0)}%`);
+                        if (event.essence_passed !== undefined) parts.push(`本质:${event.essence_passed ? '✅' : '⚠️'}`);
+                        if (event.essence_confidence !== undefined) parts.push(`本质置信:${(event.essence_confidence*100).toFixed(0)}%`);
+                        if (parts.length > 0) {
+                            const awEl = document.createElement('div');
+                            awEl.className = 'thinking-step awareness';
+                            awEl.innerHTML = `<span class="step-icon">🪞</span> <strong>意识流</strong> - ${parts.join(' · ')}`;
+                            stepsContainer.appendChild(awEl);
+                            stepsContainer.scrollTop = stepsContainer.scrollHeight;
+                        }
+
+                    } else if (event.type === 'presence_pause') {
+                        const pauseEl = document.createElement('div');
+                        pauseEl.className = 'thinking-step awareness';
+                        pauseEl.style.borderLeft = '3px solid #e67e22';
+                        pauseEl.style.background = 'rgba(230, 126, 34, 0.08)';
+                        pauseEl.innerHTML = `<span class="step-icon">🪞</span> <strong>在场停顿</strong> - ${event.signal || event.risk || '系统正在审视自己的回答动机'}`;
+                        stepsContainer.appendChild(pauseEl);
+                        stepsContainer.scrollTop = stepsContainer.scrollHeight;
 
                     } else if (event.type === 'result') {
                         finalResult = event;
@@ -611,7 +636,9 @@ async function checkHealth(retryCount = 0, maxRetry = 30) {
         // 检查 ready 字段 — 仅在所有子系统初始化完成后才标记为已连接
         if (data.ready === true) {
             if (indicator) indicator.classList.add('connected');
-            if (statusText) statusText.textContent = `已连接 (v${data.version})`;
+            const degraded = data.fully_ready === false;
+            const label = degraded ? `部分就绪 (v${data.version})` : `已连接 (v${data.version})`;
+            if (statusText) statusText.textContent = label;
             return true;
         }
         // 服务器可达但仍在初始化

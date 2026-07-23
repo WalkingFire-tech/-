@@ -1,6 +1,6 @@
 import time
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 def reflect_and_learn(query: str, response: str, attempts: list, start_time: float, comparison: list) -> str:
@@ -24,7 +24,7 @@ def reflect_and_learn(query: str, response: str, attempts: list, start_time: flo
 
     try:
         from datetime import datetime
-        db = DatabaseManager.get("data/spirit_lessons.db")
+        db = get_storage_port("data/spirit_lessons.db")
         db.executescript("""
             CREATE TABLE IF NOT EXISTS reflections (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,7 +55,7 @@ def reflect_and_learn(query: str, response: str, attempts: list, start_time: flo
                 pattern_type = "rule_based"
 
             if pattern_type != "unknown":
-                db = DatabaseManager.get("data/experience_pool.db")
+                db = get_storage_port("data/experience_pool.db")
                 db.execute(
                     "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score, success, duration) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (f"[模式]{pattern_type}:{query[:50]}", f"解决路径:{'→'.join(success_path)}", dt.now().isoformat(), f"pattern_{pattern_type}", 85, 1, 0.0),
@@ -98,7 +98,7 @@ def try_solidify_to_gene_pool(query: str, response: str, attempts: list, compari
         return ""
 
     try:
-        db = DatabaseManager.get("data/experience_pool.db")
+        db = get_storage_port("data/experience_pool.db")
         row = db.query_one("SELECT COUNT(*) FROM experiences WHERE raw_input LIKE ? AND quality_score >= 80", (f"%{query[:20]}%",))
         count = row[0] if row else 0
     except Exception:
@@ -113,7 +113,7 @@ def try_solidify_to_gene_pool(query: str, response: str, attempts: list, compari
 
     try:
         from datetime import datetime
-        db = DatabaseManager.get("data/knowledge_store.db")
+        db = get_storage_port("data/knowledge_store.db")
         db.execute(
             "INSERT INTO knowledge (content, source, type, quality, created_at) VALUES (?, ?, ?, ?, ?)",
             (response, "gene_pool_solidification", "solidified", int(best_score), datetime.now().isoformat()),
@@ -124,7 +124,7 @@ def try_solidify_to_gene_pool(query: str, response: str, attempts: list, compari
         logger.error(f"基因库固化-知识库写入失败: {e}")
 
     try:
-        db = DatabaseManager.get("data/experience_pool.db")
+        db = get_storage_port("data/experience_pool.db")
         db.execute(
             "UPDATE experiences SET quality_score = ? WHERE raw_input LIKE ? AND quality_score < ?",
             (95, f"%{query[:20]}%", 95),
@@ -145,7 +145,7 @@ def try_solidify_to_gene_pool(query: str, response: str, attempts: list, compari
 
     try:
         from datetime import datetime
-        db = DatabaseManager.get("data/spirit_lessons.db")
+        db = get_storage_port("data/spirit_lessons.db")
         db.executescript("""
             CREATE TABLE IF NOT EXISTS gene_pool (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

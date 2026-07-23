@@ -1,0 +1,70 @@
+﻿python : 2026-07-18 00:59:03.660 | INFO     | infrastructure.tool_cache:_init_db:38 - 宸ュ叿缂撳瓨鏁版嵁搴撳垵濮嬪寲瀹屾垚: data/tool_cac
+he.db
+所在位置 行:1 字符: 1
++ python scripts/growth_report.py 2>&1 | Out-File -FilePath temp_report ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (2026-07-18 00:5...a/tool_cache.db:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+2026-07-18 00:59:03.660 | INFO     | core.tool_registry:__init__:314 - 宸ュ叿鎵ц鍣ㄧ紦瀛樺凡鍚敤
+2026-07-18 00:59:03.676 | WARNING  | core.skill_emergence:_init_db:59 - 鎿嶄綔闄嶇骇璺宠繃
+2026-07-18 00:59:03.676 | WARNING  | core.skill_emergence:_init_db:63 - 鎿嶄綔闄嶇骇璺宠繃
+2026-07-18 00:59:03.676 | WARNING  | core.skill_emergence:_init_db:67 - 鎿嶄綔闄嶇骇璺宠繃
+2026-07-18 00:59:03.693 | INFO     | core.self.model:_restore_from_capability_dbs:984 - 馃獮 SelfModel 浠庤兘鍔汥B闄嶇骇鎭㈠鎴愬姛
+2026-07-18 00:59:03.693 | INFO     | core.self.model:get_self_model:1020 - 馃獮 SelfModel 宸插垱寤?鈥?绯荤粺绗竴娆℃湁浜?鎴戞槸璋?鐨勭粺涓€璁ょ煡
+2026-07-18 00:59:03.710 | INFO     | core.presence.self_perception:__init__:103 - 馃憗锔?鑷垜鎰熺煡妯″潡宸插垵濮嬪寲
+2026-07-18 00:59:03.710 | INFO     | core.presence.self_perception:start:114 - 馃憗锔?鑷垜鎰熺煡鐩戞帶宸插惎鍔?
+2026-07-18 00:59:03.710 | INFO     | core.presence.existence_layer:_init_components:126 -   鉁?鑷垜鎰熺煡妯″潡宸插姞杞藉苟鍚姩
+2026-07-18 00:59:03.710 | INFO     | core.presence.gap_growth:__init__:141 - 馃尶 闂撮殭鐢熼暱寮曟搸宸插垱寤?
+2026-07-18 00:59:03.710 | INFO     | core.presence.gap_growth:start:157 - 馃尶 闂撮殭鐢熼暱寮曟搸宸插惎鍔?
+2026-07-18 00:59:03.710 | INFO     | core.presence.existence_layer:_init_components:134 -   鉁?闂撮殭鐢熼暱妯″潡宸插姞杞藉苟鍚姩
+2026-07-18 00:59:03.710 | DEBUG    | core.presence.sleep_consolidation:_init_database:151 - 鐫＄湢鏁村悎鏁版嵁搴撳垵濮嬪寲鎴愬姛
+2026-07-18 00:59:03.710 | INFO     | core.presence.sleep_consolidation:__init__:120 - 馃挙 鐫＄湢鏁村悎寮曟搸宸插垱寤?
+2026-07-18 00:59:03.710 | INFO     | core.presence.sleep_consolidation:start:161 - 馃挙 鐫＄湢鏁村悎寮曟搸宸插惎鍔?
+2026-07-18 00:59:03.710 | INFO     | core.presence.existence_layer:_init_components:142 -   鉁?鐫＄湢鏁村悎妯″潡宸插姞杞藉苟鍚姩
+2026-07-18 00:59:03.710 | INFO     | core.presence.existence_layer:__init__:101 -   鉁?鍐呭湪鏃堕棿寮曟搸宸查泦鎴?
+2026-07-18 00:59:03.710 | INFO     | core.resource_awareness.background_controller:__init__:95 - 馃帥锔?鍚庡彴浠诲姟鎺у埗鍣ㄥ凡鍒涘缓锛?4
+涓凡鐭ヤ换鍔★級
+2026-07-18 00:59:03.710 | INFO     | core.presence.existence_layer:__init__:114 - 馃専 绗浂灞傦紙瀛樺湪灞傦級宸插垵濮嬪寲
+============================================================
+  璁ょ煡鎴愰暱鎶ュ憡
+  2026-07-18T00:59:03.543587
+============================================================
+
+  馃獮 SelfModel:
+     鎴戞嫢鏈?涓伐鍏峰拰9涓垚鐔熸妧鑳斤紝缁忛獙鎴愬姛鐜?7%锛屾椿璺冨涔犺鍒?鏉★紝褰撳墠璁ょ煡鑺傚20BPM銆佹帰绱㈤┍鍔ㄥ姏50%銆?
+     鎴愮啛搴?
+       identity             [鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒] 0.00
+       health_awareness     [鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒] 0.00
+       capability           [鈻堚枅鈻堚枅鈻戔枒鈻戔枒鈻戔枒] 0.48
+       social               [鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒] 0.00
+       learning             [鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒] 0.00
+       cognitive_depth      [鈻戔枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒] 0.00
+       integration          [鈻堚枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒] 0.17
+       overall              [鈻堚枒鈻戔枒鈻戔枒鈻戔枒鈻戔枒] 0.12
+     鏇存柊娆℃暟: 0
+
+  鈴憋笍 InnerTimeEngine:
+     璁ょ煡鑺傛媿: 0
+     鏃堕棿娴侀€? 0.10x
+     璁ょ煡鑺傚: 20 BPM
+     璁ょ煡瀵嗗害: 0.000
+     褰撳墠闃舵: sleeping
+
+  馃専 ExistenceLayer:
+     瀛樺湪鐘舵€? awake
+     鍋ュ悍: None
+     鑳介噺: None
+
+  馃敡 鑳藉姏: 涓嶅彲鐢?
+
+  馃摎 瀛︿範: 涓嶅彲鐢?
+
+  馃攲 绔彛鐙珛鎬?
+     鉁?event_sink: NullEventSink鍙敤
+     鉁?notification_port: NullNotificationPort鍙敤
+     鉁?cognitive_process: cognitive_process()鍙嫭绔嬭皟鐢?
+     鉁?self_reference: 鑷垜鍙傜収妫€娴?閿氱偣鏌ヨ鍙敤
+     鉁?independent_entry: run_cognitive_core.py鍙敤
+
+============================================================

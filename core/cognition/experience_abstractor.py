@@ -15,7 +15,13 @@
 import re
 from typing import Dict, Any, List, Optional
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
+try:
+    from core.spirit_core import spirit_core
+    SPIRIT_CORE_AVAILABLE = True
+except ImportError:
+    SPIRIT_CORE_AVAILABLE = False
+    spirit_core = None
 
 
 class ExperienceAbstractor:
@@ -142,6 +148,20 @@ class ExperienceAbstractor:
         """
         insights = []
         transferable = {}
+        
+        # 精神共振检测：记录与经验相关的原则触发
+        spirit_resonances = []
+        if SPIRIT_CORE_AVAILABLE and user_query:
+            try:
+                resonances = spirit_core.resonate(user_query, context_type="reasoning")
+                for r in resonances[:2]:  # 只记录前2个共振原则
+                    spirit_resonances.append({
+                        "principle": r.get("principle"),
+                        "strength": r.get("strength"),
+                        "drive_direction": r.get("drive_direction")
+                    })
+            except Exception as e:
+                logger.debug(f"经验抽象精神共振检测失败: {e}")
 
         if re.search(r'串口\d+|端口\d+|com\d+', user_query, re.IGNORECASE):
             insights.append("用户使用中文别名引用硬件编号，需映射为标准标识符")
@@ -191,6 +211,7 @@ class ExperienceAbstractor:
             "skeleton": skeleton,
             "scent": scent,
             "scent_signature": scent_sig,
+            "spirit_resonances": spirit_resonances,
         }
 
     @classmethod
@@ -235,7 +256,7 @@ class ExperienceAbstractor:
             new_stages = set(new_skeleton.split("→"))
             new_scent = cls.extract_scent(new_query)
             
-            db = DatabaseManager.get("data/skills.db")
+            db = get_storage_port("data/skills.db")
             rows = db.query(
                 "SELECT skill_name, trigger_patterns, solution_path, skeleton, confidence, success_count FROM skills WHERE is_active=1 AND skeleton != ''"
             )
@@ -291,7 +312,7 @@ class ExperienceAbstractor:
     def settle_to_skill_db(cls, abstracted: Dict, user_query: str, intent_type: str):
         """将抽象出的模式沉淀到skill_emergence技能表"""
         try:
-            db = DatabaseManager.get("data/skill_emergence.db")
+            db = get_storage_port("data/skill_emergence.db")
             patterns = abstracted.get("transferable_patterns", {})
             for pattern_name, pattern_data in patterns.items():
                 skill_name = f"abstracted_{pattern_name}"

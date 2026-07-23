@@ -29,7 +29,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from collections import deque
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -188,7 +188,7 @@ class AdaptiveEvolutionGoal:
         try:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
             
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             db.execute('''
                 CREATE TABLE IF NOT EXISTS evolution_goals (
                     dimension TEXT PRIMARY KEY,
@@ -229,7 +229,7 @@ class AdaptiveEvolutionGoal:
     def _load_from_database(self):
         """从数据库加载数据"""
         try:
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             rows = db.query('''
                 SELECT dimension, target_value, current_value, priority,
                        source, created_at, updated_at, progress_history
@@ -273,7 +273,7 @@ class AdaptiveEvolutionGoal:
     def _save_goal_to_db(self, goal: EvolutionGoal):
         """保存目标到数据库"""
         try:
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             db.execute('''
                 INSERT OR REPLACE INTO evolution_goals
                 (dimension, target_value, current_value, priority, source,
@@ -295,7 +295,7 @@ class AdaptiveEvolutionGoal:
     def _save_inference_to_db(self, inference: ValueInference):
         """保存推断到数据库"""
         try:
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             db.execute('''
                 INSERT OR REPLACE INTO value_inferences
                 (dimension, inferred_value, evidence_count, evidence_sources,
@@ -604,7 +604,7 @@ class AdaptiveEvolutionGoal:
     def _save_feedback_to_db(self, fb: Dict):
         """保存反馈到数据库"""
         try:
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             db.execute('''
                 INSERT INTO feedback_history
                 (timestamp, satisfaction, praised, criticized, raw_feedback)
@@ -680,7 +680,8 @@ class AdaptiveEvolutionGoal:
                     "intent": "evolution_goal",
                     "event_type": event_type,
                     "dimension": dimension.value,
-                }
+                },
+                "learning_result": {"knowledge_gained": 0, "avg_knowledge_quality": 0, "knowledge_reuse_rate": 0},
             })
             
             self.stats["evolutions_triggered"] += 1

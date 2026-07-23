@@ -45,6 +45,36 @@ async def handle_fast_path(
         handled = True
         return {"handled": handled, "final_response": final_response, "events": events, "new_intent_type": new_intent_type}
 
+    if intent_type == "time":
+        try:
+            from datetime import datetime
+            now = datetime.now()
+            weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+            final_response = f"现在是 {now.strftime('%Y年%m月%d日')} {weekdays[now.weekday()]} {now.strftime('%H时%M分%S秒')}"
+            events.append({"type": "step", "data": {"phase": "时间查询", "status": "done", "detail": "时间快速路径"}})
+            events.append({"type": "result", "data": {"response": final_response, "attempts": attempts, "intent": intent_type, "confidence": 0.95}})
+            handled = True
+            return {"handled": handled, "final_response": final_response, "events": events, "new_intent_type": new_intent_type}
+        except Exception as _te:
+            logger.warning(f"时间查询异常: {_te}")
+
+    if intent_type == "simple_query":
+        import re as _calc_re
+        calc_match = _calc_re.search(r'(\d+\s*[\+\-\*/×÷]\s*\d+)', user_input)
+        if calc_match:
+            try:
+                expr = calc_match.group(1).replace('×', '*').replace('÷', '/')
+                _allowed = set("0123456789+-*/. ")
+                if all(c in _allowed for c in expr):
+                    result = eval(expr, {"__builtins__": {}}, {})
+                    final_response = f"{calc_match.group(1)} = {result}"
+                    events.append({"type": "step", "data": {"phase": "计算器", "status": "done", "detail": "calc fast path"}})
+                    events.append({"type": "result", "data": {"response": final_response, "attempts": attempts, "intent": intent_type, "confidence": 0.95}})
+                    handled = True
+                    return {"handled": handled, "final_response": final_response, "events": events, "new_intent_type": new_intent_type}
+            except Exception:
+                pass
+
     if intent_type == "challenge":
         events.append({"type": "step", "data": {"phase": "质疑检测", "status": "running", "detail": "用户质疑上一轮回答，触发重验证..."}})
 
@@ -130,3 +160,28 @@ async def handle_map_weather_fast_path(
             events.append({"type": "step", "data": {"phase": "天气查询", "status": "done", "detail": f"天气查询异常({str(_we)[:60]})，尝试常规路径..."}})
 
     return {"final_response": final_response, "confidence": confidence, "events": events}
+
+
+def build_fast_path_result(final_response, attempts, intent_type, confidence, route, start_time, spirit_core_available):
+    """快速路径提前返回 — 构建result payload"""
+    import time
+    elapsed = time.time() - start_time
+    logger.info(f"⏱️ [T+{elapsed:.1f}s] 快速路径已完成，跳过阶段4-7")
+    result = {
+        "response": final_response,
+        "attempts": attempts,
+        "intent": intent_type,
+        "confidence": confidence,
+        "route": route,
+        "elapsed": round(elapsed, 1),
+        "spirit_compliant": spirit_core_available,
+        "candidates": [],
+        "path_contributions": {},
+        "token_usage": {},
+        "cbnr": {},
+        "session_id": "",
+        "companion_layers": {},
+        "cognitive_layers": {},
+    }
+    logger.info(f"✅ 快速路径响应已发送({elapsed:.1f}秒)")
+    return result

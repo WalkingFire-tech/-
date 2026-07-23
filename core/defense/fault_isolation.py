@@ -9,14 +9,15 @@ L3 异常处理层 - 故障隔离 (Fault Isolator)
 import time
 from typing import Dict, List, Optional
 from loguru import logger
+from infrastructure.config_manager import config
 from datetime import datetime
 
 
 class FaultIsolator:
-    ISOLATION_COOLDOWN = 300
-    MAX_ISOLATED = 20
 
     def __init__(self):
+        self._isolation_cooldown = config.get("defense.isolation_cooldown_seconds", 300)
+        self._max_isolated = config.get("defense.max_isolated_modules", 20)
         self._isolated: Dict[str, dict] = {}
         self._isolation_log: List[dict] = []
 
@@ -26,7 +27,7 @@ class FaultIsolator:
             self._isolated[module_name]["isolated_at"] = time.time()
             self._isolated[module_name]["isolation_count"] += 1
             return True
-        if len(self._isolated) >= self.MAX_ISOLATED:
+        if len(self._isolated) >= self._max_isolated:
             oldest = min(self._isolated.items(), key=lambda x: x[1]["isolated_at"])
             self.release(oldest[0])
         self._isolated[module_name] = {
@@ -64,7 +65,7 @@ class FaultIsolator:
             return False
         info = self._isolated[module_name]
         elapsed = time.time() - info["isolated_at"]
-        if elapsed > self.ISOLATION_COOLDOWN:
+        if elapsed > self._isolation_cooldown:
             if info["isolation_count"] <= 3:
                 self.release(module_name)
                 return False

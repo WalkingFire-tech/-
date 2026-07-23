@@ -44,8 +44,8 @@ def _inject_evolved_genome(genome: dict, fitness: float = 0.0):
 
 
 def _import_evolved_skills(skills: list):
-    from infrastructure.database_manager import DatabaseManager
-    db = DatabaseManager.get("data/knowledge_store.db")
+    from core.ports.adapters import get_storage_port
+    db = get_storage_port("data/knowledge_store.db")
     for skill in skills:
         name = skill.get('name', f"evolved_skill_{hash(str(skill)) % 10000}")
         code = skill.get('code', '')
@@ -261,6 +261,21 @@ async def _start_evolution_loop(app):
                         "total_generations": app.state.evolution_generation,
                         "last_run": datetime.now().isoformat(),
                     })
+                    try:
+                        from core.ports.adapters import get_storage_port
+                        _evo_db = get_storage_port("data/evolution_history.db")
+                        _evo_db.execute(
+                            "CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY AUTOINCREMENT, fitness REAL, generations INTEGER, genome TEXT, timestamp TEXT)",
+                            commit=True
+                        )
+                        import json
+                        _evo_db.execute(
+                            "INSERT INTO runs (fitness, generations, genome, timestamp) VALUES (?, ?, ?, ?)",
+                            (best_fitness, result.get("stats", {}).get("generations", 0), json.dumps(result.get("best_genome", {}), ensure_ascii=False), datetime.now().isoformat()),
+                            commit=True
+                        )
+                    except Exception:
+                        pass
 
                 app.state.evolution_running = False
             except Exception as e:
@@ -287,6 +302,9 @@ async def _start_existence_layer():
     try:
         from core.presence.existence_layer import get_existence_layer
         existence_layer = get_existence_layer()
+        if existence_layer.running:
+            logger.info("存在层已在运行，跳过重复启动")
+            return
         existence_layer.start()
         logger.info("存在层已启动（心跳/生长/休息/睡眠四阶段循环）")
     except Exception as e:
@@ -441,11 +459,13 @@ async def lifespan(app):
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
     # === 启动序列 ===
+    app.state.initialized = True
+    logger.info("✅ 后端服务基础就绪，前端可开始加载")
+
     await _start_resource_awareness()
     await _start_vector_index()
     await _start_task_queue()
 
-    # 初始化反思管道（延迟到首次使用时初始化）
     app.state.reflection_pipeline = None
     logger.info("反思管道已标记为延迟初始化")
 
@@ -463,6 +483,21 @@ async def lifespan(app):
     await _init_cognitive_planner(app)
     await _start_scheduled_tasks()
     await _register_event_bus()
+
+    try:
+        from core.cognitive_dispatcher import CognitiveDispatcher
+        _warmup_disp = CognitiveDispatcher()
+        _warmup_disp.dispatch(user_query="预热", context={})
+        logger.info("✅ CognitiveDispatcher预热完成")
+    except Exception as e:
+        logger.warning(f"CognitiveDispatcher预热跳过: {e}")
+
+    try:
+        from core.shared_embedding import get_embedding_model
+        get_embedding_model()
+        logger.info("✅ 嵌入模型预热完成")
+    except Exception as e:
+        logger.warning(f"嵌入模型预热跳过: {e}")
 
     # 文件变化感知 — 因config_manager兼容性问题暂不自动启动
     logger.info("文件变化感知已标记为手动模式（config_manager兼容性问题）")

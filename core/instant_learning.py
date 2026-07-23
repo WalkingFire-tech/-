@@ -11,7 +11,7 @@
 这是真正的"像人一样学习"的机制。
 """
 import json
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -56,7 +56,7 @@ class InstantLearningSystem:
     
     def _init_fact_db(self):
         """初始化事实库"""
-        db = DatabaseManager.get(self.fact_db_path)
+        db = get_storage_port(self.fact_db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS facts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,7 +101,7 @@ class InstantLearningSystem:
         keywords = self._extract_keywords(question)
         
         # 检索事实库
-        db = DatabaseManager.get(self.fact_db_path)
+        db = get_storage_port(self.fact_db_path)
         
         results = []
         for keyword in keywords:
@@ -188,7 +188,7 @@ class InstantLearningSystem:
         logger.info(f"📚 即时学习: {concept[:30]}...")
         
         # 写入事实库
-        db = DatabaseManager.get(self.fact_db_path)
+        db = get_storage_port(self.fact_db_path)
         
         now = datetime.now().isoformat()
         
@@ -280,7 +280,7 @@ class InstantLearningSystem:
         Returns:
             知识统计信息
         """
-        db = DatabaseManager.get(self.fact_db_path)
+        db = get_storage_port(self.fact_db_path)
         
         total_facts = db.query_one('SELECT COUNT(*) FROM facts')[0]
         

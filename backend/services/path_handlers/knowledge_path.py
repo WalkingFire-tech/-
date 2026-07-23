@@ -1,10 +1,38 @@
 import asyncio
 from loguru import logger
 from backend.services.path_handlers._shared import _check_vector_available, _fast_executor
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
-async def fetch_knowledge(query: str) -> dict:
+def _get_vector_port():
+    try:
+        from core.ports.adapters import get_vector_store_port
+        port = get_vector_store_port()
+        if port.is_available():
+            return port
+    except Exception:
+        pass
+    return None
+
+
+async def fetch_knowledge(query: str, ports: dict = None) -> dict:
+    vector_port = None
+    if ports and ports.get("vector_store"):
+        vector_port = ports["vector_store"]
+    if vector_port is None:
+        vector_port = _get_vector_port()
+    if vector_port and vector_port.is_available():
+        try:
+            results = await vector_port.search(query, k=3, threshold=0.3)
+            if results:
+                best = results[0]
+                text = best.get("text", "")
+                prob = best.get("probability", 0)
+                if text and len(text) > 30:
+                    return {"source": "知识库(向量/端口)", "response": text, "quality": min(int(prob * 100), 90),
+                            "retrieval_probability": prob, "retrieval_entropy": best.get("query_entropy", 0.5)}
+        except Exception as e:
+            logger.debug(f"端口向量检索跳过: {e}")
     if _check_vector_available():
         try:
             from infrastructure.vector_retriever import vector_retriever
@@ -38,7 +66,7 @@ async def fetch_knowledge(query: str) -> dict:
     try:
         loop = asyncio.get_running_loop()
         def _query_know():
-            db = DatabaseManager.get("data/knowledge_store.db")
+            db = get_storage_port("data/knowledge_store.db")
 
             row = db.query_one("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{query[:30]}%",))
 

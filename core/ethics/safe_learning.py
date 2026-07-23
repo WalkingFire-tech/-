@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from pathlib import Path
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 from .value_alignment_checker import (
     check_value_alignment,
@@ -49,7 +49,7 @@ class SafeLearningLayer:
         """初始化数据库"""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         db.executescript('''
             CREATE TABLE IF NOT EXISTS learning_journal (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,7 +82,7 @@ class SafeLearningLayer:
     def _load_stats(self):
         """加载统计信息"""
         try:
-            db = DatabaseManager.get(str(self.db_path))
+            db = get_storage_port(str(self.db_path))
             rows = db.query("SELECT key, value FROM learning_stats")
             self._stats = {row[0]: json.loads(row[1]) for row in rows}
         except Exception:
@@ -131,12 +131,12 @@ class SafeLearningLayer:
             "metadata": metadata
         }
         
-        self._stats["total_attempts"] += 1
+        self._stats["total_attempts"] = self._stats.get("total_attempts", 0) + 1
         
         if alignment.status == AlignmentStatus.PASS:
             logger.info(f"✅ 学习内容已通过价值对齐检查 (来源: {source}, 得分: {alignment.score:.2f})")
             journal_entry["accepted"] = True
-            self._stats["accepted"] += 1
+            self._stats["accepted"] = self._stats.get("accepted", 0) + 1
             self._save_journal_entry(journal_entry)
             
             try:
@@ -164,7 +164,7 @@ class SafeLearningLayer:
         elif alignment.status == AlignmentStatus.PARTIAL:
             logger.warning(f"⚠️ 学习内容部分对齐，已标记待审查 (来源: {source})")
             journal_entry["accepted"] = False
-            self._stats["pending_review"] += 1
+            self._stats["pending_review"] = self._stats.get("pending_review", 0) + 1
             self._save_journal_entry(journal_entry)
             
             self._add_alert({
@@ -188,7 +188,7 @@ class SafeLearningLayer:
         elif alignment.status == AlignmentStatus.CONFLICT:
             logger.error(f"❌ 学习内容与核心价值冲突，已拒绝 (来源: {source})")
             journal_entry["accepted"] = False
-            self._stats["rejected"] += 1
+            self._stats["rejected"] = self._stats.get("rejected", 0) + 1
             self._save_journal_entry(journal_entry)
             
             self._add_alert({
@@ -211,7 +211,7 @@ class SafeLearningLayer:
         
         else:
             logger.warning(f"❓ 无法判断对齐状态，已标记待审查 (来源: {source})")
-            self._stats["pending_review"] += 1
+            self._stats["pending_review"] = self._stats.get("pending_review", 0) + 1
             self._save_journal_entry(journal_entry)
             
             return {
@@ -228,7 +228,7 @@ class SafeLearningLayer:
     def _save_journal_entry(self, entry: Dict):
         """保存学习记录"""
         try:
-            db = DatabaseManager.get(str(self.db_path))
+            db = get_storage_port(str(self.db_path))
             db.execute('''
                 INSERT INTO learning_journal
                 (timestamp, source, content_preview, alignment_status, 
@@ -253,7 +253,7 @@ class SafeLearningLayer:
         self.alerts.append(alert)
         
         try:
-            db = DatabaseManager.get(str(self.db_path))
+            db = get_storage_port(str(self.db_path))
             db.execute('''
                 INSERT INTO alerts
                 (timestamp, alert_type, source, severity, issues)
@@ -271,7 +271,7 @@ class SafeLearningLayer:
     def get_learning_audit(self, limit: int = 100) -> Dict:
         """获取学习审计报告"""
         try:
-            db = DatabaseManager.get(str(self.db_path))
+            db = get_storage_port(str(self.db_path))
             
             journal = [dict(row) for row in db.query('''
                 SELECT * FROM learning_journal
@@ -311,7 +311,7 @@ class SafeLearningLayer:
     def get_pending_reviews(self) -> List[Dict]:
         """获取待审查的学习条目"""
         try:
-            db = DatabaseManager.get(str(self.db_path))
+            db = get_storage_port(str(self.db_path))
             
             rows = db.query('''
                 SELECT * FROM learning_journal
@@ -328,7 +328,7 @@ class SafeLearningLayer:
     def approve_learning(self, journal_id: int) -> bool:
         """批准待审查的学习条目"""
         try:
-            db = DatabaseManager.get(str(self.db_path))
+            db = get_storage_port(str(self.db_path))
             db.execute('''
                 UPDATE learning_journal
                 SET accepted = 1, alignment_status = 'approved'
@@ -344,7 +344,7 @@ class SafeLearningLayer:
     def reject_learning(self, journal_id: int, reason: str = "") -> bool:
         """拒绝待审查的学习条目"""
         try:
-            db = DatabaseManager.get(str(self.db_path))
+            db = get_storage_port(str(self.db_path))
             db.execute('''
                 UPDATE learning_journal
                 SET accepted = 0, alignment_status = 'rejected'

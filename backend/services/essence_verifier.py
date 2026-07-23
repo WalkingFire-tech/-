@@ -60,6 +60,26 @@ async def verify_essence(
             essence_confidence = essence_result["confidence"]
             attempts.append(("本质推理", True, f"{essence_result['verdict']} (置信度{essence_result['confidence']:.0%})"))
             events.append({"type": "step", "data": {"phase": "本质推理", "status": "done", "detail": f"推理自洽 ✅ {essence_result['verdict']}"}})
+
+            if essence_confidence >= 0.7 and len(final_response) > 50:
+                try:
+                    from core.truth_accumulator import truth_accumulator
+                    truth_accumulator._save_truth(
+                        name=user_input[:30],
+                        level="L1",
+                        domain="essence",
+                        statement=essence_result.get("verdict", final_response[:200]),
+                        source="essence_reasoning",
+                    )
+                    logger.debug(f"本质洞察→真谛候选: {user_input[:30]} (置信度{essence_confidence:.0%})")
+                except Exception:
+                    pass
+
+            events.append({"type": "awareness", "data": {
+                "essence_verdict": essence_result.get("verdict", "")[:60],
+                "essence_confidence": round(essence_confidence, 2),
+                "essence_passed": True,
+            }})
         else:
             essence_passed = False
             essence_confidence = essence_result["confidence"]
@@ -67,6 +87,11 @@ async def verify_essence(
             issues_str = '；'.join(essence_result["consistency_issues"][:3])
             attempts.append(("本质推理", False, f"发现{len(essence_result['consistency_issues'])}个问题：{issues_str[:60]}"))
             events.append({"type": "step", "data": {"phase": "本质推理", "status": "done", "detail": f"发现自洽性问题：{issues_str[:80]}，尝试修正..."}})
+            events.append({"type": "awareness", "data": {
+                "essence_issues_count": len(essence_result["consistency_issues"]),
+                "essence_confidence": round(essence_confidence, 2),
+                "essence_passed": False,
+            }})
 
             if essence_result["enhanced_response"] and len(essence_result["enhanced_response"]) > len(final_response):
                 final_response = essence_result["enhanced_response"]

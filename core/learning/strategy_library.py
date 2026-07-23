@@ -58,8 +58,8 @@ class StrategyLibrary:
 
     def _init_db(self):
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get(self.DB_PATH)
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port(self.DB_PATH)
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS strategies (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,8 +87,8 @@ class StrategyLibrary:
                      context: str = "", confidence: float = 0.5) -> Optional[int]:
         with self._lock:
             try:
-                from infrastructure.database_manager import DatabaseManager
-                db = DatabaseManager.get(self.DB_PATH)
+                from core.ports.adapters import get_storage_port
+                db = get_storage_port(self.DB_PATH)
 
                 existing = db.query_one(
                     "SELECT id FROM strategies WHERE trigger_pattern = ? AND action_patch = ?",
@@ -119,8 +119,8 @@ class StrategyLibrary:
 
     def query_strategy(self, trigger_pattern: str, category: str = "") -> List[Strategy]:
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get(self.DB_PATH)
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port(self.DB_PATH)
 
             if category:
                 rows = db.query("""
@@ -159,8 +159,8 @@ class StrategyLibrary:
     def record_outcome(self, strategy_id: int, success: bool):
         with self._lock:
             try:
-                from infrastructure.database_manager import DatabaseManager
-                db = DatabaseManager.get(self.DB_PATH)
+                from core.ports.adapters import get_storage_port
+                db = get_storage_port(self.DB_PATH)
 
                 if success:
                     db.execute("""
@@ -209,8 +209,8 @@ class StrategyLibrary:
 
     def get_low_confidence_strategies(self, threshold: float = 0.4) -> List[Strategy]:
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get(self.DB_PATH)
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port(self.DB_PATH)
             rows = db.query("""
                 SELECT id, trigger_pattern, action_patch, category, confidence,
                        success_count, fail_count, source, context, created_at, last_used, is_active
@@ -232,8 +232,8 @@ class StrategyLibrary:
 
     def get_stats(self) -> Dict:
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get(self.DB_PATH)
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port(self.DB_PATH)
             total = db.query_one("SELECT COUNT(*) FROM strategies WHERE is_active = 1")
             high_conf = db.query_one("SELECT COUNT(*) FROM strategies WHERE is_active = 1 AND confidence >= 0.7")
             low_conf = db.query_one("SELECT COUNT(*) FROM strategies WHERE is_active = 1 AND confidence < 0.4")

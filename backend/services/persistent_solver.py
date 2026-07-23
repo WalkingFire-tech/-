@@ -1,4 +1,4 @@
-"""
+﻿"""
 持续求解引擎 — "问题没有解决不了的，只有想不想得到方法"
 
 核心理念：
@@ -158,7 +158,7 @@ async def execute_method(method_name: str, method_config: Dict, intent_type: str
         elif method_type == "experience_search":
             from core.memory.layered_memory import layered_memory
             query = method_config.get("query", "")
-            results = layered_memory.search_strategic(query, limit=5)
+            results = layered_memory.query_strategic(query, limit=5)
             if results:
                 best = results[0]
                 return True, best.get("content", best.get("response", str(best)))
@@ -169,10 +169,10 @@ async def execute_method(method_name: str, method_config: Dict, intent_type: str
             from adapters.llm.ollama_adapter import ollama_chat_request
             prompt = method_config.get("prompt", "")
             result = await _run_sync(
-                ollama_chat_request, prompt, model="gemma-4-12B", timeout=25
+                ollama_chat_request, "http://localhost:11434", "gemma-4-12B:latest", prompt, timeout=25
             )
-            if result and result.get("response"):
-                return True, result["response"]
+            if result and result.get("content"):
+                return True, result["content"]
             return False, "模型未返回有效方法"
 
         elif method_type == "internet_search":
@@ -221,10 +221,10 @@ async def execute_method(method_name: str, method_config: Dict, intent_type: str
             from adapters.llm.ollama_adapter import ollama_chat_request
             prompt = method_config.get("prompt", "")
             result = await _run_sync(
-                ollama_chat_request, prompt, model_name="gemma-4-12B", timeout=25, phase=f"持续求解-分解"
+                ollama_chat_request, "http://localhost:11434", "gemma-4-12B:latest", prompt, timeout=25
             )
-            if result and result.get("response"):
-                return True, result["response"]
+            if result and result.get("content"):
+                return True, result["content"]
             return False, "问题分解未返回有效结果"
 
         else:

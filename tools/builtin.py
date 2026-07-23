@@ -396,7 +396,7 @@ class DateTimeTool(Tool):
 
 def register_builtin_tools():
     """注册所有内置工具"""
-    from tools.registry import registry
+    from core.tool_registry import tool_registry as registry
     
     tools = [
         CodeExecutionTool(),

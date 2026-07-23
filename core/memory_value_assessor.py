@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from enum import Enum
 from dataclasses import dataclass
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -82,7 +82,7 @@ class MemoryValueAssessor:
         """初始化数据库"""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             CREATE TABLE IF NOT EXISTS memories (
                 id TEXT PRIMARY KEY,
@@ -294,7 +294,7 @@ class MemoryValueAssessor:
     def update_with_feedback(self, memory_id: str, feedback_type: str, feedback_value: any):
         """根据反馈更新记忆评估"""
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO memory_verdicts
             (memory_id, verdict_type, verdict_value, created_at)
@@ -312,7 +312,7 @@ class MemoryValueAssessor:
     def _mark_important(self, memory_id: str):
         """标记为重要记忆"""
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             UPDATE memories
             SET user_marked_important = 1
@@ -322,7 +322,7 @@ class MemoryValueAssessor:
     def get_memory_report(self, limit: int = 20) -> Dict:
         """生成记忆报告"""
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         rows = db.query('''
             SELECT * FROM memories
             ORDER BY value_score DESC
@@ -349,7 +349,7 @@ class MemoryValueAssessor:
         score = self.evaluate(memory)
         grade = self.get_value_grade(score)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT OR REPLACE INTO memories
             (id, content, memory_type, value_score, value_grade, 

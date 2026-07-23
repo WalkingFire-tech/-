@@ -12,7 +12,7 @@
 import re
 import os
 import json
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 from typing import Dict, List, Any
 from loguru import logger
 from datetime import datetime
@@ -147,7 +147,7 @@ class SystemAuditor:
         result = {"stats": {}, "gaps": []}
 
         try:
-            rows = DatabaseManager.get(os.path.join(self.root_dir, "data", "experience_pool.db")).query("SELECT success, COUNT(*) FROM experiences GROUP BY success")
+            rows = get_storage_port(os.path.join(self.root_dir, "data", "experience_pool.db")).query("SELECT success, COUNT(*) FROM experiences GROUP BY success")
             success_dist = {str(r[0]): r[1] for r in rows}
             total = sum(success_dist.values())
             success_1 = success_dist.get("1", 0)
@@ -163,7 +163,7 @@ class SystemAuditor:
             logger.warning("操作降级跳过")
 
         try:
-            row = DatabaseManager.get(os.path.join(self.root_dir, "data", "learning_rules.db")).query_one("SELECT AVG(confidence) FROM learning_rules WHERE status='active'")
+            row = get_storage_port(os.path.join(self.root_dir, "data", "learning_rules.db")).query_one("SELECT AVG(confidence) FROM learning_rules WHERE status='active'")
             avg_conf = row[0] if row else 0.5
             result["stats"]["avg_rule_confidence"] = round(avg_conf, 3)
             if avg_conf <= 0.5:

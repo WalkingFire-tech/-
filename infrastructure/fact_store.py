@@ -288,7 +288,17 @@ class FactStore:
     def extract_and_store(self, question: str, response: str, source: str = "auto_extract") -> int:
         """从高质量回复中自动提取事实三元组并存储"""
         import re
-        
+
+        try:
+            from core.knowledge_status_manager import KnowledgeStatusManager
+            _ksm = KnowledgeStatusManager()
+            _status = _ksm.get_status(subject, predicate, object)
+            if _status == "deprecated":
+                logger.info(f"知识已废弃，跳过入库: {subject}")
+                return 0
+        except Exception:
+            pass
+
         cleaned = re.sub(r'#{1,6}\s*', '', response)
         cleaned = re.sub(r'\*{1,2}([^*]+)\*{1,2}', r'\1', cleaned)
         cleaned = re.sub(r'^[-*]\s*', '', cleaned, flags=re.MULTILINE)

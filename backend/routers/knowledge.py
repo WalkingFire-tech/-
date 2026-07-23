@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi import APIRouter
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 router = APIRouter()
 
@@ -68,19 +68,19 @@ async def get_knowledge_health():
         skills_total = 0
         rules_active = 0
         try:
-            db = DatabaseManager.get("data/knowledge_store.db")
+            db = get_storage_port("data/knowledge_store.db")
             row = db.query_one("SELECT COUNT(*) FROM knowledge")
             knowledge_total = row[0]
         except Exception:
             logger.warning("操作降级跳过")
         try:
-            db = DatabaseManager.get("data/skills.db")
+            db = get_storage_port("data/skills.db")
             row = db.query_one("SELECT COUNT(*) FROM skills")
             skills_total = row[0]
         except Exception:
             logger.warning("操作降级跳过")
         try:
-            db = DatabaseManager.get("data/learning_rules.db")
+            db = get_storage_port("data/learning_rules.db")
             row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
             rules_active = row[0]
         except Exception:
@@ -125,10 +125,10 @@ async def get_knowledge_health():
 @router.post("/optimize")
 async def run_optimize(request: dict):
     try:
-        db_exp = DatabaseManager.get("data/experience_pool.db")
+        db_exp = get_storage_port("data/experience_pool.db")
         row = db_exp.query_one("SELECT COUNT(*) FROM experiences")
         exp_count = row[0]
-        db_rules = DatabaseManager.get("data/learning_rules.db")
+        db_rules = get_storage_port("data/learning_rules.db")
         row = db_rules.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
         active = row[0]
         row = db_rules.query_one("SELECT AVG(confidence) FROM learning_rules WHERE status='active'")
@@ -148,14 +148,14 @@ async def run_induction(request: dict):
         patterns = 0
         rules = 0
         try:
-            db = DatabaseManager.get("data/experience_pool.db")
+            db = get_storage_port("data/experience_pool.db")
             row = db.query_one("SELECT COUNT(*) FROM experiences WHERE created_at >= ?", (cutoff,))
             recent = row[0]
             patterns = min(recent // 10, 5)
         except Exception:
             logger.warning("操作降级跳过")
         try:
-            db = DatabaseManager.get("data/learning_rules.db")
+            db = get_storage_port("data/learning_rules.db")
             row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='pending'")
             pending = row[0]
             cursor = db.execute("UPDATE learning_rules SET status='active' WHERE status='pending' AND confidence >= 0.4 AND apply_count >= 2", commit=True)
@@ -191,7 +191,7 @@ async def get_recent_learning():
     try:
         items = []
         try:
-            db = DatabaseManager.get("data/experience_pool.db")
+            db = get_storage_port("data/experience_pool.db")
             rows = db.query("SELECT raw_input, timestamp, intent_type FROM experiences ORDER BY timestamp DESC LIMIT 5")
             for row in rows:
                 query = (row["raw_input"] or "")[:30]
@@ -209,7 +209,7 @@ async def get_recent_learning():
         except Exception:
             logger.warning("操作降级跳过")
         try:
-            db = DatabaseManager.get("data/essence_reasoning.db")
+            db = get_storage_port("data/essence_reasoning.db")
             rows = db.query("SELECT query, final_verdict, timestamp FROM reasoning_chains ORDER BY timestamp DESC LIMIT 3")
             for row in rows:
                 query = (row[0] or "")[:30]
@@ -448,7 +448,7 @@ async def learn_from_files(request: dict):
                     content = f.read()
                 if len(content) < 10:
                     continue
-                db = DatabaseManager.get("data/knowledge_store.db")
+                db = get_storage_port("data/knowledge_store.db")
                 db.execute('''
                     INSERT INTO knowledge (content, source, type, quality, created_at)
                     VALUES (?, ?, ?, ?, ?)
@@ -518,7 +518,7 @@ async def learn_from_folder(request: dict):
                 elif learn_mode == "summarize":
                     first_lines = '\n'.join(content.split('\n')[:5])
                     summaries.append(f"{file_path.name}:\n{first_lines}")
-                db = DatabaseManager.get("data/knowledge_store.db")
+                db = get_storage_port("data/knowledge_store.db")
                 db.execute('''
                     INSERT INTO knowledge (content, source, type, quality, created_at)
                     VALUES (?, ?, ?, ?, ?)

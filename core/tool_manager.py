@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable, Set
 from datetime import datetime
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     import signal
@@ -76,7 +76,7 @@ class ToolManager:
     
     def _init_db(self):
         """初始化工具表"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS tools (
                 name TEXT PRIMARY KEY,
@@ -118,7 +118,7 @@ class ToolManager:
         if not existing_files:
             return
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db_tools = {row[0] for row in db.query("SELECT name FROM tools")}
         
         for tool_file in existing_files:
@@ -188,7 +188,7 @@ class ToolManager:
             
             code = self._code_cache.get(name)
             if code is None:
-                db = DatabaseManager.get(self.db_path)
+                db = get_storage_port(self.db_path)
                 row = db.query_one('SELECT code, enabled FROM tools WHERE name = ?', (name,))
                 if not row:
                     logger.warning(f"工具不存在: {name}")
@@ -323,7 +323,7 @@ class ToolManager:
     def _update_tool_stats(self, name: str, success: bool, duration: float):
         """更新工具统计"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             if success:
                 db.execute('''
                     UPDATE tools
@@ -353,7 +353,7 @@ class ToolManager:
     
     def get_tool_info(self, name: str) -> Optional[Dict]:
         """获取工具信息"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one('''
             SELECT name, description, triggers, usage_count,
                    success_count, failure_count, created_at, last_used, enabled
@@ -365,7 +365,7 @@ class ToolManager:
     
     def list_tools(self, include_disabled: bool = False) -> List[Dict]:
         """列出所有工具"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         query = 'SELECT name, description, usage_count, success_count, created_at, enabled FROM tools'
         if not include_disabled:
             query += ' WHERE enabled = 1'
@@ -388,7 +388,7 @@ class ToolManager:
             triggers = triggers or []
             
             try:
-                db = DatabaseManager.get(self.db_path)
+                db = get_storage_port(self.db_path)
                 db.execute('''
                     INSERT OR REPLACE INTO tools
                     (name, code, description, triggers, usage_count,
@@ -418,7 +418,7 @@ class ToolManager:
         """删除工具"""
         with self._lock:
             try:
-                db = DatabaseManager.get(self.db_path)
+                db = get_storage_port(self.db_path)
                 db.execute('DELETE FROM tools WHERE name = ?', (name,), commit=True)
                 
                 tool_file = self.tools_dir / f"{name}.py"
@@ -442,7 +442,7 @@ class ToolManager:
     
     def enable_tool(self, name: str) -> bool:
         """启用工具"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('UPDATE tools SET enabled = 1 WHERE name = ?', (name,), commit=True)
         self._loaded_tools.pop(name, None)
         logger.info(f"工具已启用: {name}")
@@ -450,7 +450,7 @@ class ToolManager:
     
     def disable_tool(self, name: str) -> bool:
         """禁用工具"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('UPDATE tools SET enabled = 0 WHERE name = ?', (name,), commit=True)
         self._loaded_tools.pop(name, None)
         logger.info(f"工具已禁用: {name}")
@@ -483,7 +483,7 @@ class ToolManager:
             self._loaded_tools.clear()
             self._code_cache.clear()
             
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             tools = db.query("SELECT name FROM tools WHERE enabled = 1")
             
             for row in tools:
@@ -494,7 +494,7 @@ class ToolManager:
     
     def get_tool_usage_stats(self) -> Dict:
         """获取工具使用统计"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one('''
             SELECT 
                 COUNT(*) as total_tools,

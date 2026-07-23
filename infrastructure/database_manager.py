@@ -34,6 +34,20 @@ class DatabaseManager:
             conn.execute("PRAGMA busy_timeout=5000")
             conn.row_factory = sqlite3.Row
             self._local.conn = conn
+            self._local.last_used = time.time()
+        else:
+            if time.time() - getattr(self._local, "last_used", 0) > 300:
+                try:
+                    self._local.conn.execute("SELECT 1")
+                except Exception:
+                    self._local.conn.close()
+                    conn = sqlite3.connect(str(self._path), timeout=self._timeout, check_same_thread=False)
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute("PRAGMA synchronous=NORMAL")
+                    conn.execute("PRAGMA busy_timeout=5000")
+                    conn.row_factory = sqlite3.Row
+                    self._local.conn = conn
+            self._local.last_used = time.time()
         return self._local.conn
 
     def execute(self, sql: str, params=(), commit: bool = False) -> sqlite3.Cursor:

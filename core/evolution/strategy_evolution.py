@@ -11,7 +11,7 @@ from datetime import datetime
 import json
 import hashlib
 from pathlib import Path
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -64,7 +64,7 @@ class StrategyEvolutionEngine:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS intent_patterns (
                 pattern_id TEXT PRIMARY KEY,
@@ -137,7 +137,7 @@ class StrategyEvolutionEngine:
             f"{intent_type}{pattern_text}".encode()
         ).hexdigest()[:12]
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one('''
             SELECT success_rate, sample_count, confidence
             FROM intent_patterns
@@ -179,7 +179,7 @@ class StrategyEvolutionEngine:
     
     def record_intent_transition(self, from_intent: str, to_intent: str, success: bool):
         """记录意图转换"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one('''
             SELECT transition_count, success_count
             FROM intent_transitions
@@ -221,7 +221,7 @@ class StrategyEvolutionEngine:
             f"{strategy_type}{json.dumps(configuration)}".encode()
         ).hexdigest()[:12]
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one('''
             SELECT success_count, failure_count, avg_confidence
             FROM router_strategies
@@ -273,7 +273,7 @@ class StrategyEvolutionEngine:
         
         返回成功率最低的模式，建议优化
         """
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         rows = db.query('''
             SELECT pattern_id, intent_type, pattern_text,
                    success_rate, sample_count, confidence
@@ -307,7 +307,7 @@ class StrategyEvolutionEngine:
         
         返回成功率最低的策略，建议优化
         """
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         rows = db.query('''
             SELECT strategy_id, strategy_type, configuration,
                    success_count, failure_count, avg_confidence
@@ -368,7 +368,7 @@ class StrategyEvolutionEngine:
     
     def deprecate_pattern(self, pattern_id: str, reason: str = "") -> bool:
         """废弃一个模式"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             UPDATE intent_patterns
             SET status = 'deprecated', updated_at = ?
@@ -380,7 +380,7 @@ class StrategyEvolutionEngine:
     
     def activate_pattern(self, pattern_id: str) -> bool:
         """激活一个模式"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             UPDATE intent_patterns
             SET status = 'active', updated_at = ?
@@ -392,7 +392,7 @@ class StrategyEvolutionEngine:
     
     def get_intent_transitions(self) -> List[Dict]:
         """获取意图转换统计"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         rows = db.query('''
             SELECT from_intent, to_intent, transition_count, success_count,
                    CAST(success_count AS FLOAT) / transition_count as success_rate
@@ -404,7 +404,7 @@ class StrategyEvolutionEngine:
     
     def get_statistics(self) -> Dict:
         """获取统计信息"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         row = db.query_one("SELECT COUNT(*) as total FROM intent_patterns")
         total_patterns = row['total']

@@ -21,11 +21,18 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from core.loop_mixin import LoopMixin, LoopStatus
+
 try:
     from loguru import logger
 except ImportError:
     import logging
     logger = logging.getLogger(__name__)
+
+try:
+    from core.explainability.l5_explainer import L5Explainer
+except ImportError:
+    L5Explainer = None
 
 
 @dataclass
@@ -40,16 +47,17 @@ class ModificationResult:
     error: Optional[str] = None
 
 
-class SelfModificationLoop:
+class SelfModificationLoop(LoopMixin):
     MIN_INTERVAL_SEC = 600
 
     def __init__(self):
+        super().__init__(name="self_modification_loop", cooldown_seconds=600.0, max_failures_before_degraded=2)
         self._last_run: Optional[datetime] = None
         self._run_count = 0
 
     def run_from_lessons(self) -> ModificationResult:
         result = ModificationResult(source="lesson")
-        try:
+        with self.loop_context():
             from core.self_modification.defect_diagnoser import defect_diagnoser
             defects = defect_diagnoser.diagnose_from_lessons()
             result.defects_found = len(defects)
@@ -59,15 +67,12 @@ class SelfModificationLoop:
             result.triggered = True
             logger.info(f"🔧 L5自触发: 从教训中发现{len(defects)}个缺陷")
             self._process_defects(defects, result)
-        except Exception as e:
-            result.error = str(e)
-            logger.warning(f"🔧 L5自触发(教训)失败: {e}")
         self._record_run()
         return result
 
     def run_from_file(self, relative_path: str) -> ModificationResult:
         result = ModificationResult(source=f"file:{relative_path}")
-        try:
+        with self.loop_context():
             from core.self_modification.defect_diagnoser import defect_diagnoser
             defects = defect_diagnoser.diagnose_file(relative_path)
             result.defects_found = len(defects)
@@ -77,15 +82,12 @@ class SelfModificationLoop:
             result.triggered = True
             logger.info(f"🔧 L5自触发: 从{relative_path}中发现{len(defects)}个缺陷")
             self._process_defects(defects, result)
-        except Exception as e:
-            result.error = str(e)
-            logger.warning(f"🔧 L5自触发(文件)失败: {e}")
         self._record_run()
         return result
 
     def run_from_directory(self, directory: str = "core") -> ModificationResult:
         result = ModificationResult(source=f"dir:{directory}")
-        try:
+        with self.loop_context():
             from core.self_modification.defect_diagnoser import defect_diagnoser
             all_defects = defect_diagnoser.diagnose_directory(directory)
             total = sum(len(v) for v in all_defects.values())
@@ -97,9 +99,6 @@ class SelfModificationLoop:
             logger.info(f"🔧 L5自触发: 从{directory}/中发现{total}个缺陷")
             for file_path, defects in all_defects.items():
                 self._process_defects(defects, result, file_hint=file_path)
-        except Exception as e:
-            result.error = str(e)
-            logger.warning(f"🔧 L5自触发(目录)失败: {e}")
         self._record_run()
         return result
 
@@ -107,15 +106,17 @@ class SelfModificationLoop:
         if self._last_run is None:
             return True
         elapsed = (datetime.now() - self._last_run).total_seconds()
-        return elapsed >= self.MIN_INTERVAL_SEC
+        return elapsed >= self.MIN_INTERVAL_SEC and self.loop_status != LoopStatus.DEGRADED
 
     def get_status(self) -> Dict[str, Any]:
-        return {
+        status = {
             "last_run": self._last_run.isoformat() if self._last_run else None,
             "run_count": self._run_count,
             "can_run": self.can_run(),
             "min_interval_sec": self.MIN_INTERVAL_SEC,
         }
+        status.update(self.get_loop_snapshot())
+        return status
 
     def _process_defects(self, defects: list, result: ModificationResult, file_hint: str = "") -> None:
         from core.self_modification.patch_generator import patch_generator
@@ -148,15 +149,26 @@ class SelfModificationLoop:
                 patch = patch_generator.generate_llm_patch(defect_dict, source_code)
             if not patch:
                 result.details.append({"defect": defect_dict.get("description", ""), "status": "no_patch_match"})
+                if L5Explainer:
+                    L5Explainer.explain_patch_strategy(strategy="none", category=defect_dict.get("category", ""), reason="模板和LLM均未生成有效补丁")
                 continue
+
+            _patch_strategy = "template" if patch.confidence >= 0.7 else "llm"
+            if L5Explainer:
+                L5Explainer.explain_patch_strategy(
+                    strategy=_patch_strategy, category=patch.defect_category,
+                    reason=patch.description[:80] if patch.description else "",
+                    confidence=patch.confidence, template_name=patch.defect_category,
+                )
 
             result.patches_generated += 1
 
-            # Build full patched source for validation
             patched_source = source_code.replace(patch.original, patch.replacement, 1) if patch.original else source_code
             safe, violations = patch_sandbox.validate_safety(file_path, patched_source)
             if not safe:
                 result.details.append({"defect": defect_dict.get("description", ""), "status": "unsafe", "violations": violations})
+                if L5Explainer:
+                    L5Explainer.explain_safety_rejection(file_path=file_path, violations=violations)
                 continue
 
             syntax_ok, syntax_err = patch_sandbox.validate_syntax(patched_source)
@@ -166,19 +178,81 @@ class SelfModificationLoop:
 
             result.patches_safe += 1
 
+            is_self_mod = self._is_self_modification(file_path)
+            if is_self_mod:
+                from core.self_modification.bootstrap_sandbox import bootstrap_sandbox as _bs
+                bootstrap_result = _bs.verify_self_consistency(file_path, patched_source, source_code)
+                if not bootstrap_result.can_bootstrap:
+                    result.details.append({
+                        "defect": defect_dict.get("description", ""),
+                        "status": "bootstrap_failed",
+                        "errors": bootstrap_result.errors,
+                    })
+                    if L5Explainer:
+                        L5Explainer.explain_bootstrap_verification(file_path=file_path, can_bootstrap=False, errors=bootstrap_result.errors)
+                    continue
+                logger.info(f"🧬 自修改自举验证通过: {file_path}")
+                if L5Explainer:
+                    L5Explainer.explain_bootstrap_verification(file_path=file_path, can_bootstrap=True)
+
+            wm_verdict = self._simulate_in_world_model(file_path, defect_dict, patch)
+            if wm_verdict.get("risk_level") == "high":
+                result.details.append({"defect": defect_dict.get("description", ""), "status": "world_model_high_risk", "verdict": wm_verdict})
+                if L5Explainer:
+                    L5Explainer.explain_world_model_risk(file_path=file_path, risk_level="high", improves_outcome=False, risk_details=wm_verdict)
+                continue
+
+            effective_confidence = patch.confidence
+            if wm_verdict.get("improves_outcome"):
+                effective_confidence = min(1.0, patch.confidence + 0.1)
+
             proposal = deployer.propose(
                 file_path=file_path,
                 original_code=source_code,
                 patched_code=patched_source,
                 description=patch.description,
                 defect_category=patch.defect_category,
-                confidence=patch.confidence,
+                confidence=effective_confidence,
             )
             result.proposals_created += 1
 
-            # Activate 6-step safety protocol for high-confidence template patches
             auto_status = "proposed"
-            if patch.confidence >= 0.9 and patch.defect_category == "exception_handling":
+            if is_self_mod:
+                from core.self_modification.bootstrap_sandbox import self_modification_deployer as _smd
+                deploy_result = _smd.deploy_self_modification(
+                    file_path, patched_source, source_code, effective_confidence
+                )
+                auto_status = deploy_result.get("final_status", "unknown")
+                if auto_status == "completed":
+                    self._learn_modification_outcome(file_path, defect_dict, True)
+                else:
+                    self._learn_modification_outcome(file_path, defect_dict, False)
+                result.details.append({
+                    "defect": defect_dict.get("description", ""),
+                    "status": auto_status,
+                    "file": file_path,
+                    "is_self_modification": True,
+                    "stages": deploy_result.get("stages", {}),
+                })
+                self._write_audit_log(file_path, defect_dict, patch, auto_status, wm_verdict,
+                                      is_self_mod=True, stage_details=deploy_result.get("stages", {}))
+                continue
+
+            try:
+                from core.self_modification.strategy_evolver import strategy_evolver as _se
+                should_auto = _se.should_auto_approve(effective_confidence, patch.defect_category, is_self_mod)
+                if L5Explainer:
+                    L5Explainer.explain_auto_approve(
+                        approved=should_auto, confidence=effective_confidence,
+                        threshold=_se._get_threshold_for_category(patch.defect_category),
+                        category=patch.defect_category, is_self_mod=is_self_mod,
+                        effective_threshold=_se._get_threshold_for_category(patch.defect_category) - (_se.params.self_mod_confidence_bonus if is_self_mod else 0),
+                        auto_approve_categories=list(_se.params.auto_approve_categories),
+                    )
+            except Exception:
+                should_auto = effective_confidence >= 0.9 and patch.defect_category == "exception_handling"
+
+            if should_auto:
                 approve_result = deployer.approve(proposal.proposal_id, approver="L5-auto")
                 if approve_result.get("status") == "approved":
                     sandbox_result = deployer.sandbox_verify(proposal.proposal_id)
@@ -187,8 +261,10 @@ class SelfModificationLoop:
                         deployer.inject_20pct(proposal.proposal_id)
                         deployer.inject_100pct(proposal.proposal_id)
                         auto_status = "completed"
+                        self._learn_modification_outcome(file_path, defect_dict, True)
                     else:
                         auto_status = "sandbox_rejected"
+                        self._learn_modification_outcome(file_path, defect_dict, False)
                 else:
                     auto_status = "approve_blocked"
             result.details.append({
@@ -196,8 +272,95 @@ class SelfModificationLoop:
                 "status": auto_status,
                 "proposal_id": proposal.proposal_id,
                 "file": file_path,
+                "world_model_verdict": wm_verdict,
             })
+            self._write_audit_log(file_path, defect_dict, patch, auto_status, wm_verdict,
+                                  is_self_mod=is_self_mod)
             logger.info(f"🔧 L5补丁提案: {proposal.proposal_id} ({file_path}) — {patch.description[:60]}")
+
+    def _is_self_modification(self, file_path: str) -> bool:
+        from core.self_modification.bootstrap_sandbox import L5_SELF_FILES
+        return file_path in L5_SELF_FILES
+
+    def _simulate_in_world_model(self, file_path: str, defect_dict: Dict, patch) -> Dict:
+        try:
+            from core.world_model import get_world_model
+            wm = get_world_model()
+            category = defect_dict.get("category", "unknown")
+            return wm.simulate(
+                {"intent": "self_modification", "file": file_path},
+                {"action": f"fix_{category}", "patch_confidence": patch.confidence},
+                intent="self_modification"
+            )
+        except Exception as e:
+            logger.debug(f"世界模型模拟跳过: {e}")
+            return {"risk_level": "low", "improves_outcome": False, "error": str(e)}
+
+    def _learn_modification_outcome(self, file_path: str, defect_dict: Dict, success: bool) -> None:
+        try:
+            from core.world_model import get_world_model
+            wm = get_world_model()
+            wm.learn_from_experience({
+                "intent_type": "self_modification",
+                "model_name": defect_dict.get("category", "unknown"),
+                "success": success,
+                "quality_score": 80 if success else 20,
+            })
+        except Exception:
+            pass
+
+    def _write_audit_log(self, file_path: str, defect_dict: Dict, patch, result_status: str,
+                         wm_verdict: Dict = None, is_self_mod: bool = False,
+                         stage_details: Dict = None) -> None:
+        try:
+            from core.ports.adapters import get_storage_port
+            import json
+            db = get_storage_port("data/l5_audit.db")
+            db.executescript('''
+                CREATE TABLE IF NOT EXISTS l5_audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT,
+                    file_path TEXT,
+                    defect_category TEXT,
+                    defect_description TEXT,
+                    patch_description TEXT,
+                    patch_confidence REAL,
+                    result_status TEXT,
+                    world_model_verdict TEXT,
+                    approver TEXT,
+                    is_self_modification INTEGER DEFAULT 0,
+                    stage_details TEXT,
+                    diff_before TEXT,
+                    diff_after TEXT
+                )
+            ''')
+            is_self_mod_int = 1 if is_self_mod else 0
+            diff_before = ""
+            diff_after = ""
+            if patch and hasattr(patch, 'original') and patch.original:
+                diff_before = patch.original[:500]
+                diff_after = patch.replacement[:500] if hasattr(patch, 'replacement') else ""
+            db.execute(
+                'INSERT INTO l5_audit_log (timestamp, file_path, defect_category, defect_description, patch_description, patch_confidence, result_status, world_model_verdict, approver, is_self_modification, stage_details, diff_before, diff_after) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                (
+                    datetime.now().isoformat(),
+                    file_path,
+                    defect_dict.get("category", ""),
+                    defect_dict.get("description", "")[:200],
+                    patch.description[:200] if patch else "",
+                    patch.confidence if patch else 0.0,
+                    result_status,
+                    json.dumps(wm_verdict or {}, ensure_ascii=False)[:500],
+                    "L5-auto",
+                    is_self_mod_int,
+                    json.dumps(stage_details or {}, ensure_ascii=False)[:1000],
+                    diff_before,
+                    diff_after,
+                ),
+                commit=True,
+            )
+        except Exception:
+            pass
 
     def _defect_to_dict(self, defect) -> Dict[str, Any]:
         if hasattr(defect, "__dataclass_fields__"):
@@ -250,11 +413,17 @@ class SelfModificationLoop:
     def _record_run(self) -> None:
         self._last_run = datetime.now()
         self._run_count += 1
+        if self._run_count % 5 == 0:
+            try:
+                from core.self_modification.strategy_evolver import strategy_evolver
+                strategy_evolver.evolve_modification_strategy()
+            except Exception:
+                pass
 
     def _load_lesson_rules(self) -> List[Dict[str, Any]]:
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/learning_rules.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/learning_rules.db")
             rows = db.query(
                 "SELECT condition, action, priority, metadata FROM learning_rules "
                 "WHERE source LIKE 'lesson:%' AND status='active' ORDER BY priority DESC"

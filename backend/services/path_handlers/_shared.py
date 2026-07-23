@@ -81,6 +81,15 @@ async def _run_slow(func, *args, timeout=90, phase="", **kwargs):
 def _save_to_experience_pool(query: str, response: str, success: bool = True, intent_type: str = "default",
                               quality_score: int = 80, duration: float = 0.0, model_name: str = "unknown"):
     try:
+        try:
+            from core.ethics.safe_learning import learn_safely
+            safety = learn_safely(response, source=f"experience_pool/{model_name}", metadata={"query": query, "intent_type": intent_type})
+            if not safety.get("accepted", True):
+                logger.warning(f"学习内容未通过价值对齐检查: {safety.get('issues', [])}")
+                quality_score = min(quality_score, 40)
+        except Exception:
+            pass
+
         from infrastructure.experience_pool import get_experience_pool
         ep = get_experience_pool()
         ep.add_experience(

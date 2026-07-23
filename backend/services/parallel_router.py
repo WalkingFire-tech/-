@@ -3,6 +3,7 @@ import time
 from typing import Optional
 from loguru import logger
 
+from infrastructure.config_manager import config
 from backend.services.path_handlers._shared import (
     _slow_executor, _fast_executor,
     _RESOURCE_AWARE, _save_to_experience_pool,
@@ -20,12 +21,13 @@ from backend.services.path_handlers.fact_path import fetch_fact_assertions
 from backend.services.path_handlers.tool_path import (
     fetch_tool_results, query_needs_tools,
 )
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
-def _emit(event_type: str, data: dict) -> str:
-    import json
-    return f"data: {json.dumps({'type': event_type, **data}, ensure_ascii=False)}\n\n"
+def _emit(event_type: str, data: dict, event_sink=None):
+    if event_sink is not None:
+        event_sink.emit(event_type, data)
+    return (event_type, data)
 
 
 async def _background_collect(task, query: str, task_name: str):
@@ -50,10 +52,38 @@ async def execute_parallel_paths(
     truth_insights: str,
     methodology: dict,
     start_time: float,
+    event_sink=None,
+    ports: dict = None,
 ):
+    def _emit_s(event_type: str, data: dict) -> str:
+        return _emit(event_type, data, event_sink=event_sink)
+
     logger.info(f"🚀 进入阶段3: 多策略并行尝试, intent={intent_type}, strategy={methodology['strategy']}")
 
-    max_paths = 9
+    max_paths = config.get("routing.max_parallel_paths", 9)
+    try:
+        from infrastructure.enhanced_model_stats import EnhancedModelStats
+        _ems = EnhancedModelStats()
+        _cost_hint = _ems.get_cost_estimate(max_paths)
+        if _cost_hint:
+            methodology["cost_estimate"] = _cost_hint
+    except Exception:
+        pass
+
+    try:
+        from core.presence.probability_decision_bridge import get_probability_decision_bridge
+        _bridge = get_probability_decision_bridge()
+        _decision = _bridge.get_decision_context().get("decision_params", {})
+        _diversity = _decision.get("path_diversity", 0.5)
+        min_p, max_p = 2, 9
+        _prob_paths = min_p + (max_p - min_p) * (_diversity ** 0.7)
+        _prob_paths = int(round(_prob_paths))
+        if _prob_paths < max_paths:
+            max_paths = _prob_paths
+            logger.info(f"🌉 概率场驱动路径数: diversity={_diversity:.2f} → {max_paths}路径")
+    except Exception:
+        pass
+
     resource_mode = "normal"
     resource_allocation = None
     if _RESOURCE_AWARE:
@@ -63,18 +93,18 @@ async def execute_parallel_paths(
             governor = get_adaptive_governor()
             monitor = get_health_monitor()
             _path_weights_for_alloc = methodology.get("path_weights", {}) if methodology else {}
-            max_paths = governor.get_parallel_path_count(9, path_weights=_path_weights_for_alloc if _path_weights_for_alloc else None)
+            max_paths = governor.get_parallel_path_count(max_paths, path_weights=_path_weights_for_alloc if _path_weights_for_alloc else None)
             resource_mode = monitor.get_mode_value()
             if _path_weights_for_alloc:
-                resource_allocation = governor.compute_resource_allocation(_path_weights_for_alloc, 9)
+                resource_allocation = governor.compute_resource_allocation(_path_weights_for_alloc, max_paths)
                 max_paths = len(resource_allocation["active_paths"])
             if max_paths < 9:
-                logger.info(f"⚖️ 资源感知：{resource_mode}模式，并行路径 9→{max_paths}")
-                yield _emit("step", {"phase": "资源感知", "status": "info", "detail": f"当前{resource_mode}模式，并行路径调整为{max_paths}"})
+                logger.info(f"⚖️ 资源感知：{resource_mode}模式，并行路径 →{max_paths}")
+                yield _emit_s("step", {"phase": "资源感知", "status": "info", "detail": f"当前{resource_mode}模式，并行路径调整为{max_paths}"})
         except Exception:
             logger.warning("操作降级跳过")
 
-    yield _emit("step", {"phase": "多策略并行", "status": "running", "detail": f"策略：{methodology['strategy']}，{max_paths}路径同时出击..."})
+    yield _emit_s("step", {"phase": "多策略并行", "status": "running", "detail": f"策略：{methodology['strategy']}，{max_paths}路径同时出击..."})
 
     world_model_hint = None
     try:
@@ -104,7 +134,7 @@ async def execute_parallel_paths(
                 return False
             return default
         w = _path_weights.get(path_name, 1.0)
-        if w < 0.3:
+        if w < config.get("routing.path_weight_skip_threshold", 0.3):
             logger.info(f"⚖️ 路径权重: {path_name}={w:.1f}，跳过")
             return False
         return default
@@ -113,23 +143,77 @@ async def execute_parallel_paths(
     if rule_result and rule_result.get("response"):
         candidates.append(rule_result)
 
-    # 【去API依赖】本地先行路由：先启动本地路径，3秒内有高质量结果则直接返回
-    # 本地路径：经验池、知识库、事实锚点、工具调用、自我推理
-    # API路径：Ollama、外部模型、外部学习 — 延迟3秒启动
-    LOCAL_FIRST_WINDOW = 3.0
-    LOCAL_QUALITY_THRESHOLD = 55
+    # 【混合路由】本地+API同时启动，本地先行窗口仅用于快速返回判断
+    LOCAL_FIRST_WINDOW = config.get("routing.local_first_window_seconds", 1.5)
+    LOCAL_QUALITY_THRESHOLD = config.get("routing.local_quality_threshold", 75)
 
-    exp_task = asyncio.create_task(fetch_experience(user_input)) if _should_run("experience") else None
-    know_task = asyncio.create_task(fetch_knowledge(user_input)) if _should_run("knowledge") else None
-    fact_task = asyncio.create_task(fetch_fact_assertions(user_input)) if _should_run("fact") else None
-    _tool_intent = (methodology.get("strategy") == "tool_first" if methodology else False) or intent_type == "code" or query_needs_tools(user_input)
+    # API路径：与本地路径同时启动
+    ollama_task = None
+    if max_paths >= 3 and _should_run("ollama"):
+        _ollama_decision = None
+        try:
+            from core.resource_awareness.adaptive_governor import get_adaptive_governor, ActionType
+            _ollama_decision = get_adaptive_governor().decide(ActionType.OLLAMA_INFERENCE)
+            if not _ollama_decision.allowed:
+                logger.warning(f"⚖️ Ollama路径被governor阻止: {_ollama_decision.message}")
+            elif _ollama_decision.degraded_to:
+                logger.info(f"⚖️ Ollama路径被governor降级: {_ollama_decision.degraded_to}")
+        except Exception:
+            pass
+        
+        if _ollama_decision is None or _ollama_decision.allowed:
+            try:
+                from infrastructure.hardware_monitor import get_gpu_throttle
+                throttle = get_gpu_throttle()
+                if throttle.get("level") == "critical":
+                    logger.warning(f"Ollama降级: GPU过热({throttle.get('temperature', 0)}°C)，延迟5秒+短推理")
+                    yield _emit_s("step", {"phase": "GPU保护", "status": "warning", "detail": f"GPU过热({throttle.get('temperature', 0)}°C)，本地模型降频运行"})
+                    async def _throttled_ollama():
+                        await asyncio.sleep(5)
+                        return await fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights, intent_type=intent_type)
+                    ollama_task = asyncio.create_task(_throttled_ollama())
+                elif throttle["level"] in ("warm", "hot"):
+                    logger.info(f"Ollama节流: {throttle['message']}")
+                    yield _emit_s("step", {"phase": "GPU节流", "status": "info", "detail": f"{throttle['message']}"})
+                    async def _delayed_ollama():
+                        await asyncio.sleep(throttle["delay_seconds"])
+                        return await fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights, intent_type=intent_type)
+                    ollama_task = asyncio.create_task(_delayed_ollama())
+                else:
+                    ollama_task = asyncio.create_task(fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights, intent_type=intent_type))
+            except Exception:
+                ollama_task = asyncio.create_task(fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights, intent_type=intent_type))
+    ext_task = None
+    _skip_external = methodology.get("self_referential", False)
+    if max_paths >= 3 and _should_run("external_api") and not _skip_external:
+        _search_decision = None
+        try:
+            from core.resource_awareness.adaptive_governor import get_adaptive_governor, ActionType
+            _search_decision = get_adaptive_governor().decide(ActionType.EXTERNAL_SEARCH)
+            if not _search_decision.allowed:
+                logger.warning(f"⚖️ 外部搜索被governor阻止: {_search_decision.message}")
+        except Exception:
+            pass
+        if _search_decision is None or _search_decision.allowed:
+            ext_task = asyncio.create_task(fetch_external_api(user_input, conversation_context=conversation_context, truth_insights=truth_insights))
+    ext_learn_task = None
+    if max_paths >= 4 and _should_run("external_learning") and not _skip_external:
+        ext_learn_task = asyncio.create_task(fetch_external_learning(user_input, conversation_context))
+
+    exp_task = asyncio.create_task(fetch_experience(user_input, ports=ports)) if _should_run("experience") else None
+    know_task = asyncio.create_task(fetch_knowledge(user_input, ports=ports)) if _should_run("knowledge") else None
+    fact_task = asyncio.create_task(fetch_fact_assertions(user_input, ports=ports)) if _should_run("fact") else None
+    _tool_intent = (methodology.get("strategy") == "tool_first" if methodology else False) or intent_type in ("code", "time", "simple_query", "weather", "hardware", "map") or (intent_type == "complex_query" and query_needs_tools(user_input)) or query_needs_tools(user_input)
+    if methodology.get("self_referential") and not query_needs_tools(user_input):
+        _tool_intent = False
     tool_task = None
     if (_tool_intent or max_paths >= 7) and _should_run("tool"):
         tool_task = asyncio.create_task(fetch_tool_results(user_input, intent_type, methodology=methodology, tool_intent=_tool_intent))
     self_reason_task = None
-    if max_paths >= 6 and _should_run("self_reason"):
-        from backend.services.path_handlers._shared import _check_vector_available, _fast_executor
-        self_reason_task = asyncio.create_task(_self_reason_impl(user_input, conversation_context, truth_insights))
+    if _should_run("self_reason"):
+        if methodology.get("self_referential") or max_paths >= 6:
+            from backend.services.path_handlers._shared import _check_vector_available, _fast_executor
+            self_reason_task = asyncio.create_task(_self_reason_impl(user_input, conversation_context, truth_insights))
 
     local_tasks = [t for t in [exp_task, know_task, fact_task, tool_task, self_reason_task] if t is not None]
     local_names = []
@@ -140,7 +224,7 @@ async def execute_parallel_paths(
     if self_reason_task: local_names.append("自我推理")
 
     logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] 本地先行：等待{local_names}（{LOCAL_FIRST_WINDOW}秒窗口）...")
-    yield _emit("step", {"phase": "本地先行", "status": "running", "detail": f"先用本地能力({'+'.join(local_names)})尝试..."})
+    yield _emit_s("step", {"phase": "本地先行", "status": "running", "detail": f"先用本地能力({'+'.join(local_names)})尝试..."})
 
     local_done, local_pending = await asyncio.wait(local_tasks, timeout=LOCAL_FIRST_WINDOW, return_when=asyncio.ALL_COMPLETED)
     local_count = 0
@@ -182,7 +266,7 @@ async def execute_parallel_paths(
     if local_best_quality >= LOCAL_QUALITY_THRESHOLD and local_count >= 1:
         if _tool_intent and tool_task and not tool_task.done():
             logger.warning(f"[ROUTER_DIAG] 本地先行命中(质量{local_best_quality})，工具意图=True，tool_task未完成，等待工具...")
-            yield _emit("step", {"phase": "本地先行", "status": "running", "detail": f"本地能力已有结果，但等待工具执行完成..."})
+            yield _emit_s("step", {"phase": "本地先行", "status": "running", "detail": f"本地能力已有结果，但等待工具执行完成..."})
             try:
                 tool_result = await asyncio.wait_for(tool_task, timeout=25.0)
                 logger.warning(f"[ROUTER_DIAG] 工具等待返回: type={type(tool_result).__name__}, is_list={isinstance(tool_result, list)}, is_dict={isinstance(tool_result, dict)}")
@@ -210,18 +294,18 @@ async def execute_parallel_paths(
             except Exception as e:
                 logger.warning(f"[ROUTER_DIAG] 工具等待异常: {e}", exc_info=True)
             logger.warning(f"[ROUTER_DIAG] 工具等待完成，candidates={len(candidates)}个, 最高质量={local_best_quality}，直接返回，API后台补充")
-            yield _emit("step", {"phase": "本地先行", "status": "done", "detail": f"✅ 工具已执行完成(质量{local_best_quality})，无需等待API"})
+            yield _emit_s("step", {"phase": "本地先行", "status": "done", "detail": f"✅ 工具已执行完成(质量{local_best_quality})，无需等待API"})
             logger.warning(f"[ROUTER_DIAG] yield candidates: {[{'source':c.get('source'),'quality':c.get('quality')} for c in candidates]}")
             yield candidates
             return
         else:
             logger.info(f"✅ 本地先行命中: 质量{local_best_quality}>={LOCAL_QUALITY_THRESHOLD}，可直接返回")
-            yield _emit("step", {"phase": "本地先行", "status": "done", "detail": f"✅ 本地能力已解决(质量{local_best_quality})，API仅作补充"})
+            yield _emit_s("step", {"phase": "本地先行", "status": "done", "detail": f"✅ 本地能力已解决(质量{local_best_quality})，API仅作补充"})
 
     if local_best_quality >= 60 and local_count >= 1 and _tool_intent:
         if tool_task and not tool_task.done():
             logger.warning(f"[ROUTER_DIAG] 工具意图+本地高质量({local_best_quality})，tool_task未完成，等待工具...")
-            yield _emit("step", {"phase": "本地先行", "status": "running", "detail": f"本地能力已有结果，但等待工具执行完成..."})
+            yield _emit_s("step", {"phase": "本地先行", "status": "running", "detail": f"本地能力已有结果，但等待工具执行完成..."})
             try:
                 tool_result = await asyncio.wait_for(tool_task, timeout=25.0)
                 logger.warning(f"[ROUTER_DIAG] 工具等待返回(分支2): type={type(tool_result).__name__}")
@@ -240,62 +324,11 @@ async def execute_parallel_paths(
             except Exception as e:
                 logger.warning(f"[ROUTER_DIAG] 工具等待异常(分支2): {e}", exc_info=True)
         logger.warning(f"[ROUTER_DIAG] 工具意图+结果就绪({local_best_quality})，candidates={len(candidates)}个，直接返回")
-        yield _emit("step", {"phase": "本地先行", "status": "done", "detail": f"✅ 工具已解决(质量{local_best_quality})，无需等待API"})
+        yield _emit_s("step", {"phase": "本地先行", "status": "done", "detail": f"✅ 工具已解决(质量{local_best_quality})，无需等待API"})
         logger.warning(f"[ROUTER_DIAG] yield candidates(分支2): {[{'source':c.get('source'),'quality':c.get('quality')} for c in candidates]}")
         yield candidates
         return
 
-    # API路径：延迟启动（本地先行窗口结束后才启动）
-    ollama_task = None
-    if max_paths >= 3 and _should_run("ollama"):
-        _ollama_decision = None
-        try:
-            from core.resource_awareness.adaptive_governor import get_adaptive_governor, ActionType
-            _ollama_decision = get_adaptive_governor().decide(ActionType.OLLAMA_INFERENCE)
-            if not _ollama_decision.allowed:
-                logger.warning(f"⚖️ Ollama路径被governor阻止: {_ollama_decision.message}")
-            elif _ollama_decision.degraded_to:
-                logger.info(f"⚖️ Ollama路径被governor降级: {_ollama_decision.degraded_to}")
-        except Exception:
-            pass
-        
-        if _ollama_decision is None or _ollama_decision.allowed:
-            try:
-                from infrastructure.hardware_monitor import get_gpu_throttle
-                throttle = get_gpu_throttle()
-                if throttle.get("level") == "critical":
-                    logger.warning(f"Ollama降级: GPU过热({throttle.get('temperature', 0)}°C)，延迟5秒+短推理")
-                    yield _emit("step", {"phase": "GPU保护", "status": "warning", "detail": f"GPU过热({throttle.get('temperature', 0)}°C)，本地模型降频运行"})
-                    async def _throttled_ollama():
-                        await asyncio.sleep(5)
-                        return await fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights)
-                    ollama_task = asyncio.create_task(_throttled_ollama())
-                elif throttle["level"] in ("warm", "hot"):
-                    logger.info(f"Ollama节流: {throttle['message']}")
-                    yield _emit("step", {"phase": "GPU节流", "status": "info", "detail": f"{throttle['message']}"})
-                    async def _delayed_ollama():
-                        await asyncio.sleep(throttle["delay_seconds"])
-                        return await fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights)
-                    ollama_task = asyncio.create_task(_delayed_ollama())
-                else:
-                    ollama_task = asyncio.create_task(fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights))
-            except Exception:
-                ollama_task = asyncio.create_task(fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights))
-    ext_task = None
-    if max_paths >= 4 and _should_run("external_api"):
-        _search_decision = None
-        try:
-            from core.resource_awareness.adaptive_governor import get_adaptive_governor, ActionType
-            _search_decision = get_adaptive_governor().decide(ActionType.EXTERNAL_SEARCH)
-            if not _search_decision.allowed:
-                logger.warning(f"⚖️ 外部搜索被governor阻止: {_search_decision.message}")
-        except Exception:
-            pass
-        if _search_decision is None or _search_decision.allowed:
-            ext_task = asyncio.create_task(fetch_external_api(user_input, conversation_context=conversation_context, truth_insights=truth_insights))
-    ext_learn_task = None
-    if max_paths >= 5 and _should_run("external_learning"):
-        ext_learn_task = asyncio.create_task(fetch_external_learning(user_input, conversation_context))
 
     ollama_got = False
     ext_got = False
@@ -342,10 +375,10 @@ async def execute_parallel_paths(
                     else:
                         _save_to_experience_pool(user_input, result["response"], success=True, intent_type="external_api", model_name="deepseek")
                         ext_got = True
-                yield _emit("step", {"phase": task_name, "status": "done", "detail": f"{task_name}返回结果 ✅"})
+                yield _emit_s("step", {"phase": task_name, "status": "done", "detail": f"{task_name}返回结果 ✅"})
             except Exception as e:
                 logger.error(f"{task_name}异常: {e}")
-                yield _emit("step", {"phase": task_name, "status": "done", "detail": f"{task_name}异常"})
+                yield _emit_s("step", {"phase": task_name, "status": "done", "detail": f"{task_name}异常"})
 
         if not pending_set:
             break
@@ -367,7 +400,7 @@ async def execute_parallel_paths(
                         _keep_light_tasks.add(t)
                 if _cancel_gpu_tasks:
                     logger.warning(f"🛡️ 自我保存: GPU过热({_gpu_temp_now}°C)，取消高消耗任务{_cancel_gpu_tasks}")
-                    yield _emit("step", {"phase": "自我保存", "status": "warning", "detail": f"GPU过热({_gpu_temp_now}°C)，取消本地模型推理，保留轻量路径"})
+                    yield _emit_s("step", {"phase": "自我保存", "status": "warning", "detail": f"GPU过热({_gpu_temp_now}°C)，取消本地模型推理，保留轻量路径"})
                     pending_set = _keep_light_tasks
                     if not pending_set:
                         break
@@ -378,7 +411,7 @@ async def execute_parallel_paths(
 
         if heartbeat_sec >= 90:
             logger.warning(f"⏱️ 8路径并行等待超时({heartbeat_sec}秒)，用已有{len(candidates)}个候选继续")
-            yield _emit("step", {"phase": "智能调度", "status": "done",
+            yield _emit_s("step", {"phase": "智能调度", "status": "done",
                 "detail": f"等待超时({heartbeat_sec}秒)，用已有{len(candidates)}个候选继续"})
             for t in pending_set:
                 t.cancel()
@@ -396,7 +429,7 @@ async def execute_parallel_paths(
 
         if has_tool_result_95 and heartbeat_sec >= 3:
             waiting_names = '+'.join(still_waiting)
-            yield _emit("step", {"phase": "智能调度", "status": "done",
+            yield _emit_s("step", {"phase": "智能调度", "status": "done",
                 "detail": f"工具结果评分>=95，无需等待慢路径({waiting_names})，取消后台任务"})
             for t in list(pending_set):
                 t.cancel()
@@ -409,7 +442,7 @@ async def execute_parallel_paths(
                 pass
             else:
                 waiting_names = '+'.join(still_waiting)
-                yield _emit("step", {"phase": "智能调度", "status": "done",
+                yield _emit_s("step", {"phase": "智能调度", "status": "done",
                     "detail": f"自我推理质量>=70，无需等待API，取消慢路径({waiting_names})"})
                 for t in list(pending_set):
                     t.cancel()
@@ -421,7 +454,7 @@ async def execute_parallel_paths(
                 pass
             else:
                 waiting_names = '+'.join(still_waiting)
-                yield _emit("step", {"phase": "智能调度", "status": "done",
+                yield _emit_s("step", {"phase": "智能调度", "status": "done",
                     "detail": f"已有模型结果+{high_q}条候选，取消慢路径({waiting_names})"})
                 for t in list(pending_set):
                     t.cancel()
@@ -433,7 +466,7 @@ async def execute_parallel_paths(
                 pass
             else:
                 waiting_names = '+'.join(still_waiting)
-                yield _emit("step", {"phase": "智能调度", "status": "done",
+                yield _emit_s("step", {"phase": "智能调度", "status": "done",
                     "detail": f"已有{high_q}条高质量搜索候选(无模型结果)，取消慢路径({waiting_names})"})
                 for t in list(pending_set):
                     t.cancel()
@@ -445,7 +478,7 @@ async def execute_parallel_paths(
                 pass
             else:
                 waiting_names = '+'.join(still_waiting)
-                yield _emit("step", {"phase": "智能调度", "status": "done",
+                yield _emit_s("step", {"phase": "智能调度", "status": "done",
                     "detail": f"模型未响应，已有{high_q}条搜索候选，取消慢路径({waiting_names})"})
                 for t in list(pending_set):
                     t.cancel()
@@ -460,25 +493,25 @@ async def execute_parallel_paths(
 
             if ollama_status == "alive":
                 if high_q >= 2:
-                    yield _emit("step", {"phase": "智能调度", "status": "done",
+                    yield _emit_s("step", {"phase": "智能调度", "status": "done",
                         "detail": f"模型推理中(状态正常)，已有{high_q}条高质量候选，取消慢路径"})
                     if ollama_task in pending_set:
                         ollama_task.cancel()
                         pending_set.discard(ollama_task)
                 else:
-                    yield _emit("step", {"phase": "多路并行", "status": "progress",
+                    yield _emit_s("step", {"phase": "多路并行", "status": "progress",
                         "detail": f"本地模型正在推理(已{heartbeat_sec}秒，诊断: {'; '.join(diagnosis['evidence'][:2])})，已收集{len(candidates)}个候选"})
 
             elif ollama_status == "stuck":
-                yield _emit("step", {"phase": "智能调度", "status": "progress",
+                yield _emit_s("step", {"phase": "智能调度", "status": "progress",
                     "detail": f"本地模型推理{heartbeat_sec}秒，诊断: {'; '.join(diagnosis['evidence'][:3])}，启动替代推理..."})
                 try:
-                    alt_result = await fetch_ollama_response(user_input, conversation_context=conversation_context, truth_insights=truth_insights)
+                    alt_result = await fetch_ollama_response(user_input, conversation_context=conversation_context, truth_insights=truth_insights, intent_type=intent_type)
                     if alt_result and alt_result.get("response"):
                         candidates.append(alt_result)
                         _save_to_experience_pool(user_input, alt_result["response"], success=True, intent_type="ollama_retry", model_name="ollama")
                         ollama_got = True
-                        yield _emit("step", {"phase": "替代推理", "status": "done", "detail": "替代推理成功 ✅"})
+                        yield _emit_s("step", {"phase": "替代推理", "status": "done", "detail": "替代推理成功 ✅"})
                 except Exception:
                     logger.warning("操作降级跳过")
                 if ollama_task in pending_set:
@@ -487,13 +520,13 @@ async def execute_parallel_paths(
 
             elif ollama_status == "dead":
                 ollama_diagnosed_dead = True
-                yield _emit("step", {"phase": "智能调度", "status": "done",
+                yield _emit_s("step", {"phase": "智能调度", "status": "done",
                     "detail": f"本地模型不可达(诊断: {'; '.join(diagnosis['evidence'][:2])})，使用{len(candidates)}条已有候选综合"})
                 if ollama_task in pending_set:
                     ollama_task.cancel()
                     pending_set.discard(ollama_task)
         else:
-            yield _emit("step", {"phase": "多路并行", "status": "progress",
+            yield _emit_s("step", {"phase": "多路并行", "status": "progress",
                 "detail": f"已等待{heartbeat_sec}秒，仍在等待: {'+'.join(still_waiting)}，已收集{len(candidates)}个候选"})
 
     if ollama_got:
@@ -540,6 +573,7 @@ async def execute_parallel_paths(
         "工具调用": "tool", "工具": "tool", "自我推理": "self_reason",
         "本地模型": "ollama", "Ollama": "ollama",
         "外部模型": "external_api", "外部API": "external_api",
+        "DeepSeek": "external_api",
         "外部学习": "external_learning",
     }
     for c in candidates:
@@ -558,7 +592,17 @@ async def execute_parallel_paths(
                 orig_q = c.get("quality", 50)
                 c["quality"] = int(orig_q * _path_weights[wkey])
 
-    yield _emit("step", {"phase": "多策略并行", "status": "done", "detail": f"共获取{len(candidates)}个候选结果（{len(sources_got)}条路径：{'+'.join(sources_got)}）"})
+    if methodology.get("self_referential"):
+        for c in candidates:
+            src = c.get("source", "")
+            if "自我推理" in src:
+                c["quality"] = min(100, int(c.get("quality", 50) * 1.4))
+            elif "Ollama" in src or "本地模型" in src:
+                c["quality"] = int(c.get("quality", 50) * 0.8)
+            elif "经验池" in src:
+                c["quality"] = min(100, int(c.get("quality", 50) * 1.2))
+
+    yield _emit_s("step", {"phase": "多策略并行", "status": "done", "detail": f"共获取{len(candidates)}个候选结果（{len(sources_got)}条路径：{'+'.join(sources_got)}）"})
 
     path_contributions = {}
     total_quality = 0
@@ -576,15 +620,15 @@ async def execute_parallel_paths(
             path_percentages[src] = round(pct, 1)
     if path_percentages:
         contrib_str = " | ".join(f"{k}:{v}%" for k, v in path_percentages.items())
-        yield _emit("step", {"phase": "路径贡献", "status": "done", "detail": f"有效信息占比 → {contrib_str}"})
+        yield _emit_s("step", {"phase": "路径贡献", "status": "done", "detail": f"有效信息占比 → {contrib_str}"})
 
     try:
         from core.beam_search import beam_search_engine
         if beam_search_engine.should_trigger(candidates):
-            yield _emit("step", {"phase": "树搜索扩展", "status": "running", "detail": "候选质量不足，启动beam search扩展..."})
+            yield _emit_s("step", {"phase": "树搜索扩展", "status": "running", "detail": "候选质量不足，启动beam search扩展..."})
             async def _beam_fetch(q, ctx=""):
                 try:
-                    return await fetch_ollama_all(q, conversation_context=ctx)
+                    return await fetch_ollama_all(q, conversation_context=ctx, intent_type=intent_type)
                 except Exception:
                     return {"response": "", "source": "beam_search_failed", "quality": 0}
             candidates = await beam_search_engine.search(
@@ -593,7 +637,7 @@ async def execute_parallel_paths(
                 fetch_func=_beam_fetch,
                 conversation_context=conversation_context,
             )
-            yield _emit("step", {"phase": "树搜索扩展", "status": "done", "detail": f"扩展后{len(candidates)}个候选"})
+            yield _emit_s("step", {"phase": "树搜索扩展", "status": "done", "detail": f"扩展后{len(candidates)}个候选"})
     except Exception as e:
         logger.warning(f"Beam search跳过: {e}")
 

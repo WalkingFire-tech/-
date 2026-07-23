@@ -20,7 +20,7 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class AnomalySeverity(Enum):
@@ -137,7 +137,7 @@ class IntrospectionEngine:
         """初始化数据库"""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS system_states (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -791,7 +791,7 @@ class IntrospectionEngine:
     
     def _save_state(self, state: SystemState):
         """保存状态"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO system_states (timestamp, state_json)
             VALUES (?, ?)
@@ -806,7 +806,7 @@ class IntrospectionEngine:
     
     def _save_anomaly(self, anomaly: Anomaly):
         """保存异常"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT OR REPLACE INTO anomalies
             (id, type, severity, description, context, detected_at, 
@@ -826,7 +826,7 @@ class IntrospectionEngine:
     
     def _save_healing_result(self, result: HealingResult):
         """保存修复结果"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO healing_results
             (anomaly_id, status, action_taken, effect, learned, timestamp)
@@ -839,7 +839,7 @@ class IntrospectionEngine:
     
     def _save_pattern(self, pattern_key: str, pattern: Dict):
         """保存模式"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT OR REPLACE INTO anomaly_patterns
             (pattern_key, count, success_rate, last_occurrence)
@@ -851,7 +851,7 @@ class IntrospectionEngine:
     
     def _save_prediction(self, prediction: Dict):
         """保存预测"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO predictions
             (prediction_type, predicted_at, predicted_for, actual_occurred)

@@ -92,5 +92,8 @@ backups/
 archives/
 llamaboard_cache/
 autodl_backup/
-_infra_backup/
+# Test debris
+tests/OLD/
+tests/scripts/
+scripts/diagnostics/
 kun-canvas/

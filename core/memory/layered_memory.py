@@ -19,7 +19,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class LayeredMemory:
@@ -33,7 +33,7 @@ class LayeredMemory:
         return cls._instance
 
     def _init_db(self):
-        db = DatabaseManager.get(self._db_path)
+        db = get_storage_port(self._db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS strategic_memory (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,11 +84,11 @@ class LayeredMemory:
         count = 0
 
         try:
-            db1 = DatabaseManager.get("data/truths.db")
+            db1 = get_storage_port("data/truths.db")
             rows = db1.query(
                 "SELECT statement, domain, evidence_count, level FROM truths WHERE level >= 3"
             )
-            db2 = DatabaseManager.get(self._db_path)
+            db2 = get_storage_port(self._db_path)
             for statement, domain, evidence, level in rows:
                 existing = db2.query_one(
                     "SELECT id FROM strategic_memory WHERE strategy = ?", (statement,)
@@ -110,11 +110,11 @@ class LayeredMemory:
             logger.warning(f"战略记忆同步(真谛)跳过: {e}")
 
         try:
-            db1 = DatabaseManager.get("data/trajectory_evolution.db")
+            db1 = get_storage_port("data/trajectory_evolution.db")
             rows = db1.query(
                 "SELECT query, steps_json, fitness_score, intent_type FROM trajectories WHERE fitness_score >= 60 ORDER BY fitness_score DESC LIMIT 50"
             )
-            db2 = DatabaseManager.get(self._db_path)
+            db2 = get_storage_port(self._db_path)
             for query, steps_str, fitness, intent_type in rows:
                 try:
                     steps = json.loads(steps_str) if steps_str else []
@@ -148,11 +148,11 @@ class LayeredMemory:
         count = 0
 
         try:
-            db1 = DatabaseManager.get("data/learning_rules.db")
+            db1 = get_storage_port("data/learning_rules.db")
             rows = db1.query(
                 "SELECT condition, action, confidence, apply_count, success_count, source FROM learning_rules WHERE status='active' AND confidence >= 0.5"
             )
-            db2 = DatabaseManager.get(self._db_path)
+            db2 = get_storage_port(self._db_path)
             for condition, action, confidence, apply_count, success_count, source in rows:
                 existing = db2.query_one(
                     "SELECT id FROM procedural_memory WHERE trigger_condition = ? AND sop_name = ?",
@@ -183,7 +183,7 @@ class LayeredMemory:
         try:
             from core.tool_registry import tool_executor
             stats = tool_executor.get_stats()
-            db = DatabaseManager.get(self._db_path)
+            db = get_storage_port(self._db_path)
             for tool_name, stat in stats.items():
                 existing = db.query_one(
                     "SELECT id FROM tool_memory WHERE tool_name = ?", (tool_name,)
@@ -210,7 +210,7 @@ class LayeredMemory:
 
     def query_strategic(self, dilemma: str, limit: int = 3) -> List[Dict]:
         try:
-            db = DatabaseManager.get(self._db_path)
+            db = get_storage_port(self._db_path)
             rows = db.query(
                 "SELECT * FROM strategic_memory WHERE dilemma LIKE ? OR domains LIKE ? ORDER BY importance DESC, success_rate DESC LIMIT ?",
                 (f"%{dilemma[:20]}%", f"%{dilemma[:10]}%", limit)
@@ -221,7 +221,7 @@ class LayeredMemory:
 
     def query_procedural(self, situation: str, limit: int = 3) -> List[Dict]:
         try:
-            db = DatabaseManager.get(self._db_path)
+            db = get_storage_port(self._db_path)
             rows = db.query(
                 "SELECT * FROM procedural_memory WHERE trigger_condition LIKE ? OR sop_name LIKE ? ORDER BY confidence DESC LIMIT ?",
                 (f"%{situation[:20]}%", f"%{situation[:10]}%", limit)
@@ -232,7 +232,7 @@ class LayeredMemory:
 
     def query_tool(self, query: str, limit: int = 5) -> List[Dict]:
         try:
-            db = DatabaseManager.get(self._db_path)
+            db = get_storage_port(self._db_path)
             rows = db.query(
                 "SELECT * FROM tool_memory WHERE tool_name LIKE ? OR query_pattern LIKE ? ORDER BY avg_quality DESC, success_count DESC LIMIT ?",
                 (f"%{query[:15]}%", f"%{query[:10]}%", limit)
@@ -268,7 +268,7 @@ class LayeredMemory:
                           quality: int = 0, duration_ms: float = 0, params: Dict = None):
         now = datetime.now().isoformat()
         try:
-            db = DatabaseManager.get(self._db_path)
+            db = get_storage_port(self._db_path)
             existing = db.query_one(
                 "SELECT id, call_count, success_count, avg_quality, avg_duration_ms FROM tool_memory WHERE tool_name = ? AND query_pattern = ?",
                 (tool_name, query[:50])
@@ -298,7 +298,7 @@ class LayeredMemory:
         result = {"strategic_decayed": 0, "procedural_decayed": 0, "tool_decayed": 0}
 
         try:
-            db = DatabaseManager.get(self._db_path)
+            db = get_storage_port(self._db_path)
             strategic_cutoff = (now - timedelta(days=30)).isoformat()
             result["strategic_decayed"] = db.execute(
                 "DELETE FROM strategic_memory WHERE last_updated < ? AND evidence_count < 2 AND importance < 0.3",
@@ -323,7 +323,7 @@ class LayeredMemory:
 
     def get_stats(self) -> Dict:
         try:
-            db = DatabaseManager.get(self._db_path)
+            db = get_storage_port(self._db_path)
             strategic = db.query_one("SELECT COUNT(*) FROM strategic_memory")[0]
             procedural = db.query_one("SELECT COUNT(*) FROM procedural_memory")[0]
             tool = db.query_one("SELECT COUNT(*) FROM tool_memory")[0]

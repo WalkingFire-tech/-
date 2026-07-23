@@ -10,7 +10,7 @@
 这是"白天记忆"阶段。
 """
 import json
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import re
 from pathlib import Path
 from datetime import datetime
@@ -194,7 +194,7 @@ class GoldExtractor:
             return interactions
         
         try:
-            rows = DatabaseManager.get(self.db_path).query("""
+            rows = get_storage_port(self.db_path).query("""
                 SELECT question, response, feedback, objective_score, timestamp 
                 FROM interactions 
                 WHERE feedback IS NOT NULL 

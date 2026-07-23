@@ -18,6 +18,15 @@ from backend.services.path_handlers.experience_path import get_experience_contex
 _OLLAMA_MODEL_CACHE = {"model": None, "timestamp": 0}
 _OLLAMA_MODELS_CACHE = {"models": [], "timestamp": 0}
 
+_CODE_INTENTS = {"complex_query", "hardware", "map"}
+_GENERAL_INTENTS = {"greeting", "confirmation", "simple_query", "learning_trigger", "challenge", "history_query", "weather"}
+
+
+def _model_priority_for_intent(intent_type: str) -> list:
+    if intent_type in _CODE_INTENTS:
+        return ["qwen2.5-coder:7b", "qwen2.5:7b", "gemma-4-12B:latest", "deepcoder:latest"]
+    return ["qwen2.5:7b", "qwen2.5-coder:7b", "gemma-4-12B:latest", "deepcoder:latest"]
+
 
 async def get_available_ollama_models_async() -> list:
     """异步获取可用Ollama模型列表"""
@@ -41,16 +50,17 @@ async def get_available_ollama_models_async() -> list:
         return _OLLAMA_MODELS_CACHE["models"]
 
 
-async def get_available_ollama_model_async() -> str:
-    """异步获取优先Ollama模型"""
+async def get_available_ollama_model_async(intent_type: str = "") -> str:
+    """异步获取优先Ollama模型（根据意图类型动态选择）"""
     import time as _time
     now = _time.time()
-    if _OLLAMA_MODEL_CACHE["model"] and (now - _OLLAMA_MODEL_CACHE["timestamp"]) < 60:
+    cache_key = f"{intent_type or 'default'}"
+    if _OLLAMA_MODEL_CACHE["model"] and (now - _OLLAMA_MODEL_CACHE["timestamp"]) < 60 and _OLLAMA_MODEL_CACHE.get("intent") == cache_key:
         return _OLLAMA_MODEL_CACHE["model"]
     models = await get_available_ollama_models_async()
     if not models:
         return _OLLAMA_MODEL_CACHE["model"]
-    model_priority = ["qwen2.5:7b", "qwen2.5-coder:7b", "gemma-4-12B:latest", "deepcoder:latest"]
+    model_priority = _model_priority_for_intent(intent_type)
     selected = None
     for m in model_priority:
         for a in models:
@@ -64,6 +74,7 @@ async def get_available_ollama_model_async() -> str:
     if selected:
         _OLLAMA_MODEL_CACHE["model"] = selected
         _OLLAMA_MODEL_CACHE["timestamp"] = now
+        _OLLAMA_MODEL_CACHE["intent"] = cache_key
     return selected
 
 
@@ -80,6 +91,15 @@ async def ollama_background_save(ollama_task: asyncio.Task, query: str):
 
 
 async def fetch_ollama(query: str, model: str, timeout: int = 60, conversation_context: str = "", truth_insights: str = "") -> dict:
+    try:
+        from core.config.unified_config import get_config
+        _cfg = get_config()
+        if _cfg.get("gpu_protection.disable_ollama", False):
+            _reason = _cfg.get("gpu_protection.disable_reason", "GPU保护模式")
+            logger.warning(f"Ollama已禁用(GPU保护): {_reason}")
+            return {"response": "", "source": "ollama_disabled", "error": _reason}
+    except Exception:
+        pass
     async with _get_ollama_semaphore():
         global _ollama_last_inference_time
         _num_predict = 1024
@@ -204,11 +224,11 @@ async def fetch_ollama(query: str, model: str, timeout: int = 60, conversation_c
     return None
 
 
-async def fetch_ollama_all(query: str, conversation_context: str = "", truth_insights: str = "") -> list:
+async def fetch_ollama_all(query: str, conversation_context: str = "", truth_insights: str = "", intent_type: str = "") -> list:
     models = await get_available_ollama_models_async()
     if not models:
         return []
-    model = await get_available_ollama_model_async()
+    model = await get_available_ollama_model_async(intent_type=intent_type)
     if not model:
         return []
     ollama_timeout = 45
@@ -222,8 +242,8 @@ async def fetch_ollama_all(query: str, conversation_context: str = "", truth_ins
     return [result] if result else []
 
 
-async def fetch_ollama_response(query: str, conversation_context: str = "", truth_insights: str = "") -> dict:
-    results = await fetch_ollama_all(query, conversation_context=conversation_context, truth_insights=truth_insights)
+async def fetch_ollama_response(query: str, conversation_context: str = "", truth_insights: str = "", intent_type: str = "") -> dict:
+    results = await fetch_ollama_all(query, conversation_context=conversation_context, truth_insights=truth_insights, intent_type=intent_type)
     return results[0] if results else None
 
 

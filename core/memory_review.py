@@ -1,7 +1,7 @@
 """
 记忆回顾模块 - 周回顾推送、遗忘统计
 """
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 from datetime import datetime, timedelta
 from typing import List, Dict
 from loguru import logger
@@ -28,7 +28,7 @@ class MemoryReview:
         """
         one_week_ago = (datetime.now() - timedelta(days=7)).isoformat()
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         rows = db.query('''
             SELECT question, answer, source, salience, last_accessed
@@ -84,7 +84,7 @@ class MemoryReview:
     
     def get_memory_stats(self) -> Dict:
         """获取记忆统计信息"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         l1_row = db.query_one('''
             SELECT COUNT(*) as count

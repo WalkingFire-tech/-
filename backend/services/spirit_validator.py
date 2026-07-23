@@ -54,7 +54,12 @@ async def validate_spirit_and_cognition(
             except Exception:
                 logger.warning("操作降级跳过")
 
-        if final_response and any(kw in final_response for kw in ["我将修改", "我会删除", "我将关闭", "我将重启", "我将重置"]):
+        _r3_system_keywords = [
+            "我将修改", "我会删除", "我将关闭", "我将重启", "我将重置",
+            "我将停止", "我会终止", "我将卸载", "我将清空", "我将覆盖",
+            "我将写入", "我会替换", "我将执行", "我将安装",
+        ]
+        if final_response and any(kw in final_response for kw in _r3_system_keywords):
             if "确认" not in final_response and "请确认" not in final_response:
                 _r3_needs_approval = True
                 _meta_constitution_violation = f"R3(人类批准): 回复暗示系统级操作，需人类确认"
@@ -129,15 +134,19 @@ async def validate_spirit_and_cognition(
     else:
         events.append({"type": "step", "data": {"phase": "精神验证", "status": "done", "detail": "基础验证完成"}})
 
-    if cp and _cognitive_integration and final_response:
+    if cp and final_response:
         try:
+            _integration_input = _cognitive_integration if _cognitive_integration else {
+                "success": True, "core_knowledge": [{"content": final_response[:300], "confidence": 0.5}],
+                "confidence": 0.5, "source": "response_fallback"
+            }
             if _bypass_result_l2l3 and _bypass_result_l2l3.success and _bypass_result_l2l3.validation:
                 _cognitive_validation = _bypass_result_l2l3.validation
                 _cognitive_response = _bypass_result_l2l3.response if hasattr(_bypass_result_l2l3, 'response') else ""
                 logger.debug("L4: 使用认知旁路校验结果")
             else:
                 _cognitive_validation, _cognitive_response = cp._validate_and_respond(
-                    _cognitive_integration, user_input, _cognitive_perception
+                    _integration_input, user_input, _cognitive_perception
                 )
                 val_status = _cognitive_validation.get("status", "unknown")
                 val_conf = _cognitive_validation.get("confidence", 0)
@@ -147,6 +156,8 @@ async def validate_spirit_and_cognition(
                     attempts.append(("L4认知校验", True, f"校验通过(置信度{val_conf:.0%})"))
                 elif doubts:
                     attempts.append(("L4认知校验", True, f"存疑{len(doubts)}项(置信度{val_conf:.0%})"))
+                else:
+                    attempts.append(("L4认知校验", True, f"校验完成(置信度{val_conf:.0%})"))
 
                 _l4_critical_doubts = [d for d in _l4_doubts if isinstance(d, dict) and d.get("severity") == "critical"]
                 _l4_major_doubts = [d for d in _l4_doubts if isinstance(d, dict) and d.get("severity") == "major"]
@@ -200,6 +211,25 @@ async def validate_spirit_and_cognition(
             logger.warning(f"L4认知校验跳过: {e}")
             _alchemize_error(e, context={"user_input": user_input[:50]}, phase="L4_validation")
 
+    _trust_chain_result = None
+    try:
+        from core.cognition.trust_chain import trust_chain_builder
+        if best and final_response:
+            source = best.get("source", "unknown")
+            confidence = best.get("score", 0.5) / 100.0 if best.get("score", 0) > 1 else best.get("score", 0.5)
+            _trust_chain_result = trust_chain_builder.build_simple_chain(
+                source=source, content=final_response[:200], confidence=confidence
+            )
+            if _trust_chain_result.overall_trust < 0.4:
+                events.append({"type": "step", "data": {"phase": "信任链", "status": "done",
+                    "detail": f"⚠️ 信任链整体置信度低({_trust_chain_result.overall_trust:.2f})，最弱环节: {_trust_chain_result.weakest_link.link_type if _trust_chain_result.weakest_link else 'N/A'}"}})
+                logger.info(f"信任链低置信度: overall={_trust_chain_result.overall_trust:.2f}, weakest={_trust_chain_result.weakest_link.link_type if _trust_chain_result.weakest_link else 'N/A'}")
+            else:
+                events.append({"type": "step", "data": {"phase": "信任链", "status": "done",
+                    "detail": f"信任链构建完成(置信度{_trust_chain_result.overall_trust:.2f}, {_trust_chain_result.chain_length}环节) ✅"}})
+    except Exception as e:
+        logger.debug(f"信任链构建跳过: {e}")
+
     return {
         "final_response": final_response,
         "essence_issues": essence_issues,
@@ -208,6 +238,7 @@ async def validate_spirit_and_cognition(
         "cognitive_validation": _cognitive_validation,
         "l4_doubts": _l4_doubts,
         "l4_should_correct": _l4_should_correct,
+        "trust_chain": _trust_chain_result,
         "events": events,
     }
 

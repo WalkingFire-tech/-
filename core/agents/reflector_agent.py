@@ -101,9 +101,9 @@ class ReflectorAgent(BaseAgent):
         if not lessons:
             return
         try:
-            from infrastructure.database_manager import DatabaseManager
+            from core.ports.adapters import get_storage_port
             from datetime import datetime
-            db = DatabaseManager.get("data/spirit_lessons.db")
+            db = get_storage_port("data/spirit_lessons.db")
             db.execute('''
                 CREATE TABLE IF NOT EXISTS lessons (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -139,7 +139,7 @@ class ConfigManager:
             },
             "stats": {"db_path": "data/model_stats.db"},
             "audit": {"enabled": True},
-            "sandbox": {"enabled": True, "timeout": 15},
+            "sandbox": {"enabled": True, "timeout": 30},
             "calculation": {
                 "pi": {
                     "use_predefined": True,

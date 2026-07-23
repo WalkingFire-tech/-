@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from fastapi import APIRouter
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 router = APIRouter()
 
@@ -17,7 +17,7 @@ ROOT_DIR = Path(__file__).parent.parent.parent
 async def get_stats():
     stats = {}
     try:
-        db = DatabaseManager.get("data/experience_pool.db")
+        db = get_storage_port("data/experience_pool.db")
 
         row = db.query_one("SELECT COUNT(*) FROM experiences")
         stats["experiences"] = row[0] if row else 0
@@ -25,7 +25,7 @@ async def get_stats():
     except Exception:
         stats["experiences"] = 0
     try:
-        db = DatabaseManager.get("data/learning_rules.db")
+        db = get_storage_port("data/learning_rules.db")
 
         row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
         stats["active_rules"] = row[0] if row else 0

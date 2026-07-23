@@ -8,7 +8,7 @@
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import json
 import hashlib
 import os
@@ -53,7 +53,7 @@ class BehaviorEvolutionEngine:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS response_profiles (
                 id TEXT PRIMARY KEY,
@@ -117,7 +117,7 @@ class BehaviorEvolutionEngine:
         structure_type = self._detect_structure(content)
         tone_type = self._detect_tone(content)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO response_profiles
             (id, response_id, conversation_id, content, length,
@@ -159,7 +159,7 @@ class BehaviorEvolutionEngine:
             context_fit_score: 上下文匹配度 (可选)
             context_type: 上下文类型
         """
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one(
             "SELECT structure_type FROM response_profiles WHERE response_id = ?",
             (response_id,)
@@ -210,7 +210,7 @@ class BehaviorEvolutionEngine:
     
     def _update_style_stats(self):
         """更新风格有效性统计"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         rows = db.query('''
             SELECT structure_type, 
                    AVG(user_feedback_score) as avg_score,
@@ -233,7 +233,7 @@ class BehaviorEvolutionEngine:
     
     def _update_tone_stats(self):
         """更新语气有效性统计"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         rows = db.query('''
             SELECT tone_type, 
                    AVG(user_feedback_score) as avg_score,
@@ -264,7 +264,7 @@ class BehaviorEvolutionEngine:
         Returns:
             推荐的风格和语气
         """
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         context_style_row = db.query_one('''
             SELECT style_type, effectiveness_score
@@ -370,7 +370,7 @@ class BehaviorEvolutionEngine:
     
     def analyze_style_effectiveness(self) -> Dict[str, Any]:
         """分析各风格的有效性"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         rows = db.query('''
             SELECT structure_type,
@@ -401,7 +401,7 @@ class BehaviorEvolutionEngine:
     
     def analyze_tone_effectiveness(self) -> Dict[str, Any]:
         """分析各语气的有效性"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         rows = db.query('''
             SELECT tone_type,
@@ -430,7 +430,7 @@ class BehaviorEvolutionEngine:
     
     def get_statistics(self) -> Dict:
         """获取统计信息"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         total_row = db.query_one("SELECT COUNT(*) as total FROM response_profiles")
         total = total_row['total']

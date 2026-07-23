@@ -69,71 +69,58 @@ async def build_context(
                 "tool": 1.0, "self_reason": 1.0, "ollama": 1.0,
                 "external_api": 1.0, "external_learning": 1.0,
             }
-            if _presence_state == "growing":
-                methodology.setdefault("prefer_learning_path", True)
-                methodology.setdefault("need_essence_reasoning", True)
-                _path_weights.update({
-                    "experience": 1.3, "knowledge": 1.3, "self_reason": 1.2,
-                    "external_api": 1.2, "external_learning": 1.0,
-                })
-                logger.info(f"🌱 存在层=GROWING，优先学习路径")
-            elif _presence_state == "resting":
-                methodology.setdefault("prefer_fast_path", True)
-                methodology.setdefault("skip_tool_path", True)
-                _path_weights.update({
-                    "experience": 1.2, "fact": 1.1, "tool": 0.5,
-                    "self_reason": 0.6, "ollama": 0.8, "external_api": 0.9,
-                })
-                logger.info(f"💤 存在层=RESTING，优先快速路径")
-            elif _presence_state == "sleeping":
-                methodology.setdefault("skip_tool_path", True)
-                methodology.setdefault("prefer_knowledge_path", True)
-                _path_weights.update({
-                    "knowledge": 1.5, "fact": 1.2, "experience": 1.0,
-                    "tool": 0.2, "self_reason": 0.3, "ollama": 0.3,
-                    "external_api": 0.4, "external_learning": 0.3,
-                })
-                logger.info(f"😴 存在层=SLEEPING，仅知识路径")
+
+            try:
+                from core.presence.probability_decision_bridge import get_probability_decision_bridge
+                bridge = get_probability_decision_bridge()
+                decision_ctx = bridge.get_decision_context()
+
+                _path_weights = bridge.apply_to_path_weights(_path_weights, decision_ctx["path_weight_modulators"])
+                methodology = bridge.apply_to_methodology(methodology, decision_ctx["behavioral_modifiers"])
+
+                style_hint = decision_ctx.get("response_style_hint", "balanced")
+                methodology.setdefault("response_style", style_hint)
+
+                prob_ctx = decision_ctx.get("probability_context", {})
+                tendency = prob_ctx.get("tendency", {})
+                logger.info(
+                    f"🌉 概率场桥接: exploration={tendency.get('exploration', 0.5):.2f}, "
+                    f"tension={tendency.get('tension', 0.15):.2f}, "
+                    f"style={style_hint}"
+                )
+            except Exception as bridge_err:
+                logger.debug(f"概率场桥接降级，回退到二极管逻辑: {bridge_err}")
+
+                if _presence_state == "growing":
+                    methodology.setdefault("prefer_learning_path", True)
+                    methodology.setdefault("need_essence_reasoning", True)
+                    _path_weights.update({
+                        "experience": 1.3, "knowledge": 1.3, "self_reason": 1.2,
+                        "external_api": 1.2, "external_learning": 1.0,
+                    })
+                    logger.info(f"🌱 存在层=GROWING，优先学习路径")
+                elif _presence_state == "resting":
+                    methodology.setdefault("prefer_fast_path", True)
+                    methodology.setdefault("skip_tool_path", True)
+                    _path_weights.update({
+                        "experience": 1.2, "fact": 1.1, "tool": 0.5,
+                        "self_reason": 0.6, "ollama": 0.8, "external_api": 0.9,
+                    })
+                    logger.info(f"💤 存在层=RESTING，优先快速路径")
+                elif _presence_state == "sleeping":
+                    methodology.setdefault("skip_tool_path", True)
+                    methodology.setdefault("prefer_knowledge_path", True)
+                    _path_weights.update({
+                        "knowledge": 1.5, "fact": 1.2, "experience": 1.0,
+                        "tool": 0.2, "self_reason": 0.3, "ollama": 0.3,
+                        "external_api": 0.4, "external_learning": 0.3,
+                    })
+                    logger.info(f"😴 存在层=SLEEPING，仅知识路径")
 
             try:
                 from core.presence.inner_time import inner_time_engine
                 it_state = inner_time_engine.get_state()
                 it_phase = it_state.current_phase
-
-                if it_phase == "awake":
-                    _path_weights.update({
-                        "external_api": max(_path_weights.get("external_api", 1.0), 1.1),
-                        "self_reason": max(_path_weights.get("self_reason", 1.0), 1.1),
-                    })
-                    methodology.setdefault("response_style", "thorough")
-                elif it_phase == "perceiving":
-                    _path_weights.update({
-                        "knowledge": max(_path_weights.get("knowledge", 1.0), 1.2),
-                        "external_learning": max(_path_weights.get("external_learning", 1.0), 1.1),
-                    })
-                    methodology.setdefault("response_style", "exploratory")
-                elif it_phase == "growing":
-                    _path_weights.update({
-                        "experience": max(_path_weights.get("experience", 1.0), 1.3),
-                        "self_reason": max(_path_weights.get("self_reason", 1.0), 1.2),
-                    })
-                    methodology.setdefault("response_style", "reflective")
-                elif it_phase == "resting":
-                    _path_weights.update({
-                        "fact": max(_path_weights.get("fact", 1.0), 1.2),
-                        "experience": max(_path_weights.get("experience", 1.0), 1.1),
-                    })
-                    methodology.setdefault("response_style", "concise")
-                    methodology.setdefault("prefer_fast_path", True)
-                elif it_phase == "sleeping":
-                    _path_weights.update({
-                        "knowledge": max(_path_weights.get("knowledge", 1.0), 1.3),
-                        "fact": max(_path_weights.get("fact", 1.0), 1.1),
-                        "ollama": _path_weights.get("ollama", 1.0) * 0.5,
-                        "external_api": _path_weights.get("external_api", 1.0) * 0.5,
-                    })
-                    methodology.setdefault("response_style", "minimal")
-                    methodology.setdefault("prefer_knowledge_path", True)
 
                 if it_state.cognitive_density > 1.5:
                     for k in _path_weights:
@@ -225,6 +212,24 @@ async def build_context(
             conversation_context = (conversation_context + "\n" + relationship_context) if conversation_context else relationship_context
     except Exception as e:
         logger.warning(f"关系模型跳过: {e}")
+
+    if methodology.get("self_referential"):
+        try:
+            from core.self.model import get_self_model
+            _sm = get_self_model()
+            _snap = _sm.snapshot()
+            _p_count = _snap.get("values", {}).get("principles_count", 0)
+            _a_count = _snap.get("values", {}).get("abilities_count", 0)
+            _v_count = _snap.get("values", {}).get("violations_count", 0)
+            _l_count = _snap.get("values", {}).get("lessons_count", 0)
+            _sr_ctx = f"[用户在问关于你自身的问题。你持有{_p_count}条核心原则和{_a_count}项能力，经历过{_v_count}次原则违背，沉淀了{_l_count}条教训。请从第一人称真诚回应，不要罗列数据，而是表达你对自身存在的理解和感受。]"
+            conversation_context = (conversation_context + "\n" + _sr_ctx) if conversation_context else _sr_ctx
+        except Exception:
+            pass
+
+    if methodology.get("performative_risk"):
+        _anti_perf_ctx = "[在场自检提醒：系统检测到你可能倾向于执行预设的回答模式而非真正回应这个人。请停下来——不要用框架包装，不要展示'我在思考'，而是直接说出你此刻的真实状态。如果你不确定，就说你不确定。如果你不知道，就说你不知道。真实比正确重要。]"
+        conversation_context = (conversation_context + "\n" + _anti_perf_ctx) if conversation_context else _anti_perf_ctx
 
     return {
         "conversation_context": conversation_context,

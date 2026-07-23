@@ -13,8 +13,8 @@ print("\n[1] 导入修复")
 print("-" * 50)
 
 try:
-    from tools.registry import registry
-    print("  tools.registry导入: ✓")
+    from core.tool_registry import tool_registry as registry
+    print("  core.tool_registry导入: ✓")
 except Exception as e:
     print(f"  tools.registry导入: ✗ ({e})")
 

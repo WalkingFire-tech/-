@@ -548,6 +548,13 @@ body {
     background: rgba(124, 77, 255, 0.04);
 }
 
+.thinking-step.awareness {
+    color: #00897b;
+    border-left-color: #4db6ac;
+    background: rgba(0, 137, 123, 0.04);
+    font-size: 0.9em;
+}
+
 .thinking-step.thinking {
     color: #7c4dff;
     border-left-color: #b388ff;

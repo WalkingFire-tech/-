@@ -54,9 +54,9 @@ class KnowledgeLookupTool(ToolInterface):
             logger.warning("操作降级跳过")
 
         try:
-            from infrastructure.database_manager import DatabaseManager
+            from core.ports.adapters import get_storage_port
             def _search_kb():
-                db = DatabaseManager.get("data/knowledge_store.db", timeout=3)
+                db = get_storage_port("data/knowledge_store.db", timeout=3)
                 try:
                     rows = db.query(
                         "SELECT answer, source, quality_score FROM knowledge_items "

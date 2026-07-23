@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -67,7 +67,7 @@ class LearningReflector:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             CREATE TABLE IF NOT EXISTS learning_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -119,7 +119,7 @@ class LearningReflector:
         improvement = confidence_after - confidence_before
         timestamp = datetime.now().isoformat()
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO learning_events
             (event_id, event_type, timestamp, question, action_taken, result,
@@ -136,7 +136,7 @@ class LearningReflector:
     
     def reflect_on_learning(self, event_id: str) -> Dict:
         """对一次学习事件进行反思"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one(
             'SELECT * FROM learning_events WHERE event_id = ?',
             (event_id,)
@@ -213,7 +213,7 @@ class LearningReflector:
         else:
             start_time = now - timedelta(weeks=1)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         rows = db.query('''
             SELECT * FROM learning_events WHERE timestamp >= ? ORDER BY timestamp DESC
         ''', (start_time.isoformat(),))
@@ -322,7 +322,7 @@ class LearningReflector:
     
     def _save_reflection(self, result: ReflectionResult):
         """保存反思记录"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO reflections
             (period, generated_at, total_events, success_rate, avg_improvement,
