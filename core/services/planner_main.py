@@ -316,26 +316,6 @@ class DataDrivenPlanner:
             logger.error(f"归纳失败: {e}")
             return {"success": False, "message": str(e)}
     
-    def _check_periodic_induction(self):
-        """检查是否需要定期归纳"""
-        if not INDUCTION_AVAILABLE:
-            return
-        
-        hours_since_last = (time.time() - self.last_induction_time) / 3600
-        
-        if hours_since_last >= self.induction_interval:
-            logger.info("触发定期归纳任务")
-            self.run_induction(days=7)
-            
-            try:
-                from meta.meta_induction import meta_inductor
-                if meta_inductor.should_trigger_optimization():
-                    logger.info("触发元归纳优化")
-                    meta_result = meta_inductor.optimize_parameters()
-                    if meta_result.get('success'):
-                        logger.info(f"元归纳完成: {len(meta_result.get('adjustments', []))}项调整")
-            except Exception as e:
-                logger.warning(f"元归纳优化失败: {e}")
     
     def _get_user_preference_weights(self, urgency: str = 'normal') -> tuple:
         """获取用户偏好权重（增强版：情绪感知）"""
@@ -819,58 +799,6 @@ _感谢您的质疑，这帮助我发现了错误。_
     
     
     
-    def _try_tool_first(self, intent: Intent) -> Optional[str]:
-        """【第1层防御】工具优先调用策略
-        
-        当意图类型明确且存在对应工具时，优先调用工具而非模型。
-        这避免了模型"我不知道"的尴尬，直接给出精确答案。
-        
-        Returns:
-            工具执行结果，失败返回None
-        """
-        try:
-            from core.tool_registry import tool_registry as registry
-            from tools.base import ToolCategory
-            
-            # 意图到工具类别的映射
-            intent_to_category = {
-                "calculation": ToolCategory.CALCULATION,
-                "code": ToolCategory.CODE,
-                "document": ToolCategory.FILE,
-            }
-            
-            category = intent_to_category.get(intent.type)
-            if not category:
-                return None
-            
-            # 查找最佳工具
-            best_tool = registry.get_best_tool(category, min_success_rate=0.5)
-            if not best_tool:
-                # 降级：列出所有该类别工具
-                tools = registry.list_tools(category)
-                if not tools:
-                    return None
-                best_tool = tools[0]
-            
-            logger.info(f"【第1层防御】工具优先: {best_tool.name} for {intent.type}")
-            
-            # 执行工具
-            result = registry.execute(best_tool.name, expression=intent.raw_text)
-            
-            if result.success and result.output:
-                # 格式化输出
-                if isinstance(result.output, (int, float)):
-                    return f"计算结果: {result.output}"
-                elif isinstance(result.output, str):
-                    return result.output
-                else:
-                    return str(result.output)
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"工具调用失败: {e}")
-            return None
     
     
     
@@ -987,137 +915,9 @@ _感谢您的质疑，这帮助我发现了错误。_
             logger.error(f"并行调度异常: {e}")
             return None
     
-    def _check_reflex_level(self, intent: Intent) -> Optional[str]:
-        """【反射级】硬编码快速响应（最高优先级）
-        
-        Returns:
-            拦截消息，None表示通过
-        """
-        try:
-            from infrastructure.reflex_engine import reflex_engine
-            
-            reflex_context = {
-                "user_input": intent.raw_text,
-                "recent_failures": len(self.failure_history.get(intent.type, []))
-            }
-            
-            try:
-                import psutil
-                reflex_context["memory_percent"] = psutil.virtual_memory().percent
-            except Exception:
-                logger.warning("操作降级跳过")
-            
-            reflex_result = reflex_engine.check(reflex_context)
-            if reflex_result:
-                logger.warning(f"【反射级】触发拦截")
-                return reflex_result
-                
-        except Exception as e:
-            logger.error(f"反射检查失败: {e}")
-        
-        return None
     
-    def _infer_emotion(self, intent: Intent) -> Dict:
-        """【情绪推断】理解用户状态 - 使用第二阶段增强感知
-        
-        Returns:
-            情绪推断结果
-        """
-        # 优先使用第二阶段情绪感知
-        if hasattr(self, 'emotion_detector') and self.emotion_detector:
-            try:
-                emotion_result = self.emotion_detector.detect(intent.raw_text)
-                
-                result = {
-                    "emotion": emotion_result.primary_emotion,
-                    "intensity": emotion_result.intensity,
-                    "confidence": emotion_result.confidence,
-                    "patience": 1.0 - emotion_result.intensity * 0.3,
-
-                    "should_simplify": emotion_result.intensity > 0.7
-                }
-                
-                logger.warning(f"情绪感知: {result['emotion']} (强度: {result['intensity']:.2f}, 置信度: {result['confidence']:.2f})")
-                return result
-                
-            except Exception as e:
-                logger.error(f"第二阶段情绪感知失败: {e}")
-        
-        # 降级到原有情绪推断
-        try:
-            from infrastructure.emotion_inferencer import emotion_inferencer
-            
-            emotion_result = emotion_inferencer.infer(
-                intent.raw_text,
-                {"recent_failures": len(self.failure_history.get(intent.type, []))}
-            )
-            
-            if emotion_inferencer.should_simplify_response(emotion_result):
-                logger.info(f"用户状态: {emotion_result['emotion']} (耐心: {emotion_result['patience']:.2f})")
-            
-            return emotion_result
-            
-        except Exception as e:
-            logger.error(f"情绪推断失败: {e}")
-            return {"emotion": "neutral", "patience": 1.0}
     
-    def _check_system_state(self) -> Optional[str]:
-        """【系统状态检查】健康度+资源检查
-        
-        Returns:
-            状态异常消息，None表示正常
-        """
-        # 健康度检查（只在严重情况下才拦截）
-        try:
-            from infrastructure.health_dashboard import health_dashboard
-            mode = health_dashboard.mode
-            # 只有在critical模式下才拦截
-            if mode == "critical":
-                logger.warning(f"系统健康度严重不足，当前模式: {mode}")
-                return "系统状态不佳，正在自我修复中。部分功能可能受限。"
-        except Exception as e:
-            logger.error(f"健康度检查失败: {e}")
-        
-        # 资源检查（放宽限制，只在极端情况下拦截）
-        try:
-            from infrastructure.charter_executor import charter_executor
-            resource_check = charter_executor.check_resource_limits()
-            
-            # 只有在严重超限（多个资源同时超限）时才拦截
-            violations = resource_check.get('violations', [])
-            if len(violations) >= 2:  # 至少2个资源同时超限才拦截
-                logger.warning(f"多个资源超限: {violations}")
-                return "系统资源紧张，已暂缓处理。请稍后重试。"
-        except Exception as e:
-            logger.error(f"资源检查失败: {e}")
-        
-        return None
     
-    def _apply_five_layer_defense(self, intent: Intent) -> Optional[str]:
-        """【五层防御机制】
-        
-        第1层: 工具优先调用
-        第2层: 任务智能分解（在normal_flow中处理）
-        第3层: 知识库检索
-        第4层: 主动用户求助（在normal_flow异常中处理）
-        第5层: 失败学习机制（在normal_flow异常中处理）
-        
-        Returns:
-            防御层结果，None表示需要进入normal_flow
-        """
-        # 第1层：工具优先调用
-        tool_result = self._try_tool_first(intent)
-        if tool_result:
-            logger.info(f"【第1层】工具调用成功")
-            return tool_result
-        
-        # 第3层：知识库检索
-        knowledge_result = self._try_knowledge_retrieval(intent)
-        if knowledge_result:
-            logger.info(f"【第3层】知识库命中")
-            return knowledge_result
-        
-        return None
     
     def plan(self, intent: Intent):
         """主规划方法 - 清晰的流程编排
