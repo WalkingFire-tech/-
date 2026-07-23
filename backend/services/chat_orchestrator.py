@@ -471,6 +471,23 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
     )
     reflection = _rl_result["reflection"]
     _learning_outcomes = _rl_result["learning_outcomes"]
+
+    # 新增：反思 → 真谛沉淀（看板#41断裂修复）
+    if reflection and len(str(reflection)) > 20:
+        try:
+            from core.truth_accumulator import TruthAccumulator
+            _ta = TruthAccumulator()
+            _ta._save_truth(
+                name=f"reflection_{int(time.time())}",
+                level="L3",
+                domain=intent_type,
+                statement=str(reflection)[:500],
+                source="reflection_learning",
+            )
+            logger.info(f"🧩 反思沉淀为真谛: {str(reflection)[:50]}...")
+        except Exception as _ta_e:
+            logger.warning(f"反思沉淀失败（非阻塞）: {_ta_e}")
+
     if _rl_result.get("final_response_override"):
         final_response = _rl_result["final_response_override"]
     for _ev in _rl_result["events"]:
