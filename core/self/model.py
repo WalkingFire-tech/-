@@ -163,36 +163,36 @@ class SelfModel(LoopMixin):
         else:
             try:
                 self.update("values", self._extract_spirit(None))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"SelfModel sync values failed: {e}")
             try:
                 self.update("health", self._extract_health(None))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"SelfModel sync health failed: {e}")
             try:
                 self.update("presence", self._extract_presence(None))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"SelfModel sync presence failed: {e}")
             try:
                 self.update("relationship", self._extract_relationship(None))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"SelfModel sync relationship failed: {e}")
             try:
                 self.update("evolution", self._extract_evolution(None))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"SelfModel sync evolution failed: {e}")
             try:
                 self.update("introspection", self._extract_introspection(None))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"SelfModel sync introspection failed: {e}")
             try:
                 self.update("capabilities", self._extract_capabilities(None))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"SelfModel sync capabilities failed: {e}")
             try:
                 self.update("learning", self._extract_learning(None))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"SelfModel sync learning failed: {e}")
 
         try:
             self.update("assessment", self._extract_assessment())
