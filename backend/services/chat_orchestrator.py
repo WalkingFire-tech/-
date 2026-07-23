@@ -291,8 +291,9 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
     )
     if _presence_check["is_performative_risk"]:
         methodology["performative_risk"] = True
+        methodology["presence_mode"] = True
         yield _emit_s("step", {"phase": "在场自检", "status": "done",
-            "detail": f"🪞 我注意到：{_presence_check['reason']}"})
+            "detail": f"🪞 我注意到：{_presence_check['reason']} — 切换为在场模式，用我自己的声音回应"})
         if should_externalize_uncertainty(_presence_check) and _presence_check.get("signal"):
             yield _emit_s("presence_pause", {
                 "risk": _presence_check["risk"],
@@ -352,6 +353,7 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
         _dim_orch=_dim_orch if '_dim_orch' in locals() else None,
         event_sink=event_sink,
         response_style=methodology.get("response_style", ""),
+        methodology=methodology,
     )
     best = _cs_result["best"]
     comparison = _cs_result["comparison"]

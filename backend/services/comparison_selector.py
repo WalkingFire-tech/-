@@ -39,6 +39,7 @@ async def compare_and_select(
     _dim_orch=None,
     event_sink=None,
     response_style: str = "",
+    methodology: dict = None,
 ) -> Dict[str, Any]:
     """
     阶段4：对比择优
@@ -80,6 +81,17 @@ async def compare_and_select(
         candidates = sorted(candidates, key=lambda c: c.get("_relevance", 0), reverse=True)[:3]
     for c in candidates:
         c["quality"] = int(c.get("quality", 30) * 0.6 + c["_relevance"] * 40)
+
+    if methodology and methodology.get("presence_mode"):
+        for c in candidates:
+            src = c.get("source", "")
+            if "自我推理" in src:
+                c["quality"] = min(100, int(c.get("quality", 30) * 1.5))
+            elif "Ollama" in src or "本地模型" in src:
+                c["quality"] = int(c.get("quality", 30) * 0.5)
+            elif "外部" in src or "搜索" in src or "DeepSeek" in src:
+                c["quality"] = int(c.get("quality", 30) * 0.3)
+        logger.info(f"🪞 在场模式择优: 自我推理×1.5, Ollama×0.5, 外部×0.3")
 
     logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] 进入阶段4: 对比择优, {len(candidates)}个候选")
     for i, c in enumerate(candidates):

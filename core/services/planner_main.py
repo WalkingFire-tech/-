@@ -1526,101 +1526,8 @@ _感谢您的质疑，这帮助我发现了错误。_
             logger.error(f"工具调用失败: {e}")
             return None
     
-    def _try_knowledge_retrieval(self, intent: Intent) -> Optional[str]:
-        """【第3层防御】知识库检索（经验复用）
-        
-        当问题在知识库中有记录时，直接返回历史答案。
-        这避免了重复调用模型，实现"一次学习，终身受益"。
-        
-        Returns:
-            历史答案，未找到返回None
-        """
-        try:
-            from infrastructure.knowledge_injector import knowledge_injector
-            
-            result = knowledge_injector.retrieve_knowledge(
-                question=intent.raw_text,
-                intent_type=intent.type,
-                min_quality=70.0
-            )
-            
-            if result:
-                answer, confidence = result
-                logger.info(f"【第3层防御】知识库命中 (置信度: {confidence:.2f})")
-                
-                # 高置信度直接返回
-                if confidence > 0.8:
-                    return answer
-                # 中等置信度添加提示
-                else:
-                    return f"{answer}\n\n_(基于历史经验，置信度: {confidence:.0%})_"
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"知识检索失败: {e}")
-            return None
     
-    def _expert_collaboration(self, intent: Intent, confidence: float) -> str:
-        """调用外部模型进行结构化分析（外脑协作）"""
-        
-        # 选择专家（优先远程模型）
-        expert = None
-        if "remote_gpt4" in self.adapters:
-            expert = self.adapters["remote_gpt4"]
-        elif "deepseek-chat" in self.adapters:
-            expert = self.adapters["deepseek-chat"]
-        elif "deepcoder" in self.adapters:
-            expert = self.adapters["deepcoder"]
-        else:
-            expert = next(iter(self.adapters.values()))
-        
-        logger.info(f"外脑协作专家: {expert.model_name}")
-        
-        # 直接回答用户问题
-        prompt = intent.raw_text
-        
-        try:
-            response = expert.generate(prompt, task_type=intent.type)
-            
-            if isinstance(response, tuple):
-                response, _ = response
-            
-            # 存储专家分析（为未来逆向学习预留）
-            self._store_expert_analysis(intent, response, confidence, expert.model_name)
-            
-            return response
-            
-        except Exception as e:
-            logger.error(f"外脑协作失败: {e}")
-            # 降级到普通生成
-            return self._normal_generate(intent)
     
-    def _store_expert_analysis(self, intent: Intent, analysis: str, confidence: float, expert_model: str):
-        """存储专家分析（为逆向学习预留）"""
-        try:
-            conn = get_storage_port()._get_conn('data/experience_pool.db')
-            conn.execute('''
-                INSERT INTO experiences
-                (intent_type, raw_input, plan, model_name, 
-                 quality_score, user_feedback, success, 
-                 response, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                intent.type,
-                intent.raw_text,
-                f"expert_collaboration:{expert_model}",
-                expert_model,
-                0,
-                0,
-                False,
-                analysis,
-                time.time()
-            ))
-            conn.commit()
-            logger.warning(f"已存储专家分析 (置信度: {confidence:.2f})")
-        except Exception as e:
-            logger.warning(f"存储专家分析失败: {e}")
     
     def _normal_generate(self, intent: Intent) -> str:
         """降级到普通生成"""
@@ -2007,18 +1914,6 @@ _感谢您的质疑，这帮助我发现了错误。_
             except Exception as e:
                 logger.error(f"自我评估失败: {e}")
     
-    def _try_expert_collaboration(self, intent: Intent) -> Optional[str]:
-        """尝试外脑协作（仅当置信度极低时）"""
-        confidence = self._estimate_self_confidence(intent)
-        
-        # 提高阈值，减少不必要的外脑协作
-        if confidence < 0.4:
-            logger.info(f"自我置信度低({confidence:.2f})，启用外脑协作模式")
-            response = self._expert_collaboration(intent, confidence)
-            bus.publish("plan_executed", response)
-            return response
-        
-        return None
     
     def _try_federation_flow(self, intent: Intent) -> Optional[str]:
         """尝试联邦调度流程"""
@@ -2060,25 +1955,6 @@ _感谢您的质疑，这帮助我发现了错误。_
         
         return None
     
-    def _try_vector_reuse(self, intent: Intent) -> Optional[str]:
-        """尝试向量检索复用"""
-        if not VECTOR_AVAILABLE:
-            return None
-        
-        try:
-            similar = vector_retriever.find_similar_plan(intent.raw_text, intent.type)
-            if similar and similar.get('plan', {}).get('quality_score', 0) >= 70:
-                logger.info(f"✓ 复用相似成功案例(相似度:{similar.get('similarity', 0):.2f})")
-                response = similar.get('plan', {}).get('response', '')
-                if response:
-                    bus.publish("plan_executed", response)
-                    return response
-        except (KeyError, TypeError) as e:
-            logger.warning(f"向量检索数据格式错误: {e}")
-        except Exception as e:
-            logger.error(f"向量检索未知错误: {type(e).__name__}: {e}")
-        
-        return None
     
     def _try_rule_based_routing(self, intent: Intent) -> Optional[str]:
         """尝试学习规则路由"""

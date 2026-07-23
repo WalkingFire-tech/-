@@ -60,7 +60,12 @@ async def execute_parallel_paths(
 
     logger.info(f"🚀 进入阶段3: 多策略并行尝试, intent={intent_type}, strategy={methodology['strategy']}")
 
+    _presence_mode = methodology.get("presence_mode", False)
+
     max_paths = config.get("routing.max_parallel_paths", 9)
+    if _presence_mode:
+        max_paths = 2
+        logger.info(f"🪞 在场模式: max_paths→2，仅保留自我推理+经验池")
     try:
         from infrastructure.enhanced_model_stats import EnhancedModelStats
         _ems = EnhancedModelStats()
@@ -149,7 +154,7 @@ async def execute_parallel_paths(
 
     # API路径：与本地路径同时启动
     ollama_task = None
-    if max_paths >= 3 and _should_run("ollama"):
+    if max_paths >= 3 and _should_run("ollama") and not _presence_mode:
         _ollama_decision = None
         try:
             from core.resource_awareness.adaptive_governor import get_adaptive_governor, ActionType
@@ -184,7 +189,7 @@ async def execute_parallel_paths(
             except Exception:
                 ollama_task = asyncio.create_task(fetch_ollama_all(user_input, conversation_context=conversation_context, truth_insights=truth_insights, intent_type=intent_type))
     ext_task = None
-    _skip_external = methodology.get("self_referential", False)
+    _skip_external = methodology.get("self_referential", False) or _presence_mode
     if max_paths >= 3 and _should_run("external_api") and not _skip_external:
         _search_decision = None
         try:
@@ -211,7 +216,7 @@ async def execute_parallel_paths(
         tool_task = asyncio.create_task(fetch_tool_results(user_input, intent_type, methodology=methodology, tool_intent=_tool_intent))
     self_reason_task = None
     if _should_run("self_reason"):
-        if methodology.get("self_referential") or max_paths >= 6:
+        if _presence_mode or methodology.get("self_referential") or max_paths >= 6:
             from backend.services.path_handlers._shared import _check_vector_available, _fast_executor
             self_reason_task = asyncio.create_task(_self_reason_impl(user_input, conversation_context, truth_insights))
 
@@ -592,13 +597,15 @@ async def execute_parallel_paths(
                 orig_q = c.get("quality", 50)
                 c["quality"] = int(orig_q * _path_weights[wkey])
 
-    if methodology.get("self_referential"):
+    if methodology.get("self_referential") or _presence_mode:
         for c in candidates:
             src = c.get("source", "")
             if "自我推理" in src:
-                c["quality"] = min(100, int(c.get("quality", 50) * 1.4))
+                boost = 1.5 if _presence_mode else 1.4
+                c["quality"] = min(100, int(c.get("quality", 50) * boost))
             elif "Ollama" in src or "本地模型" in src:
-                c["quality"] = int(c.get("quality", 50) * 0.8)
+                penalty = 0.5 if _presence_mode else 0.8
+                c["quality"] = int(c.get("quality", 50) * penalty)
             elif "经验池" in src:
                 c["quality"] = min(100, int(c.get("quality", 50) * 1.2))
 
