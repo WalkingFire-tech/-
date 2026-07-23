@@ -10,7 +10,7 @@ from enum import Enum
 import json
 from pathlib import Path
 import threading
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -104,7 +104,7 @@ class LongTermMemory:
     
     def _init_database(self):
         """初始化数据库"""
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         db.executescript('''
             CREATE TABLE IF NOT EXISTS memories (
                 id TEXT PRIMARY KEY,
@@ -176,7 +176,7 @@ class LongTermMemory:
         with self._lock:
             self.memory_cache[memory_id] = memory
             
-            db = DatabaseManager.get(str(self.db_path))
+            db = get_storage_port(str(self.db_path))
             db.execute('''
                 INSERT INTO memories 
                 (id, type, content, importance, created_at, last_accessed,
@@ -210,7 +210,7 @@ class LongTermMemory:
             memory.access_count += 1
             return memory
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         row = db.query_one(
             'SELECT * FROM memories WHERE id = ?',
             (memory_id,)
@@ -257,7 +257,7 @@ class LongTermMemory:
         """搜索记忆"""
         memories = []
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         sql = 'SELECT * FROM memories WHERE content LIKE ?'
         params = [f'%{query}%']
         
@@ -304,7 +304,7 @@ class LongTermMemory:
         cutoff = datetime.now() - timedelta(hours=hours)
         memories = []
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         sql = 'SELECT * FROM memories WHERE created_at >= ?'
         params = [cutoff.isoformat()]
         
@@ -350,7 +350,7 @@ class LongTermMemory:
         
         self.conversation_cache[conversation_id] = conversation
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         row = db.query_one(
             'SELECT * FROM users WHERE user_id = ?',
             (user_id,)
@@ -403,7 +403,7 @@ class LongTermMemory:
         if emotion is not None:
             conversation.emotions.append(emotion)
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         row = db.query_one(
             'SELECT messages, emotions FROM conversations WHERE conversation_id = ?',
             (conversation_id,)
@@ -447,7 +447,7 @@ class LongTermMemory:
         if key_memories:
             conversation.key_memories = key_memories
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         db.execute('''
             UPDATE conversations 
             SET ended_at = ?, satisfaction = ?, key_memories = ?
@@ -463,7 +463,7 @@ class LongTermMemory:
     
     def get_user_profile(self, user_id: str) -> Dict[str, Any]:
         """获取用户档案"""
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         row = db.query_one(
             'SELECT * FROM users WHERE user_id = ?',
             (user_id,)
@@ -496,7 +496,7 @@ class LongTermMemory:
     
     def update_user_trust(self, user_id: str, delta: float):
         """更新用户信任度"""
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         db.execute('''
             UPDATE users 
             SET trust_score = MAX(0.0, MIN(1.0, trust_score + ?))
@@ -507,7 +507,7 @@ class LongTermMemory:
         """整合记忆（睡眠整合）"""
         logger.info("开始记忆整合...")
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         rows = db.query('''
             SELECT id, access_count, importance 
             FROM memories 
@@ -540,7 +540,7 @@ class LongTermMemory:
     
     def get_memory_stats(self) -> Dict[str, Any]:
         """获取记忆统计"""
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         total_memories = db.query_one('SELECT COUNT(*) FROM memories')[0]
         total_conversations = db.query_one('SELECT COUNT(*) FROM conversations')[0]
         total_users = db.query_one('SELECT COUNT(*) FROM users')[0]

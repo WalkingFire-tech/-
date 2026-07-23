@@ -254,9 +254,10 @@ class AdaptiveGovernor(LoopMixin):
         effective = self.get_effective_mode()
         effective_sev = self._MODE_SEVERITY.get(effective, 0)
         if effective_sev >= 2:
-            max_paths = min(max_paths, 4)
-        elif effective_sev >= 1:
             max_paths = min(max_paths, 5)
+        elif effective_sev >= 1:
+            max_paths = min(max_paths, 7)
+        max_paths = max(max_paths, 5)
         actual = min(requested, max_paths)
         if actual < requested:
             logger.info(f"⚖️ 路径削减：{requested}→{actual}（{effective.value}模式）")

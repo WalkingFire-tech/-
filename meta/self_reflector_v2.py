@@ -60,8 +60,26 @@ class SelfReflector:
             CREATE INDEX IF NOT EXISTS idx_priority ON learning_rules(priority);
         ''')
     
+    PERSPECTIVES = [
+        {"name": "failure_analyst", "focus": "根因分析：为什么失败？模式是什么？"},
+        {"name": "devils_advocate", "focus": "反向审视：失败是否可能是正确选择但时机不对？是否有被忽略的成功信号？"},
+        {"name": "alternative_path", "focus": "替代路径：如果当时选择不同模型/路由，结果会怎样？"},
+        {"name": "system_health", "focus": "系统健康：失败是否反映了更深层问题（资源不足/模型退化/配置过时）？"},
+    ]
+
     def reflect_on_failures(self, limit: int = 20) -> List[Dict]:
-        """分析最近的失败案例,生成改进规则"""
+        """分析最近的失败案例,生成改进规则 — 通过治理器频率控制"""
+        
+        try:
+            from meta.governor import meta_governor
+            approval = meta_governor.approve_adjustment(
+                "self_reflector", {"reflect": 1.0}
+            )
+            if not approval["approved"]:
+                logger.debug(f"反思被治理器节流: {approval['reason']}")
+                return []
+        except Exception:
+            pass
         
         failures = self._get_recent_failures(limit)
         
@@ -78,6 +96,8 @@ class SelfReflector:
         
         try:
             rules = self._llm_based_reflection(failures, light_llm)
+            counterfactuals = self._counterfactual_reflection(failures, light_llm)
+            rules.extend(counterfactuals)
             
             if rules:
                 self._save_rules(rules)
@@ -85,6 +105,7 @@ class SelfReflector:
                 bus.publish("reflection_completed", {
                     "failure_count": len(failures),
                     "rules_generated": len(rules),
+                    "perspectives_used": [p["name"] for p in self.PERSPECTIVES],
                     "timestamp": datetime.now().isoformat()
                 })
             
@@ -122,7 +143,7 @@ class SelfReflector:
         return None
     
     def _llm_based_reflection(self, failures: List[Dict], llm) -> List[Dict]:
-        """基于LLM的反思"""
+        """基于LLM的多视角反思"""
         failure_summary = [
             {
                 "intent": f["intent_type"],
@@ -133,15 +154,25 @@ class SelfReflector:
             for f in failures[:10]
         ]
         
-        prompt = f"""分析以下失败案例,总结模式并提出改进规则。
+        perspective_prompts = []
+        for p in self.PERSPECTIVES:
+            perspective_prompts.append(f"视角【{p['name']}】: {p['focus']}")
+        perspectives_text = "\n".join(perspective_prompts)
+
+        prompt = f"""从多个视角分析以下失败案例,每个视角独立提出改进规则。
 
 失败案例:
 {json.dumps(failure_summary, indent=2, ensure_ascii=False)}
+
+分析视角:
+{perspectives_text}
 
 请输出JSON数组,每个元素包含:
 - condition: 触发条件(如 "intent_type == 'code' and quality < 30")
 - action: 建议动作(如 "reroute:qwen2.5-coder:1.5b" 或 "ask_user:请安装代码模型")
 - priority: 优先级(1-5)
+- perspective: 来源视角名称
+- confidence: 置信度(0.0-1.0)
 
 只输出JSON,不要解释。"""
 
@@ -158,7 +189,7 @@ class SelfReflector:
         return []
     
     def _rule_based_reflection(self, failures: List[Dict]) -> List[Dict]:
-        """基于规则的反思(兜底)"""
+        """基于规则的反思(兜底) — 含多视角"""
         rules = []
         
         failure_patterns = {}
@@ -176,18 +207,101 @@ class SelfReflector:
                     rules.append({
                         "condition": f"intent_type == 'code' and model == '{model_name}'",
                         "action": "reroute:qwen2.5-coder:1.5b",
-                        "priority": 4
+                        "priority": 4,
+                        "perspective": "failure_analyst",
+                        "confidence": 0.7,
                     })
                 
                 else:
                     rules.append({
                         "condition": f"intent_type == '{intent_type}' and quality < 30",
                         "action": f"avoid_model:{model_name}",
-                        "priority": 3
+                        "priority": 3,
+                        "perspective": "failure_analyst",
+                        "confidence": 0.6,
                     })
+
+        for pattern_key, pattern_failures in failure_patterns.items():
+            if len(pattern_failures) >= 1:
+                intent_type, model_name = pattern_key.rsplit('_', 1)
+                avg_quality = sum(f.get("quality_score", 0) for f in pattern_failures) / len(pattern_failures)
+                if 20 < avg_quality < 40:
+                    rules.append({
+                        "condition": f"intent_type == '{intent_type}' and model == '{model_name}' and 20 < quality < 40",
+                        "action": f"retry_with_context:{intent_type}",
+                        "priority": 2,
+                        "perspective": "devils_advocate",
+                        "confidence": 0.4,
+                    })
+
+        for pattern_key, pattern_failures in failure_patterns.items():
+            if len(pattern_failures) >= 1:
+                intent_type, model_name = pattern_key.rsplit('_', 1)
+                rules.append({
+                    "condition": f"intent_type == '{intent_type}' and model == '{model_name}'",
+                    "action": f"try_alternative_model:{intent_type}",
+                    "priority": 2,
+                    "perspective": "alternative_path",
+                    "confidence": 0.5,
+                })
+
+        durations = [f.get("duration", 0) for f in failures if f.get("duration")]
+        if durations and sum(durations) / len(durations) > 15:
+            rules.append({
+                "condition": "duration > 15",
+                "action": "check_system_resources",
+                "priority": 3,
+                "perspective": "system_health",
+                "confidence": 0.5,
+            })
         
-        logger.info(f"规则引擎生成{len(rules)}条规则")
+        logger.info(f"规则引擎生成{len(rules)}条规则(含多视角)")
         return rules
+    
+    def _counterfactual_reflection(self, failures: List[Dict], llm) -> List[Dict]:
+        """反事实推理：如果当时做了不同选择会怎样？"""
+        if not failures:
+            return []
+        
+        sample = failures[:5]
+        scenarios = []
+        for f in sample:
+            scenarios.append({
+                "actual": f"意图={f['intent_type']}, 模型={f['model_name']}, 质量={f['quality_score']}",
+                "counterfactual_1": f"如果使用不同模型会怎样？",
+                "counterfactual_2": f"如果用户提供更多上下文会怎样？",
+                "counterfactual_3": f"如果系统处于不同状态（低负载/高负载）会怎样？",
+            })
+        
+        prompt = f"""对以下失败案例进行反事实推理：如果当时做了不同选择，结果会如何变化？
+
+案例:
+{json.dumps(scenarios, indent=2, ensure_ascii=False)}
+
+请输出JSON数组,每个元素包含:
+- condition: 触发条件(基于反事实假设)
+- action: 预防性动作(避免类似失败)
+- priority: 优先级(1-5)
+- perspective: "counterfactual"
+- confidence: 置信度(0.0-1.0,反事实推理通常较低)
+
+只输出JSON,不要解释。"""
+
+        try:
+            response = llm.generate(prompt, task_type="reflection")
+            if isinstance(response, tuple):
+                response = response[0]
+            json_str = self._extract_json(response)
+            if json_str:
+                rules = json.loads(json_str)
+                for r in rules:
+                    r.setdefault("perspective", "counterfactual")
+                    r.setdefault("confidence", 0.3)
+                return rules
+        except Exception as e:
+            logger.warning(f"反事实推理失败: {e}")
+        
+        return []
     
     def _extract_json(self, text: str) -> Optional[str]:
         """从文本中提取JSON"""
@@ -215,16 +329,19 @@ class SelfReflector:
         db = DatabaseManager.get(self.db_path)
         db.executemany('''
             INSERT INTO learning_rules 
-            (condition, action, priority, created_at, status, confidence)
-            VALUES (?, ?, ?, ?, 'pending', 0.5)
+            (condition, action, priority, created_at, status, confidence, source, metadata)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
         ''', [(
             rule.get("condition"),
             rule.get("action"),
             rule.get("priority", 3),
-            datetime.now().isoformat()
+            datetime.now().isoformat(),
+            rule.get("confidence", 0.5),
+            rule.get("perspective", "reflection"),
+            json.dumps({"perspective": rule.get("perspective", "unknown")}, ensure_ascii=False),
         ) for rule in rules], commit=True)
         
-        logger.info(f"保存{len(rules)}条反思规则")
+        logger.info(f"保存{len(rules)}条反思规则(含视角标记)")
     
     def get_active_rules(self) -> List[LearningRule]:
         """获取活跃规则"""

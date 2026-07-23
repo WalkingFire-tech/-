@@ -128,8 +128,10 @@ class SSEEventSink:
 
     def emit(self, event_type: str, data: dict) -> str:
         import json
-        from backend.services.orchestrator_helpers import SafeEncoder
-        return f"data: {json.dumps({'type': event_type, **data}, ensure_ascii=False, cls=SafeEncoder)}\n\n"
+        return f"data: {json.dumps({'type': event_type, **data}, ensure_ascii=False, default=str)}\n\n"
+
+    def is_available(self) -> bool:
+        return True
 
 
 class NullEventSink:
@@ -137,6 +139,9 @@ class NullEventSink:
 
     def emit(self, event_type: str, data: dict) -> None:
         return None
+
+    def is_available(self) -> bool:
+        return True
 
 
 class BufferedEventSink:
@@ -154,6 +159,9 @@ class BufferedEventSink:
         self.events.clear()
         return events
 
+    def is_available(self) -> bool:
+        return True
+
 
 class LogEventSink:
     """日志事件接收器 — 将认知事件写入日志"""
@@ -166,6 +174,9 @@ class LogEventSink:
             pass
         return None
 
+    def is_available(self) -> bool:
+        return True
+
 
 class SSENotificationPort:
     """SSE通知端口 — 当前默认实现"""
@@ -176,6 +187,9 @@ class SSENotificationPort:
             _enqueue_proactivity({"type": level, "content": message, **kwargs})
         except ImportError:
             pass
+
+    def is_available(self) -> bool:
+        return True
 
 
 class LogNotificationPort:
@@ -189,9 +203,15 @@ class LogNotificationPort:
             import logging
             logging.getLogger(__name__).info(f"[NotificationPort:{level}] {message}")
 
+    def is_available(self) -> bool:
+        return True
+
 
 class NullNotificationPort:
     """空通知端口 — 静默运行时使用"""
 
     def notify(self, message: str, level: str = "info", **kwargs) -> None:
         pass
+
+    def is_available(self) -> bool:
+        return True

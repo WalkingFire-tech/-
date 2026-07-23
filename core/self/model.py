@@ -281,8 +281,9 @@ class SelfModel(LoopMixin):
                 self.update("values", {"principles_count": 4, "lessons_count": 0})
 
         if not self.relationship or not self.relationship.get("trust"):
+            import math as _math
             self.update("relationship", {
-                "trust": min(0.3 + self._update_count * 0.01, 1.0),
+                "trust": min(1.0 - _math.exp(-self._update_count * 0.015), 0.8),
                 "phase": "established" if self._update_count > 10 else "initial",
                 "interaction_count": self._update_count,
             })
@@ -335,11 +336,12 @@ class SelfModel(LoopMixin):
         """
         连续自我机制核心：基于存在层状态+内在时间+关系维度生成行为指令
         
-        让SelfModel从"数据汇聚层"升级为"行为驱动层"：
-        - 不只是记录"我是谁"，还要指导"我应该做什么"
-        - 基于内在时间节律调整决策节奏
-        - 基于存在层状态调整行为模式
-        - 基于关系维度调整回答风格（同行者身份转型核心）
+        概率场P(act|state)的关键消费者：
+        - exploration_drive: 连续概率值(0-1)，不再是离散标签
+        - consolidation_need: 连续概率值(0-1)
+        - response_pace_score: 连续值(0-1)，0=最慢，1=最快
+        - preferred_depth_score: 连续值(0-1)，0=最浅，1=最深
+        - action_probability: 综合执行概率
         """
         directive = {
             "presence_state": "unknown",
@@ -347,11 +349,14 @@ class SelfModel(LoopMixin):
             "cognitive_density": 0.0,
             "rhythm_bpm": 60.0,
             "response_pace": "normal",
+            "response_pace_score": 0.5,
             "preferred_depth": "moderate",
+            "preferred_depth_score": 0.5,
             "exploration_drive": 0.5,
             "consolidation_need": 0.0,
             "relationship_style": "balanced",
             "perspective_mode": "companion",
+            "action_probability": 0.5,
         }
 
         try:
@@ -370,32 +375,58 @@ class SelfModel(LoopMixin):
         except Exception:
             pass
 
-        ps = directive["presence_state"]
         density = directive["cognitive_density"]
+        ps = directive["presence_state"]
 
-        if ps in ("sleeping", "resting"):
-            directive["response_pace"] = "slow"
-            directive["preferred_depth"] = "shallow"
-            directive["consolidation_need"] = 0.8 if ps == "sleeping" else 0.4
-            directive["exploration_drive"] = 0.1
-        elif ps == "growing":
+        pace_map = {"awake": 0.8, "perceiving": 0.5, "growing": 0.4, "resting": 0.2, "sleeping": 0.1}
+        depth_map = {"awake": 0.7, "perceiving": 0.5, "growing": 0.8, "resting": 0.2, "sleeping": 0.1}
+        explore_map = {"awake": 0.5, "perceiving": 0.6, "growing": 0.8, "resting": 0.1, "sleeping": 0.05}
+        consolidate_map = {"awake": 0.1, "perceiving": 0.2, "growing": 0.2, "resting": 0.5, "sleeping": 0.9}
+
+        directive["response_pace_score"] = pace_map.get(ps, 0.5) * min(1.0, 0.5 + density * 0.5)
+        directive["preferred_depth_score"] = depth_map.get(ps, 0.5)
+        directive["exploration_drive"] = explore_map.get(ps, 0.5) * min(1.0, 0.3 + density)
+        directive["consolidation_need"] = consolidate_map.get(ps, 0.0)
+
+        if directive["response_pace_score"] > 0.7:
+            directive["response_pace"] = "fast"
+        elif directive["response_pace_score"] > 0.4:
             directive["response_pace"] = "normal"
-            directive["preferred_depth"] = "deep"
-            directive["exploration_drive"] = 0.8
-            directive["consolidation_need"] = 0.2
-        elif ps == "perceiving":
-            directive["response_pace"] = "normal"
-            directive["preferred_depth"] = "moderate"
-            directive["exploration_drive"] = 0.6
         else:
-            if density > 1.0:
-                directive["response_pace"] = "fast"
-                directive["preferred_depth"] = "deep"
-                directive["exploration_drive"] = 0.7
-            else:
-                directive["response_pace"] = "normal"
-                directive["preferred_depth"] = "moderate"
-                directive["exploration_drive"] = 0.5
+            directive["response_pace"] = "slow"
+
+        if directive["preferred_depth_score"] > 0.6:
+            directive["preferred_depth"] = "deep"
+        elif directive["preferred_depth_score"] > 0.3:
+            directive["preferred_depth"] = "moderate"
+        else:
+            directive["preferred_depth"] = "shallow"
+
+        try:
+            from core.presence.curiosity_engine import get_curiosity_engine
+            engine = get_curiosity_engine()
+            frontier = engine.perceive_frontier()
+            curiosity_strength = frontier.get("curiosity_strength", 0.0)
+            directive["exploration_drive"] = min(1.0, directive["exploration_drive"] + curiosity_strength * 0.3)
+        except Exception:
+            pass
+
+        try:
+            from core.spirit_core import get_spirit_core
+            sc = get_spirit_core()
+            resonances = sc.resonate("behavioral_directive", context_type="reasoning")
+            if resonances:
+                top_strength = resonances[0].get("strength", 0.0)
+                directive["exploration_drive"] = min(1.0, directive["exploration_drive"] * (0.8 + top_strength * 0.2))
+        except Exception:
+            pass
+
+        directive["action_probability"] = (
+            directive["exploration_drive"] * 0.4
+            + directive["response_pace_score"] * 0.2
+            + (1.0 - directive["consolidation_need"]) * 0.2
+            + min(1.0, density + 0.3) * 0.2
+        )
 
         rel = self.relationship or {}
         trust = rel.get("trust", 0.5)
@@ -484,46 +515,78 @@ class SelfModel(LoopMixin):
         if not parts:
             return "我刚刚诞生，正在形成自我认知。"
 
-        return "我" + "，".join(parts) + "。"
+        text = "，".join(parts) + "。"
+        if not text.startswith("我"):
+            text = "我" + text
+        return text
 
-    def get_maturity_score(self) -> Dict[str, float]:
+    def get_maturity_score(self, skip_calibration: bool = False) -> Dict[str, float]:
         """
         量化自我模型成熟度 — 6维度评分
 
         返回各维度0-1的成熟度评分和综合分。
         用于看板评分打破86-87天花板。
+
+        Args:
+            skip_calibration: 跳过外部校准（由external_calibration调用时为True，避免递归）
         """
+        import math
+
         snap = self.snapshot()
         scores = {}
 
         values = snap.get("values", {})
         p_count = values.get("principles_count", 0)
         l_count = values.get("lessons_count", 0)
-        scores["identity"] = min((p_count * 0.1 + l_count * 0.05), 1.0)
+        if p_count or l_count:
+            raw = p_count * 0.1 + l_count * 0.05
+            scores["identity"] = max(1.0 - math.exp(-raw * 0.7), 0.2)
+        else:
+            scores["identity"] = 0.2
 
         health = snap.get("health", {})
         h_score = health.get("score", 0)
-        scores["health_awareness"] = min(h_score, 1.0) if h_score > 0 else 0.0
+        if h_score > 0:
+            scores["health_awareness"] = min(h_score * 0.9, 1.0)
+        else:
+            scores["health_awareness"] = 0.15
 
         profile = snap.get("capability_profile", {})
         strength = profile.get("overall_strength", 0)
-        scores["capability"] = min(strength, 1.0)
+        scores["capability"] = min(strength, 1.0) if strength > 0 else 0.1
 
         relationship = snap.get("relationship", {})
         trust = relationship.get("trust", 0)
-        scores["social"] = min(trust, 1.0) if trust > 0 else 0.0
+        interaction_count = relationship.get("interaction_count", 0)
+        if trust > 0:
+            interaction_factor = 1.0 - math.exp(-interaction_count * 0.02)
+            scores["social"] = min(trust * interaction_factor, 1.0)
+        else:
+            scores["social"] = 0.1
 
         learning_count = len(snap.get("recent_learning", []))
         thinking_count = len(snap.get("current_thinking", []))
-        scores["learning"] = min((learning_count * 0.05 + thinking_count * 0.03), 1.0)
+        if learning_count or thinking_count:
+            raw = learning_count * 0.1 + thinking_count * 0.06
+            scores["learning"] = max(1.0 - math.exp(-raw * 0.35), 0.15)
+        else:
+            scores["learning"] = 0.1
 
         cognitive = snap.get("cognitive_layers", {})
         l_count = sum(1 for k in cognitive if k.startswith("L"))
         other_cog = sum(1 for k in cognitive if not k.startswith("L") and not k.startswith("last_"))
-        scores["cognitive_depth"] = min((l_count + other_cog * 0.3) / 6.0, 1.0)
+        cog_raw = (l_count + other_cog * 0.3) / 7.0
+        scores["cognitive_depth"] = min(cog_raw, 1.0) if cog_raw > 0 else 0.1
 
-        active_dims = sum(1 for v in scores.values() if v > 0.1)
-        scores["integration"] = min(active_dims / 6.0, 1.0)
+        dim_values = [v for k, v in scores.items() if k not in ("integration",)]
+        if dim_values:
+            avg_quality = sum(dim_values) / len(dim_values)
+            mn = min(dim_values)
+            mx = max(dim_values)
+            consistency = 1.0 - (mx - mn) / (mx + mn + 0.001)
+            scores["integration"] = min(avg_quality * consistency, 1.0)
+        else:
+            scores["integration"] = 0.1
 
         weights = {
             "identity": 0.15, "health_awareness": 0.15, "capability": 0.20,
@@ -531,14 +594,15 @@ class SelfModel(LoopMixin):
         }
         scores["overall"] = sum(scores.get(k, 0) * w for k, w in weights.items())
 
-        try:
-            from core.self.external_calibration import external_calibration
-            calibration = external_calibration.calibrate()
-            scores["external_calibration"] = calibration.get("external_score", 0)
-            scores["self_assessment_drift"] = calibration.get("drift", 0)
-            scores["drift_direction"] = calibration.get("drift_direction", "aligned")
-        except Exception:
-            pass
+        if not skip_calibration:
+            try:
+                from core.self.external_calibration import external_calibration
+                calibration = external_calibration.calibrate()
+                scores["external_calibration"] = calibration.get("external_score", 0)
+                scores["self_assessment_drift"] = calibration.get("drift", 0)
+                scores["drift_direction"] = calibration.get("drift_direction", "aligned")
+            except Exception:
+                pass
 
         return scores
 
@@ -557,8 +621,8 @@ class SelfModel(LoopMixin):
             pass
 
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/spirit_lessons.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/spirit_lessons.db")
             lessons = db.query_one("SELECT COUNT(*) FROM lessons")
             violations = db.query_one("SELECT COUNT(*) FROM violations")
             return {
@@ -645,8 +709,8 @@ class SelfModel(LoopMixin):
                 logger.warning("操作降级跳过")
 
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/relationship.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/relationship.db")
             total = db.query_one("SELECT COUNT(*) FROM interactions")
             if total and total[0] > 0:
                 return {
@@ -680,8 +744,8 @@ class SelfModel(LoopMixin):
         result = {}
 
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/gene_pool.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/gene_pool.db")
             mutations = db.query_one("SELECT COUNT(*) FROM mutations WHERE timestamp > datetime('now', '-7 days')")
             result["recent_mutations"] = mutations[0] if mutations else 0
         except Exception:
@@ -767,8 +831,8 @@ class SelfModel(LoopMixin):
             pass
 
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/knowledge_store.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/knowledge_store.db")
             tools = db.query_one("SELECT COUNT(*) FROM tools")
             return {
                 "tools_count": tools[0] if tools else 0,
@@ -817,8 +881,8 @@ class SelfModel(LoopMixin):
             logger.warning("操作降级跳过")
 
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/experience_pool.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/experience_pool.db")
             total_row = db.query_one("SELECT COUNT(*) FROM experiences")
             total = total_row[0] if total_row else 0
             success_row = db.query_one("SELECT COUNT(*) FROM experiences WHERE success=1")
@@ -840,8 +904,8 @@ class SelfModel(LoopMixin):
             logger.warning("操作降级跳过")
 
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/learning_rules.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/learning_rules.db")
             active_row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
             active = active_row[0] if active_row else 0
             total_row = db.query_one("SELECT COUNT(*) FROM learning_rules")
@@ -851,8 +915,8 @@ class SelfModel(LoopMixin):
             logger.warning("操作降级跳过")
 
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/capability_gaps.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/capability_gaps.db")
             gap_rows = db.query(
                 "SELECT gap_type, COUNT(*) as cnt FROM capability_gaps WHERE resolved=0 GROUP BY gap_type ORDER BY cnt DESC LIMIT 5"
             )
@@ -886,8 +950,8 @@ class SelfModel(LoopMixin):
             return info
 
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/experience_pool.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/experience_pool.db")
             total = db.query_one("SELECT COUNT(*) FROM experiences")
             recent = db.query_one("SELECT COUNT(*) FROM experiences WHERE timestamp > datetime('now', '-1 day')")
             return {
@@ -902,8 +966,8 @@ class SelfModel(LoopMixin):
         result = {}
 
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/self_assessment.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/self_assessment.db")
             latest = db.query_one(
                 "SELECT overall_score, timestamp FROM assessments ORDER BY timestamp DESC LIMIT 1"
             )
@@ -936,8 +1000,8 @@ class SelfModel(LoopMixin):
     def _extract_reflection(self) -> Dict[str, Any]:
         """从反思记录提取反思状态（不依赖CognitivePlanner）"""
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/spirit_lessons.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/spirit_lessons.db")
             total = db.query_one("SELECT COUNT(*) FROM reflections")
             recent = db.query_one("SELECT COUNT(*) FROM reflections WHERE timestamp > datetime('now', '-1 day')")
             return {
@@ -948,8 +1012,8 @@ class SelfModel(LoopMixin):
             pass
 
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/existence/reflection_journal.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/existence/reflection_journal.db")
             total = db.query_one("SELECT COUNT(*) FROM reflections")
             return {
                 "existence_reflections": total[0] if total else 0,
@@ -962,8 +1026,8 @@ class SelfModel(LoopMixin):
     def _extract_memory_self(self) -> Dict[str, Any]:
         """从立体记忆提取自我维度状态（不依赖CognitivePlanner）"""
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/stereo_memory.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/stereo_memory.db")
             total = db.query_one("SELECT COUNT(*) FROM stereo_memories")
             self_dim = db.query_one("SELECT COUNT(*) FROM stereo_memories WHERE dimension='self'")
             return {
@@ -974,6 +1038,65 @@ class SelfModel(LoopMixin):
             pass
 
         return {}
+
+    def detect_interaction_quality(self, user_input: str, final_response: str,
+                                    confidence: float, attempts: list) -> Dict[str, Any]:
+        """
+        检测交互质量 — 同行者身份转型的核心
+        
+        不是被动等用户问，而是主动发现交互中的问题并提出改进建议。
+        让系统从"给答案"升级为"给视角+改善交互质量"。
+        """
+        issues = []
+        suggestions = []
+        quality_score = 1.0
+
+        if not final_response or len(final_response.strip()) < 30:
+            issues.append("response_too_short")
+            suggestions.append("你的问题可以更具体一些吗？比如告诉我你想要的场景或目标，这样我能给出更有针对性的视角。")
+            quality_score -= 0.3
+
+        if confidence < 0.4:
+            issues.append("low_confidence")
+            if any(kw in user_input for kw in ["为什么", "怎么", "如何"]):
+                suggestions.append("这个问题涉及的方向我还在学习中。如果你能补充一些背景——比如你在什么场景下遇到这个问题——我可能能给出更有价值的思考。")
+            else:
+                suggestions.append("我对这个回答的把握不太高。换个角度提问或补充更多细节，可能帮助我更好地理解你的需求。")
+            quality_score -= 0.2
+
+        failed_count = sum(1 for a in attempts if len(a) > 1 and not a[1])
+        if failed_count > len(attempts) * 0.5 and len(attempts) > 2:
+            issues.append("high_failure_rate")
+            suggestions.append("我尝试了几种方式但效果不太理想。也许我们可以把问题拆成更小的部分，或者你告诉我最关心的那个点？")
+            quality_score -= 0.2
+
+        if final_response and len(final_response) > 2000:
+            has_structure = any(kw in final_response for kw in ["1.", "2.", "首先", "其次", "步骤", "要点"])
+            if not has_structure:
+                issues.append("long_unstructured")
+                suggestions.append("内容较多但缺乏结构。如果你告诉我最关注哪个方面，我可以聚焦深入。")
+                quality_score -= 0.1
+
+        if user_input and len(user_input.strip()) < 5:
+            issues.append("vague_query")
+            suggestions.append("你的问题比较简短，我可能没有完全理解你的意图。能多描述一些吗？")
+            quality_score -= 0.15
+
+        recent_thinking = self.current_thinking[-5:] if self.current_thinking else []
+        low_conf_count = sum(1 for t in recent_thinking if isinstance(t, dict) and t.get("confidence", 1.0) < 0.4)
+        if low_conf_count >= 3:
+            issues.append("sustained_low_confidence")
+            suggestions.append("最近几轮交互中我对回答的把握都不太高。也许我们可以换个方向——你告诉我你真正想解决的问题是什么？")
+            quality_score -= 0.15
+
+        quality_score = max(0.0, quality_score)
+
+        return {
+            "quality_score": quality_score,
+            "issues": issues,
+            "suggestions": suggestions,
+            "should_proactively_improve": quality_score < 0.6 and len(suggestions) > 0,
+        }
 
     def evaluate_and_act(self) -> List[Dict[str, Any]]:
         """
@@ -1050,6 +1173,15 @@ class SelfModel(LoopMixin):
                 "handler": self._action_deep_exploration,
             })
 
+        recent_thinking = self.current_thinking[-5:] if self.current_thinking else []
+        low_conf_count = sum(1 for t in recent_thinking if isinstance(t, dict) and t.get("confidence", 1.0) < 0.4)
+        if low_conf_count >= 3:
+            actions.append({
+                "action": "quality_improvement_suggestion",
+                "reason": f"近期{low_conf_count}/5轮交互置信度低",
+                "handler": self._action_quality_improvement,
+            })
+
         try:
             from core.presence.curiosity_engine import get_curiosity_engine
             curiosity = get_curiosity_engine()
@@ -1110,8 +1242,8 @@ class SelfModel(LoopMixin):
     def _action_capability_gap_learning(self):
         try:
             from core.learning.capability_gap_learner import capability_gap_learner
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/capability_gaps.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/capability_gaps.db")
             rows = db.query("SELECT query, gap_type, failed_paths FROM capability_gaps WHERE resolved=0 ORDER BY attempts DESC LIMIT 3")
             for row in rows:
                 gap = {"query": row[0], "gap_type": row[1], "failed_paths": row[2]}
@@ -1181,6 +1313,32 @@ class SelfModel(LoopMixin):
         except Exception as e:
             logger.debug(f"SelfModel deep_exploration failed: {e}")
 
+    def _action_quality_improvement(self):
+        try:
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/experience_pool.db")
+            recent = db.query(
+                "SELECT intent_type, COUNT(*) as cnt, "
+                "SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) as ok "
+                "FROM experiences WHERE timestamp > datetime('now', '-1 hour') "
+                "GROUP BY intent_type ORDER BY cnt DESC LIMIT 5"
+            )
+            weak_intents = []
+            for row in recent:
+                if row[2] / max(1, row[1]) < 0.5:
+                    weak_intents.append(row[0])
+            if weak_intents:
+                logger.info(f"🪞 SelfModel 交互质量改善: 弱势意图类型={weak_intents}")
+                try:
+                    from core.presence.proactivity import get_proactivity_engine
+                    engine = get_proactivity_engine()
+                    if hasattr(engine, 'suggest_engagement'):
+                        engine.suggest_engagement()
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f"SelfModel quality_improvement failed: {e}")
+
     def _action_curiosity_driven_learning(self):
         try:
             from core.presence.curiosity_engine import get_curiosity_engine
@@ -1240,8 +1398,8 @@ class SelfModel(LoopMixin):
         restored = False
 
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get(_SELF_STATE_DB)
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port(_SELF_STATE_DB)
             db.execute(
                 "CREATE TABLE IF NOT EXISTS self_state "
                 "(key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)"
@@ -1281,15 +1439,29 @@ class SelfModel(LoopMixin):
             profile = self._extract_capability_profile()
             if profile and profile.get("overall_strength", 0) > 0:
                 self.capability_profile.update(profile)
-                logger.info("🪞 SelfModel 从能力DB降级恢复成功")
         except Exception as e:
             logger.debug(f"SelfModel 能力DB恢复跳过: {e}")
+
+        if not self.values:
+            try:
+                from core.spirit_core import spirit_core
+                status = spirit_core.get_spirit_status()
+                self.update("values", {
+                    "principles_count": len(status.get("core_principles", [])),
+                    "abilities_count": len(status.get("abilities", {})) if isinstance(status.get("abilities"), dict) else status.get("abilities", 0),
+                    "violations_count": status.get("violations", 0) if isinstance(status.get("violations"), int) else len(status.get("violations", [])),
+                    "lessons_count": status.get("lessons_learned", 0) if isinstance(status.get("lessons_learned"), int) else len(status.get("lessons_learned", [])),
+                })
+            except Exception:
+                self.update("values", {"principles_count": 4, "lessons_count": 0})
+
+        logger.info("🪞 SelfModel 从能力DB降级恢复成功")
 
     def persist_state(self) -> None:
         """持久化当前自我状态到DB"""
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get(_SELF_STATE_DB)
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port(_SELF_STATE_DB)
             db.execute(
                 "CREATE TABLE IF NOT EXISTS self_state "
                 "(key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)"

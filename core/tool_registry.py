@@ -496,8 +496,8 @@ class ToolExecutor:
 
     def _init_stats_db(self):
         try:
-            from infrastructure.database_manager import DatabaseManager
-            self._stats_db = DatabaseManager.get("data/tool_stats.db")
+            from core.ports.adapters import get_storage_port
+            self._stats_db = get_storage_port("data/tool_stats.db")
             self._stats_db.execute('''CREATE TABLE IF NOT EXISTS tool_stats (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tool_name TEXT,
@@ -593,11 +593,12 @@ def register_builtin_tools():
     from core.tools.file_reader_tool import FileReaderTool
     from core.tools.bash_tool import BashTool
     from core.tools.serial_port_tool import SerialPortTool
+    from core.tools.datetime_tool import DateTimeTool
 
     for tool_cls in [WebSearchTool, CalculatorTool, CodeExecutorTool,
                      KnowledgeLookupTool, FactCheckTool,
                      ProjectScannerTool, CodeIndexerTool, DependencyAnalyzerTool,
-                     FileReaderTool, BashTool, SerialPortTool]:
+                     FileReaderTool, BashTool, SerialPortTool, DateTimeTool]:
         try:
             tool = tool_cls()
             tool_registry.register(tool)
@@ -624,6 +625,13 @@ def register_builtin_tools():
                 logger.warning(f"用户工具注册跳过 {ut['name']}: {e}")
     except Exception:
         logger.warning("操作降级跳过")
+
+    try:
+        from core.unified_reader import UnifiedReader
+        _ur = UnifiedReader()
+        tool_registry.register_tool("unified_read", _ur.read, category="io", description="统一读取接口：本地文件/PDF/SQLite/网页")
+    except Exception:
+        pass
 
     logger.info(f"工具注册完成: {tool_registry.tool_count}个工具")
 

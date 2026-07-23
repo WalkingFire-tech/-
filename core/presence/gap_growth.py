@@ -84,6 +84,18 @@ class GrowthEvent:
     details: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class BoundaryExpectation:
+    """边界扩展预期——消化信号后期望的能力扩展"""
+    id: str
+    gap_type: str
+    expected_capability: str
+    created_at: str
+    verified: bool = False
+    verified_at: Optional[str] = None
+    verification_result: Optional[str] = None
+
+
 class GapGrowthEngine:
     """
     间隙生长引擎
@@ -99,6 +111,12 @@ class GapGrowthEngine:
         self._signal_history: List[Signal] = []
 
         self._growth_events: List[GrowthEvent] = []
+
+        self._boundary_expectations: List[BoundaryExpectation] = []
+
+        self._boundary_verifications = {
+            "total": 0, "confirmed": 0, "failed": 0, "pending": 0
+        }
 
         self._stats = {
             "signals_received": 0,
@@ -489,6 +507,89 @@ class GapGrowthEngine:
         self._stats["growth_events"] += 1
         self._stats["total_growth_impact"] += event.impact
 
+        if signal.type in (SignalType.KNOWLEDGE_GAP, SignalType.TOOL_NEED, SignalType.SKILL_OPPORTUNITY):
+            self._record_boundary_expectation(signal, result)
+
+    def _record_boundary_expectation(self, signal: Signal, result: Dict) -> None:
+        """记录边界扩展预期——消化后期望系统能力边界扩展"""
+        expected = result.get("details", {}).get("expected_capability", signal.content[:80])
+        expectation = BoundaryExpectation(
+            id=hashlib.md5(f"be_{signal.id}_{datetime.now().isoformat()}".encode()).hexdigest()[:12],
+            gap_type=signal.type.value,
+            expected_capability=expected,
+            created_at=datetime.now().isoformat(),
+        )
+        self._boundary_expectations.append(expectation)
+        self._boundary_verifications["pending"] += 1
+        self._boundary_verifications["total"] += 1
+
+    def verify_boundary_expansion(self) -> Dict:
+        """
+        验证边界是否真正扩展——闭环的关键步骤
+
+        检查未验证的边界预期，对比当前系统能力是否已覆盖预期。
+        这是"生长→验证边界扩展"闭环的验证端。
+        """
+        verified_count = 0
+        confirmed_count = 0
+        failed_count = 0
+
+        for exp in self._boundary_expectations:
+            if exp.verified:
+                continue
+
+            is_confirmed = self._check_capability_exists(exp.expected_capability)
+
+            exp.verified = True
+            exp.verified_at = datetime.now().isoformat()
+            exp.verification_result = "confirmed" if is_confirmed else "failed"
+
+            if is_confirmed:
+                confirmed_count += 1
+                self._boundary_verifications["confirmed"] += 1
+            else:
+                failed_count += 1
+                self._boundary_verifications["failed"] += 1
+            self._boundary_verifications["pending"] -= 1
+            verified_count += 1
+
+        if verified_count > 0:
+            logger.info(f"🌿 边界验证: {verified_count}项, 确认={confirmed_count}, 未达={failed_count}")
+
+        return {
+            "verified": verified_count,
+            "confirmed": confirmed_count,
+            "failed": failed_count,
+            "total_expectations": len(self._boundary_expectations),
+        }
+
+    def _check_capability_exists(self, expected_capability: str) -> bool:
+        """检查预期能力是否已存在于系统中"""
+        try:
+            from core.self.model import get_self_model
+            sm = get_self_model()
+            snapshot = sm.snapshot()
+            capabilities = snapshot.get("capabilities", {})
+            for cap_name, cap_data in capabilities.items():
+                if isinstance(cap_data, dict):
+                    score = cap_data.get("mastery_score", 0)
+                    if score > 0.3 and (expected_capability.lower() in cap_name.lower()
+                                        or cap_name.lower() in expected_capability.lower()):
+                        return True
+        except Exception:
+            pass
+
+        try:
+            from core.skill_emergence import SkillEmergence
+            se = SkillEmergence()
+            result = se.reflex_query(expected_capability)
+            if result and result.get("confidence", 0) > 0.3:
+                return True
+        except Exception:
+            pass
+
+        return False
+
     def _periodic_deep_growth(self) -> None:
         """执行周期性的深度生长（基于时间触发）"""
         now = datetime.now()
@@ -566,6 +667,8 @@ class GapGrowthEngine:
                 }
                 for e in self._growth_events[-10:]
             ],
+            "boundary_verification": self._boundary_verifications,
+            "pending_expectations": len([e for e in self._boundary_expectations if not e.verified]),
             "total_events": len(self._growth_events),
             "running": self._running
         }

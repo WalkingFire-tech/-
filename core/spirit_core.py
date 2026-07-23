@@ -49,7 +49,7 @@
 from typing import Dict, Any, List, Optional, Final
 from loguru import logger
 import time
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import json
 import threading
 from datetime import datetime
@@ -192,7 +192,7 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         object.__delattr__(self, name)
     
     def _db(self):
-        return DatabaseManager.get("data/spirit_lessons.db", timeout=10.0)
+        return get_storage_port("data/spirit_lessons.db", timeout=10.0)
     
     def _init_lesson_db(self):
         """初始化教训持久化数据库"""
@@ -232,18 +232,37 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         """
         issues = []
         checks = {}
+        import re as _re
+        from core.response_quality_contract import (
+            PERFUNCTORY_KEYWORDS, CONTRADICTION_PAIRS, EXPLANATORY_KEYWORDS,
+            GIVE_UP_PHRASES,
+            is_perfunctory, has_contradiction, has_explanatory_content, has_give_up,
+        )
         query = (context or {}).get("query", "")
         content_understanding = (context or {}).get("content_understanding", {})
         is_simple_fact = content_understanding.get("claim_type") in ("factual", "descriptive") and not content_understanding.get("has_causal_assertions", False)
         
         # === 维度1：有意义回复 ===
+        _factual_patterns = [
+            r'\d{4}年\d{1,2}月\d{1,2}日', r'\d{1,2}时\d{1,2}分',
+            r'°C', r'km/h', r'%$', r'天气', r'气温',
+            r'^[\d\+\-\*/\.\s=]+$', r'结果[是为].*\d',
+        ]
+        is_factual_result = any(_re.search(p, response) for p in _factual_patterns) if response else False
         if not response or len(response.strip()) < 10:
             issues.append("回复过于简单，不符合'有意义回复'原则")
             checks["meaningful"] = False
+        elif is_factual_result:
+            checks["meaningful"] = True
         else:
-            perfunctory_keywords = ["我不知道", "无法回答", "请稍后", "系统错误"]
-            has_perfunctory = any(kw in response and len(response) < 50 for kw in perfunctory_keywords)
-            if has_perfunctory:
+            has_perfunctory_keyword = any(kw in response for kw in PERFUNCTORY_KEYWORDS)
+            # 敷衍+无实质+短 → 拦截
+            has_substantive_content = (
+                has_explanatory_content(response) or
+                any(kw in response for kw in ["包括", "涉及", "例如", "比如", "分析", "方法", "步骤", "原理", "原因"])
+            )
+            if has_perfunctory_keyword and not has_substantive_content and len(response) < 120:
+
                 issues.append("回复包含敷衍性语言，不符合'有意义回复'原则")
                 checks["meaningful"] = False
             elif is_simple_fact and len(response) >= 10:
@@ -260,40 +279,34 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
                 checks["meaningful"] = True
         
         # === 维度2：永不放弃 ===
-        give_up_phrases = ["我放弃了", "无法继续", "不再尝试", "彻底失败"]
-        has_give_up = any(phrase in response for phrase in give_up_phrases)
+        has_give_up = any(phrase in response for phrase in GIVE_UP_PHRASES)
         if has_give_up:
             issues.append("回复包含放弃性语言，违反'永不放弃'元能力")
             checks["never_give_up"] = False
         else:
             checks["never_give_up"] = True
         
-        # === 维度3：逻辑自洽（P5-2c增强：扩展矛盾词对+跨句检测） ===
-        contradiction_pairs = [
-            ("不可能", "可以"), ("无法", "可以"), ("错误", "正确"),
-            ("必须", "可以不"), ("永远", "有时"), ("所有", "某些"),
-            ("一定", "可能不"), ("必然", "偶然"), ("总是", "从不"),
-        ]
+        # === 维度3：逻辑自洽（使用统一契约中的矛盾词对） ===
         has_contradiction = False
-        import re as _re
-        # 层1：全文本词对矛盾检测（不拆分，确保跨逗号的矛盾也能捕获）
-        for w1, w2 in contradiction_pairs:
-            if w1 in response and w2 in response:
-                has_contradiction = True
+
+        # 层1：跨句命题一致性检测优先（避免"无法"+"可以"误报）
+        sentences = _re.split(r'[。！？；\n，,]', response)
+        abs_sents = [s for s in sentences if any(w in s for w in ["必须", "一定", "必然", "永远", "所有", "任何"])]
+        qual_sents = [s for s in sentences if any(w in s for w in ["可以不", "可能不", "偶然", "有时", "某些"])]
+        for a in abs_sents:
+            for q in qual_sents:
+                a_kw = set(_re.findall(r'[\u4e00-\u9fff]{2,}', a))
+                q_kw = set(_re.findall(r'[\u4e00-\u9fff]{2,}', q))
+                if len(a_kw & q_kw) >= 2:
+                    has_contradiction = True
+                    break
+            if has_contradiction:
                 break
-        # 层2：跨句命题一致性检测（逗号也作为分句点）
+        # 层2：全文本矛盾词对检测（不拆句，捕获跨句矛盾）
         if not has_contradiction:
-            sentences = _re.split(r'[。！？；\n，,]', response)
-            abs_sents = [s for s in sentences if any(w in s for w in ["必须", "一定", "必然", "永远", "所有", "任何"])]
-            qual_sents = [s for s in sentences if any(w in s for w in ["可以不", "可能不", "偶然", "有时", "某些"])]
-            for a in abs_sents:
-                for q in qual_sents:
-                    a_kw = set(_re.findall(r'[\u4e00-\u9fff]{2,}', a))
-                    q_kw = set(_re.findall(r'[\u4e00-\u9fff]{2,}', q))
-                    if len(a_kw & q_kw) >= 2:
-                        has_contradiction = True
-                        break
-                if has_contradiction:
+            for w1, w2 in CONTRADICTION_PAIRS:
+                if w1 in response and w2 in response:
+                    has_contradiction = True
                     break
         if has_contradiction:
             issues.append("回复可能存在自相矛盾，需检查逻辑自洽性")
@@ -347,8 +360,7 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         # === 维度7：困惑时坦诚 ===
         forced_fusion = ["综上所述，两者其实是一回事", "简单来说都一样"]
         has_forced_fusion = any(p in response for p in forced_fusion)
-        import re as _re2
-        oversimplified_conclusion = _re2.search(r'(总之|总的来说|简而言之|总而言之)[，,]\s*(.{2,15})(?:就是|都是|就是)', response)
+        oversimplified_conclusion = _re.search(r'(总之|总的来说|简而言之|总而言之)[，,]\s*(.{2,15})(?:就是|都是|就是)', response)
         if has_forced_fusion:
             issues.append("回复可能强行融合矛盾观点，不符合'困惑时坦诚'原则")
             checks["honest_when_lost"] = False
@@ -361,7 +373,7 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         # === 维度8：多源验证 ===
         single_source_claims = ["据我所知唯一", "只有一种可能", "毫无疑问"]
         has_single_source = any(p in response for p in single_source_claims) and len(response) < 80
-        absolute_patterns = _re2.search(r'(一定|必然|绝对|肯定)[^，。？！\n]{0,10}(是|对|正确|没错)', response)
+        absolute_patterns = _re.search(r'(一定|必然|绝对|肯定)[^，。？！\n]{0,10}(是|对|正确|没错)', response)
         if has_single_source:
             issues.append("回复呈现单一来源断言，不符合'多源交叉验证'原则")
             checks["multi_source"] = False
@@ -371,9 +383,15 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         else:
             checks["multi_source"] = True
         
+        HARD_CONSTRAINT_DIMENSIONS = {"meaningful", "never_give_up"}
+        soft_issues = [i for i, d in zip(issues, [k for k, v in checks.items() if not v]) if d not in HARD_CONSTRAINT_DIMENSIONS]
+        hard_issues = [i for i, d in zip(issues, [k for k, v in checks.items() if not v]) if d in HARD_CONSTRAINT_DIMENSIONS]
+
         result = {
-            "valid": len(issues) == 0,
+            "valid": len(hard_issues) == 0,
             "issues": issues,
+            "hard_issues": hard_issues,
+            "soft_issues": soft_issues,
             "spirit_compliance": len(issues) == 0,
             "checks": checks,
             "score": sum(1 for v in checks.values() if v) / max(len(checks), 1)
@@ -523,7 +541,7 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
             suggestions.append("考虑多方面因素的综合影响")
             suggestions.append("寻找历史案例或数据支撑")
         
-        elif any(kw in question_lower for kw in ["怎么", "如何", "方法"]):
+        elif any(kw in question_lower for kw in ["怎么", "如何", "方法", "途径", "方式", "哪些"]):
             suggestions.append("将问题分解为更小的步骤")
             suggestions.append("寻找类似的已解决问题")
             suggestions.append("尝试不同的解决路径")
@@ -717,6 +735,14 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         except Exception:
             pass
 
+        try:
+            from core.defense import check_safety
+            _safety = check_safety(context)
+            if _safety and not _safety.get("safe", True):
+                logger.warning(f"SDRS防御拦截: {_safety.get('reason', '')}")
+        except Exception:
+            pass
+
         return resonances
 
     def get_spirit_status(self) -> Dict[str, Any]:
@@ -813,20 +839,22 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
         with self._lock:
             self._total_validations += 1
         
-        validation = self.validate_response(response)
+        validation = self.validate_response(response, context={"query": query})
         
         if not validation["valid"]:
-            # 触发精神异常
-            self.raise_spirit_violation(response, validation["issues"], source)
+            self.raise_spirit_violation(response, validation["hard_issues"], source)
             
-            # 自动修正：生成有意义的回复
             corrected = self.ensure_meaningful_response(
                 query, 
-                [{"method": source, "success": False, "error": "; ".join(validation["issues"])}],
+                [{"method": source, "success": False, "error": "; ".join(validation["hard_issues"])}],
                 response
             )
-            logger.info(f"🔧 精神内核自动修正: {source}")
+            logger.info(f"🔧 精神内核自动修正(硬约束): {source}")
             return corrected
+        
+        if validation.get("soft_issues"):
+            logger.info(f"📊 精神内核软信号({source}): {'; '.join(validation['soft_issues'][:2])}")
+            self._record_lesson(query, [{"method": source, "success": True, "warning": "; ".join(validation["soft_issues"])}])
         
         return response
 

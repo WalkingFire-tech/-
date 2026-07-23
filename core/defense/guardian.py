@@ -69,10 +69,10 @@ class SystemGuardian:
 
     def _collect_health_metrics(self):
         try:
-            from infrastructure.database_manager import DatabaseManager
-            row = DatabaseManager.get("data/experience_pool.db").query_one("SELECT COUNT(*) FROM experiences WHERE success=0")
+            from core.ports.adapters import get_storage_port
+            row = get_storage_port("data/experience_pool.db").query_one("SELECT COUNT(*) FROM experiences WHERE success=0")
             failures = row[0] if row else 0
-            row = DatabaseManager.get("data/experience_pool.db").query_one("SELECT COUNT(*) FROM experiences")
+            row = get_storage_port("data/experience_pool.db").query_one("SELECT COUNT(*) FROM experiences")
             total = row[0] if row else 0
 
             if total > 0:

@@ -385,8 +385,8 @@ class SubTaskExecutor:
     def _store_execution_stats(self, stats: Dict):
         """存储执行统计到数据库"""
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get('data/task_decomposition.db')
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port('data/task_decomposition.db')
             db.execute('''
                 CREATE TABLE IF NOT EXISTS execution_stats (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,

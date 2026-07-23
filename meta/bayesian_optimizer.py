@@ -241,11 +241,36 @@ class BayesianOptimizer:
         )
     
     def apply_best_params(self, best_params: Dict[str, float]) -> None:
-        """应用最佳参数并发送配置更新事件"""
+        """应用最佳参数 — 通过MetaControlGovernor审批"""
+        try:
+            from meta.governor import meta_governor
+            meta_governor.snapshot_params("bayesian_optimizer", self.current_params)
+            approval = meta_governor.approve_adjustment("bayesian_optimizer", best_params)
+            if not approval["approved"]:
+                logger.warning(f"贝叶斯优化参数调整被治理器拒绝: {approval['reason']}")
+                return
+            if approval["clamped"]:
+                logger.info(f"贝叶斯优化参数被钳位: {approval['clamped']}")
+        except Exception:
+            pass
+
         self.current_params.update(best_params)
         logger.info(f"应用最佳参数: {best_params}")
         
         bus.publish("config_updated", {"new_params": best_params})
+    
+    def rollback_params(self) -> bool:
+        """回滚到上次参数快照"""
+        try:
+            from meta.governor import meta_governor
+            snapshot = meta_governor.rollback_params("bayesian_optimizer")
+            if snapshot:
+                self.current_params.update(snapshot)
+                bus.publish("config_updated", {"new_params": snapshot})
+                return True
+        except Exception:
+            pass
+        return False
     
     def save_optimization_result(self, result: OptimizationResult,
                                 filepath: str = "data/optimization_result.json") -> None:

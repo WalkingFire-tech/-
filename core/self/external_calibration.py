@@ -145,8 +145,8 @@ class ExternalCalibration:
     def _read_user_rejection_rate(self) -> float:
         """用户拒绝率 → 反转为满意度（1 - rejection_rate）"""
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/learning_rules.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/learning_rules.db")
             row = db.query_one(
                 "SELECT SUM(apply_count), SUM(user_rejection_count) FROM learning_rules WHERE status='active'"
             )
@@ -160,8 +160,8 @@ class ExternalCalibration:
     def _read_empty_response_rate(self) -> float:
         """非空响应率（从experience_pool读取quality_score>0的比例）"""
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/experience_pool.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/experience_pool.db")
             total = db.query_one("SELECT COUNT(*) FROM experiences")
             quality = db.query_one("SELECT COUNT(*) FROM experiences WHERE quality_score > 0")
             if total and total[0] > 0:
@@ -173,8 +173,8 @@ class ExternalCalibration:
     def _read_rule_activation_rate(self) -> float:
         """规则激活率（active / total）"""
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/learning_rules.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/learning_rules.db")
             total = db.query_one("SELECT COUNT(*) FROM learning_rules")
             active = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
             if total and total[0] > 0:
@@ -186,8 +186,8 @@ class ExternalCalibration:
     def _read_experience_quality_rate(self) -> float:
         """高质量经验占比（quality_score >= 60）"""
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/experience_pool.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/experience_pool.db")
             total = db.query_one("SELECT COUNT(*) FROM experiences")
             high = db.query_one("SELECT COUNT(*) FROM experiences WHERE quality_score >= 60")
             if total and total[0] > 0:
@@ -199,8 +199,8 @@ class ExternalCalibration:
     def _read_trial_conversion_rate(self) -> float:
         """trial→active转化率"""
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/learning_rules.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/learning_rules.db")
             total = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status IN ('active','expired','trial')")
             active = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
             if total and total[0] > 0:
@@ -210,11 +210,13 @@ class ExternalCalibration:
         return 0.5
 
     def _get_self_model_score(self) -> float:
-        """读取SelfModel的当前自评分"""
+        """读取SelfModel的当前自评分 — 使用skip_calibration避免递归"""
         try:
             from core.self.model import get_self_model
             sm = get_self_model()
-            scores = sm.get_maturity_score()
+            if not sm.values:
+                sm.sync_from_cognitive_planner(None)
+            scores = sm.get_maturity_score(skip_calibration=True)
             return scores.get("overall", 0.5)
         except Exception:
             return 0.5

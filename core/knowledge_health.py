@@ -7,7 +7,7 @@ from typing import Dict, List
 from collections import Counter
 from loguru import logger
 
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class KnowledgeHealthChecker:
@@ -56,7 +56,7 @@ class KnowledgeHealthChecker:
     
     def _check_knowledge(self) -> Dict:
         """检查知识总量"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         row = db.query_one("SELECT COUNT(*) FROM knowledge_items")
         total = row[0]
@@ -86,7 +86,7 @@ class KnowledgeHealthChecker:
     
     def _check_memory_layers(self) -> Dict:
         """检查记忆层级"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         rows = db.query('''
             SELECT memory_layer, COUNT(*) as cnt
@@ -111,7 +111,7 @@ class KnowledgeHealthChecker:
     
     def _check_skills(self) -> Dict:
         """检查技能库"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         row = db.query_one("SELECT COUNT(*) FROM tools")
         total = row[0]
@@ -136,7 +136,7 @@ class KnowledgeHealthChecker:
     
     def _check_rules(self) -> Dict:
         """检查规则库"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         row = db.query_one("SELECT COUNT(*) FROM learning_rules")
         total = row[0]
@@ -163,7 +163,7 @@ class KnowledgeHealthChecker:
     
     def _check_quality(self) -> Dict:
         """检查知识质量"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         row = db.query_one("""
             SELECT 
@@ -201,7 +201,7 @@ class KnowledgeHealthChecker:
     
     def _check_topics(self) -> Dict:
         """检查知识覆盖领域"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         rows = db.query("""
             SELECT question FROM knowledge_items
@@ -228,7 +228,7 @@ class KnowledgeHealthChecker:
     
     def _check_trend(self) -> Dict:
         """检查学习趋势"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         week_ago = (datetime.now() - timedelta(days=7)).isoformat()
         row = db.query_one("""

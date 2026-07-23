@@ -16,7 +16,7 @@
 import time
 from typing import Optional, Dict, Any, List
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class MetabolismOrchestrator:
@@ -211,7 +211,7 @@ class MetabolismOrchestrator:
 
     def _prune_knowledge_items(self) -> tuple:
         try:
-            db = DatabaseManager.get("data/knowledge_items.db")
+            db = get_storage_port("data/knowledge_items.db")
             db.execute(
                 "CREATE TABLE IF NOT EXISTS knowledge_items ("
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -257,7 +257,7 @@ class MetabolismOrchestrator:
 
     def _prune_experiences(self) -> tuple:
         try:
-            db = DatabaseManager.get("data/experience_pool.db")
+            db = get_storage_port("data/experience_pool.db")
             rows = db.query(
                 "SELECT id, raw_input, quality_score FROM experiences "
                 "WHERE success = 0 AND timestamp < datetime('now', '-14 days') AND quality_score < 30 "

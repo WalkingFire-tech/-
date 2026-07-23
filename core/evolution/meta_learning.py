@@ -8,7 +8,7 @@
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import json
 import hashlib
 import threading
@@ -71,7 +71,7 @@ class MetaLearner:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS learning_observations (
                 id TEXT PRIMARY KEY,
@@ -149,7 +149,7 @@ class MetaLearner:
             f"{layer_name}{metric_name}{datetime.now().isoformat()}".encode()
         ).hexdigest()[:12]
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO learning_observations
             (id, layer_name, metric_name, old_value, new_value,
@@ -228,7 +228,7 @@ class MetaLearner:
         """
         patterns = []
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         rows = db.query('''
             SELECT metric_name, 
@@ -341,7 +341,7 @@ class MetaLearner:
     
     def get_active_patterns(self) -> List[LearningPattern]:
         """获取活跃的学习模式"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         rows = db.query('''
             SELECT * FROM learning_patterns
             WHERE status = 'active'
@@ -371,7 +371,7 @@ class MetaLearner:
         Returns:
             adjustment_id
         """
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         cur = db.execute('''
             INSERT INTO learning_adjustments
             (adjustment_type, target_layer, parameter_name,
@@ -393,7 +393,7 @@ class MetaLearner:
     
     def evaluate_adjustment(self, adjustment_id: int, effectiveness: float):
         """评估调整效果"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             UPDATE learning_adjustments
             SET effectiveness = ?
@@ -402,7 +402,7 @@ class MetaLearner:
     
     def get_layer_metrics(self) -> List[Dict]:
         """获取各层指标"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         rows = db.query('''
             SELECT * FROM layer_metrics
             ORDER BY layer_name, metric_name
@@ -411,7 +411,7 @@ class MetaLearner:
     
     def get_learning_report(self) -> Dict:
         """获取学习报告"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         total_observations = db.query_one("SELECT COUNT(*) as total FROM learning_observations")['total']
         
@@ -535,7 +535,7 @@ class MetaLearner:
     def _cleanup_old_data(self):
         """清理旧数据"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             cutoff_date = (datetime.now() - timedelta(days=30)).isoformat()
             
             db.execute('''
@@ -553,7 +553,7 @@ class MetaLearner:
     
     def get_statistics(self) -> Dict:
         """获取统计信息"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         total_observations = db.query_one("SELECT COUNT(*) as total FROM learning_observations")['total']
         

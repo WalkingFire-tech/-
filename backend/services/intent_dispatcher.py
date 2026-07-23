@@ -6,7 +6,7 @@ from backend.services.auto_fix_service import auto_fix_checkpoint as _auto_fix_c
 from backend.services.input_preprocessor import build_fallback_dispatch as _build_fallback_dispatch
 from backend.services.orchestrator_helpers import get_cognitive_planner_safe as _get_cognitive_planner, get_self_model_safe as _get_self_model
 from backend.services.path_handlers._shared import _fast_executor
-from backend.services.self_reference_detector import is_self_referential, generate_self_reference_response
+from backend.services.self_reference_detector import is_self_referential, is_direct_self_reference, generate_self_reference_response, has_rich_topic_response
 
 
 async def dispatch_intent(
@@ -29,12 +29,37 @@ async def dispatch_intent(
     logger.info(f"📩 收到请求: '{user_input}'")
     events.append({"type": "step", "data": {"phase": "意图识别", "status": "running", "detail": "分析问题类型和复杂度..."}})
 
+    _scene_hint = None
+    try:
+        from core.dialogue.scene_perceiver import ScenePerceiver
+        _sp = ScenePerceiver()
+        _scene_hint = _sp.perceive(user_input, context.get("history", history))
+        if _scene_hint and _scene_hint.primary_role.value != "unknown":
+            methodology["scene_role"] = _scene_hint.primary_role.value
+            methodology["scene_confidence"] = _scene_hint.confidence
+            if _scene_hint.is_multi_role:
+                methodology["scene_secondary_roles"] = [r.value for r in _scene_hint.secondary_roles]
+            logger.debug(f"🎭 场景感知: role={_scene_hint.primary_role.value}, conf={_scene_hint.confidence:.2f}")
+    except Exception as e:
+        logger.debug(f"场景感知跳过: {e}")
+
     try:
         from core.cognitive_dispatcher import get_cognitive_dispatcher
         dispatcher = get_cognitive_dispatcher()
 
         raw_intent, raw_conf = dispatcher._quick_intent_classification(user_input)
         logger.info(f"🔍 快速意图: raw_intent={raw_intent} raw_conf={raw_conf:.2f}")
+
+        try:
+            from core.intent_router import IntentRouter
+            _ir = IntentRouter()
+            _ir_result = _ir.parse(user_input)
+            if _ir_result and hasattr(_ir_result, 'confidence') and _ir_result.confidence > raw_conf:
+                raw_intent = _ir_result.type
+                raw_conf = _ir_result.confidence
+                logger.debug(f"IntentRouter级联: intent={raw_intent}, conf={raw_conf:.2f}")
+        except Exception as e:
+            logger.debug(f"IntentRouter跳过: {e}")
 
         dispatch_result = None
         try:
@@ -68,8 +93,8 @@ async def dispatch_intent(
             if _fc_sensing == "blind":
                 logger.warning("场域失明: embedding不可用, 场域辅助决策降级")
                 try:
-                    from infrastructure.database_manager import DatabaseManager
-                    _db = DatabaseManager.get("data/spirit_lessons.db")
+                    from core.ports.adapters import get_storage_port
+                    _db = get_storage_port("data/spirit_lessons.db")
                     _db.execute(
                         "INSERT INTO spirit_lessons (lesson_type, lesson_text, severity, context) VALUES (?, ?, ?, ?)",
                         ("field_blind", f"场域失明: embedding不可用, query={user_input[:50]}", 3, "M2_field_context"),
@@ -143,39 +168,48 @@ async def dispatch_intent(
         events.append({"type": "step", "data": {"phase": "意图识别", "status": "done", "detail": "识别失败，按复杂问题处理"}})
 
     if is_self_referential(user_input):
-        _sr_result = generate_self_reference_response(user_input)
-        final_response = _sr_result["response"]
-        intent_type = _sr_result["intent_type"]
-        confidence = _sr_result["confidence"]
-        route = _sr_result["route"]
-        events.append({"type": "step", "data": {"phase": "自我参照检测", "status": "done", "detail": "检测到自我参照问题，进入存在性感知路径"}})
-        events.append({"type": "result", "data": {"response": final_response, "attempts": attempts, "intent": intent_type, "confidence": confidence, "route": route}})
-        should_return = True
-
+        events.append({"type": "step", "data": {"phase": "自我参照检测", "status": "done", "detail": "检测到自我参照，转入自省响应路径"}})
         try:
             from core.presence.inner_time import inner_time_engine, CognitiveEventType
-            inner_time_engine.tick(CognitiveEventType.SELF_REFERENCE, intensity=0.9, description=f"self_ref:{user_input[:30]}")
+            inner_time_engine.tick(CognitiveEventType.SELF_REFERENCE, intensity=0.7, description=f"self_ref:{user_input[:30]}")
         except Exception:
             pass
-
         try:
             _sm = _get_self_model()
             if _sm and hasattr(_sm, 'record_cognitive_cycle'):
                 _sm.record_cognitive_cycle(
                     perception={"self_referential": True, "query": user_input[:50]},
-                    validation={"anchor_layers": _sr_result.get("anchor_layers", {})},
+                    validation={},
                 )
         except Exception:
             pass
+        methodology["self_referential"] = True
 
-        return {
-            "intent_type": intent_type, "route": route, "confidence": confidence,
-            "methodology": methodology, "dispatch_result": dispatch_result,
-            "cognitive_perception": _cognitive_perception, "cp": cp,
-            "cognitive_bypass_future": _cognitive_bypass_future,
-            "rule_actions": _rule_actions, "final_response": final_response,
-            "should_return": should_return, "events": events,
-        }
+        if is_direct_self_reference(user_input):
+            if has_rich_topic_response(user_input):
+                self_ref_response = generate_self_reference_response(user_input)
+                if self_ref_response and self_ref_response.get("response"):
+                    final_response = self_ref_response["response"]
+                    intent_type = self_ref_response.get("intent_type", "self_reference")
+                    route = "self_reflect"
+                    confidence = self_ref_response.get("confidence", 0.8)
+                    events.append({"type": "step", "data": {"phase": "自省响应", "status": "done", "detail": "基于三层锚点生成自我参照响应"}})
+                    events.append({"type": "result", "data": {"response": final_response, "attempts": attempts, "intent": intent_type}})
+                    should_return = True
+                    return {
+                        "intent_type": intent_type, "route": route, "confidence": confidence,
+                        "methodology": methodology, "dispatch_result": dispatch_result,
+                        "cognitive_perception": _cognitive_perception if 'cp' in dir() else {}, "cp": cp if 'cp' in dir() else None,
+                        "cognitive_bypass_future": _cognitive_bypass_future if '_cognitive_bypass_future' in dir() else None,
+                        "rule_actions": _rule_actions if '_rule_actions' in dir() else [], "final_response": final_response,
+                        "should_return": should_return, "events": events,
+                    }
+            else:
+                logger.info(f"🪞 深度自我参照: query='{user_input[:50]}'，无预设topic，走LLM深度推理")
+                events.append({"type": "step", "data": {"phase": "深度自我参照", "status": "done", "detail": "检测到深度自我参照问题，走本地推理路径"}})
+        else:
+            logger.info(f"🪞 哲学概念检测: query='{user_input[:50]}'，标记self_referential但走LLM推理")
+            events.append({"type": "step", "data": {"phase": "哲学概念", "status": "done", "detail": "检测到哲学性概念，跳过搜索走深度推理"}})
 
     try:
         _af1 = await _auto_fix_checkpoint(attempts, methodology, user_input, intent_type, "意图识别后")

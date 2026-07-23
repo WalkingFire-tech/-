@@ -87,6 +87,8 @@ class SceneAwareness:
         """时机判断：该说话还是该沉默"""
         if scene.intent_type in self.SILENCE_INTENTS:
             return False
+        if scene.resource_mode != "normal" and scene.response_length > 200:
+            return False
         if scene.resource_mode != "normal":
             return True
         if scene.complexity > 0.7 and scene.confidence < 0.5:

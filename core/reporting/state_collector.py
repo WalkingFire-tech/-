@@ -5,7 +5,7 @@
 from typing import Dict, List, Optional, Any, Callable
 from datetime import datetime, timedelta
 import threading
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import json
 from pathlib import Path
 
@@ -87,7 +87,7 @@ class StateCollector:
         """初始化数据库"""
         self._db_path.parent.mkdir(exist_ok=True)
         
-        db = DatabaseManager.get(str(self._db_path))
+        db = get_storage_port(str(self._db_path))
         
         existing_cols = [row[1] for row in db.execute("PRAGMA table_info(state_reports)").fetchall()] if db.query_one("SELECT name FROM sqlite_master WHERE type='table' AND name='state_reports'") else []
         if existing_cols and 'layer' not in existing_cols:
@@ -148,7 +148,7 @@ class StateCollector:
     def _save_report(self, report: LayerStateReport):
         """保存报告到数据库"""
         try:
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             db.execute('''
                 INSERT INTO state_reports 
                 (layer, timestamp, status, health, metrics, issues, warnings,
@@ -285,7 +285,7 @@ class StateCollector:
         try:
             cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
             
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             rows = db.query('''
                 SELECT timestamp, health, confidence
                 FROM state_reports

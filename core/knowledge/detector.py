@@ -10,7 +10,7 @@
 
 import json
 import numpy as np
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 from typing import Tuple, List, Optional, Dict
 from pathlib import Path
 from datetime import datetime
@@ -66,7 +66,7 @@ class SemanticGapDetector:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(exist_ok=True)
 
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS domain_knowledge (
                 domain TEXT PRIMARY KEY,
@@ -120,7 +120,7 @@ class SemanticGapDetector:
     def _init_uncertainty_words(self):
         """从数据库加载不确定性词汇"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             row = db.query_one("SELECT COUNT(*) FROM uncertainty_words")
             if row[0] == 0:
                 self._load_default_uncertainty_words()
@@ -148,7 +148,7 @@ class SemanticGapDetector:
                 json.dump(default_words, f, ensure_ascii=False, indent=2)
             words = default_words
 
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         for word in words:
             db.execute(
                 "INSERT OR IGNORE INTO uncertainty_words (word, created_at) VALUES (?, ?)",
@@ -159,7 +159,7 @@ class SemanticGapDetector:
     def _get_uncertainty_words(self) -> List[str]:
         """从数据库获取不确定性词汇"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query("SELECT word FROM uncertainty_words")
             return [row[0] for row in rows]
         except Exception:
@@ -179,7 +179,7 @@ class SemanticGapDetector:
 
     def learn_uncertainty_word(self, word: str):
         """学习新的不确定性词汇"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute(
             "INSERT OR IGNORE INTO uncertainty_words (word, created_at) VALUES (?, ?)",
             (word, datetime.now().isoformat()),
@@ -252,7 +252,7 @@ class SemanticGapDetector:
     def _identify_domain_keyword(self, query: str) -> Tuple[Optional[str], float]:
         """关键词降级识别"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query("SELECT domain, keywords FROM domain_knowledge")
             for domain, keywords_json in rows:
                 if not keywords_json:
@@ -271,7 +271,7 @@ class SemanticGapDetector:
             return self._domain_embeddings
 
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query(
                 "SELECT domain, embedding FROM domain_knowledge WHERE embedding IS NOT NULL"
             )
@@ -307,7 +307,7 @@ class SemanticGapDetector:
     def _get_domain_coverage_count(self, domain: str) -> float:
         """基于数量的覆盖度计算"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             row = db.query_one(
                 "SELECT COUNT(*) FROM knowledge_items WHERE domain = ?",
                 (domain,)
@@ -320,7 +320,7 @@ class SemanticGapDetector:
     def _get_domain_knowledge_vectors(self, domain: str) -> List[np.ndarray]:
         """获取领域内知识的向量"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query(
                 "SELECT embedding FROM knowledge_items WHERE domain = ? AND embedding IS NOT NULL",
                 (domain,)
@@ -343,7 +343,7 @@ class SemanticGapDetector:
             except Exception:
                 logger.warning("操作降级跳过")
 
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute(
             "INSERT OR REPLACE INTO domain_knowledge (domain, keywords, description, embedding, created_at) VALUES (?, ?, ?, ?, ?)",
             (domain, json.dumps(keywords, ensure_ascii=False), description, embedding_json, datetime.now().isoformat()),
@@ -365,7 +365,7 @@ class SemanticGapDetector:
             except Exception:
                 logger.warning("操作降级跳过")
 
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute(
             "INSERT INTO knowledge_items (domain, question, answer, embedding, quality_score, created_at) VALUES (?, ?, ?, ?, ?, ?)",
             (domain, question, answer, embedding_json, quality, datetime.now().isoformat()),

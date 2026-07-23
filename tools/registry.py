@@ -1,6 +1,8 @@
 """
-工具注册表 - 薄代理层
+工具注册表 - 薄代理层（已废弃）
+
 已统一到 core/tool_registry.py，本模块保持向后兼容。
+请直接使用 from core.tool_registry import tool_registry, ToolRegistry 等。
 
 迁移说明：
 - 核心注册表：core.tool_registry.ToolRegistry (单例: tool_registry)
@@ -8,6 +10,14 @@
 - 旧版Tool适配：core.tool_registry.LegacyToolAdapter
 - 本模块的 registry 变量指向 core.tool_registry.tool_registry
 """
+
+import warnings
+
+warnings.warn(
+    "tools.registry 已废弃，请使用 core.tool_registry。将在下个版本移除。",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 from core.tool_registry import (
     ToolRegistry,

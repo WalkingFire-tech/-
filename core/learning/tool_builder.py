@@ -70,7 +70,7 @@ def _validate_tool_code(code: str) -> List[str]:
     return violations
 
 
-def _sandbox_exec(code: str, timeout: float = 5.0) -> tuple:
+def _sandbox_exec(code: str, timeout: float = 15.0) -> tuple:
     """
     在沙箱中执行代码，返回 (local_namespace, errors)
     - 受限全局命名空间（无os/sys/subprocess等）
@@ -301,7 +301,7 @@ def {name}(items):
             code = self._generate_basic_tool(need.description)
         
         try:
-            local_namespace, exec_errors = _sandbox_exec(code, timeout=5.0)
+            local_namespace, exec_errors = _sandbox_exec(code, timeout=15.0)
             errors.extend(exec_errors)
             
             func_name = self._extract_function_name(code)

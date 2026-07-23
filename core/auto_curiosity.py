@@ -1,7 +1,7 @@
 """
 后台守护任务 - 定期主动学习
 """
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import time
 import threading
 from datetime import datetime, timedelta
@@ -24,7 +24,7 @@ class AutoCuriosity:
         """扫描低质量但频繁访问的知识"""
         
         items = []
-        rows = DatabaseManager.get(self.db_path).query('''
+        rows = get_storage_port(self.db_path).query('''
             SELECT question, answer, quality_score, access_count, source
             FROM knowledge_items
             WHERE quality_score < ?
@@ -45,7 +45,7 @@ class AutoCuriosity:
         """扫描常见但未解答的问题模式"""
         
         patterns = []
-        rows = DatabaseManager.get(self.db_path).query('''
+        rows = get_storage_port(self.db_path).query('''
             SELECT question, COUNT(*) as cnt
             FROM knowledge_items
             WHERE answer IS NULL OR answer = '' OR answer LIKE '%不确定%'

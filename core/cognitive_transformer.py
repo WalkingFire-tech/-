@@ -13,7 +13,7 @@ L4: 抽象能力/元认知（跨领域原则）
 - 技能 → 反射（高频成功自动化）
 - 情景记忆 → 抽象知识（归纳总结）
 """
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import json
 import re
 from datetime import datetime, timedelta
@@ -66,7 +66,7 @@ class CognitiveTransformer:
         skills_created = 0
         MAX_AUTO_TOOLS = 30
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         existing_count = db.query_one("SELECT COUNT(*) FROM tools WHERE enabled=1")[0]
         if existing_count >= MAX_AUTO_TOOLS:
             logger.debug(f"自动工具已达上限({MAX_AUTO_TOOLS})，跳过技能转化")
@@ -130,7 +130,7 @@ class CognitiveTransformer:
         """
         reflexes_created = 0
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         candidates = db.query('''
             SELECT name, description, triggers, usage_count
@@ -179,7 +179,7 @@ class CognitiveTransformer:
         """
         abstractions_created = 0
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         situations = db.query('''
             SELECT question, answer, source, metadata
@@ -263,7 +263,7 @@ class CognitiveTransformer:
     
     def get_transformation_stats(self) -> Dict:
         """获取转化统计"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         l3_count = db.query_one("SELECT COUNT(*) FROM knowledge_items WHERE memory_layer = 3")[0]
         tools_count = db.query_one("SELECT COUNT(*) FROM tools")[0]

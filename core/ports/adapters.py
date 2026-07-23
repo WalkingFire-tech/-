@@ -11,6 +11,7 @@ from core.ports.vector_store_port import VectorStorePort
 from core.ports.config_port import ConfigPort
 from core.ports.knowledge_port import KnowledgePort
 from core.ports.experience_port import ExperiencePort
+from core.ports.storage_port import StoragePort
 
 
 class FactStoreAdapter(FactStorePort):
@@ -75,25 +76,30 @@ class VectorStoreAdapter(VectorStorePort):
 
 
 class ConfigAdapter(ConfigPort):
-    """ConfigManager 适配器 — 包装 infrastructure.config_manager"""
+    """ConfigManager 适配器 — 包装 infrastructure.config_manager.config"""
 
     def __init__(self, manager=None):
         self._manager = manager
 
     def _get_manager(self):
         if self._manager is None:
-            from infrastructure.config_manager import config_manager
-            self._manager = config_manager
+            from infrastructure.config_manager import config
+            self._manager = config
         return self._manager
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._get_manager().get(key, default)
 
     def get_section(self, name: str) -> Dict:
-        return self._get_manager().get_section(name)
+        mgr = self._get_manager()
+        if hasattr(mgr, 'get_section'):
+            return mgr.get_section(name)
+        return {}
 
     def set(self, key: str, value: Any) -> None:
-        self._get_manager().set(key, value)
+        mgr = self._get_manager()
+        if hasattr(mgr, 'set'):
+            mgr.set(key, value)
 
     def is_available(self) -> bool:
         try:
@@ -104,25 +110,40 @@ class ConfigAdapter(ConfigPort):
 
 
 class KnowledgeAdapter(KnowledgePort):
-    """KnowledgeStore 适配器 — 包装 infrastructure.knowledge_store"""
+    """KnowledgeIndex 适配器 — 包装 infrastructure.knowledge_index.KnowledgeIndex"""
 
     def __init__(self, store=None):
         self._store = store
 
     def _get_store(self):
         if self._store is None:
-            from infrastructure.knowledge_store import knowledge_store
-            self._store = knowledge_store
+            from infrastructure.knowledge_index import KnowledgeIndex
+            self._store = KnowledgeIndex()
         return self._store
 
     async def search(self, query: str, top_k: int = 5) -> List[Dict]:
-        return self._get_store().search(query, top_k)
+        store = self._get_store()
+        if hasattr(store, 'find_knowledge'):
+            return store.find_knowledge(query, top_k)
+        if hasattr(store, 'search'):
+            return store.search(query, top_k)
+        return []
 
     async def store(self, content: str, metadata: Optional[Dict] = None) -> str:
-        return self._get_store().add_knowledge(content, metadata=metadata or {})
+        store = self._get_store()
+        if hasattr(store, 'add_topic_entry'):
+            return store.add_topic_entry(content, metadata=metadata or {})
+        if hasattr(store, 'add_knowledge'):
+            return store.add_knowledge(content, metadata=metadata or {})
+        return ""
 
     async def count(self) -> int:
-        return self._get_store().count()
+        store = self._get_store()
+        if hasattr(store, 'update_count'):
+            return store.update_count() if callable(store.update_count) else store.update_count
+        if hasattr(store, 'count'):
+            return store.count()
+        return 0
 
     def is_available(self) -> bool:
         try:
@@ -162,6 +183,59 @@ class ExperienceAdapter(ExperiencePort):
 
 
 _adapters: Dict[str, Any] = {}
+
+
+class StorageAdapter(StoragePort):
+    """DatabaseManager 适配器 — 包装 infrastructure.database_manager.DatabaseManager"""
+
+    def __init__(self, db_path: str = None):
+        self._db_path = db_path
+        self._db = None
+
+    def _get_db(self):
+        if self._db is None and self._db_path:
+            from infrastructure.database_manager import DatabaseManager
+            self._db = DatabaseManager.get(self._db_path)
+        return self._db
+
+    def query(self, sql: str, params: tuple = None):
+        return self._get_db().query(sql, params or ())
+
+    def query_one(self, sql: str, params: tuple = None):
+        return self._get_db().query_one(sql, params or ())
+
+    def execute(self, sql: str, params: tuple = None, commit: bool = False):
+        return self._get_db().execute(sql, params or (), commit=commit)
+
+    def get(self, db_path: str, **kwargs) -> "StoragePort":
+        return StorageAdapter(db_path)
+
+    def executescript(self, sql_script: str) -> None:
+        db = self._get_db()
+        if db and hasattr(db, 'executescript'):
+            db.executescript(sql_script)
+        else:
+            for stmt in sql_script.split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    self.execute(stmt)
+
+    def is_available(self) -> bool:
+        try:
+            if self._db_path:
+                self._get_db()
+                return True
+            from infrastructure.database_manager import DatabaseManager
+            return True
+        except Exception:
+            return False
+
+
+def get_storage_port(db_path: str = None, **kwargs) -> StoragePort:
+    key = f"storage:{db_path or 'default'}"
+    if key not in _adapters:
+        _adapters[key] = StorageAdapter(db_path)
+    return _adapters[key]
 
 
 def get_fact_store_port() -> FactStorePort:

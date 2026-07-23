@@ -220,6 +220,15 @@ class SystemDiagnostician:
             parser="key_value",
             fix_suggestion="防火墙关闭时建议启用: netsh advfirewall set allprofiles state on",
         ),
+        DiagnosticProbe(
+            name="loop_health",
+            command="echo ok",
+            category=ProbeCategory.SELF,
+            risk=RiskLevel.READ_ONLY,
+            timeout=5,
+            description="闭环健康度看板（规则激活率/策略库/满足感）",
+            parser="raw",
+        ),
     ]
 
     SAFE_FIX_COMMANDS = {
@@ -590,7 +599,54 @@ class SystemDiagnostician:
                 return "warning", f"发现{rows}个非标准路径进程"
             return "ok", f"非标准路径进程{rows}个"
 
+        elif probe_name == "loop_health":
+            return self._evaluate_loop_health()
+
         return "ok", raw[:100] if raw else "无输出"
+
+    def _evaluate_loop_health(self) -> Tuple[str, str]:
+        indicators = []
+        overall_status = "ok"
+
+        try:
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/learning_rules.db")
+            row = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
+            active_rules = row[0] if row else 0
+            row2 = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='trial'")
+            trial_rules = row2[0] if row2 else 0
+            activation_rate = active_rules / max(active_rules + trial_rules, 1) * 100
+            if activation_rate < 5:
+                indicators.append(f"规则激活率{activation_rate:.1f}%⚠️")
+                overall_status = "warning"
+            else:
+                indicators.append(f"规则激活率{activation_rate:.1f}%✅")
+        except Exception:
+            indicators.append("规则激活率:无法读取")
+
+        try:
+            from core.learning.strategy_library import strategy_library
+            stats = strategy_library.get_stats()
+            total = stats.get("total_active", 0)
+            avg_conf = stats.get("avg_confidence", 0)
+            indicators.append(f"策略库{total}条(均值{avg_conf:.1f})")
+        except Exception:
+            indicators.append("策略库:无法读取")
+
+        try:
+            from core.learning.intrinsic_reward import intrinsic_reward
+            istats = intrinsic_reward.get_stats()
+            satisfaction = istats.get("satisfaction", 0.5)
+            if satisfaction < 0.3:
+                indicators.append(f"满足感{satisfaction:.1f}⚠️")
+                if overall_status != "error":
+                    overall_status = "warning"
+            else:
+                indicators.append(f"满足感{satisfaction:.1f}✅")
+        except Exception:
+            indicators.append("满足感:无法读取")
+
+        return overall_status, "; ".join(indicators)
 
 
 system_diagnostician = SystemDiagnostician()

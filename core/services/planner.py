@@ -10,7 +10,7 @@ from infrastructure.model_stats import ModelStats
 from infrastructure.experience_pool import ExperiencePool
 from infrastructure.self_audit import SelfAudit
 from infrastructure.config_manager import config
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 from loguru import logger
 import time
 from datetime import datetime
@@ -1022,11 +1022,11 @@ class DataDrivenPlanner:
         
         # 通用元认知问题处理
         try:
-            conn_exp = DatabaseManager.get()._get_conn('data/experience_pool.db')
+            conn_exp = get_storage_port()._get_conn('data/experience_pool.db')
             cur = conn_exp.execute("SELECT COUNT(*), AVG(quality_score) FROM experiences")
             exp_count, exp_quality = cur.fetchone()
             
-            conn_rules = DatabaseManager.get()._get_conn('data/learning_rules.db')
+            conn_rules = get_storage_port()._get_conn('data/learning_rules.db')
             cur = conn_rules.execute("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
             active_rules = cur.fetchone()[0]
             
@@ -1387,7 +1387,7 @@ _感谢您的质疑，这帮助我发现了错误。_
     def _evaluate_recent_dialogs(self) -> str:
         """评价最近对话"""
         try:
-            conn = DatabaseManager.get()._get_conn('data/experience_pool.db')
+            conn = get_storage_port()._get_conn('data/experience_pool.db')
             cur = conn.execute('''
                 SELECT intent_type, raw_input, quality_score, success, model_name
                 FROM experiences
@@ -1444,7 +1444,7 @@ _感谢您的质疑，这帮助我发现了错误。_
         
         # 2. 历史相似任务成功率
         try:
-            conn = DatabaseManager.get()._get_conn('data/experience_pool.db')
+            conn = get_storage_port()._get_conn('data/experience_pool.db')
             cursor = conn.execute('''
                 SELECT success FROM experiences
                 WHERE intent_type = ?
@@ -1483,7 +1483,7 @@ _感谢您的质疑，这帮助我发现了错误。_
             工具执行结果，失败返回None
         """
         try:
-            from tools.registry import registry
+            from core.tool_registry import tool_registry as registry
             from tools.base import ToolCategory
             
             # 意图到工具类别的映射
@@ -1599,7 +1599,7 @@ _感谢您的质疑，这帮助我发现了错误。_
     def _store_expert_analysis(self, intent: Intent, analysis: str, confidence: float, expert_model: str):
         """存储专家分析（为逆向学习预留）"""
         try:
-            conn = DatabaseManager.get()._get_conn('data/experience_pool.db')
+            conn = get_storage_port()._get_conn('data/experience_pool.db')
             conn.execute('''
                 INSERT INTO experiences
                 (intent_type, raw_input, plan, model_name, 
@@ -2557,7 +2557,7 @@ _感谢您的质疑，这帮助我发现了错误。_
         """
         try:
             # 1. 记录失败（质量分为0）
-            conn = DatabaseManager.get()._get_conn(self.db_path)
+            conn = get_storage_port()._get_conn(self.db_path)
             conn.execute('''
                 INSERT INTO experiences 
                 (intent_type, model_used, success, quality_score, response, context)
@@ -2684,7 +2684,7 @@ _感谢您的质疑，这帮助我发现了错误。_
         try:
             from infrastructure.rule_matcher import RuleMatcher
             
-            conn = DatabaseManager.get()._get_conn("data/learning_rules.db")
+            conn = get_storage_port()._get_conn("data/learning_rules.db")
             cur = conn.execute('''
                 SELECT id, condition, action, priority, confidence, status
                 FROM learning_rules
@@ -2735,7 +2735,7 @@ _感谢您的质疑，这帮助我发现了错误。_
     def _record_trial_match(self, rule_id: int):
         """记录trial规则的影子匹配，增加apply_count用于后续评估"""
         try:
-            conn = DatabaseManager.get()._get_conn("data/learning_rules.db")
+            conn = get_storage_port()._get_conn("data/learning_rules.db")
             conn.execute('''
                 UPDATE learning_rules
                 SET apply_count = apply_count + 1,
@@ -2750,7 +2750,7 @@ _感谢您的质疑，这帮助我发现了错误。_
     def _update_rule_stats(self, rule_id: int, success: bool = True):
         """更新规则应用统计"""
         try:
-            conn = DatabaseManager.get()._get_conn("data/learning_rules.db")
+            conn = get_storage_port()._get_conn("data/learning_rules.db")
             conn.execute('''
                 UPDATE learning_rules
                 SET apply_count = apply_count + 1,

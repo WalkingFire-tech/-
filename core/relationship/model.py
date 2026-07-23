@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 import os
 import json
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from core.memory.stereo_memory import MemoryImportance
@@ -136,7 +136,7 @@ class RelationshipModel:
     
     def _init_database(self):
         """初始化数据库"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             CREATE TABLE IF NOT EXISTS interactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -181,7 +181,7 @@ class RelationshipModel:
     def _load_relationship(self):
         """加载关系状态"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             row = db.query_one(
                 "SELECT * FROM relationship_state WHERE user_id = ?",
                 (self.user_id,)
@@ -265,7 +265,7 @@ class RelationshipModel:
     
     def _save_interaction(self, record: InteractionRecord):
         """保存互动记录"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO interactions (
                 timestamp, interaction_type, user_input,
@@ -377,7 +377,7 @@ class RelationshipModel:
     
     def _save_state(self):
         """保存关系状态"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT OR REPLACE INTO relationship_state (
                 user_id, trust_level, intimacy_level, understanding_level,
@@ -402,7 +402,7 @@ class RelationshipModel:
     
     def _save_trust_evolution(self, evolution: TrustEvolution):
         """保存信任演化"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO trust_evolution (
                 timestamp, old_trust, new_trust, delta, reason, interaction_type

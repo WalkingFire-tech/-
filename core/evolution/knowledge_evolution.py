@@ -12,7 +12,7 @@ import json
 import hashlib
 import re
 from pathlib import Path
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -65,7 +65,7 @@ class KnowledgeEvolutionEngine:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS knowledge_verifications (
                 id TEXT PRIMARY KEY,
@@ -154,7 +154,7 @@ class KnowledgeEvolutionEngine:
             timestamp=datetime.now().isoformat()
         )
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT OR REPLACE INTO knowledge_verifications
             (id, knowledge_id, is_consistent, conflict_with,
@@ -209,7 +209,7 @@ class KnowledgeEvolutionEngine:
     def _get_all_knowledge(self) -> List[Dict]:
         """获取所有已有知识"""
         try:
-            db = DatabaseManager.get(self.knowledge_db_path)
+            db = get_storage_port(self.knowledge_db_path)
             
             row = db.query_one("""
                 SELECT name FROM sqlite_master 
@@ -450,7 +450,7 @@ class KnowledgeEvolutionEngine:
             resolution: 解决方式 ('accept_a', 'accept_b', 'merge', 'ignore')
             note: 备注
         """
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             UPDATE knowledge_conflicts
             SET resolution_status = ?, resolved_at = ?, resolution_note = ?
@@ -503,7 +503,7 @@ class KnowledgeEvolutionEngine:
             f"{knowledge_id}{datetime.now().isoformat()}".encode()
         ).hexdigest()[:12]
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one('''
             SELECT quality_score FROM knowledge_verifications
             WHERE knowledge_id = ?
@@ -534,7 +534,7 @@ class KnowledgeEvolutionEngine:
     
     def get_pending_conflicts(self) -> List[KnowledgeConflict]:
         """获取待处理的冲突"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         rows = db.query('''
             SELECT * FROM knowledge_conflicts
             WHERE resolution_status = 'pending'
@@ -557,7 +557,7 @@ class KnowledgeEvolutionEngine:
     
     def get_verification_history(self, knowledge_id: str, limit: int = 10) -> List[Dict]:
         """获取知识的验证历史"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         return [dict(row) for row in db.query('''
             SELECT * FROM knowledge_verifications
             WHERE knowledge_id = ?
@@ -567,7 +567,7 @@ class KnowledgeEvolutionEngine:
     
     def get_statistics(self) -> Dict:
         """获取统计信息"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         total_verifications = db.query_one("SELECT COUNT(*) as total FROM knowledge_verifications")['total']
         

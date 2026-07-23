@@ -21,7 +21,7 @@
 - P3: 规范单例实现
 - P5: 配置化阈值
 """
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -42,6 +42,8 @@ class PerformanceMetric(Enum):
     HELPFULNESS = "helpfulness"
     CLARITY = "clarity"
     TIMELINESS = "timeliness"
+    INTEGRATION = "integration"
+    SELF_MODEL_MATURITY = "self_model_maturity"
 
 
 @dataclass
@@ -92,11 +94,13 @@ class ContinuousSelfAssessment:
                 'needs_improvement': 0.4
             },
             'metric_weights': {
-                'accuracy': 0.30,
-                'relevance': 0.25,
-                'helpfulness': 0.25,
-                'clarity': 0.10,
-                'timeliness': 0.10
+                'accuracy': 0.25,
+                'relevance': 0.20,
+                'helpfulness': 0.20,
+                'clarity': 0.08,
+                'timeliness': 0.07,
+                'integration': 0.10,
+                'self_model_maturity': 0.10
             },
             'min_response_length': 30,
             'question_words': ["?", "吗", "呢", "怎样", "如何", "为什么", "what", "how", "why"]
@@ -127,6 +131,14 @@ class ContinuousSelfAssessment:
                 "weight": self.config['metric_weights']['timeliness'],
                 "description": "回答是否及时",
             },
+            PerformanceMetric.INTEGRATION: {
+                "weight": self.config['metric_weights']['integration'],
+                "description": "系统各模块集成度",
+            },
+            PerformanceMetric.SELF_MODEL_MATURITY: {
+                "weight": self.config['metric_weights']['self_model_maturity'],
+                "description": "自我模型成熟度",
+            },
         }
         
         self.stats = {
@@ -144,7 +156,7 @@ class ContinuousSelfAssessment:
         try:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
             
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS assessments (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -172,7 +184,7 @@ class ContinuousSelfAssessment:
             if not self._db_path.exists():
                 return
             
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             rows = db.query('''
                 SELECT conversation_id, timestamp, overall_score, 
                        metrics, insights, improvements, 
@@ -202,7 +214,7 @@ class ContinuousSelfAssessment:
     def _save_assessment_to_db(self, result: AssessmentResult):
         """保存评估结果到数据库"""
         try:
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             db.execute('''
                 INSERT INTO assessments
                 (conversation_id, timestamp, overall_score, metrics, insights,
@@ -433,6 +445,28 @@ class ContinuousSelfAssessment:
         
         metrics[PerformanceMetric.TIMELINESS.value] = timeliness
         
+        integration_score = 0.5
+        try:
+            from core.monitoring.runtime_trigger_monitor import trigger_monitor
+            stats = trigger_monitor.get_all_stats()
+            if stats:
+                triggered = sum(1 for s in stats.values() if s.get("trigger_count", 0) > 0)
+                total = len(stats)
+                integration_score = triggered / max(total, 1)
+        except Exception:
+            pass
+        metrics[PerformanceMetric.INTEGRATION.value] = integration_score
+        
+        maturity_score = 0.5
+        try:
+            from core.self.model import get_self_model
+            sm = get_self_model()
+            scores = sm.get_maturity_score()
+            maturity_score = scores.get("overall", 0.5)
+        except Exception:
+            pass
+        metrics[PerformanceMetric.SELF_MODEL_MATURITY.value] = maturity_score
+        
         return metrics
     
     def _calculate_overall_score(self, metrics: Dict[str, float]) -> float:
@@ -588,12 +622,15 @@ class ContinuousSelfAssessment:
                 f"改进: {', '.join(result.improvements[:2])}"
             )
             
-            store.save(
-                user_content=f"对话评估: {user_input[:50]}...",
-                system_content=assessment_summary,
-                intent="self_assessment",
-                topic="continuous_improvement"
-            )
+            store.save({
+                "user_content": f"对话评估: {user_input[:50]}...",
+                "content": f"对话评估: {user_input[:50]}...",
+                "system_content": assessment_summary,
+                "intent": "self_assessment",
+                "topic": "continuous_improvement",
+                "memory_type": "conversation",
+                "importance": 0.7,
+            })
             logger.debug("评估结果已保存到立体记忆")
         except ImportError:
             logger.debug("立体记忆模块未安装，跳过保存")
@@ -618,7 +655,8 @@ class ContinuousSelfAssessment:
                     "confidence": result.overall_score
                 },
                 "insights": result.insights,
-                "learning_points": result.learning_points
+                "learning_points": result.learning_points,
+                "learning_result": {"knowledge_gained": 0, "avg_knowledge_quality": 0, "knowledge_reuse_rate": 0},
             })
             logger.debug("评估结果已触发L5进化")
         except ImportError:
@@ -685,7 +723,7 @@ class ContinuousSelfAssessment:
     def get_historical_assessments(self, limit: int = 20) -> List[Dict[str, Any]]:
         """获取历史评估"""
         try:
-            db = DatabaseManager.get(str(self._db_path))
+            db = get_storage_port(str(self._db_path))
             rows = db.query('''
                 SELECT conversation_id, timestamp, overall_score, metrics
                 FROM assessments

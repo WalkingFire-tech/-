@@ -5,7 +5,7 @@
 
 import threading
 import time
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
@@ -302,7 +302,7 @@ class SystemStateSensor:
     def _get_knowledge_stats(self) -> Dict:
         """获取知识库统计"""
         try:
-            row = DatabaseManager.get(self.db_path).query_one('''
+            row = get_storage_port(self.db_path).query_one('''
                 SELECT 
                     COUNT(*) as total,
                     AVG(quality_score) as avg_quality,
@@ -337,7 +337,7 @@ class SystemStateSensor:
     def _get_health_stats(self) -> Dict:
         """获取健康状态"""
         try:
-            row = DatabaseManager.get(self.db_path).query_one('''
+            row = get_storage_port(self.db_path).query_one('''
                 SELECT COUNT(*) as error_count
                 FROM knowledge_items
                 WHERE quality_score < 15

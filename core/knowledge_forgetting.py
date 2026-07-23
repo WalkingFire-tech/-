@@ -13,7 +13,7 @@
   - 淡化（fade）：保留价值中等，降低优先级但不删除
   - 清除（prune）：保留价值低，删除以释放资源
 """
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import json
 from typing import Dict, List, Tuple
 from datetime import datetime, timedelta
@@ -31,7 +31,7 @@ class KnowledgeForgetting:
         self._last_report: Dict = {}
 
     def _db(self, name: str):
-        return DatabaseManager.get(f"{self.root_dir}/data/{name}")
+        return get_storage_port(f"{self.root_dir}/data/{name}")
 
     def evaluate_rules(self) -> dict:
         result = {"retain": [], "fade": [], "prune": [], "stats": {}}

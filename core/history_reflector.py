@@ -1,7 +1,7 @@
 """
 历史对话反思机制 - 从历史中自动发现错误并纠正
 """
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 from typing import List, Dict, Tuple
 from loguru import logger
 
@@ -148,7 +148,7 @@ class HistoryReflector:
         """获取最近的对话历史"""
         
         try:
-            rows = DatabaseManager.get(self.db_path).query('''
+            rows = get_storage_port(self.db_path).query('''
                 SELECT question as user, answer as assistant, created_at
                 FROM knowledge_items
                 WHERE knowledge_type = 'chat'

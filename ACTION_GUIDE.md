@@ -396,6 +396,21 @@ Phase 5 (系统完善) ───────────────────
 | P2-6 | 陈旧数据库清理 | P2 | ✅ 已完成（62个测试DB+9个陈旧DB归档到data/archives/） |
 | P2-7 | 双速进化 | P2 | ✅ 已完成（RatchetGate棘轮门+DualSpeedEvolutionCoordinator+慢循环定时任务+快循环集成到chat_stream） |
 | P2-8 | API文档生成 | P2 | ✅ 已完成（65个端点全部添加OpenAPI docstring，100%覆盖率） |
+| **R-1** | 系统自诊断引擎 | P0 | ✅ **已完成** — system_diagnostician 589行，16安全探针+白名单CMD/PowerShell+定时 |
+| **R-2** | 内驱力进化(P0-1/P0-2) | P0 | ✅ **已完成** — intrinsic_reward(6种奖励信号)+strategy_library(经验→策略转化) |
+| **R-3** | 4个核心闭环断裂打通 | P0 | ✅ **已完成** — knowledge_gap_learning+trial→active+existence_layer+L5自修改 |
+| **R-4** | chat_orchestrator瘦身 | P1 | ✅ **已完成** — 2913→2756行(-157首次净缩减) |
+| **R-5** | 测试覆盖提升 | P1 | ✅ **已完成** — 5新测试文件+851行，测试文件14→20 |
+| **R-6** | P1闭环质量提升 | P1 | ✅ **已完成** — 好奇心分发→task_queue+SkillToolWrapper三级降级+反思可观测 |
+| **R-7** | capability_creation_loop裸except清零 | P1 | ✅ **已完成** — 13处"except:"→"except Exception:" |
+| **R-8** | self_modification管线 | P1 | ✅ **已完成** — 5文件1165行(code_reader→diagnoser→generator→deployer→loop) |
+| **R-9** | CuriosityEngine L5自触发回路 | P2 | ✅ **已完成** — reflect_internal自动触发诊断→补丁→部署完整链路 |
+| **R-10** | GenomeEvolver进化算法 | P2 | ✅ **已完成** — 478行，4层进化引擎+安全协议 |
+| **R-11** | internal deliberation loop | P2 | ✅ **已完成** — shallow→deep reasoning→fallback self-reasoning |
+| **R-12** | architecture_awareness自我认知 | P2 | ✅ **已完成** — 306行，core/self/自我认知架构 |
+| **R-13** | system_command基础设施 | P2 | ✅ **已完成** — 225行，infrastructure/系统命令 |
+| **R-14** | 闭环基类抽象 | P2 | ⬜ **工作区完成待提交** — cognitive_loop_base 276行+loop_mixin 170行 |
+| **R-15** | ToolRegistry双注册表统一 | P2 | ✅ **已完成** — tools/registry 371→30行薄代理+统一接口 |
 
 ---
 
@@ -676,12 +691,30 @@ Phase 5 (系统完善) ───────────────────
   P2-8 API文档生成            [S]
   P1-10 测试体系重构          [M]
 
-Phase 6 (能力深化与集成) ─────────────────────── ⬜ 进行中
-  E0-1 PathWeightManager集成   [M] ← 最高优先
+Phase 6 (能力深化与集成) ─────────────────────── ✅ 全部完成 🎉
+  E0-1 PathWeightManager集成   [M]
   E0-2 ContribAttributor集成   [M]
-  E0-3 向量检索能力恢复        [M] ← TF-IDF替代方案
+  E0-3 向量检索能力恢复        [M]
   E0-4 系统状态可视化          [L]
   E0-5 持续进化闭环            [L]
+
+Phase 7 (闭环贯通与自我进化) ──────────────────── ⬜ 进行中 🎯
+  R-3 4个核心闭环断裂打通       [M] ✅ 已完成
+  R-6 P1闭环质量提升           [M] ✅ 已完成
+  R-8 self_modification管线    [L] ✅ 已完成 — 系统能自己诊断+修改自己
+  R-9 CuriosityEngine L5自触发 [M] ✅ 已完成 — 好奇心自动触发诊断→修复
+  R-10 GenomeEvolver进化算法   [M] ✅ 已完成 — 安全渐进式基因进化
+  R-11 internal deliberation   [M] ✅ 已完成 — 深度思考三重奏
+  R-15 ToolRegistry双注册统一   [M] ✅ 已完成
+
+Phase 8 (内驱力与自诊断) ──────────────────────── ⬜ 进行中
+  R-1 系统自诊断引擎           [M] ✅ 已完成 — 16安全探针+白名单CMD/PowerShell
+  R-2 内驱力进化               [L] ✅ 已完成 — intrinsic_reward+strategy_library
+  R-4 chat_orchestrator瘦身    [L] ✅ 已完成(HEAD) / ⬜ 工作区进一步拆分中
+  R-12/R-13 自我认知+系统命令   [S] ✅ 已完成
+  R-14 闭环基类抽象            [M] ⬜ 待提交工作区
+  R-5 测试覆盖提升             [M] ✅ 已完成(851行新增)
+  R-7 bare except清零          [S] ✅ 已完成(capability_creation_loop)
 ```
 
 ---
@@ -1804,3 +1837,68 @@ Phase 6 (能力深化与集成) ────────────────
 - `backend/main_fast.py` — 新增3个世界模型API+1个棘轮统计API
 - `core/perception_snapshot.py` — 新增action_trace维度+update_action_trace()
 - Perception Snapshot：mode=normal, state=growing, health=0.997
+
+---
+
+## 里程碑总览 (续)
+
+### M40: 系统自诊断引擎 ✅ (巡检#99 周期)
+- core/system_diagnostician.py 589行 — 16个安全探针+白名单制度
+- L0只读(90%探针)+L1-L3渐进修复框架
+- 定时任务: system_diagnostics 每1800s运行快速诊断
+
+### M41: 内驱力进化 ✅ (巡检#99 周期)
+- P0-1 好奇心驱动主动探索 _discover_strategy_gaps()第5个缺口来源
+- P0-2 内在奖励机制 intrinsic_reward.py 94行，6种奖励信号
+- 里程碑1 经验→策略转化引擎 strategy_library.py 222行
+
+### M42: 4个核心闭环断裂全面打通 ✅ (巡检#99 周期)
+- knowledge_gap_learning任务处理器 + trial→active规则晋升
+- existence_layer方法修复 + L5自修改循环定时任务
+
+### M43: P1闭环质量提升 ✅ (巡检#99 周期)
+- 好奇心行动分发到task_queue (3种行动类型)
+- SkillToolWrapper三级降级 (quality 30→50-60)
+- 反思学习阶段可观测性
+
+### M44: chat_orchestrator 首次净缩减 ✅ (巡检#99 周期)
+- 3117→2968→2756行 (-157)；工作区拆分为686+13服务文件(2256行)
+- 13新服务文件全部0裸except
+
+### M45: 测试覆盖大幅提升 ✅ (巡检#99 周期)
+- 5新测试文件+851行，测试文件14→20
+
+### M46: 架构健康评分 96→97 ✅ (巡检#99 周期)
+- **综合评分**: 97/100 ↑+1 🟢，score_trend: up
+- 4维度上涨: 模块耦合78→80, 测试覆盖14→18, 认知集成度85→88, 自我模型成熟度70→75
+- 核心指标: 裸except=0/sqlite3=0 ✅
+
+---
+
+## 迭代记录：巡检#99 之后状态
+
+> 本文件 ACTION_GUIDE.md 自 v3.7.0 (8ef50ea) 后92个commit未更新。
+> 详细巡检报告见 `_arch_review/.tracking/`
+
+### 当前状态快照
+
+| 指标 | 值 | 判定 |
+|------|:---:|:----:|
+| HEAD | c671b97 | 10 commits since last update |
+| 综合评分 | **97/100 🟢** | ↑+1 |
+| score_trend | up | 🎉 |
+| chat_stream.py | 37行 ✅ | 双满分 |
+| main_fast.py | 182行 ✅ | 双满分 |
+| chat_orchestrator.py(HEAD) | 2756行 | **↓-157 首次净缩减** |
+| 裸except(跟踪文件) | 0 ✅ | 持续 |
+| sqlite3.connect(跟踪文件) | 0 ✅ | 持续 |
+| 测试文件 | 20 | ↑+6 |
+| 工作区 | 23 changed + 26 untracked | 🏗️ 拆分进行中 |
+
+### 下一阶段关注
+
+1. **工作区chat_orchestrator拆分提交** — 686行+13服务文件(2256行)
+2. **capability_creation_loop 1360行拆分** — 提取PowerShell/CMD handler
+3. **core/裸except扩围跟踪** — ~150处未纳入
+4. **ToolRegistry双注册表统一** — 持续推进
+5. **测试覆盖提升至30+** — 当前18

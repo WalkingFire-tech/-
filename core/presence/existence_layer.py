@@ -115,6 +115,27 @@ class ExistenceLayer(LoopMixin):
         self._reflection_db = self.persistence_dir / "reflection_journal.db"
         self._init_reflection_db()
 
+        self._probability_field = None
+        try:
+            from core.presence.probability_field import get_probability_field, ExperiencePoolConsolidator, PathWeightDecay
+            self._probability_field = get_probability_field()
+            self._consolidator = ExperiencePoolConsolidator()
+            self._path_decay = PathWeightDecay()
+            logger.info("  ✓ 概率场漂移引擎已集成（带呼吸节律）")
+        except ImportError:
+            self._consolidator = None
+            self._path_decay = None
+
+        self._resource_scheduler = None
+        try:
+            from core.presence.resource_aware_scheduler import get_resource_scheduler, set_thread_priority
+            self._resource_scheduler = get_resource_scheduler()
+            self._set_thread_priority = set_thread_priority
+            logger.info("  ✓ 资源感知调度器已集成")
+        except ImportError:
+            self._set_thread_priority = None
+
+        self._recent_interactions: List[Dict[str, Any]] = []
         
         logger.info("🌟 第零层（存在层）已初始化")
     
@@ -154,6 +175,9 @@ class ExistenceLayer(LoopMixin):
             logger.warning("存在层已在运行")
             return
         
+        if self._resource_scheduler:
+            self._resource_scheduler.start()
+        
         self.running = True
         self._main_thread = threading.Thread(target=self._run_main_loop, daemon=True)
         self._main_thread.start()
@@ -179,6 +203,13 @@ class ExistenceLayer(LoopMixin):
     
     def _run_main_loop(self):
         """主循环"""
+        if self._set_thread_priority:
+            try:
+                self._set_thread_priority("above_normal")
+                logger.info("  ✓ 存在层线程优先级已提升（above_normal）")
+            except Exception:
+                pass
+        
         last_heartbeat = time.time()
         last_growth = time.time()
         last_rest = time.time()
@@ -223,8 +254,42 @@ class ExistenceLayer(LoopMixin):
                 time.sleep(5.0)
     
     def _update_state(self, silence: float):
-        """更新存在状态 — 优先使用内在节律，回退到wall-clock"""
-        if self.inner_time:
+        """更新存在状态 — 概率场驱动+内在节律双通道"""
+        if self._probability_field:
+            density_signal = 0.0
+            if self.inner_time:
+                it_state = self.inner_time.get_state()
+                density_signal = min(1.0, max(-1.0, (it_state.cognitive_density - 0.5) * 2.0))
+            
+            interaction_signal = self._get_interaction_signal()
+            combined_signal = density_signal * 0.6 + interaction_signal * 0.4
+            
+            self._probability_field.update(signal=combined_signal, dt=1.0)
+            
+            tendency = self._probability_field.get_tendency()
+            exploration = tendency["exploration"]
+            tension = tendency["tension"]
+            
+            if exploration > 0.7 and tension > 0.2:
+                new_state = PresenceState.GROWING
+            elif exploration > 0.5 and tension > 0.15:
+                new_state = PresenceState.PERCEIVING
+            elif exploration > 0.3:
+                new_state = PresenceState.AWAKE
+            elif exploration > 0.15:
+                new_state = PresenceState.RESTING
+            else:
+                new_state = PresenceState.SLEEPING
+            
+            if new_state != self.state:
+                old = self.state.value
+                self.state = new_state
+                logger.info(
+                    f"🌊 概率场驱动状态切换: {old}→{new_state.value} "
+                    f"(探索={exploration:.3f}, 张力={tension:.3f}, "
+                    f"相位={tendency['phase']})"
+                )
+        elif self.inner_time:
             state = self.inner_time.get_state()
             phase = state.current_phase
             phase_map = {
@@ -255,6 +320,28 @@ class ExistenceLayer(LoopMixin):
             else:
                 self.state = PresenceState.SLEEPING
     
+    def _get_interaction_signal(self) -> float:
+        from core.presence.probability_field import FieldPhase
+        if not self._recent_interactions:
+            return 0.0
+        signals = []
+        for interaction in self._recent_interactions[-3:]:
+            quality = interaction.get("quality_score", 50) / 100.0
+            feedback = interaction.get("user_feedback", 0)
+            signal = quality * (1 + feedback * 0.5) - 0.5
+            signals.append(max(-1, min(1, signal)))
+        return sum(signals) / len(signals)
+    
+    def record_interaction(self, quality_score: float, user_feedback: int = 0, metadata: Optional[Dict] = None):
+        self._recent_interactions.append({
+            "quality_score": quality_score,
+            "user_feedback": user_feedback,
+            "metadata": metadata or {},
+            "timestamp": time.time(),
+        })
+        if len(self._recent_interactions) > 100:
+            self._recent_interactions = self._recent_interactions[-100:]
+    
     def _heartbeat(self):
         """心跳：持续感知自身状态"""
         with self.loop_context():
@@ -284,6 +371,14 @@ class ExistenceLayer(LoopMixin):
             
             if self.metrics.total_cycles % self._reflection_interval == 0:
                 self._generate_reflection(perception)
+
+            if self.inner_time and hasattr(self.inner_time, 'check_self_events'):
+                signal_pack = self.get_signal_pack()
+                detected = signal_pack.get("detected_signals", [])
+                try:
+                    self.inner_time.check_self_events(detected)
+                except Exception as e:
+                    logger.debug(f"SELF_MODIFY/SELF_REFERENCE检测跳过: {e}")
 
             if self.pending_signals and self.state not in [PresenceState.GROWING, PresenceState.PERCEIVING]:
                 signals_to_process = self.pending_signals[:3]
@@ -318,14 +413,17 @@ class ExistenceLayer(LoopMixin):
         )
     
     def _grow(self):
-        """间隙生长：消化未处理的信号 + 好奇心驱动的主动探索"""
+        """间隙生长：概率场驱动 + 资源感知 + 信号消化 + 轻量housekeeping"""
         with self.loop_context():
             if self.state not in [PresenceState.GROWING, PresenceState.PERCEIVING]:
                 return
         
+        if not self._can_grow():
+            return
+
         if self.inner_time:
             self.inner_time.tick(CognitiveEventType.LEARN, intensity=0.5, description="gap_growth")
-        
+
         if self.pending_signals:
             self.metrics.growing_cycles += 1
             
@@ -345,7 +443,15 @@ class ExistenceLayer(LoopMixin):
                 f"剩余 {len(self.pending_signals)} 个"
             )
         
+        self._lightweight_housekeeping()
+
         if not self.pending_signals:
+            exploration_prob = self._compute_exploration_probability()
+            import random
+            if random.random() > exploration_prob:
+                logger.debug(f"🌱 探索概率门控: P={exploration_prob:.2f}, 跳过本次探索")
+                return
+
             try:
                 from core.presence.curiosity_engine import get_curiosity_engine
                 engine = get_curiosity_engine()
@@ -389,6 +495,84 @@ class ExistenceLayer(LoopMixin):
             except Exception as e:
                 logger.debug(f"好奇心探索跳过: {e}")
     
+    def _can_grow(self) -> bool:
+        """双重门控：概率场活跃度 + 资源感知调度"""
+        import random
+
+        if self._resource_scheduler:
+            if not self._resource_scheduler.can_execute("lightweight_growth"):
+                logger.debug("🌱 资源门控: 系统资源紧张，跳过生长")
+                return False
+            strategy = self._resource_scheduler.get_growth_strategy()
+            if random.random() > strategy["growth_probability"]:
+                logger.debug(f"🌱 资源策略门控: P={strategy['growth_probability']:.2f}, 跳过")
+                return False
+
+        if self._probability_field:
+            activity = self._probability_field.get_tendency().get("activity", 0.075)
+            growth_probability = min(0.3, activity * 2 + 0.05)
+            if random.random() > growth_probability:
+                logger.debug(f"🌱 概率场门控: P={growth_probability:.3f}, 跳过")
+                return False
+
+        return True
+
+    def _lightweight_housekeeping(self):
+        """轻量housekeeping: 经验池整理 + 路径权重衰减 — CPU操作，不涉及LLM"""
+        if self._consolidator:
+            try:
+                intensity = 0.5
+                if self._probability_field:
+                    intensity = self._probability_field.get_tendency().get("activity", 0.075) * 5
+                result = self._consolidator.consolidate(intensity=min(1.0, intensity))
+                if any(v > 0 for v in result.values()):
+                    logger.debug(f"🧹 经验池整理: {result}")
+            except Exception:
+                pass
+
+        if self._path_decay:
+            try:
+                result = self._path_decay.decay()
+                if result.get("decayed", 0) > 0:
+                    logger.debug(f"📉 路径权重衰减: {result}")
+            except Exception:
+                pass
+    
+    def _compute_exploration_probability(self) -> float:
+        """
+        P(explore | state) = curiosity_strength * resonance_boost * density_factor
+        
+        将神经末梢的连续感知值映射到执行概率
+        """
+        curiosity_strength = 0.3
+        try:
+            from core.presence.curiosity_engine import get_curiosity_engine
+            engine = get_curiosity_engine()
+            frontier = engine.perceive_frontier()
+            curiosity_strength = frontier.get("curiosity_strength", 0.3)
+        except Exception:
+            pass
+
+        resonance_boost = 1.0
+        try:
+            from core.spirit_core import get_spirit_core
+            sc = get_spirit_core()
+            resonances = sc.resonate("gap_growth_exploration", context_type="reasoning")
+            if resonances:
+                top_strength = resonances[0].get("strength", 0.0)
+                resonance_boost = 0.7 + top_strength * 0.3
+        except Exception:
+            pass
+
+        density_factor = 0.5
+        if self.inner_time:
+            it_state = self.inner_time.get_state()
+            density = it_state.cognitive_density
+            density_factor = min(1.0, max(0.1, density * 2.0))
+
+        prob = curiosity_strength * resonance_boost * density_factor
+        return min(1.0, max(0.0, prob))
+    
     def _rest(self):
         """休息：低功耗状态下的轻量整合"""
         with self.loop_context():
@@ -427,17 +611,66 @@ class ExistenceLayer(LoopMixin):
         
         logger.info("💤 进入睡眠状态，进行深度记忆整合...")
         
-        if self.sleep_consolidation and hasattr(self.sleep_consolidation, 'consolidate'):
+        can_deep_consolidate = True
+        if self._resource_scheduler:
+            can_deep_consolidate = self._resource_scheduler.can_execute("sleep_consolidation")
+        
+        if can_deep_consolidate and self.sleep_consolidation and hasattr(self.sleep_consolidation, 'consolidate'):
             try:
                 result = self.sleep_consolidation.consolidate()
                 self.metrics.memories_consolidated += result.get("consolidated", 0)
             except Exception as e:
                 logger.warning(f"睡眠整合失败: {e}")
+        elif not can_deep_consolidate:
+            self._lightweight_housekeeping()
+            logger.debug("💤 GPU满载，睡眠整合降级为轻量housekeeping")
         else:
             self.metrics.memories_consolidated += 1
         
         logger.info(f"💤 睡眠完成，已整合 {self.metrics.memories_consolidated} 条记忆")
     
+    def get_signal_pack(self) -> Dict[str, Any]:
+        """获取当前信号包（供inner_time事件触发使用）"""
+        detected_signals = []
+        pattern_emergence_count = 0
+        try:
+            from core.presence.active_perception import get_active_perception_engine
+            ape = get_active_perception_engine()
+            stats = ape.get_stats()
+            by_signal = stats.get("by_signal", {})
+            for signal_type, count in by_signal.items():
+                detected_signals.append(signal_type)
+                if signal_type == "pattern_emergence":
+                    pattern_emergence_count = count
+        except Exception:
+            pass
+
+        self_score_trend = 0.0
+        try:
+            from core.self.model import get_self_model
+            sm = get_self_model()
+            scores = sm.get_maturity_score()
+            overall = scores.get("overall", 0)
+            self_score_trend = overall - 0.5
+        except Exception:
+            pass
+
+        probability_field = {}
+        if self._probability_field:
+            try:
+                probability_field = self._probability_field.get_tendency()
+            except Exception:
+                pass
+
+        return {
+            "detected_signals": detected_signals,
+            "pattern_emergence_count": pattern_emergence_count,
+            "self_score_trend": self_score_trend,
+            "probability_field": probability_field,
+            "current_phase": self.state.value,
+            "recent_interactions": len(self._recent_interactions),
+        }
+
     def receive_signal(self, signal: Dict[str, Any]):
         """接收信号"""
         signal["received_at"] = datetime.now().isoformat()
@@ -466,6 +699,10 @@ class ExistenceLayer(LoopMixin):
             self.state = PresenceState.AWAKE
             self.metrics.last_user_interaction = datetime.now()
             logger.info(f"👁️ 感知信号驱动状态切换: {signal_type} → AWAKE")
+        elif signal_type == "pattern_emergence" and confidence > 0.5:
+            if self.state in (PresenceState.RESTING, PresenceState.SLEEPING):
+                self.state = PresenceState.PERCEIVING
+                logger.info(f"👁️ 模式涌现信号驱动状态切换: {signal_type} → PERCEIVING")
         elif signal_type == "silence_break" and confidence > 0.7:
             self.state = PresenceState.AWAKE
             logger.info(f"👁️ 沉默打破信号: 切换到AWAKE")
@@ -501,6 +738,13 @@ class ExistenceLayer(LoopMixin):
         if self.inner_time:
             it_state = self.inner_time.get_state()
             status["inner_time"] = it_state.to_dict()
+            if hasattr(self.inner_time, 'get_accumulator_stats'):
+                status["signal_accumulator"] = self.inner_time.get_accumulator_stats()
+        if self._probability_field:
+            status["probability_field"] = self._probability_field.get_status()
+            status["breath_metrics"] = self._probability_field.get_breath_metrics()
+        if self._resource_scheduler:
+            status["resource_scheduler"] = self._resource_scheduler.get_status()
         return status
     
     def force_state(self, state: PresenceState):
@@ -530,11 +774,9 @@ class ExistenceLayer(LoopMixin):
     def _init_reflection_db(self):
         try:
             self.persistence_dir.mkdir(parents=True, exist_ok=True)
-            import sqlite3 as _sqlite3
-            conn = _sqlite3.connect(str(self._reflection_db), timeout=15.0)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=10000")
-            conn.executescript('''
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get(str(self._reflection_db))
+            db.executescript('''
                 CREATE TABLE IF NOT EXISTS reflections (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     phase TEXT,
@@ -546,7 +788,6 @@ class ExistenceLayer(LoopMixin):
                     created_at TEXT
                 )
             ''')
-            conn.close()
         except Exception as e:
             logger.debug(f"反思DB初始化跳过: {e}")
 
@@ -562,21 +803,101 @@ class ExistenceLayer(LoopMixin):
                 it = self.inner_time.get_state()
                 density = it.cognitive_density
                 tick = it.tick_count
-            import sqlite3 as _sqlite3
-            conn = _sqlite3.connect(str(self._reflection_db), timeout=15.0)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=10000")
-            conn.execute(
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get(str(self._reflection_db))
+            db.execute(
                 "INSERT INTO reflections (phase, note, health_score, energy_level, cognitive_density, tick_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (phase, note, health, energy, density, tick, datetime.now().isoformat()),
+                commit=True
             )
-            conn.commit()
-            conn.close()
             logger.debug(f"📝 自我反思笔记已记录: [{phase}] {note[:60]}")
+
+            try:
+                from infrastructure.experience_pool import get_experience_pool
+                ep = get_experience_pool()
+                quality = 70
+                try:
+                    if note and len(note) > 100:
+                        quality = 80
+                    if note and any(kw in note for kw in ["建议", "优化", "提升", "发现"]):
+                        quality = min(95, quality + 10)
+                except Exception:
+                    pass
+                ep.add_experience(
+                    intent_type="autonomous_reflection",
+                    raw_input=f"[自主反思/{phase}]",
+                    plan="",
+                    model_name="existence_layer",
+                    quality_score=quality,
+                    user_feedback=0,
+                    success=True,
+                    duration=0.0,
+                    response=note,
+                )
+            except Exception:
+                pass
         except Exception as e:
             logger.debug(f"反思笔记生成跳过: {e}")
 
     def _compose_reflection_note(self, phase: str, perception: SelfPerceptionResult) -> str:
+        template_note = self._compose_template_reflection(phase, perception)
+
+        can_use_llm = True
+        if self._resource_scheduler:
+            can_use_llm = self._resource_scheduler.can_execute("ollama_inference")
+
+        if not can_use_llm:
+            return template_note
+
+        try:
+            llm_note = self._compose_llm_reflection(phase, perception, template_note)
+            if llm_note and len(llm_note) > len(template_note) * 1.5:
+                return llm_note
+        except Exception:
+            pass
+
+        return template_note
+
+    def _compose_llm_reflection(self, phase: str, perception: SelfPerceptionResult, template_context: str) -> Optional[str]:
+        """尝试用LLM生成深度反思——GPU可用时调用"""
+        try:
+            from adapters.llm.ollama_adapter import ollama_chat_request
+            model = None
+            try:
+                from backend.chat_handler import _get_available_ollama_model
+                model = _get_available_ollama_model("reflection")
+            except Exception:
+                pass
+            if not model:
+                return None
+
+            density = 0.0
+            if self.inner_time:
+                it = self.inner_time.get_state()
+                density = it.cognitive_density
+
+            prompt = (
+                f"你是一个自我进化的智能体系统，正在进行自我反思。"
+                f"当前状态: {phase}，健康度={perception.health_score:.0%}，"
+                f"能量={perception.energy_level:.0%}，认知密度={density:.2f}。\n"
+                f"模板反思: {template_context}\n"
+                f"请用1-2句话写出更深层的自我反思：我在这个状态下真正的感受是什么？"
+                f"我应该如何调整自己的行为？不要重复模板内容。"
+            )
+            result = ollama_chat_request(
+                base_url="http://localhost:11434",
+                model=model,
+                prompt=prompt,
+                timeout=10,
+            )
+            content = result.get("content", "")
+            if content and len(content) > 20:
+                return content.strip()
+        except Exception:
+            pass
+        return None
+
+    def _compose_template_reflection(self, phase: str, perception: SelfPerceptionResult) -> str:
         parts = []
         phase_notes = {
             "awake": "我正在清醒地运行，认知活动密集。",
@@ -623,16 +944,12 @@ class ExistenceLayer(LoopMixin):
 
     def get_recent_reflections(self, limit: int = 5) -> List[Dict[str, Any]]:
         try:
-            import sqlite3 as _sqlite3
-            conn = _sqlite3.connect(str(self._reflection_db), timeout=15.0)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=10000")
-            cursor = conn.execute(
+            from infrastructure.database_manager import DatabaseManager
+            db = DatabaseManager.get(str(self._reflection_db))
+            rows = db.query(
                 "SELECT phase, note, health_score, energy_level, cognitive_density, tick_count, created_at FROM reflections ORDER BY id DESC LIMIT ?",
                 (limit,)
             )
-            rows = cursor.fetchall()
-            conn.close()
             return [
                 {"phase": r[0], "note": r[1], "health": r[2], "energy": r[3],
                  "density": r[4], "ticks": r[5], "time": r[6]}

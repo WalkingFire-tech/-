@@ -16,7 +16,7 @@ import os
 from datetime import datetime
 from loguru import logger
 from adapters.llm.ollama_adapter import ollama_chat_request
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 _write_lock = threading.Lock()
 
@@ -33,6 +33,10 @@ GENE_DEFAULTS = {
     "knowledge_solidify_threshold": 80.0,
     "model_preference_speed": 0.5,
     "self_doubt_frequency": 0.3,
+    "wisdom_truth_balance": 0.5,
+    "dimension_switch_sensitivity": 0.6,
+    "alignment_vigilance": 0.5,
+    "attention_residual_alpha": 0.2,
 }
 
 # 基因安全基线：无论怎么突变，都不能超出这个区间
@@ -48,6 +52,10 @@ GENE_SAFETY_BOUNDS = {
     "knowledge_solidify_threshold": (50.0, 100.0),
     "model_preference_speed": (0.1, 0.9),
     "self_doubt_frequency": (0.1, 0.8),
+    "wisdom_truth_balance": (0.2, 0.8),
+    "dimension_switch_sensitivity": (0.2, 0.9),
+    "alignment_vigilance": (0.2, 0.8),
+    "attention_residual_alpha": (0.05, 0.5),
 }
 
 
@@ -62,7 +70,7 @@ class GenePool:
         self._safety_violations = 0
 
     def _connect(self):
-        return DatabaseManager.get(self.db_path)
+        return get_storage_port(self.db_path)
 
     def _write_op(self, func, *args, **kwargs):
         with self._lock:
@@ -272,7 +280,7 @@ class PersistentTaskQueue:
         self._idle_threshold = 10.0
 
     def _connect(self):
-        return DatabaseManager.get(self.db_path)
+        return get_storage_port(self.db_path)
 
     def _write_op(self, func, *args, **kwargs):
         with self._lock:
@@ -318,6 +326,14 @@ class PersistentTaskQueue:
     def notify_user_interaction(self):
         """用户交互通知——更新空闲时间戳"""
         self._last_user_interaction = time.time()
+        try:
+            from core.task_planning import TaskPlanner
+            _tp = TaskPlanner()
+            _pending = _tp.get_pending_tasks()
+            if _pending:
+                logger.debug(f"TaskPlanner: {len(_pending)}个待处理任务")
+        except Exception:
+            pass
 
     def _is_idle(self) -> bool:
         """检测系统是否空闲（用户无交互超过阈值）"""
@@ -434,7 +450,7 @@ class PersistentTaskQueue:
     def _save_timeout_experience(self, payload: dict, task_type: str):
         try:
             query = payload.get("query", "")
-            db2 = DatabaseManager.get("data/experience_pool.db")
+            db2 = get_storage_port("data/experience_pool.db")
             db2.execute(
                 "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
                 (query, f"[超时经验] {task_type}任务在{self.HARD_TIMEOUT}s内未完成，建议简化prompt", datetime.now().isoformat(), "timeout_wisdom", 30),
@@ -512,13 +528,13 @@ class PersistentTaskQueue:
         response_text = payload.get("response", "")
         score = payload.get("score", 0)
         try:
-            db2 = DatabaseManager.get("data/knowledge_store.db")
+            db2 = get_storage_port("data/knowledge_store.db")
             db2.execute(
                 "INSERT INTO knowledge (content, source, type, quality, created_at) VALUES (?, ?, ?, ?, ?)",
                 (response_text, "gene_pool", "solidified", int(score), datetime.now().isoformat()),
                 commit=True
             )
-            db2 = DatabaseManager.get("data/experience_pool.db")
+            db2 = get_storage_port("data/experience_pool.db")
             db2.execute("UPDATE experiences SET quality_score = ? WHERE raw_input LIKE ? AND quality_score < ?", (95, f"%{query[:20]}%", 95), commit=True)
             return f"知识固化完成(评分{score:.0f})"
         except Exception as e:
@@ -602,7 +618,7 @@ class PersistentTaskQueue:
 
     def _save_experience(self, query: str, response: str):
         try:
-            db2 = DatabaseManager.get("data/experience_pool.db")
+            db2 = get_storage_port("data/experience_pool.db")
             db2.execute(
                 "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
                 (query, response, datetime.now().isoformat(), "background_task", 80),
@@ -644,7 +660,7 @@ class PersistentTaskQueue:
 
     def _do_idle_consolidation(self):
         try:
-            db2 = DatabaseManager.get("data/experience_pool.db")
+            db2 = get_storage_port("data/experience_pool.db")
             row = db2.query_one("SELECT COUNT(*) FROM experiences WHERE quality_score >= 80")
             high_quality = row[0]
             row = db2.query_one("SELECT COUNT(*) FROM experiences WHERE intent_type = 'timeout_wisdom'")
@@ -689,7 +705,7 @@ class PersistentTaskQueue:
         stats = {"exp_purged": 0, "exp_promoted": 0, "know_purged": 0}
 
         try:
-            db2 = DatabaseManager.get("data/experience_pool.db")
+            db2 = get_storage_port("data/experience_pool.db")
             row = db2.query_one("SELECT COUNT(*) FROM experiences WHERE quality_score < 50 AND timestamp < datetime('now', '-30 days')")
             purge_count = row[0]
             if purge_count > 0:
@@ -701,7 +717,7 @@ class PersistentTaskQueue:
             logger.error(f"经验池代谢失败: {e}")
 
         try:
-            db2 = DatabaseManager.get("data/knowledge_store.db")
+            db2 = get_storage_port("data/knowledge_store.db")
             row = db2.query_one("SELECT COUNT(*) FROM knowledge WHERE quality < 30 AND created_at < datetime('now', '-30 days')")
             purge_count = row[0]
             if purge_count > 0:
@@ -764,7 +780,7 @@ class PersistentTaskQueue:
         db_ok = True
         for db_name in ["experience_pool.db", "knowledge_store.db", "gene_pool.db", "task_queue.db"]:
             try:
-                db2 = DatabaseManager.get(f"data/{db_name}")
+                db2 = get_storage_port(f"data/{db_name}")
                 db2.query_one("SELECT COUNT(*) FROM sqlite_master")
             except Exception:
                 db_ok = False
@@ -804,7 +820,7 @@ class PersistentTaskQueue:
             })
             if ollama_result and len(ollama_result) > 20:
                 try:
-                    db = DatabaseManager.get("data/knowledge_store.db")
+                    db = get_storage_port("data/knowledge_store.db")
                     db.execute('''
                         INSERT OR IGNORE INTO knowledge_items
                         (topic, content, source, confidence, timestamp)

@@ -10,7 +10,7 @@
 """
 
 from tools.base import Tool, ToolCategory, Parameter, ToolResult
-from tools.registry import registry, ToolRegistry
+from core.tool_registry import tool_registry as registry, ToolRegistry
 from tools.arbiter import ToolArbiter, get_tool_arbiter
 
 __all__ = [

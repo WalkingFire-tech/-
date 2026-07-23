@@ -17,6 +17,7 @@ import re
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from loguru import logger
+from infrastructure.config_manager import config
 
 
 class CognitiveHighway:
@@ -34,7 +35,7 @@ class CognitiveHighway:
         self.tools = tool_registry
         self.retriever = vector_retriever
         self.reflection = reflection_pipeline
-        self.execution_timeout = 3.0  # 工具硬超时
+        self.execution_timeout = config.get("cognitive_highway.execution_timeout_seconds", 3.0)
         
         logger.info("🧬 认知主干道已初始化（系统脊髓）")
     

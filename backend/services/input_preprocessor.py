@@ -9,10 +9,17 @@ def get_intent_domain_keywords(intent_type, user_input):
         kw.update({"map": 1.0, "coordinate": 0.9, "location": 0.9, "navigate": 0.8, "gps": 0.8, "marker": 0.7, "latitude": 0.9, "longitude": 0.9})
     elif intent_type == "weather":
         kw.update({"weather": 1.0, "temperature": 0.9, "forecast": 0.8, "rain": 0.8, "wind": 0.6, "humidity": 0.7})
-    for word in (user_input or "")[:200].replace("?", " ").replace(",", " ").split():
+    elif intent_type == "simple_query":
+        kw.update({"是什么": 0.6, "为什么": 0.6, "怎么": 0.6, "如何": 0.6, "可以": 0.5, "会": 0.4, "能": 0.4, "吗": 0.3, "呢": 0.3, "什么": 0.5, "多少": 0.5, "哪个": 0.5, "是否": 0.5, "原因": 0.5, "方法": 0.5})
+    _text = (user_input or "")[:200]
+    for word in _text.replace("?", " ").replace("？", " ").replace(",", " ").split():
         w = word.strip().lower()
         if len(w) >= 2:
             kw[w] = kw.get(w, 0.25)
+    for i in range(0, min(len(_text), 20), 2):
+        _bigram = _text[i:i+2].strip()
+        if len(_bigram) == 2 and any('\u4e00' <= c <= '\u9fff' for c in _bigram):
+            kw[_bigram] = kw.get(_bigram, 0.3)
     return kw
 
 
@@ -25,7 +32,9 @@ def compute_relevance(text, domain_keywords):
         if kw.lower() in tl:
             score += w
             matched += 1
-    return 0.05 if matched == 0 else min(score / max(len(domain_keywords), 1) * (1 + matched * 0.1), 1.0)
+    if matched == 0:
+        return 0.05
+    return min(score / max(len(domain_keywords), 1) * (1 + matched * 0.1), 1.0)
 
 
 def feature_enabled(flag_name: str, default: bool = True) -> bool:

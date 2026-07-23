@@ -63,8 +63,8 @@ class DefectDiagnoser:
     def diagnose_from_lessons(self) -> List[Defect]:
         defects = []
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/alignment_violations.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/alignment_violations.db")
             rows = db.query("SELECT module, deviation_type, description, severity, status FROM deviations WHERE status='open'")
             for r in rows:
                 d = dict(r) if hasattr(r, "keys") else r

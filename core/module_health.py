@@ -9,7 +9,7 @@
 import time
 from typing import Dict, Optional
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 from datetime import datetime
 
 
@@ -27,7 +27,7 @@ class ModuleHealthMonitor:
 
     def _init_db(self):
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.executescript('''CREATE TABLE IF NOT EXISTS module_health (
                 module_name TEXT PRIMARY KEY,
                 status TEXT DEFAULT 'healthy',
@@ -53,7 +53,7 @@ class ModuleHealthMonitor:
     def record_success(self, module_name: str):
         """记录模块成功"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute("INSERT OR IGNORE INTO module_health (module_name) VALUES (?)", (module_name,), commit=True)
             db.execute("UPDATE module_health SET success_count=success_count+1, last_success=?, status=CASE WHEN status='degraded' THEN 'degraded' ELSE 'healthy' END WHERE module_name=?",
                       (datetime.now().isoformat(), module_name), commit=True)
@@ -66,7 +66,7 @@ class ModuleHealthMonitor:
     def record_failure(self, module_name: str, detail: str = ""):
         """记录模块失败，检查是否需要隔离"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute("INSERT OR IGNORE INTO module_health (module_name) VALUES (?)", (module_name,), commit=True)
             db.execute("UPDATE module_health SET failure_count=failure_count+1, last_failure=? WHERE module_name=?",
                       (datetime.now().isoformat(), module_name), commit=True)
@@ -94,7 +94,7 @@ class ModuleHealthMonitor:
     def is_module_available(self, module_name: str) -> bool:
         """检查模块是否可用（未隔离）"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             row = db.query_one("SELECT status, isolated_at FROM module_health WHERE module_name=?", (module_name,))
 
             if not row:
@@ -115,7 +115,7 @@ class ModuleHealthMonitor:
         """获取所有模块的健康报告"""
         report = {"healthy": [], "degraded": [], "isolated": [], "unknown": []}
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query("SELECT module_name, status, failure_count, success_count, last_failure FROM module_health")
             for row in rows:
                 entry = {"name": row[0], "status": row[1], "failures": row[2], "successes": row[3], "last_failure": row[4]}
@@ -131,7 +131,7 @@ class ModuleHealthMonitor:
     def clear_anomalies(self, module_name: str):
         """异常吞噬：清理模块的异常状态"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute("UPDATE module_health SET failure_count=0, status='healthy' WHERE module_name=?", (module_name,), commit=True)
             db.execute("INSERT INTO health_events (module_name, event_type, detail, timestamp) VALUES (?, 'cleared', '异常吞噬：状态重置', ?)",
                       (module_name, datetime.now().isoformat()), commit=True)

@@ -47,8 +47,8 @@ def score_response(result: dict, query: str) -> float:
         score += 10
     elif result["source"] == "自我推理":
         score += 12
-    elif "外部" in result["source"]:
-        score -= 5
+    elif "DeepSeek" in result["source"]:
+        score += 5
 
     search_snippet_patterns = ["...", "…:", "CSDN", "博客园", "知乎", "Stack Overflow", "GitHub -"]
     snippet_count = sum(1 for p in search_snippet_patterns if p in response)
@@ -87,7 +87,76 @@ def score_response(result: dict, query: str) -> float:
     return score
 
 
-def compare_and_select(candidates: list, query: str, cbnr_ctx: dict = None) -> tuple:
+_SOURCE_TO_WEIGHT_KEY = {
+    "DeepSeek": "external_model",
+    "外部API": "external_model",
+    "Ollama": "ollama",
+    "经验池": "experience_pool",
+    "知识库": "knowledge_base",
+    "规则推理": "rule_reasoning",
+    "self_reasoning": "self_reasoning",
+    "工具调用": "tool_framework",
+}
+
+
+def _resolve_weight_key(source: str, path_weights: dict) -> float:
+    mapped = _SOURCE_TO_WEIGHT_KEY.get(source)
+    if mapped and mapped in path_weights:
+        return path_weights[mapped]
+    for key in path_weights:
+        if key in source or source in key:
+            return path_weights[key]
+    return 0.1
+
+
+_DEEP_SOURCES = {"DeepSeek", "Ollama", "self_reasoning", "本质推理"}
+_FAST_SOURCES = {"经验池", "知识库", "事实锚点", "规则推理"}
+_LEARNING_SOURCES = {"DeepSeek", "外部学习", "外部API", "知识库"}
+
+
+def _jaccard_similarity(a: str, b: str) -> float:
+    wa = set(a.split())
+    wb = set(b.split())
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
+def _deduplicate_candidates(scored: list) -> list:
+    if len(scored) <= 1:
+        return scored
+    kept = [scored[0]]
+    for c, s, ws in scored[1:]:
+        resp = c.get("response", "")
+        is_dup = False
+        for kc, ks, kws in kept:
+            kresp = kc.get("response", "")
+            if _jaccard_similarity(resp, kresp) > 0.7:
+                is_dup = True
+                break
+        if not is_dup:
+            kept.append((c, s, ws))
+    return kept
+
+
+def _compute_rhythm_bonus(response_style: str) -> dict:
+    if not response_style:
+        return {}
+    if response_style == "thorough":
+        return {"_default": 1.0, **{s: 1.1 for s in _DEEP_SOURCES}}
+    elif response_style == "exploratory":
+        return {"_default": 1.0, **{s: 1.1 for s in _LEARNING_SOURCES}}
+    elif response_style == "reflective":
+        return {"_default": 1.0, "self_reasoning": 1.15, "经验池": 1.1}
+    elif response_style == "concise":
+        return {"_default": 1.0, **{s: 1.15 for s in _FAST_SOURCES}}
+    elif response_style == "minimal":
+        return {"_default": 0.95, "经验池": 1.2, "事实锚点": 1.15, "知识库": 1.1}
+    return {}
+
+
+def compare_and_select(candidates: list, query: str, cbnr_ctx: dict = None,
+                       response_style: str = "") -> tuple:
     if not candidates:
         return None, []
     path_weights = {}
@@ -96,6 +165,9 @@ def compare_and_select(candidates: list, query: str, cbnr_ctx: dict = None) -> t
         path_weights = path_weight_manager.get_weights()
     except Exception:
         logger.warning("操作降级跳过")
+
+    _rhythm_bonus = _compute_rhythm_bonus(response_style)
+
     _surprise_boost = 1.0
     _deep_sources = {"Ollama", "DeepSeek", "Ollama(qwen2.5-coder:7b)", "self_reasoning", "本质推理"}
     _tool_sources = {"file_reader", "project_scanner", "code_indexer", "dependency_analyzer", "工具调用", "serial_port", "bash"}
@@ -108,7 +180,7 @@ def compare_and_select(candidates: list, query: str, cbnr_ctx: dict = None) -> t
     for c in candidates:
         s = score_response(c, query)
         source = c.get("source", "")
-        pw = path_weights.get(source, 0.1)
+        pw = _resolve_weight_key(source, path_weights)
         s_weighted = s * (0.7 + 0.3 * pw / max(path_weights.values()) if path_weights else s)
         if _surprise_boost > 1.0 and any(ds in source for ds in _deep_sources):
             s_weighted *= _surprise_boost
@@ -116,8 +188,14 @@ def compare_and_select(candidates: list, query: str, cbnr_ctx: dict = None) -> t
             s_weighted *= (2.0 - _surprise_boost)
         if _query_is_tool_intent and any(ts in source for ts in _tool_sources):
             s_weighted *= 1.5
+
+        if _rhythm_bonus:
+            src_bonus = _rhythm_bonus.get(source, _rhythm_bonus.get("_default", 1.0))
+            s_weighted *= src_bonus
+
         scored.append((c, s, s_weighted))
     scored.sort(key=lambda x: x[2], reverse=True)
+    scored = _deduplicate_candidates(scored)
     best = scored[0]
     comparison = [
         {"source": c["source"], "score": round(s, 1), "weighted_score": round(ws, 1), "length": len(c.get("response", ""))}
@@ -131,6 +209,30 @@ async def self_verify(query: str, response: str) -> dict:
 
     if not response or len(response) < 20:
         issues.append("回复过短")
+    _system_error_patterns = [
+        "cmdlet", "CategoryInfo", "FullyQualifiedErrorId",
+        "无法将", "项识别为", "不是内部或外部命令",
+        "不是可运行的程序", "CommandNotFoundException",
+        "Traceback (most recent call last):",
+        "Permission denied", "Access is denied",
+    ]
+    for pat in _system_error_patterns:
+        if pat in response:
+            issues.append(f"包含系统错误输出'{pat}'")
+            break
+    _physical_keywords = ["西瓜", "苹果", "香蕉", "水", "冰", "温度", "植物", "动物", "人",
+                          "食物", "水果", "蔬菜", "花", "树", "鱼", "鸟", "猫", "狗"]
+    _digital_actions = ["文件资源管理器", "右键点击", "属性", "详细信息选项卡",
+                        "打开文件", "导航到文件夹", "选择并右键", "查看属性",
+                        "cmdlet", "PowerShell", "命令提示符"]
+    _has_physical = any(kw in response for kw in _physical_keywords)
+    _has_digital_action = any(kw in response for kw in _digital_actions)
+    if _has_physical and _has_digital_action:
+        issues.append("物理对象与数字操作混淆（模型幻觉）")
+    _weather_in_response = any(kw in response for kw in ["当前天气", "天气状况", "气温：", "体感温度", "风速：", "湿度：", "能见度：", "气压：", "明天预报"])
+    _weather_in_query = any(kw in query for kw in ["天气", "气温", "weather", "下雨", "晴天", "阴天", "刮风", "预报"])
+    if _weather_in_response and not _weather_in_query:
+        issues.append("响应包含无关天气数据（查询未涉及天气）")
     perfunctory = ["我不知道", "无法回答", "请稍后重试", "无法访问", "无法直接", "没有能力", "不能访问", "无法获取数据",
                    "我无法访问", "我无法直接", "我不能访问", "作为ai", "作为一个ai", "作为语言模型",
                    "你需要手动", "你可以自己", "我建议你"]

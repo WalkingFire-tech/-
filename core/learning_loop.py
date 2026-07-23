@@ -7,7 +7,7 @@
 4. 存储高质量知识
 5. 形成学习闭环
 """
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import json
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -75,7 +75,7 @@ class LearningLoop:
         
         # 4. 检查知识库是否有相关知识
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             knowledge_count = db.query_one(
                 'SELECT COUNT(*) FROM knowledge_items WHERE question LIKE ? OR answer LIKE ?',
                 (f'%{question[:30]}%', f'%{question[:30]}%')
@@ -98,20 +98,26 @@ class LearningLoop:
                         gap_info: Dict,
                         context: Dict = None) -> Dict:
         """
-        触发学习
+        触发学习 — 优先委托L2学习层（真实搜索+质量评估+冲突检测）
         
         返回: {
             "success": bool,
             "knowledge_gained": int,
             "sources": List[str],
-            "analysis": str
+            "analysis": str,
+            "avg_knowledge_quality": float,
+            "knowledge_reuse_rate": float,
+            "real_search_performed": bool,
         }
         """
         result = {
             "success": False,
             "knowledge_gained": 0,
             "sources": [],
-            "analysis": ""
+            "analysis": "",
+            "avg_knowledge_quality": 0.0,
+            "knowledge_reuse_rate": 0.0,
+            "real_search_performed": False,
         }
         
         if not gap_info["has_gap"]:
@@ -120,16 +126,31 @@ class LearningLoop:
         logger.info(f"🔍 检测到能力不足: {gap_info['gap_type']}, 优先级: {gap_info['learning_priority']}")
         logger.info(f"📚 触发学习: {question[:50]}...")
         
-        # 1. 搜索学习
+        try:
+            from core.layers.l2_learning import get_l2_learning
+            l2 = get_l2_learning()
+            target = {
+                'name': question,
+                'keywords': question.split()[:5],
+            }
+            l2_result = l2.learn(target, context)
+            result.update({
+                "success": l2_result.success,
+                "knowledge_gained": l2_result.knowledge_gained,
+                "sources": l2_result.sources_used,
+                "analysis": f"L2学习: {l2_result.knowledge_gained}条新知, 质量={l2_result.avg_knowledge_quality:.1f}",
+                "avg_knowledge_quality": l2_result.avg_knowledge_quality,
+                "knowledge_reuse_rate": l2_result.knowledge_reuse_rate,
+                "real_search_performed": l2_result.real_search_performed,
+            })
+            logger.info(f"✅ L2学习完成: 获得{l2_result.knowledge_gained}条知识 (真实搜索={l2_result.real_search_performed})")
+            return result
+        except Exception as e:
+            logger.warning(f"L2学习层不可用，降级到内置搜索: {e}")
+        
         search_results = self._search_and_learn(question)
-        
-        # 2. 分析对比
         analysis = self._analyze_and_compare(question, search_results)
-        
-        # 3. 存储知识
         saved_count = self._save_knowledge(question, search_results, analysis, gap_info)
-        
-        # 4. 生成学习规则
         self._generate_learning_rule(question, gap_info, saved_count)
         
         result.update({
@@ -223,7 +244,7 @@ class LearningLoop:
         saved_count = 0
         
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             for sr in search_results:
                 answer = f"{sr.get('title', '')}\n\n{sr.get('body', '')}"
                 source = sr.get('href', 'search_learned')
@@ -265,7 +286,7 @@ class LearningLoop:
             if not keywords:
                 return
             
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             existing = db.query_one(
                 'SELECT 1 FROM learning_rules WHERE trigger_pattern LIKE ?',
                 (f'%{keywords[0]}%',)

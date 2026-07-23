@@ -84,24 +84,17 @@ class ExecutorAgent(BaseAgent):
         best_result = {"response": "", "source": "", "quality": 0, "success": False, "attempts": []}
 
         try:
-            async for chunk in chat_stream_func(user_input, context or {}):
-                if '"type": "result"' in chunk:
-                    import json
-                    try:
-                        data_str = chunk.replace("data: ", "").strip()
-                        data = json.loads(data_str)
-                        if data.get("type") == "result":
-                            resp = data.get("response", "")
-                            if resp and len(resp) > len(best_result["response"]):
-                                best_result = {
-                                    "response": resp,
-                                    "source": data.get("source", "chat_stream"),
-                                    "quality": data.get("fitness_score", 50),
-                                    "success": True,
-                                    "attempts": data.get("attempts", []),
-                                }
-                    except (json.JSONDecodeError, KeyError):
-                        pass
+            async for event_type, data in chat_stream_func(user_input, context or {}):
+                if event_type == "result":
+                    resp = data.get("response", "")
+                    if resp and len(resp) > len(best_result["response"]):
+                        best_result = {
+                            "response": resp,
+                            "source": data.get("source", "chat_stream"),
+                            "quality": data.get("fitness_score", 50),
+                            "success": True,
+                            "attempts": data.get("attempts", []),
+                        }
         except Exception as e:
             logger.error(f"ExecutorAgent: chat_stream执行异常: {e}")
 

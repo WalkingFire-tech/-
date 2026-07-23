@@ -11,7 +11,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class LocalAcademicLibrary:
@@ -39,7 +39,7 @@ class LocalAcademicLibrary:
         """初始化数据库"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS documents (
                 id TEXT PRIMARY KEY,
@@ -120,7 +120,7 @@ class LocalAcademicLibrary:
                 except Exception:
                     logger.warning("操作降级跳过")
             
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute('''
                 INSERT OR REPLACE INTO documents
                 (id, title, authors, abstract, filename, file_path, tags, source, language, content, embedding, indexed_at)
@@ -189,7 +189,7 @@ class LocalAcademicLibrary:
             try:
                 query_vec = self._embedding_model.encode(query)
                 
-                db = DatabaseManager.get(self.db_path)
+                db = get_storage_port(self.db_path)
                 rows = db.query('''
                     SELECT id, title, authors, abstract, file_path, tags, source
                     FROM documents
@@ -227,7 +227,7 @@ class LocalAcademicLibrary:
                 logger.error(f"语义搜索失败: {e}")
         
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query('''
                 SELECT id, title, authors, abstract, file_path, tags, source
                 FROM documents
@@ -255,7 +255,7 @@ class LocalAcademicLibrary:
     def get_document(self, doc_id: str) -> Optional[Dict]:
         """获取单个文档"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             row = db.query_one(
                 'SELECT * FROM documents WHERE id = ?',
                 (doc_id,)
@@ -281,7 +281,7 @@ class LocalAcademicLibrary:
     def get_stats(self) -> Dict:
         """获取统计信息"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             total_row = db.query_one("SELECT COUNT(*) FROM documents")
             total = total_row[0] if total_row else 0
             
@@ -307,7 +307,7 @@ class LocalAcademicLibrary:
     def clear(self):
         """清空库"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute("DELETE FROM documents", commit=True)
             logger.info("本地学术库已清空")
         except Exception as e:

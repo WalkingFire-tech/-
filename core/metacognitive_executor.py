@@ -13,6 +13,7 @@ import time
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from loguru import logger
+from infrastructure.config_manager import config
 from adapters.llm.ollama_adapter import ollama_chat_request
 
 class MetacognitiveExecutor:
@@ -61,7 +62,7 @@ class MetacognitiveExecutor:
         try:
             capability_context = await asyncio.wait_for(
                 self._phase0_capability_introspection(),
-                timeout=3.0  # 最多3秒
+                timeout=config.get("metacognitive.phase0_timeout_seconds", 3.0)
             )
         except asyncio.TimeoutError:
             logger.warning("⚠️ 阶段0超时，使用默认能力")
@@ -87,7 +88,7 @@ class MetacognitiveExecutor:
                     capability_context,
                     context
                 ),
-                timeout=5.0  # 最多5秒
+                timeout=config.get("metacognitive.phase1_timeout_seconds", 5.0)
             )
         except asyncio.TimeoutError:
             logger.warning("⚠️ 阶段1超时，使用默认计划")
@@ -130,7 +131,7 @@ class MetacognitiveExecutor:
                     execution_results,
                     capability_context
                 ),
-                timeout=2.0  # 最多2秒
+                timeout=config.get("metacognitive.phase3_timeout_seconds", 2.0)
             )
         except asyncio.TimeoutError:
             logger.warning("⚠️ 阶段3超时，使用默认验证")
@@ -411,7 +412,7 @@ class MetacognitiveExecutor:
     async def _execute_tool(self, tool_name: str, query: str) -> Any:
         """执行工具"""
         try:
-            from tools.registry import registry
+            from core.tool_registry import tool_registry as registry
             import asyncio
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
@@ -429,8 +430,8 @@ class MetacognitiveExecutor:
         """检索知识（快速，不依赖向量检索器）"""
         def _do_retrieve(q):
             try:
-                from infrastructure.database_manager import DatabaseManager
-                rows = DatabaseManager.get("data/knowledge_store.db").query(
+                from core.ports.adapters import get_storage_port
+                rows = get_storage_port("data/knowledge_store.db").query(
                     "SELECT answer FROM knowledge_items WHERE answer LIKE ? LIMIT 3",
                     (f"%{q[:30]}%",)
                 )
@@ -516,7 +517,7 @@ class MetacognitiveExecutor:
         try:
             from adapters.llm.remote_adapter import RemoteAdapter
             adapter = RemoteAdapter(
-                model="deepseek-chat",
+                model_name="deepseek-chat",
                 base_url="https://api.deepseek.com/v1"
             )
             loop = asyncio.get_event_loop()
@@ -601,9 +602,9 @@ class MetacognitiveExecutor:
             
             # 1. 存储到经验池（SQLite，快速）
             try:
-                from infrastructure.database_manager import DatabaseManager
+                from core.ports.adapters import get_storage_port
                 answer = self._extract_best_answer(execution_results)
-                DatabaseManager.get("data/experience_pool.db").execute(
+                get_storage_port("data/experience_pool.db").execute(
                     "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
                     (user_query, answer, datetime.now().isoformat(), "metacognitive", int(validation.get("quality_score", 50))),
                     commit=True

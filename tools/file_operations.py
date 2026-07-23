@@ -557,7 +557,7 @@ class FileCopyTool(BaseFileTool):
 
 def register_file_tools():
     """注册文件操作工具"""
-    from tools.registry import registry
+    from core.tool_registry import tool_registry as registry
     
     tools = [
         FileWriterTool(),

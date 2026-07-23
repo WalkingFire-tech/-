@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -214,7 +214,7 @@ class SystemIntrospector:
     def _check_data_loops(self) -> List[Anomaly]:
         anomalies = []
         try:
-            db = DatabaseManager.get("data/experience_pool.db")
+            db = get_storage_port("data/experience_pool.db")
             fail_count = db.query_one("SELECT COUNT(*) FROM experiences WHERE success = 0")[0]
             total = db.query_one("SELECT COUNT(*) FROM experiences")[0]
             if total > 0 and fail_count / total > 0.5:
@@ -234,7 +234,7 @@ class SystemIntrospector:
             logger.warning("操作降级跳过")
 
         try:
-            db = DatabaseManager.get("data/rule_store.db")
+            db = get_storage_port("data/rule_store.db")
             active = db.query_one("SELECT COUNT(*) FROM rules WHERE apply_count > 0")[0]
             total_active = db.query_one("SELECT COUNT(*) FROM rules WHERE status = 'active'")[0]
             if total_active > 0 and active / total_active < 0.1:
@@ -300,7 +300,7 @@ class SystemIntrospector:
     def _check_performance(self) -> List[Anomaly]:
         anomalies = []
         try:
-            db = DatabaseManager.get("data/experience_pool.db")
+            db = get_storage_port("data/experience_pool.db")
             avg_duration = db.query_one(
                 "SELECT AVG(duration) FROM experiences WHERE timestamp > datetime('now', '-1 hour')"
             )[0]

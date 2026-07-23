@@ -15,7 +15,7 @@
 import json
 import hashlib
 import threading
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 from typing import Dict, List, Optional, Set, Tuple
 from datetime import datetime
 from enum import Enum
@@ -117,7 +117,7 @@ class KnowledgeGraph:
 
     def _init_db(self):
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS nodes (
                 id TEXT PRIMARY KEY,
@@ -162,7 +162,7 @@ class KnowledgeGraph:
             updated_at=now,
         )
         with self._lock:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute(
                 'INSERT OR REPLACE INTO nodes (id, node_type, content, importance, access_count, metadata, created_at, updated_at) '
                 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
@@ -179,7 +179,7 @@ class KnowledgeGraph:
         return node
 
     def get_node(self, node_id: str) -> Optional[KnowledgeNode]:
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one('SELECT * FROM nodes WHERE id = ?', (node_id,))
         if not row:
             return None
@@ -198,7 +198,7 @@ class KnowledgeGraph:
                        connection_type: ConnectionType = ConnectionType.RELATED_TO,
                        strength: float = 0.5, evidence: str = "") -> bool:
         with self._lock:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             try:
                 db.execute(
                     'INSERT OR REPLACE INTO connections (source_id, target_id, connection_type, strength, evidence) '
@@ -266,7 +266,7 @@ class KnowledgeGraph:
         clusters = []
 
         all_node_ids = set()
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         for row in db.query('SELECT id FROM nodes'):
             all_node_ids.add(row[0])
 
@@ -331,7 +331,7 @@ class KnowledgeGraph:
 
         if to_remove:
             with self._lock:
-                db = DatabaseManager.get(self.db_path)
+                db = get_storage_port(self.db_path)
                 placeholders = ",".join("?" * len(to_remove))
                 db.execute(f'DELETE FROM nodes WHERE id IN ({placeholders})', to_remove, commit=True)
                 db.execute(f'DELETE FROM connections WHERE source_id IN ({placeholders})', to_remove, commit=True)
@@ -339,7 +339,7 @@ class KnowledgeGraph:
             logger.info(f"知识图谱修剪: 移除{len(to_remove)}个低价值节点")
 
     def get_stats(self) -> Dict:
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         node_count = db.query_one('SELECT COUNT(*) FROM nodes')[0]
         conn_count = db.query_one('SELECT COUNT(*) FROM connections')[0]
         type_dist = {}
@@ -360,7 +360,7 @@ class KnowledgeGraph:
 
     def _get_all_nodes(self) -> List[KnowledgeNode]:
         nodes = []
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         for row in db.query('SELECT * FROM nodes'):
             nodes.append(KnowledgeNode(
                 id=row['id'],
@@ -376,7 +376,7 @@ class KnowledgeGraph:
 
     def _build_adjacency(self) -> Dict[str, List[str]]:
         adj: Dict[str, List[str]] = {}
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         for row in db.query('SELECT source_id, target_id FROM connections'):
             adj.setdefault(row[0], []).append(row[1])
             adj.setdefault(row[1], []).append(row[0])

@@ -2,7 +2,7 @@ import asyncio
 import subprocess
 import importlib
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class CapabilityGapLearner:
@@ -59,7 +59,7 @@ class CapabilityGapLearner:
 
     def _init_db(self):
         try:
-            db = DatabaseManager.get("data/capability_gaps.db")
+            db = get_storage_port("data/capability_gaps.db")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS capability_gaps (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -290,7 +290,7 @@ class CapabilityGapLearner:
     def _record_gap(self, gap: dict, resolved: int = 0, resolution: str = ""):
         try:
             from datetime import datetime
-            db = DatabaseManager.get("data/capability_gaps.db")
+            db = get_storage_port("data/capability_gaps.db")
             now = datetime.now().isoformat()
             row = db.query_one(
                 "SELECT id, attempts FROM capability_gaps WHERE query LIKE ? AND gap_type=?",

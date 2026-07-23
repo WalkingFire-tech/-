@@ -16,7 +16,7 @@
   5. 适应速度   — 面对变化时的调整能力
   6. 前端覆盖率 — 系统能否"看见"自身能力的前端可达性
 """
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import time
 import json
 from typing import Dict, List, Optional
@@ -51,7 +51,7 @@ class SelfAssessment:
         return report
 
     def _db(self, name: str):
-        return DatabaseManager.get(f"{self.root_dir}/data/{name}")
+        return get_storage_port(f"{self.root_dir}/data/{name}")
 
     def _assess_loop_integrity(self) -> dict:
         result = {"stages": {}, "breaks": [], "score": 0.0}

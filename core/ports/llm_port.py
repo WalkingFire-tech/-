@@ -14,3 +14,7 @@ class LLMPort(ABC):
     def model_name(self) -> str:
         """返回模型名称，用于日志和路由"""
         pass
+
+    def is_available(self) -> bool:
+        """LLM是否可用（默认True，子类可覆盖）"""
+        return True

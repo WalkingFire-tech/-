@@ -12,7 +12,7 @@ import json
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 from datetime import datetime
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -35,7 +35,7 @@ class RecommendationValidator:
         """初始化知识库数据库"""
         Path(self.db_path).parent.mkdir(exist_ok=True)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS product_categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,7 +74,7 @@ class RecommendationValidator:
     
     def _load_initial_knowledge(self):
         """加载初始知识（仅首次）"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one("SELECT COUNT(*) FROM product_categories")
         if row[0] > 0:
             return
@@ -177,7 +177,7 @@ class RecommendationValidator:
         """识别需求类别"""
         categories = []
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         rows = db.query("SELECT category_name, keywords FROM product_categories")
         for row in rows:
             category_name, keywords_json = row
@@ -191,7 +191,7 @@ class RecommendationValidator:
         """从文本中提取产品"""
         products = []
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         rows = db.query("SELECT product_id, product_name, category, keywords FROM products")
         for row in rows:
             pid, name, category, keywords_json = row
@@ -272,7 +272,7 @@ class RecommendationValidator:
         """记录验证历史"""
         try:
             query_hash = str(hash(query))[:12]
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute(
                 "INSERT INTO validation_history (query_hash, recommendation, is_valid, issues, validated_at) VALUES (?, ?, ?, ?, ?)",
                 (query_hash, recommendation[:200], int(is_valid) if is_valid is not None else -1, json.dumps(issues, ensure_ascii=False), datetime.now().isoformat()),
@@ -285,7 +285,7 @@ class RecommendationValidator:
                    features: List[str], keywords: List[str]):
         """添加产品到知识库"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute(
                 "INSERT OR REPLACE INTO products (product_id, product_name, category, features, keywords, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (product_id, name, category, json.dumps(features, ensure_ascii=False), json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat(), datetime.now().isoformat()),
@@ -298,7 +298,7 @@ class RecommendationValidator:
     def add_category(self, name: str, description: str, keywords: List[str]):
         """添加产品类别"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute(
                 "INSERT OR REPLACE INTO product_categories (category_name, description, keywords, created_at) VALUES (?, ?, ?, ?)",
                 (name, description, json.dumps(keywords, ensure_ascii=False), datetime.now().isoformat()),
@@ -319,7 +319,7 @@ class RecommendationValidator:
         
         recommendations = []
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         for category in required_categories:
             rows = db.query(
                 "SELECT product_id, product_name, features FROM products WHERE category = ?",

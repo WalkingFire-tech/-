@@ -2,7 +2,7 @@ import asyncio
 import json
 from typing import Optional
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 from backend.services.path_handlers._shared import (
     _fast_executor,
@@ -54,14 +54,16 @@ class SafeEncoder(json.JSONEncoder):
             return f"<{type(obj).__name__}>"
 
 
-def emit(event_type: str, data: dict) -> str:
+def emit(event_type: str, data: dict, event_sink=None):
     if event_type == "result" and _RESOURCE_AWARE:
         try:
             if get_health_monitor:
                 get_health_monitor().unregister_query()
         except Exception:
             logger.warning("操作降级跳过")
-    return f"data: {json.dumps({'type': event_type, **data}, ensure_ascii=False, cls=SafeEncoder)}\n\n"
+    if event_sink is not None:
+        event_sink.emit(event_type, data)
+    return (event_type, data)
 
 
 def build_uncertainty_note(query: str, response: str, attempts: list, prob_field, action: dict) -> str:
@@ -209,7 +211,7 @@ async def self_reason(query: str, conversation_context: str = "", truth_insights
         try:
             loop = asyncio.get_running_loop()
             def _query_rules():
-                db = DatabaseManager.get("data/learning_rules.db")
+                db = get_storage_port("data/learning_rules.db")
                 rows = db.query("SELECT rule_text, confidence FROM learning_rules WHERE status='active' AND rule_text LIKE ? ORDER BY confidence DESC LIMIT 5", (f"%{query[:10]}%",))
                 return [(r[0], r[1]) for r in rows]
             rows = await asyncio.wait_for(loop.run_in_executor(_fast_executor, _query_rules), timeout=3)
@@ -325,7 +327,7 @@ async def self_reason_deliberation(query: str, current_response: str, reason: st
         insight_text = ""
 
     try:
-        db = DatabaseManager.get("data/spirit_lessons.db")
+        db = get_storage_port("data/spirit_lessons.db")
         lesson_rows = db.query(
             "SELECT lesson_type, lesson_text FROM spirit_lessons ORDER BY RANDOM() LIMIT 3"
         )
@@ -437,10 +439,32 @@ def is_goal_achieved(user_input: str, response: str, intent_type: str, attempts:
         "作为ai", "作为一个ai", "作为语言模型",
         "我建议你", "你可以自己", "你需要手动",
     ]
+    has_evasion = False
+    matched_evasion = ""
     for pattern in evasion_patterns:
         if pattern in resp_lower:
-            logger.info(f"🔄 目标未达成: 回复包含敷衍模式'{pattern}'")
+            has_evasion = True
+            matched_evasion = pattern
+            break
+    
+    if has_evasion:
+        substantive_markers = [
+            "因为", "由于", "所以", "因此", "意味着", "说明", "表明",
+            "方法", "步骤", "原理", "机制", "分析", "原因", "关键",
+            "例如", "比如", "具体", "首先", "其次", "然后",
+            "建议", "可以尝试", "可以考虑", "推荐",
+        ]
+        has_substantive = any(kw in resp_lower for kw in substantive_markers)
+        is_bare_evasion = len(response) < 80 and not has_substantive
+        
+        if is_bare_evasion:
+            logger.info(f"🔄 目标未达成: 回复包含敷衍模式'{matched_evasion}'且缺乏实质内容")
             return False
+        elif not has_substantive and len(response) < 200:
+            logger.info(f"🔄 目标未达成: 回复包含敷衍模式'{matched_evasion}'且缺乏实质内容")
+            return False
+        else:
+            logger.debug(f"目标达成: 回复含'{matched_evasion}'但有实质性解释，不判为敷衍")
 
     if is_operational:
         fabricated_patterns = [
@@ -642,6 +666,13 @@ def alchemize_error(error: Exception, context: dict = None, phase: str = "unknow
     而非在每个except块中重复import+record+alchemize三步。
     """
     global _error_alchemy_instance
+    try:
+        from infrastructure.error_handler import CampfireError
+        if not isinstance(error, CampfireError):
+            error = CampfireError(str(error), category=context.get("phase", "unknown"))
+        logger.warning(f"🧯 {error.friendly_message()}")
+    except Exception:
+        pass
     try:
         if _error_alchemy_instance is None:
             from core.learning.error_alchemy import ErrorAlchemy

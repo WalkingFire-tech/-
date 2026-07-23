@@ -13,7 +13,7 @@
 - 置信度分布 = 加权贡献度（类似SHAP值）
 """
 
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import time
 import json
 from typing import Dict, List, Optional
@@ -23,15 +23,15 @@ from loguru import logger
 
 class PathWeightManager:
     DEFAULT_PATHS = {
-        "rule_reasoning": {"weight": 0.15, "success_rate": 0.7},
-        "experience_pool": {"weight": 0.16, "success_rate": 0.65},
-        "knowledge_base": {"weight": 0.12, "success_rate": 0.6},
-        "ollama": {"weight": 0.10, "success_rate": 0.7},
-        "external_model": {"weight": 0.08, "success_rate": 0.75},
-        "external_learner": {"weight": 0.05, "success_rate": 0.6},
-        "fact_anchor": {"weight": 0.15, "success_rate": 0.8},
-        "self_reasoning": {"weight": 0.12, "success_rate": 0.55},
-        "tool_framework": {"weight": 0.15, "success_rate": 0.5},
+        "rule_reasoning": {"weight": 0.10, "success_rate": 0.7},
+        "experience_pool": {"weight": 0.11, "success_rate": 0.65},
+        "knowledge_base": {"weight": 0.08, "success_rate": 0.6},
+        "ollama": {"weight": 0.12, "success_rate": 0.7},
+        "external_model": {"weight": 0.20, "success_rate": 0.85},
+        "external_learner": {"weight": 0.08, "success_rate": 0.6},
+        "fact_anchor": {"weight": 0.10, "success_rate": 0.8},
+        "self_reasoning": {"weight": 0.08, "success_rate": 0.55},
+        "tool_framework": {"weight": 0.08, "success_rate": 0.5},
     }
 
     def __init__(self, db_path: str = "data/path_weights.db"):
@@ -48,7 +48,7 @@ class PathWeightManager:
     def _init_db(self):
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS path_weights (
                 path_name TEXT PRIMARY KEY,
@@ -70,7 +70,7 @@ class PathWeightManager:
         ''')
 
     def _load_weights(self):
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         rows = db.query("SELECT path_name, weight, success_rate, total_uses, total_successes FROM path_weights")
         if rows:
             for name, weight, sr, uses, succ in rows:
@@ -93,7 +93,7 @@ class PathWeightManager:
             self._save_all_weights()
 
     def _save_all_weights(self):
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         for name, info in self._paths.items():
             db.execute('''
                 INSERT OR REPLACE INTO path_weights (path_name, weight, success_rate, total_uses, total_successes, last_updated)
@@ -191,7 +191,7 @@ class PathWeightManager:
 
     def _save_path_weight(self, path: str):
         info = self._paths[path]
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT OR REPLACE INTO path_weights (path_name, weight, success_rate, total_uses, total_successes, last_updated)
             VALUES (?, ?, ?, ?, ?, ?)

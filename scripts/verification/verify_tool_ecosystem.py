@@ -51,7 +51,7 @@ print(f"  FileReaderTool: ✓")
 print("\n[5] 工具注册")
 print("-" * 50)
 
-from tools.registry import ToolRegistry
+from core.tool_registry import ToolRegistry
 
 registry = ToolRegistry()
 print(f"  ToolRegistry单例: ✓")

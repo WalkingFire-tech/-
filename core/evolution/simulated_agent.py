@@ -13,7 +13,7 @@ import json
 from typing import Dict, List, Optional
 from datetime import datetime
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class SimulatedGenome:
@@ -135,7 +135,7 @@ class SimulatedAgent:
     
     def _init_db(self):
         """初始化临时数据库"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             CREATE TABLE IF NOT EXISTS knowledge (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -157,7 +157,7 @@ class SimulatedAgent:
     
     def _add_skill(self, skill: Dict):
         """添加技能"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO skills (name, code, trigger)
             VALUES (?, ?, ?)
@@ -165,7 +165,7 @@ class SimulatedAgent:
     
     def learn(self, question: str, answer: str, confidence: float = 0.7):
         """学习知识"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO knowledge (question, answer, confidence, created_at)
             VALUES (?, ?, ?, ?)
@@ -173,7 +173,7 @@ class SimulatedAgent:
     
     def retrieve(self, query: str) -> Optional[Dict]:
         """检索知识"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         row = db.query_one('''
             SELECT answer, confidence FROM knowledge
@@ -225,12 +225,12 @@ class SimulatedAgent:
     
     def evaluate_on_task(self, task: Dict) -> float:
         """
-        在任务上评估
+        在任务上评估 — 向量相似度优先，关键词降级
         
         task: {
             'question': str,
             'expected_answer': str,
-            'keywords': List[str]  # 可选
+            'keywords': List[str]
         }
         
         Returns: 得分 (0-1)
@@ -241,31 +241,47 @@ class SimulatedAgent:
         
         response = self.answer(question)
         
-        # 计算相似度
         score = 0.0
-        
-        # 方法1：期望答案包含
+
+        try:
+            from core.shared_embedding import get_embedding_model
+            import numpy as np
+            model = get_embedding_model()
+            if model is not None:
+                emb_q = model.encode([response], show_progress_bar=False)
+                emb_e = model.encode([expected], show_progress_bar=False)
+                if emb_q is not None and emb_e is not None and len(emb_q) > 0 and len(emb_e) > 0:
+                    v1 = emb_q[0].flatten()
+                    v2 = emb_e[0].flatten()
+                    norm1 = np.linalg.norm(v1)
+                    norm2 = np.linalg.norm(v2)
+                    if norm1 > 0 and norm2 > 0:
+                        cos_sim = float(np.dot(v1, v2) / (norm1 * norm2))
+                        score = max(0.0, min(1.0, cos_sim))
+                        self.fitness += score
+                        return score
+        except Exception:
+            pass
+
         if expected and expected[:50] in response:
             score = 0.8
         elif expected and response[:50] in expected:
             score = 0.6
-        
-        # 方法2：关键词匹配
+
         if keywords:
             matched = sum(1 for kw in keywords if kw.lower() in response.lower())
             score = max(score, matched / len(keywords) * 0.7)
-        
-        # 方法3：长度合理性
+
         if not score:
             if 10 < len(response) < 500:
                 score = 0.3
-        
+
         self.fitness += score
         return score
     
     def learn_from_experience(self):
         """从情景记忆抽象出技能（认知转化：L3情景→L2技能）"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         patterns = db.query('''
             SELECT question, answer, COUNT(*) as cnt

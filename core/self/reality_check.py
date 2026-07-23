@@ -90,9 +90,9 @@ class RealityCheck:
         reality = {}
 
         try:
-            from infrastructure.database_manager import DatabaseManager
+            from core.ports.adapters import get_storage_port
 
-            db_rules = DatabaseManager.get("data/learning_rules.db")
+            db_rules = get_storage_port("data/learning_rules.db")
             total_rules = db_rules.query_one("SELECT COUNT(*) FROM learning_rules")
             active_rules = db_rules.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
             trial_rules = db_rules.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='trial'")
@@ -104,7 +104,7 @@ class RealityCheck:
             reality["trial_rules_ever_matched"] = trial_with_count[0] if trial_with_count else 0
             reality["rule_activation_rate"] = (active_rules[0] / total_rules[0]) if (total_rules and total_rules[0] > 0) else 0
 
-            db_exp = DatabaseManager.get("data/experience_pool.db")
+            db_exp = get_storage_port("data/experience_pool.db")
             total_exp = db_exp.query_one("SELECT COUNT(*) FROM experiences")
             high_quality = db_exp.query_one("SELECT COUNT(*) FROM experiences WHERE quality_score >= 60")
             low_quality = db_exp.query_one("SELECT COUNT(*) FROM experiences WHERE quality_score < 30")

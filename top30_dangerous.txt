@@ -1,0 +1,365 @@
+=== #1 (score=49) ===
+File: C:\Users\Administrator\alliance_pioneer\core\cognitive_dispatcher.py:181
+Has logging: False, Has pass: True
+Block: pass
+Try context: spatch_history.db")
+                db.execute(
+                    "INSERT OR IGNORE INTO learned_keywords (keyword, intent_type, source, learned_at) VALUES (?, ?, ?, ?)",
+                    (w, correct_intent, source, datetime.now().isoformat()),
+                    commit=True,
+                )
+
+=== #2 (score=38) ===
+File: C:\Users\Administrator\alliance_pioneer\core\knowledge_gap_detector.py:313
+Has logging: True, Has pass: False
+Block: logger.warning("操作降级跳过")
+Try context: self.db_path)
+            db.execute(
+                "INSERT INTO validation_history (query_hash, has_gap, reason, confidence, validated_at) VALUES (?, ?, ?, ?, ?)",
+                (query_hash, int(has_gap), reason, confidence, datetime.now().isoformat()),
+                commit=True
+            )
+
+=== #3 (score=38) ===
+File: C:\Users\Administrator\alliance_pioneer\core\defense\auto_rollback.py:68
+Has logging: True, Has pass: False
+Block: logger.warning("操作降级跳过")
+Try context: _SNAPSHOTS:]
+        try:
+            db = get_storage_port(self.db_path)
+            db.execute("INSERT INTO snapshots (target, data, created_at) VALUES (?, ?, ?)",
+                         (target, json.dumps(data, default=str, ensure_ascii=False)[:10000], datetime.now().isoformat()), commit=True)
+
+=== #4 (score=36) ===
+File: C:\Users\Administrator\alliance_pioneer\core\knowledge_graph.py:177
+Has logging: True, Has pass: False
+Block: logger.warning("操作降级跳过")
+Try context: .value, node.content, node.importance,
+                 node.access_count, json.dumps(node.metadata, ensure_ascii=False),
+                 node.created_at, node.updated_at),
+                commit=True
+            )
+        if auto_connect:
+            try:
+                self.auto_connect(node.id)
+
+=== #5 (score=33) ===
+File: C:\Users\Administrator\alliance_pioneer\core\cognitive_architecture_v2.py:319
+Has logging: True, Has pass: False
+Block: logger.warning("操作降级跳过")
+Try context: ef _save_dynamic_boundaries(self):
+        """保存动态边界"""
+        
+        path = os.path.join(self.persistent_dir, "dynamic_boundaries.json")
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump({'boundaries': self.dynamic_boundaries}, f, ensure_ascii=False)
+
+=== #6 (score=33) ===
+File: C:\Users\Administrator\alliance_pioneer\core\cognitive_architecture_v2.py:438
+Has logging: True, Has pass: False
+Block: logger.warning("操作降级跳过")
+Try context:    
+    def _save_knowledge_timestamps(self):
+        """保存知识时间戳"""
+        
+        path = os.path.join(self.persistent_dir, "knowledge_timestamps.json")
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(self.knowledge_timestamps, f, ensure_ascii=False)
+
+=== #7 (score=33) ===
+File: C:\Users\Administrator\alliance_pioneer\core\cognitive_architecture_v2.py:1239
+Has logging: True, Has pass: False
+Block: logger.warning("操作降级跳过")
+Try context: _save_state(self):
+        """保存持久化状态"""
+        
+        # 保存错误归档
+        path_errors = os.path.join(self.persistent_dir, "error_archive.json")
+        try:
+            with open(path_errors, 'w', encoding='utf-8') as f:
+                json.dump(self.error_archive, f, ensure_ascii=False, indent=2)
+
+=== #8 (score=33) ===
+File: C:\Users\Administrator\alliance_pioneer\core\defense\auto_rollback.py:91
+Has logging: True, Has pass: False
+Block: logger.warning("操作降级跳过")
+Try context: [-200:]
+        try:
+            db = get_storage_port(self.db_path)
+            db.execute("INSERT INTO rollback_log (target, reason, entropy_before, entropy_after, created_at) VALUES (?, ?, ?, ?, ?)",
+                         (target, reason, entropy, 0.0, datetime.now().isoformat()), commit=True)
+
+=== #9 (score=33) ===
+File: C:\Users\Administrator\alliance_pioneer\core\presence\sleep_consolidation.py:419
+Has logging: False, Has pass: True
+Block: pass
+Try context: lessons (lesson_type, lesson_text, severity, context) VALUES (?, ?, ?, ?)',
+                            (lesson_type, lesson_text, "medium", json.dumps(af, ensure_ascii=False, default=str)[:500]),
+                            commit=True
+                        )
+                        consumed += 1
+
+=== #10 (score=33) ===
+File: C:\Users\Administrator\alliance_pioneer\core\self_modification\loop.py:362
+Has logging: False, Has pass: True
+Block: pass
+Try context: nsure_ascii=False)[:500],
+                    "L5-auto",
+                    is_self_mod_int,
+                    json.dumps(stage_details or {}, ensure_ascii=False)[:1000],
+                    diff_before,
+                    diff_after,
+                ),
+                commit=True,
+            )
+
+=== #11 (score=31) ===
+File: C:\Users\Administrator\alliance_pioneer\core\task_queue.py:785
+Has logging: False, Has pass: False
+Block: db_ok = False
+                tests.append(("数据库完整性", False, f"{db_name}损坏"))
+                break
+Try context: lse "全部合规"))
+
+        # 测试4：数据库完整性
+        db_ok = True
+        for db_name in ["experience_pool.db", "knowledge_store.db", "gene_pool.db", "task_queue.db"]:
+            try:
+                db2 = get_storage_port(f"data/{db_name}")
+                db2.query_one("SELECT COUNT(*) FROM sqlite_master")
+
+=== #12 (score=30) ===
+File: C:\Users\Administrator\alliance_pioneer\core\low_load_reorganization.py:111
+Has logging: True, Has pass: False
+Block: logger.warning("操作降级跳过")
+Try context: key=lambda r: r[3])
+                for rule in rules:
+                    if rule[0] != best[0]:
+                        try:
+                            db.execute("UPDATE learning_rules SET status='superseded' WHERE id=?", (rule[0],), commit=True)
+                            result["merged"] += 1
+
+=== #13 (score=29) ===
+File: C:\Users\Administrator\alliance_pioneer\core\self_evolution.py:87
+Has logging: False, Has pass: False
+Block: return False
+Try context: as f:
+            json.dump(self.evolution_history, f, ensure_ascii=False, indent=2)
+    
+    def check_ollama_available(self) -> bool:
+        """检查Ollama是否可用"""
+        try:
+            response = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
+            return response.status_code == 200
+
+=== #14 (score=28) ===
+File: C:\Users\Administrator\alliance_pioneer\core\task_queue.py:459
+Has logging: True, Has pass: False
+Block: logger.warning("操作降级跳过")
+Try context:             "INSERT INTO experiences (raw_input, response, timestamp, intent_type, quality_score) VALUES (?, ?, ?, ?, ?)",
+                (query, f"[超时经验] {task_type}任务在{self.HARD_TIMEOUT}s内未完成，建议简化prompt", datetime.now().isoformat(), "timeout_wisdom", 30),
+                commit=True
+            )
+
+=== #15 (score=28) ===
+File: C:\Users\Administrator\alliance_pioneer\core\truth_accumulator.py:419
+Has logging: True, Has pass: False
+Block: logger.warning("操作降级跳过")
+Try context:               applicable = []
+                for method in [a[0] for a in successful]:
+                    if any(app in method for app in applicable):
+                        db.execute("UPDATE truths SET evidence_count=? WHERE name=?", (count + 1, name), commit=True)
+                        break
+
+=== #16 (score=28) ===
+File: C:\Users\Administrator\alliance_pioneer\core\truth_accumulator.py:452
+Has logging: True, Has pass: False
+Block: logger.warning("操作降级跳过")
+Try context: e
+            )
+
+            if verification_status == "pending_verification":
+                db.execute("UPDATE truths SET verification_status=? WHERE name=?", (verification_status, name), commit=True)
+
+            logger.info(f"💎 真谛沉淀: {name} ({level}) [{verification_status}] — {statement[:50]}")
+
+=== #17 (score=28) ===
+File: C:\Users\Administrator\alliance_pioneer\core\truth_accumulator.py:1205
+Has logging: True, Has pass: False
+Block: logger.warning("操作降级跳过")
+Try context: 
+        try:
+            db = get_storage_port(self.db_path)
+            name = candidate.get("name", "")
+            new_level = candidate.get("target_level", "")
+            if name and new_level:
+                db.execute("UPDATE truths SET level=? WHERE name=?", (new_level, name), commit=True)
+
+=== #18 (score=28) ===
+File: C:\Users\Administrator\alliance_pioneer\core\world_model.py:216
+Has logging: True, Has pass: False
+Block: logger.warning("操作降级跳过")
+Try context: ES (?, ?, ?, ?, ?, ?)',
+                (query_hash, json.dumps(prediction.predicted_state, ensure_ascii=False),
+                 prediction.probability, prediction.confidence,
+                 json.dumps(prediction.causal_path), datetime.now().isoformat()),
+                commit=True
+            )
+
+=== #19 (score=28) ===
+File: C:\Users\Administrator\alliance_pioneer\core\cognition\failure_classifier.py:465
+Has logging: False, Has pass: True
+Block: pass
+Try context: ng_prompt TEXT, timestamp TEXT,
+                severity TEXT, layer TEXT,
+                auto_fix_applied INTEGER DEFAULT 0,
+                auto_fix_detail TEXT
+            )''', commit=True)
+            try:
+                db.execute('ALTER TABLE failures ADD COLUMN severity TEXT', commit=True)
+
+=== #20 (score=28) ===
+File: C:\Users\Administrator\alliance_pioneer\core\cognition\failure_classifier.py:469
+Has logging: False, Has pass: True
+Block: pass
+Try context: tail TEXT
+            )''', commit=True)
+            try:
+                db.execute('ALTER TABLE failures ADD COLUMN severity TEXT', commit=True)
+            except Exception:
+                pass
+            try:
+                db.execute('ALTER TABLE failures ADD COLUMN layer TEXT', commit=True)
+
+=== #21 (score=28) ===
+File: C:\Users\Administrator\alliance_pioneer\core\cognition\failure_classifier.py:473
+Has logging: False, Has pass: True
+Block: pass
+Try context:                pass
+            try:
+                db.execute('ALTER TABLE failures ADD COLUMN layer TEXT', commit=True)
+            except Exception:
+                pass
+            try:
+                db.execute('ALTER TABLE failures ADD COLUMN auto_fix_applied INTEGER DEFAULT 0', commit=True)
+
+=== #22 (score=28) ===
+File: C:\Users\Administrator\alliance_pioneer\core\cognition\failure_classifier.py:477
+Has logging: False, Has pass: True
+Block: pass
+Try context:      pass
+            try:
+                db.execute('ALTER TABLE failures ADD COLUMN auto_fix_applied INTEGER DEFAULT 0', commit=True)
+            except Exception:
+                pass
+            try:
+                db.execute('ALTER TABLE failures ADD COLUMN auto_fix_detail TEXT', commit=True)
+
+=== #23 (score=28) ===
+File: C:\Users\Administrator\alliance_pioneer\core\ports\adapters.py:152
+Has logging: False, Has pass: False
+Block: return False
+Try context: pdate_count'):
+            return store.update_count() if callable(store.update_count) else store.update_count
+        if hasattr(store, 'count'):
+            return store.count()
+        return 0
+
+    def is_available(self) -> bool:
+        try:
+            self._get_store()
+            return True
+
+=== #24 (score=28) ===
+File: C:\Users\Administrator\alliance_pioneer\core\presence\existence_layer.py:869
+Has logging: False, Has pass: True
+Block: pass
+Try context:   """尝试用LLM生成深度反思——GPU可用时调用"""
+        try:
+            from adapters.llm.ollama_adapter import ollama_chat_request
+            model = None
+            try:
+                from backend.chat_handler import _get_available_ollama_model
+                model = _get_available_ollama_model("reflection")
+
+=== #25 (score=28) ===
+File: C:\Users\Administrator\alliance_pioneer\core\self\model.py:166
+Has logging: False, Has pass: True
+Block: pass
+Try context: iled: {e}")
+
+            try:
+                self.update("learning", self._extract_learning(cp))
+            except Exception as e:
+                logger.warning(f"SelfModel sync learning failed: {e}")
+        else:
+            try:
+                self.update("values", self._extract_spirit(None))
+
+=== #26 (score=28) ===
+File: C:\Users\Administrator\alliance_pioneer\core\self\model.py:170
+Has logging: False, Has pass: True
+Block: pass
+Try context:                logger.warning(f"SelfModel sync learning failed: {e}")
+        else:
+            try:
+                self.update("values", self._extract_spirit(None))
+            except Exception:
+                pass
+            try:
+                self.update("health", self._extract_health(None))
+
+=== #27 (score=28) ===
+File: C:\Users\Administrator\alliance_pioneer\core\self\model.py:194
+Has logging: False, Has pass: True
+Block: pass
+Try context: ospection(None))
+            except Exception:
+                pass
+            try:
+                self.update("capabilities", self._extract_capabilities(None))
+            except Exception:
+                pass
+            try:
+                self.update("learning", self._extract_learning(None))
+
+=== #28 (score=28) ===
+File: C:\Users\Administrator\alliance_pioneer\core\self\model.py:840
+Has logging: False, Has pass: True
+Block: pass
+Try context:      pass
+
+        try:
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/knowledge_store.db")
+            tools = db.query_one("SELECT COUNT(*) FROM tools")
+            return {
+                "tools_count": tools[0] if tools else 0,
+            }
+
+=== #29 (score=28) ===
+File: C:\Users\Administrator\alliance_pioneer\core\self\model.py:1197
+Has logging: False, Has pass: True
+Block: pass
+Try context:             if high_urgency:
+                    actions.append({
+                        "action": "curiosity_driven_learning",
+                        "reason": f"好奇心驱动: {len(high_urgency)}个高紧急度知识缺口",
+                        "handler": self._action_curiosity_driven_learning,
+                    })
+
+=== #30 (score=26) ===
+File: C:\Users\Administrator\alliance_pioneer\core\reflective_model_free_evolution.py:1049
+Has logging: False, Has pass: False
+Block: return 0.5
+Try context:    return 0.1
+    
+    def _calculate_learning_efficiency(self) -> float:
+        """计算学习效率"""
+        try:
+            db = get_storage_port("data/knowledge_store.db")
+            result = db.query_one("SELECT AVG(quality_score) FROM knowledge_items")[0]
+            return result if result else 0.5
+

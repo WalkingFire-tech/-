@@ -16,7 +16,7 @@
 """
 
 import json
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import time
 import threading
 from typing import Dict, List, Optional
@@ -113,7 +113,7 @@ class AlignmentGuard:
         self._init_db()
 
     def _connect(self):
-        return DatabaseManager.get(self.db_path, timeout=10.0)
+        return get_storage_port(self.db_path, timeout=10.0)
 
     def _write_op(self, func, *args, **kwargs):
         with self._lock:

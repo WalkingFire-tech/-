@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class AutoLearningTrigger:
@@ -52,7 +52,7 @@ class AutoLearningTrigger:
     def _init_db(self):
         """初始化学习进度数据库"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute('''
                 CREATE TABLE IF NOT EXISTS learning_progress (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -185,7 +185,7 @@ class AutoLearningTrigger:
     def _get_topic_progress(self, topic_name: str) -> int:
         """获取主题学习进度（知识条数）"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             row = db.query_one('''
                 SELECT COUNT(*) as cnt FROM knowledge_items
                 WHERE question LIKE ? OR answer LIKE ?
@@ -199,7 +199,7 @@ class AutoLearningTrigger:
     def _get_skill_success_rate(self, skill_name: str) -> float:
         """获取技能成功率"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             row = db.query_one('''
                 SELECT 
                     SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
@@ -302,7 +302,7 @@ class AutoLearningTrigger:
                                  action: str, result: str, knowledge_gained: int = 0):
         """记录学习历史"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute('''
                 INSERT INTO learning_history 
                 (target_name, target_type, action, result, knowledge_gained, timestamp)
@@ -314,7 +314,7 @@ class AutoLearningTrigger:
     def _update_progress(self, target_name: str, target_type: str, result: Dict):
         """更新学习进度"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             row = db.query_one('''
                 SELECT progress, success_count FROM learning_progress
                 WHERE target_name = ? AND target_type = ?

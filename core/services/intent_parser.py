@@ -356,8 +356,8 @@ class IntentParser:
             correct_intent: 正确的意图类型
         """
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/learning_rules.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/learning_rules.db")
             db.execute('''
                 CREATE TABLE IF NOT EXISTS learning_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,

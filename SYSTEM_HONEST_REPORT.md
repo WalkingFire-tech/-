@@ -1,7 +1,7 @@
 # 联盟拓荒者：系统实况报告
 
 > 这不是一份产品介绍。这是一份对运行中系统的诚实描述。
-> 最后更新：2026年7月18日
+> 最后更新：2026年7月19日
 
 ---
 
@@ -180,13 +180,14 @@ infrastructure/
 
 ### 4.3 端口抽象的实际状态
 
-系统定义了端口抽象（EventSink、NotificationPort、CognitiveStimulus/Response），但：
+系统定义了端口抽象（EventSink、NotificationPort、CognitiveStimulus/Response），当前状态：
 
-- **主请求流（chat_stream）仍直接使用str/dict**，不通过端口协议
-- 端口抽象仅在`cognitive_process()`函数（非流式路径）和`run_cognitive_core.py`（独立运行脚本）中使用
-- `SSEEventSink`已定义但从未在主流程中实例化
+- **chat_stream入口已支持CognitiveStimulus**：接受str或CognitiveStimulus，在入口处自动转换
+- **cognitive_process出口已支持CognitiveResponse**：通过`return_cognitive_response=True`参数
+- **主请求流内部仍使用str/dict**：chat_stream内部处理仍以user_input(str)为主，端口协议仅在入口/出口转换
+- `SSEEventSink`已定义但未在主流程中实例化（SSE路由层仍直接yield字符串）
 
-**诚实评价**：端口抽象是"可用但未在用"的脚手架。它证明了认知核心可以脱离SSE运行，但主流程没有迁移到这个抽象上。
+**诚实评价**：端口抽象从"可用但未在用"升级为"入口/出口已接入，内部未迁移"。这是渐进式迁移的第一步——确保外部接口可以完全使用端口协议，内部逐步替换。
 
 ---
 
@@ -255,11 +256,14 @@ SelfModel声称聚合12个数据源。实际情况：
 6. **知识遗忘** — 定时淡化/清除低价值知识，防止无限膨胀
 7. **外部校准** — 检测SelfModel自评与客观指标的偏差
 8. **现实校验** — 检测系统自报告与运行时数据的差距
+9. **信任链构建** — 为最终响应构建可追溯的信任链（spirit_validator阶段6集成）
+10. **知识冲突检测** — 知识写入前检测并解决冲突（reflection_learner集成）
+11. **协调性评估** — 定期评估系统各模块协调性和健康趋势（scheduled_tasks定时任务）
 
 ### 声称能做但实际有限的
 
 1. **"从每次交互中学习"** — 学习机制存在，但trial规则匹配率仍需提升
-2. **"认知核心独立运行"** — 端口抽象已定义，但主流程未迁移
+2. **"认知核心独立运行"** — 端口抽象入口/出口已接入，内部处理仍用str/dict
 3. **"自主呼吸"** — 反思笔记已恢复(837条)，但需要服务器持续运行才能积累
 
 ### 本轮修复后已改善的

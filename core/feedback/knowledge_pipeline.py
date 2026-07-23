@@ -8,7 +8,7 @@ import json
 import hashlib
 from enum import Enum
 from pathlib import Path
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class KnowledgeStatus(Enum):
@@ -29,7 +29,7 @@ class KnowledgePromotionPipeline:
     def _init_database(self):
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         db.executescript("""
             CREATE TABLE IF NOT EXISTS knowledge_candidates (
                 id TEXT PRIMARY KEY,
@@ -56,7 +56,7 @@ class KnowledgePromotionPipeline:
         """添加候选知识"""
         candidate_id = hashlib.md5(f"{content}{datetime.now().isoformat()}".encode()).hexdigest()[:12]
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         db.execute("""
             INSERT INTO knowledge_candidates
             (id, content, source, status, related_signals, created_at, updated_at)
@@ -71,7 +71,7 @@ class KnowledgePromotionPipeline:
     
     def promote_to_verified(self, candidate_id: str, validation: Dict) -> bool:
         """晋升为已验证"""
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         db.execute("""
             UPDATE knowledge_candidates
             SET status = ?, validation_score = ?, validation_details = ?, updated_at = ?
@@ -102,7 +102,7 @@ class KnowledgePromotionPipeline:
         Returns:
             bool: 是否成功晋升
         """
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         
         candidate = db.query_one(
             "SELECT * FROM knowledge_candidates WHERE id = ?",
@@ -173,7 +173,7 @@ class KnowledgePromotionPipeline:
         Returns:
             bool: 是否成功拒绝
         """
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         
         if not db.query_one("SELECT id FROM knowledge_candidates WHERE id = ?", (candidate_id,)):
             logger.warning(f"候选知识不存在: {candidate_id}")
@@ -217,7 +217,7 @@ class KnowledgePromotionPipeline:
         Returns:
             bool: 是否成功延迟
         """
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         
         if not db.query_one("SELECT id FROM knowledge_candidates WHERE id = ?", (candidate_id,)):
             logger.warning(f"候选知识不存在: {candidate_id}")
@@ -267,7 +267,7 @@ class KnowledgePromotionPipeline:
             "skipped": 0
         }
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         
         candidates = db.query("""
             SELECT * FROM knowledge_candidates
@@ -334,7 +334,7 @@ class KnowledgePromotionPipeline:
         2. 质量基准
         3. 回答参考
         """
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         return [dict(row) for row in db.query("SELECT * FROM golden_tests ORDER BY created_at DESC")]
     
     def get_pending_reviews(self) -> List[Dict]:
@@ -343,7 +343,7 @@ class KnowledgePromotionPipeline:
         
         返回所有到达审核时间的POSTPONED知识
         """
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         
         rows = db.query("""
             SELECT * FROM knowledge_candidates
@@ -372,7 +372,7 @@ class KnowledgePromotionPipeline:
         
         返回各状态的知识数量和平均得分
         """
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         stats = {}
         
         for status in KnowledgeStatus:

@@ -15,7 +15,7 @@
 import math
 import time
 import json
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 from loguru import logger
@@ -52,7 +52,7 @@ class DynamicProbabilityField:
     def _init_db(self):
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS probability_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,6 +115,13 @@ class DynamicProbabilityField:
         if self._evidence_count % 3 == 0:
             self._prune_low_probability()
 
+        try:
+            from core.presence.probability_field import get_probability_field
+            pf = get_probability_field()
+            pf.update(signal=confidence)
+        except Exception:
+            pass
+
         return self.get_distribution()
 
     def batch_update(self, evidences: List[Dict]) -> Dict:
@@ -151,7 +158,19 @@ class DynamicProbabilityField:
         return top[1]["content"]
 
     def should_explore(self) -> bool:
-        return self._entropy > 0.8 and self._evidence_count < 5
+        base = self._entropy > 0.8 and self._evidence_count < 5
+        try:
+            from core.presence.probability_decision_bridge import get_probability_decision_bridge
+            _bridge = get_probability_decision_bridge()
+            _decision = _bridge.get_decision_context().get("decision_params", {})
+            _diversity = _decision.get("path_diversity", 0.5)
+            if _diversity > 0.6:
+                return True
+            if _diversity < 0.4:
+                return False
+        except Exception:
+            pass
+        return base
 
     def get_exploration_guidance(self) -> Dict:
         if not self._candidates:
@@ -169,7 +188,7 @@ class DynamicProbabilityField:
     def save_snapshot(self, query: str = ""):
         dist = self.get_distribution()
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute('''
                 INSERT INTO probability_snapshots
                 (query, distribution, entropy, top_candidate, top_probability, evidence_count, timestamp)
@@ -183,7 +202,7 @@ class DynamicProbabilityField:
 
     def get_recent_snapshots(self, limit: int = 20) -> List[Dict]:
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query(
                 "SELECT query, distribution, entropy, top_candidate, top_probability, evidence_count, timestamp FROM probability_snapshots ORDER BY id DESC LIMIT ?",
                 (limit,))

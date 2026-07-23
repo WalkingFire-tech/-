@@ -18,7 +18,7 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -78,7 +78,7 @@ class LearningRhythmMonitor:
         """初始化数据库"""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         db.execute('''
             CREATE TABLE IF NOT EXISTS learning_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,7 +117,7 @@ class LearningRhythmMonitor:
         """
         metadata = metadata or {}
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         db.execute('''
             INSERT INTO learning_records
             (timestamp, source, quality_score, content_hash, alignment_status, metadata)
@@ -145,7 +145,7 @@ class LearningRhythmMonitor:
         week_start = today_start - timedelta(days=now.weekday())
         month_start = today_start.replace(day=1)
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         
         today_row = db.query_one('''
             SELECT COUNT(*) as count, AVG(quality_score) as avg_quality
@@ -206,7 +206,7 @@ class LearningRhythmMonitor:
         """分析学习节奏"""
         now = datetime.now()
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         
         daily_counts = []
         for i in range(7):
@@ -285,7 +285,7 @@ class LearningRhythmMonitor:
         for alert in alerts:
             severity = "high" if "🚨" in alert else "medium" if "⚠️" in alert else "low"
             
-            db = DatabaseManager.get(str(self.db_path))
+            db = get_storage_port(str(self.db_path))
             db.execute('''
                 INSERT INTO rhythm_alerts
                 (timestamp, alert_type, message, severity)

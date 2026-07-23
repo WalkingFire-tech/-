@@ -64,9 +64,8 @@ async def discover_methodology(
     instinct_hit = None
     if _field_prefer_reflex:
         try:
-            from core.skill_emergence import SkillEmergence
-            se = SkillEmergence()
-            instinct_hit = se.reflex_query(user_input)
+            from core.skill_emergence import skill_emergence
+            instinct_hit = skill_emergence.reflex_query(user_input)
             if instinct_hit:
                 events.append({"type": "step", "data": {"phase": "本能查询", "status": "done",
                     "detail": f"⚡ 场域加速-本能触发: {instinct_hit['skill_name']} (置信度{instinct_hit['confidence']:.2f})"}})
@@ -76,9 +75,8 @@ async def discover_methodology(
             logger.warning("操作降级跳过")
     else:
         try:
-            from core.skill_emergence import SkillEmergence
-            se = SkillEmergence()
-            instinct_hit = se.reflex_query(user_input)
+            from core.skill_emergence import skill_emergence
+            instinct_hit = skill_emergence.reflex_query(user_input)
             if instinct_hit:
                 events.append({"type": "step", "data": {"phase": "本能查询", "status": "done",
                     "detail": f"⚡ 本能触发: {instinct_hit['skill_name']} (置信度{instinct_hit['confidence']:.2f})"}})

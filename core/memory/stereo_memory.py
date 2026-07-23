@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from datetime import datetime, timedelta
 from enum import Enum
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import os
 import json
 from loguru import logger
@@ -162,7 +162,7 @@ class StereoMemorySystem:
         self._load_memories()
 
     def _init_database(self):
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS stereo_memories (
                 memory_id TEXT PRIMARY KEY,
@@ -195,7 +195,7 @@ class StereoMemorySystem:
 
     def _load_memories(self):
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             for row in db.query("SELECT * FROM stereo_memories"):
                 memory = self._row_to_memory(row)
                 self.memories[memory.memory_id] = memory
@@ -325,7 +325,7 @@ class StereoMemorySystem:
             return memory_id
 
     def _save_memory(self, memory: StereoMemory):
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         data = self._memory_to_dict(memory)
         db.execute('''
             INSERT OR REPLACE INTO stereo_memories (
@@ -557,7 +557,7 @@ class StereoMemorySystem:
     def get_recent(self, limit: int = 20) -> List[StereoMemory]:
         """获取最近记忆（SQL排序，避免全量Python排序）"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query('SELECT * FROM stereo_memories ORDER BY last_accessed DESC LIMIT ?', (limit,))
             results = [self._row_to_memory(row) for row in rows]
             for m in results:

@@ -20,7 +20,7 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class DomainKnowledgeLearner:
@@ -43,7 +43,7 @@ class DomainKnowledgeLearner:
 
     def _init_database(self):
         """初始化数据库"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS domain_knowledge (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,7 +116,7 @@ class DomainKnowledgeLearner:
 
             query_vec = self._embedding_model.encode(query)
 
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query(
                 "SELECT domain, semantic_vector FROM domain_knowledge WHERE semantic_vector IS NOT NULL"
             )
@@ -143,7 +143,7 @@ class DomainKnowledgeLearner:
     def _detect_by_keyword(self, query: str) -> Tuple[Optional[str], float]:
         """关键词降级匹配（从知识库查询）"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query(
                 "SELECT domain, sample_queries FROM domain_knowledge"
             )
@@ -194,7 +194,7 @@ class DomainKnowledgeLearner:
             except Exception as e:
                 logger.warning(f"向量生成失败: {e}")
 
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one(
             "SELECT id, semantic_vector, sample_queries, occurrences FROM domain_knowledge WHERE domain = ?",
             (correct_domain,)
@@ -254,7 +254,7 @@ class DomainKnowledgeLearner:
     def get_domain_stats(self) -> Dict:
         """获取领域统计"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             domains = db.query('''
                 SELECT domain, occurrences, confidence, updated_at
                 FROM domain_knowledge
@@ -278,7 +278,7 @@ class DomainKnowledgeLearner:
     def get_learning_history(self, limit: int = 20) -> List[Dict]:
         """获取学习历史"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             return [dict(row) for row in db.query('''
                 SELECT query, correct_domain, wrong_domain, confidence, learned_at
                 FROM learning_history

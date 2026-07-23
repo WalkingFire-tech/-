@@ -13,7 +13,7 @@ from enum import Enum
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -61,7 +61,7 @@ class KnowledgeStatusManager:
         """初始化数据库"""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         db.execute("""
             CREATE TABLE IF NOT EXISTS knowledge_status (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,7 +107,7 @@ class KnowledgeStatusManager:
         Returns:
             知识ID
         """
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         cursor = db.execute("""
             INSERT INTO knowledge_status 
             (question, answer, status, confidence, sources, last_verified)
@@ -142,7 +142,7 @@ class KnowledgeStatusManager:
         Returns:
             新状态
         """
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         row = db.query_one("""
             SELECT status, verification_count, confidence
             FROM knowledge_status WHERE id = ?
@@ -245,7 +245,7 @@ class KnowledgeStatusManager:
         limit: int = 10
     ) -> List[Dict]:
         """按状态获取知识"""
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         rows = db.query("""
             SELECT * FROM knowledge_status
             WHERE status = ?
@@ -262,7 +262,7 @@ class KnowledgeStatusManager:
         reason: str
     ):
         """废弃冲突的知识"""
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         db.execute("""
             UPDATE knowledge_status
             SET status = ?,

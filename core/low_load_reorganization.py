@@ -14,7 +14,7 @@
   3. 知识连接：发现知识间的新关联
   4. 经验提炼：高质量经验提取为规则
 """
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import re
 from typing import Dict, List
 from datetime import datetime
@@ -27,7 +27,7 @@ class LowLoadReorganization:
         self._last_result: Dict = {}
 
     def _db(self, name: str):
-        return DatabaseManager.get(f"{self.root_dir}/data/{name}")
+        return get_storage_port(f"{self.root_dir}/data/{name}")
 
     def run(self) -> dict:
         result = {
@@ -150,7 +150,7 @@ class LowLoadReorganization:
         result = {"connections": 0}
         try:
             db = self._db("truths.db")
-            truths = db.query("SELECT content, level FROM truths WHERE level >= 3 LIMIT 20")
+            truths = db.query("SELECT statement, level FROM truths WHERE level >= 3 LIMIT 20")
 
 
             if len(truths) < 2:

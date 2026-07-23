@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 import json
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ class SleepConsolidator:
         """
         cutoff = datetime.utcnow() - timedelta(days=self.consolidation_window_days)
         
-        db = DatabaseManager.get(self.reflection_db)
+        db = get_storage_port(self.reflection_db)
         
         rows = db.query('''
             SELECT id, query, final_answer, confidence, plan, tool_calls, 
@@ -215,36 +215,29 @@ class SleepConsolidator:
         return answer[:200] + "..." if len(answer) > 200 else answer
     
     def _save_to_experience_pool(self, sample: Dict, summary: str):
-        """存入经验池"""
-        db = DatabaseManager.get(self.experience_db)
-        
-        plan = sample.get("plan", "{}")
-        if isinstance(plan, str):
-            plan = json.loads(plan)
-        intent = plan.get("intent", "general")
-        
-        tool_calls = sample.get("tool_calls", "[]")
-        if isinstance(tool_calls, str):
-            tool_calls = json.loads(tool_calls)
-        tools_used = [tc.get("name", "") for tc in tool_calls if tc.get("status") == "success"]
-        
-        db.execute('''
-            INSERT INTO experiences 
-            (timestamp, intent_type, raw_input, plan, model_name, 
-             quality_score, success, duration, user_feedback, response)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            sample.get("timestamp", datetime.utcnow().isoformat()),
-            intent,
-            sample["query"][:500],
-            sample.get("plan", "{}"),
-            sample.get("model_used", "unknown"),
-            int(sample.get("confidence", 0.5) * 100),
-            1 if sample.get("confidence", 0) > 0.6 else 0,
-            sample.get("duration_ms", 0) / 1000.0,
-            None,
-            summary
-        ), commit=True)
+        """存入经验池 — 通过ExperiencePool触发因果图学习"""
+        try:
+            from infrastructure.experience_pool import get_experience_pool
+            ep = get_experience_pool()
+
+            plan = sample.get("plan", "{}")
+            if isinstance(plan, str):
+                plan = json.loads(plan)
+            intent = plan.get("intent", "general")
+
+            ep.add_experience(
+                intent_type=intent,
+                raw_input=sample.get("query", "")[:500],
+                plan=sample.get("plan", "{}"),
+                model_name=sample.get("model_used", "unknown"),
+                quality_score=int(sample.get("confidence", 0.5) * 100),
+                success=sample.get("confidence", 0) > 0.6,
+                duration=sample.get("duration_ms", 0) / 1000.0,
+                user_feedback=0,
+                response=summary
+            )
+        except Exception as e:
+            logger.warning(f"睡眠巩固经验存储失败: {e}")
     
     def _mark_consolidated(self, samples: List[Dict]):
         """标记为已巩固"""
@@ -253,7 +246,7 @@ class SleepConsolidator:
         
         ids = [s["id"] for s in samples]
         
-        db = DatabaseManager.get(self.reflection_db)
+        db = get_storage_port(self.reflection_db)
         
         placeholders = ",".join(["?" for _ in ids])
         db.execute(f'''
@@ -270,7 +263,7 @@ class SleepConsolidator:
         """
         cutoff = datetime.utcnow() - timedelta(days=self.cleanup_days)
         
-        db = DatabaseManager.get(self.reflection_db)
+        db = get_storage_port(self.reflection_db)
         
         cursor = db.execute('''
             DELETE FROM reflection_log
@@ -289,7 +282,7 @@ class SleepConsolidator:
     
     def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""
-        db = DatabaseManager.get(self.reflection_db)
+        db = get_storage_port(self.reflection_db)
         
         total_row = db.query_one('SELECT COUNT(*) as cnt FROM reflection_log')
         total = total_row['cnt'] if total_row else 0

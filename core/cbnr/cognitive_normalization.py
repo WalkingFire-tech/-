@@ -36,6 +36,8 @@ class NormalizationResult:
     prediction_errors: List[float] = field(default_factory=list)
     normalized_input: Dict[str, Any] = field(default_factory=dict)
     timestamp: float = 0.0
+    information_retention: float = 1.0
+    attention_fidelity: float = 1.0
 
 
 class CognitiveNormalization:
@@ -68,6 +70,8 @@ class CognitiveNormalization:
         self._prediction_cache: Dict[str, Dict] = {}
         self._bias_history: List[Dict] = []
         self._normalization_count = 0
+        self._retention_history: List[float] = []
+        self._fidelity_history: List[float] = []
 
     def normalize(self, input_stream: Dict[str, Any], context: Dict[str, Any] = None) -> NormalizationResult:
         context = context or {}
@@ -98,7 +102,27 @@ class CognitiveNormalization:
                 "focus_boost": min(1.0 + max_error, 2.0),
             }
         
+        scaled = self._attention_residual_add(input_stream, scaled)
+        
         self._update_prediction_cache(input_hash, input_stream)
+        
+        info_retention = self._compute_information_retention(input_stream, scaled)
+        attention_fidelity = self._compute_attention_fidelity(input_stream, scaled)
+        
+        self._retention_history.append(info_retention)
+        self._fidelity_history.append(attention_fidelity)
+        if len(self._retention_history) > 200:
+            self._retention_history = self._retention_history[-200:]
+            self._fidelity_history = self._fidelity_history[-200:]
+        
+        if info_retention < 0.5:
+            logger.warning(
+                f"认知规范化信息丢失: retention={info_retention:.2f}, "
+                f"fidelity={attention_fidelity:.2f}, strength={strength:.2f}"
+            )
+        
+        if len(self._fidelity_history) >= 10 and self._normalization_count % 10 == 0:
+            self._feedback_adjust_alpha()
         
         result = NormalizationResult(
             input_hash=input_hash,
@@ -110,6 +134,8 @@ class CognitiveNormalization:
             prediction_errors=prediction_errors,
             normalized_input=scaled,
             timestamp=time.time(),
+            information_retention=info_retention,
+            attention_fidelity=attention_fidelity,
         )
         
         if result.bias_cleared:
@@ -164,8 +190,8 @@ class CognitiveNormalization:
             logger.warning("操作降级跳过")
         
         try:
-            from infrastructure.database_manager import DatabaseManager
-            rows = DatabaseManager.get("data/experience_pool.db").query(
+            from core.ports.adapters import get_storage_port
+            rows = get_storage_port("data/experience_pool.db").query(
                 "SELECT response, quality_score FROM experiences WHERE raw_input LIKE ? ORDER BY quality_score DESC LIMIT 2",
                 (f"%{user_input[:30]}%",)
             )
@@ -300,8 +326,180 @@ class CognitiveNormalization:
             del self._prediction_cache[oldest[0]]
 
     def get_stats(self) -> Dict[str, Any]:
+        avg_retention = sum(self._retention_history) / max(len(self._retention_history), 1)
+        avg_fidelity = sum(self._fidelity_history) / max(len(self._fidelity_history), 1)
+        low_retention_count = sum(1 for r in self._retention_history if r < 0.5)
         return {
             "normalization_count": self._normalization_count,
             "prediction_cache_size": len(self._prediction_cache),
             "bias_history_size": len(self._bias_history),
+            "avg_information_retention": round(avg_retention, 3),
+            "avg_attention_fidelity": round(avg_fidelity, 3),
+            "low_retention_events": low_retention_count,
+            "retention_samples": len(self._retention_history),
         }
+
+    def _compute_information_retention(self, original: Dict, normalized: Dict) -> float:
+        """计算信息保留率：规范化后输出与原始输入的关键信息重叠度
+        
+        衡量L1处理过程中是否丢失了原始输入中的重要信息。
+        返回0.0-1.0，1.0=完全保留，<0.5=显著丢失。
+        """
+        orig_keys = set(k for k in original.keys() if not k.startswith("_"))
+        norm_keys = set(k for k in normalized.keys() if not k.startswith("_"))
+        
+        if not orig_keys:
+            return 1.0
+        
+        key_retention = len(orig_keys & norm_keys) / len(orig_keys)
+        
+        orig_input = original.get("user_input", "")
+        norm_input = normalized.get("user_input", "")
+        if orig_input and norm_input:
+            orig_words = set(orig_input.lower().split())
+            norm_words = set(norm_input.lower().split())
+            if orig_words:
+                word_retention = len(orig_words & norm_words) / len(orig_words)
+            else:
+                word_retention = 1.0
+        else:
+            word_retention = 1.0 if not orig_input else 0.0
+        
+        return key_retention * 0.4 + word_retention * 0.6
+
+    def _compute_attention_fidelity(self, original: Dict, normalized: Dict) -> float:
+        """计算注意力保真度：注意力机制是否保留了原始输入的语义焦点
+        
+        衡量预测编码驱动的注意力是否偏离了原始输入的核心语义。
+        返回0.0-1.0，1.0=注意力完全对齐原始语义。
+        """
+        attn = normalized.get("_attention_weights", {})
+        if not attn:
+            return 1.0
+        
+        pred_error = attn.get("avg_prediction_error", 0.5)
+        fidelity = 1.0 - pred_error * 0.5
+        
+        focus_boost = attn.get("focus_boost", 1.0)
+        if focus_boost > 1.5:
+            fidelity *= 0.9
+        
+        return max(0.0, min(1.0, fidelity))
+
+    def _attention_residual_add(self, original: Dict, attended: Dict) -> Dict:
+        """注意力残差连接：attention_output = base_signal + α · attention_increment
+        
+        核心思想（类比ResNet）：
+        - 注意力权重（预测误差、聚焦增强）可能过度偏离，导致后续推理路径被误导
+        - 残差连接在注意力权重上叠加一个"锚定基线"，防止过度聚焦
+        - α系数由基因参数控制，系统可自行调整
+        
+        具体机制：
+        - base_signal = 0.5（中性基线，既不聚焦也不分散）
+        - attention_increment = 预测误差驱动的注意力偏移量
+        - output = base_signal + α · (attention - base_signal)
+        - 当α=0时完全忽略注意力，α=1时完全信任注意力
+        """
+        try:
+            from core.task_queue import gene_pool
+            alpha = gene_pool.get("attention_residual_alpha")
+        except Exception:
+            alpha = 0.2
+        
+        result = dict(attended)
+        
+        attn = result.get("_attention_weights")
+        if not attn:
+            result["_residual_applied"] = False
+            return result
+        
+        pred_error = attn.get("avg_prediction_error", 0.5)
+        focus_boost = attn.get("focus_boost", 1.0)
+        high_surprise = attn.get("high_surprise", False)
+        
+        base_pred_error = 0.5
+        base_focus_boost = 1.0
+        
+        residual_pred_error = base_pred_error + alpha * (pred_error - base_pred_error)
+        residual_focus_boost = base_focus_boost + alpha * (focus_boost - base_focus_boost)
+        
+        residual_high_surprise = high_surprise and (pred_error > 0.7)
+        
+        result["_attention_weights"] = {
+            "avg_prediction_error": residual_pred_error,
+            "max_prediction_error": attn.get("max_prediction_error", 0.5),
+            "high_surprise": residual_high_surprise,
+            "focus_boost": residual_focus_boost,
+            "raw_prediction_error": pred_error,
+            "raw_focus_boost": focus_boost,
+            "residual_alpha": alpha,
+        }
+        
+        result["_residual_applied"] = True
+        
+        if abs(pred_error - residual_pred_error) > 0.05:
+            logger.debug(
+                f"注意力残差: pred_error {pred_error:.2f}→{residual_pred_error:.2f}, "
+                f"focus_boost {focus_boost:.2f}→{residual_focus_boost:.2f}, α={alpha:.2f}"
+            )
+        
+        return result
+
+    def _feedback_adjust_alpha(self):
+        """反馈回路：根据近期fidelity趋势微调attention_residual_alpha基因
+        
+        逻辑：
+        - 如果avg_fidelity持续<0.5，增大α（更信任残差锚定）
+        - 如果avg_fidelity>0.7且稳定，减小α（让注意力更自由）
+        - 调整幅度很小（±0.01），由基因安全边界约束
+        """
+        try:
+            recent = self._fidelity_history[-10:]
+            avg_fid = sum(recent) / len(recent)
+            
+            from core.task_queue import gene_pool
+            current_alpha = gene_pool.get("attention_residual_alpha")
+            
+            delta = 0.0
+            if avg_fid < 0.5:
+                delta = 0.01
+            elif avg_fid > 0.7:
+                delta = -0.005
+            
+            if abs(delta) > 0:
+                gene_pool.mutate("attention_residual_alpha", delta, trigger="attention_fidelity_feedback")
+                logger.debug(f"注意力残差反馈: avg_fid={avg_fid:.2f}, α {current_alpha:.3f}→{current_alpha+delta:.3f}")
+        except Exception:
+            pass
+        
+        pred_error = attn.get("avg_prediction_error", 0.5)
+        focus_boost = attn.get("focus_boost", 1.0)
+        high_surprise = attn.get("high_surprise", False)
+        
+        base_pred_error = 0.5
+        base_focus_boost = 1.0
+        
+        residual_pred_error = base_pred_error + alpha * (pred_error - base_pred_error)
+        residual_focus_boost = base_focus_boost + alpha * (focus_boost - base_focus_boost)
+        
+        residual_high_surprise = high_surprise and (pred_error > 0.7)
+        
+        result["_attention_weights"] = {
+            "avg_prediction_error": residual_pred_error,
+            "max_prediction_error": attn.get("max_prediction_error", 0.5),
+            "high_surprise": residual_high_surprise,
+            "focus_boost": residual_focus_boost,
+            "raw_prediction_error": pred_error,
+            "raw_focus_boost": focus_boost,
+            "residual_alpha": alpha,
+        }
+        
+        result["_residual_applied"] = True
+        
+        if abs(pred_error - residual_pred_error) > 0.05:
+            logger.debug(
+                f"注意力残差: pred_error {pred_error:.2f}→{residual_pred_error:.2f}, "
+                f"focus_boost {focus_boost:.2f}→{residual_focus_boost:.2f}, α={alpha:.2f}"
+            )
+        
+        return result

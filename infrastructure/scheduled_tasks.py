@@ -45,6 +45,35 @@ class ScheduledJob:
     last_run: float = 0.0
     run_count: int = 0
     enabled: bool = True
+    base_interval: float = 0.0
+    min_interval: float = 0.0
+    max_interval: float = 0.0
+    resource_aware: bool = True
+
+    def __post_init__(self):
+        if self.base_interval == 0.0:
+            self.base_interval = self.interval_seconds
+        if self.min_interval == 0.0:
+            self.min_interval = self.base_interval * 0.3
+        if self.max_interval == 0.0:
+            self.max_interval = self.base_interval * 3.0
+
+    def get_effective_interval(self, activity: float = 0.075, resource_mode: str = "NORMAL") -> float:
+        """
+        动态间隔 = base / (1 + activity * k) * resource_factor
+        
+        activity高→间隔缩短（更频繁执行）
+        activity低→间隔拉长（节省资源）
+        """
+        k = 5.0
+        activity_factor = 1.0 / (1.0 + activity * k)
+        interval = self.base_interval * activity_factor
+
+        resource_factors = {"NORMAL": 1.0, "CONSERVATIVE": 1.5, "EMERGENCY": 3.0}
+        resource_factor = resource_factors.get(resource_mode, 1.0)
+        interval *= resource_factor
+
+        return max(self.min_interval, min(self.max_interval, interval))
 
 
 class ScheduledTaskManager:
@@ -73,6 +102,10 @@ class ScheduledTaskManager:
         self.register_job("l5_rollback_monitor", 600.0, self._job_l5_rollback_monitor)
         self.register_job("trial_rule_timeout", 86400.0, self._job_trial_rule_timeout)
         self.register_job("reality_check", 1800.0, self._job_reality_check)
+        self.register_job("coordination_assessment", 1800.0, self._job_coordination_assessment)
+        self.register_job("skill_promotion", 3600.0, self._job_skill_promotion)
+        self.register_job("plan_template_cleanup", 86400.0, self._job_plan_template_cleanup)
+        self.register_job("boundary_verification", 1800.0, self._job_boundary_verification)
         try:
             from core.resource_awareness.adaptive_governor import get_adaptive_governor
             from core.resource_awareness.health_monitor import OperatingMode
@@ -136,10 +169,16 @@ class ScheduledTaskManager:
         while self._running:
             try:
                 now = time.time()
+                activity = self._get_field_activity()
+                resource_mode = self._get_resource_mode()
+
                 with self._lock:
                     jobs_to_run = []
                     for job in self._jobs.values():
-                        if job.enabled and (now - job.last_run) >= job.interval_seconds:
+                        if not job.enabled:
+                            continue
+                        effective_interval = job.get_effective_interval(activity, resource_mode) if job.resource_aware else job.interval_seconds
+                        if (now - job.last_run) >= effective_interval:
                             jobs_to_run.append(job)
 
                 for job in jobs_to_run:
@@ -152,6 +191,22 @@ class ScheduledTaskManager:
             except Exception as e:
                 logger.error(f"定时任务调度循环异常: {e}")
                 time.sleep(60.0)
+
+    def _get_field_activity(self) -> float:
+        try:
+            from core.presence.probability_field import get_probability_field
+            field = get_probability_field()
+            return field.get_tendency().get("activity", 0.075)
+        except Exception:
+            return 0.075
+
+    def _get_resource_mode(self) -> str:
+        try:
+            from core.presence.resource_aware_scheduler import get_resource_scheduler
+            scheduler = get_resource_scheduler()
+            return scheduler.mode.name
+        except Exception:
+            return "NORMAL"
 
     def _execute_job(self, job: ScheduledJob):
         job.last_run = time.time()
@@ -310,12 +365,14 @@ class ScheduledTaskManager:
                 except Exception:
                     logger.warning("操作降级跳过")
                 try:
-                    db = DatabaseManager.get("data/experience_pool.db")
-                    db.execute(
-                        "INSERT INTO experiences (raw_input, response, quality_score, intent_type, timestamp) VALUES (?, ?, ?, ?, datetime('now'))",
-                        (f"[主动性:{decision.action_type.value if decision.action_type else 'unknown'}] {decision.reason}",
-                         decision.content, int(decision.confidence * 50), "proactivity"),
-                        commit=True
+                    from backend.services.path_handlers._shared import _save_to_experience_pool as _save_exp
+                    _save_exp(
+                        query=f"[主动性:{decision.action_type.value if decision.action_type else 'unknown'}] {decision.reason}",
+                        response=decision.content,
+                        success=True,
+                        intent_type="proactivity",
+                        quality_score=int(decision.confidence * 50),
+                        model_name="proactivity",
                     )
                 except Exception:
                     logger.warning("操作降级跳过")
@@ -777,6 +834,115 @@ class ScheduledTaskManager:
                 logger.debug(f"🔍 现实校验: 叙事与现实对齐 (score={alignment:.2f})")
         except Exception as e:
             logger.warning(f"现实校验跳过: {e}")
+
+    def _job_coordination_assessment(self):
+        """协调性评估：定期评估系统各模块协调性和健康趋势"""
+        try:
+            from core.introspection.coordination_assessor import coordination_assessor
+            module_reports = {}
+
+            try:
+                from core.module_health import module_health
+                health_report = module_health.get_health_report()
+                for status_key, modules in health_report.items():
+                    for m in modules:
+                        if isinstance(m, dict):
+                            name = m.get("name", "unknown")
+                            module_reports[name] = {
+                                "health": 0.8 if status_key == "healthy" else 0.3,
+                                "confidence": m.get("confidence", 0.5),
+                                "issues": m.get("issues", []),
+                                "productive": status_key == "healthy",
+                            }
+            except Exception:
+                pass
+
+            try:
+                from core.presence.existence_layer import get_existence_layer
+                el = get_existence_layer()
+                status = el.get_status()
+                module_reports["existence_layer"] = {
+                    "health": 0.7 if status.get("state") != "error" else 0.2,
+                    "confidence": 0.8,
+                    "issues": [],
+                    "productive": status.get("total_cycles", 0) > 0,
+                }
+            except Exception:
+                pass
+
+            try:
+                from core.presence.inner_time import inner_time_engine
+                phase = inner_time_engine.state.current_phase
+                module_reports["inner_time"] = {
+                    "health": 0.8 if phase != "sleeping" else 0.4,
+                    "confidence": 0.7,
+                    "issues": [],
+                    "productive": phase != "sleeping",
+                }
+            except Exception:
+                pass
+
+            try:
+                from core.self.model import get_self_model
+                sm = get_self_model()
+                snap = sm.snapshot()
+                maturity = snap.get("maturity_score", 0.5)
+                module_reports["self_model"] = {
+                    "health": min(1.0, maturity + 0.2),
+                    "confidence": 0.7,
+                    "issues": [],
+                    "productive": snap.get("update_count", 0) > 0,
+                }
+            except Exception:
+                pass
+
+            if module_reports:
+                snapshot = coordination_assessor.assess(module_reports)
+                trend_detail = coordination_assessor.get_trend_detail()
+                logger.info(
+                    f"⏰ 协调性评估: overall={snapshot.overall:.2f}, "
+                    f"coordination={snapshot.coordination:.2f}, "
+                    f"trend={snapshot.trend}, "
+                    f"modules={len(module_reports)}"
+                )
+                if snapshot.trend == "declining":
+                    logger.warning(f"⚠️ 系统健康趋势下降! recent_avg={trend_detail.get('recent_avg', 0):.2f}, older_avg={trend_detail.get('older_avg', 0):.2f}")
+            else:
+                logger.debug("⏰ 协调性评估: 无模块报告可用")
+        except Exception as e:
+            logger.warning(f"协调性评估跳过: {e}")
+
+    def _job_skill_promotion(self):
+        """技能晋升：定期将成熟技能从manual升级为learned/reflex"""
+        try:
+            from core.skill_emergence import skill_emergence
+            promoted = skill_emergence.promote_skills()
+            if promoted > 0:
+                logger.info(f"⏰ 技能晋升: {promoted}个技能升级")
+        except Exception as e:
+            logger.debug(f"技能晋升跳过: {e}")
+
+    def _job_plan_template_cleanup(self):
+        """计划模板清理：删除低质量+标记过期+陈旧降权"""
+        try:
+            from infrastructure.plan_templates import PlanTemplateLibrary
+            ptl = PlanTemplateLibrary()
+            ptl.cleanup_low_quality_templates()
+        except Exception as e:
+            logger.debug(f"计划模板清理跳过: {e}")
+
+
+    def _job_boundary_verification(self):
+        """边界扩展验证：检查gap_growth的边界预期是否已实现"""
+        try:
+            from core.presence.existence_layer import get_existence_layer
+            el = get_existence_layer()
+            if el.gap_growth and hasattr(el.gap_growth, 'verify_boundary_expansion'):
+                result = el.gap_growth.verify_boundary_expansion()
+                if result.get("verified", 0) > 0:
+                    logger.info(f"边界验证: confirmed={result.get('confirmed',0)}, failed={result.get('failed',0)}")
+        except Exception as e:
+            logger.debug(f"边界验证跳过: {e}")
 
 
 scheduled_task_manager = ScheduledTaskManager()

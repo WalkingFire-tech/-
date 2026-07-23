@@ -4,7 +4,7 @@
 
 from typing import Dict, List, Tuple
 from dataclasses import dataclass
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 from pathlib import Path
 
 
@@ -91,7 +91,7 @@ class KnowledgeValidator:
             if not self.knowledge_db_path.exists():
                 return 0.95
             
-            db = DatabaseManager.get(str(self.knowledge_db_path))
+            db = get_storage_port(str(self.knowledge_db_path))
             
             table_row = db.query_one("""
                 SELECT name FROM sqlite_master 
@@ -315,7 +315,7 @@ class KnowledgeValidator:
             if not self.knowledge_db_path.exists():
                 return 0.9
             
-            db = DatabaseManager.get(str(self.knowledge_db_path))
+            db = get_storage_port(str(self.knowledge_db_path))
             
             table_row = db.query_one("""
                 SELECT name FROM sqlite_master 

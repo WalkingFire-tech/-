@@ -15,7 +15,14 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime, timedelta
 from enum import Enum
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
+from core.loop_mixin import LoopMixin
+
+try:
+    from loguru import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 class ProactivityType(Enum):
@@ -49,6 +56,7 @@ class ProactivityContext:
 class ProactivityDecision:
     """主动性决策"""
     should_act: bool
+    action_probability: float
     action_type: Optional[ProactivityType]
     content: Optional[str]
     reason: str
@@ -56,7 +64,7 @@ class ProactivityDecision:
     timing_score: float
 
 
-class ProactivityEngine:
+class ProactivityEngine(LoopMixin):
     """
     主动性引擎
     
@@ -64,6 +72,7 @@ class ProactivityEngine:
     """
     
     def __init__(self):
+        super().__init__(name="proactivity_engine", cooldown_seconds=60.0, max_failures_before_degraded=5)
         self.level = ProactivityLevel.MODERATE
         self.last_proactivity: Optional[datetime] = None
         self.proactivity_history: List[Dict[str, Any]] = []
@@ -98,63 +107,109 @@ class ProactivityEngine:
         context: ProactivityContext,
     ) -> ProactivityDecision:
         """
-        评估是否应该主动行动
+        评估是否应该主动行动 — 概率驱动
         
-        Args:
-            context: 主动性上下文
-        
-        Returns:
-            主动性决策
+        P(act) = base_score * curiosity_boost * resonance_boost * trust_factor
+        should_act = P(act) >= threshold (由level决定)
         """
-        if self.level == ProactivityLevel.PASSIVE:
-            return ProactivityDecision(
-                should_act=False,
-                action_type=None,
-                content=None,
-                reason="被动模式",
-                confidence=0.0,
-                timing_score=0.0,
-            )
-        
-        if context.relationship_trust < self.min_trust_for_proactivity:
-            return ProactivityDecision(
-                should_act=False,
-                action_type=None,
-                content=None,
-                reason="信任度不足",
-                confidence=0.0,
-                timing_score=0.0,
-            )
-        
-        if self._too_frequent(context):
-            return ProactivityDecision(
-                should_act=False,
-                action_type=None,
-                content=None,
-                reason="主动频率过高",
-                confidence=0.0,
-                timing_score=0.0,
-            )
-        
-        candidates = []
-        for rule in self.proactivity_rules:
-            decision = rule(context)
-            if decision.should_act:
-                candidates.append(decision)
-        
-        if not candidates:
-            return ProactivityDecision(
-                should_act=False,
-                action_type=None,
-                content=None,
-                reason="无合适的主动行动",
-                confidence=0.0,
-                timing_score=0.0,
-            )
-        
-        candidates.sort(key=lambda d: d.timing_score * d.confidence, reverse=True)
-        
-        return candidates[0]
+        with self.loop_context():
+            if self.level == ProactivityLevel.PASSIVE:
+                return ProactivityDecision(
+                    should_act=False,
+                    action_probability=0.0,
+                    action_type=None,
+                    content=None,
+                    reason="被动模式",
+                    confidence=0.0,
+                    timing_score=0.0,
+                )
+            
+            trust_factor = min(1.0, context.relationship_trust / self.min_trust_for_proactivity) if self.min_trust_for_proactivity > 0 else 1.0
+            if context.relationship_trust < self.min_trust_for_proactivity:
+                return ProactivityDecision(
+                    should_act=False,
+                    action_probability=trust_factor * 0.3,
+                    action_type=None,
+                    content=None,
+                    reason="信任度不足",
+                    confidence=0.0,
+                    timing_score=0.0,
+                )
+            
+            if self._too_frequent(context):
+                return ProactivityDecision(
+                    should_act=False,
+                    action_probability=0.1,
+                    action_type=None,
+                    content=None,
+                    reason="主动频率过高",
+                    confidence=0.0,
+                    timing_score=0.0,
+                )
+            
+            curiosity_boost = self._get_curiosity_boost()
+            resonance_boost = self._get_resonance_boost()
+            
+            candidates = []
+            for rule in self.proactivity_rules:
+                decision = rule(context)
+                if decision.should_act:
+                    candidates.append(decision)
+            
+            if not candidates:
+                base_prob = 0.05 * curiosity_boost * resonance_boost * trust_factor
+                return ProactivityDecision(
+                    should_act=False,
+                    action_probability=base_prob,
+                    action_type=None,
+                    content=None,
+                    reason="无合适的主动行动",
+                    confidence=0.0,
+                    timing_score=0.0,
+                )
+            
+            candidates.sort(key=lambda d: d.timing_score * d.confidence, reverse=True)
+            best = candidates[0]
+            
+            base_score = best.timing_score * best.confidence
+            action_prob = min(1.0, base_score * curiosity_boost * resonance_boost * trust_factor)
+            
+            thresholds = {
+                ProactivityLevel.LOW: 0.7,
+                ProactivityLevel.MODERATE: 0.5,
+                ProactivityLevel.HIGH: 0.3,
+                ProactivityLevel.PROACTIVE: 0.15,
+            }
+            threshold = thresholds.get(self.level, 0.5)
+            
+            best.should_act = action_prob >= threshold
+            best.action_probability = action_prob
+            
+            return best
+    
+    def _get_curiosity_boost(self) -> float:
+        """从好奇心引擎获取探索驱动增强因子"""
+        try:
+            from core.presence.curiosity_engine import get_curiosity_engine
+            engine = get_curiosity_engine()
+            frontier = engine.perceive_frontier()
+            strength = frontier.get("curiosity_strength", 0.0)
+            return 0.5 + strength * 0.5
+        except Exception:
+            return 1.0
+    
+    def _get_resonance_boost(self) -> float:
+        """从spirit_core弦共振获取驱动增强因子"""
+        try:
+            from core.spirit_core import get_spirit_core
+            sc = get_spirit_core()
+            resonances = sc.resonate("proactivity_check", context_type="reasoning")
+            if resonances:
+                top_strength = resonances[0].get("strength", 0.0)
+                return 0.7 + top_strength * 0.3
+            return 0.8
+        except Exception:
+            return 1.0
     
     def _too_frequent(self, context: ProactivityContext) -> bool:
         """检查是否过于频繁"""
@@ -179,8 +234,10 @@ class ProactivityEngine:
         if silence >= threshold and context.relationship_trust >= 0.7:
             timing_score = min(1.0, silence / threshold / 2)
             content = self._get_dynamic_content("greeting", f"用户沉默{silence/60:.0f}分钟")
+            prob = timing_score * context.relationship_trust
             return ProactivityDecision(
-                should_act=True,
+                should_act=prob >= 0.5,
+                action_probability=prob,
                 action_type=ProactivityType.GREETING,
                 content=content,
                 reason=f"用户沉默{silence/60:.0f}分钟",
@@ -190,6 +247,7 @@ class ProactivityEngine:
         
         return ProactivityDecision(
             should_act=False,
+            action_probability=0.0,
             action_type=None,
             content=None,
             reason="",
@@ -205,6 +263,7 @@ class ProactivityEngine:
         if context.user_silence_duration < self.min_silence_for_follow_up:
             return ProactivityDecision(
                 should_act=False,
+                action_probability=0.0,
                 action_type=None,
                 content=None,
                 reason="",
@@ -213,8 +272,10 @@ class ProactivityEngine:
             )
         
         content = self._get_dynamic_content("follow_up", "跟进上次对话")
+        prob = 0.6 * 0.7
         return ProactivityDecision(
-            should_act=True,
+            should_act=prob >= 0.5,
+            action_probability=prob,
             action_type=ProactivityType.FOLLOW_UP,
             content=content,
             reason="跟进上次对话",
@@ -230,6 +291,7 @@ class ProactivityEngine:
         if context.user_silence_duration < self.min_silence_for_suggestion:
             return ProactivityDecision(
                 should_act=False,
+                action_probability=0.0,
                 action_type=None,
                 content=None,
                 reason="",
@@ -240,6 +302,7 @@ class ProactivityEngine:
         if context.relationship_trust < 0.8:
             return ProactivityDecision(
                 should_act=False,
+                action_probability=0.0,
                 action_type=None,
                 content=None,
                 reason="",
@@ -248,8 +311,10 @@ class ProactivityEngine:
             )
         
         content = self._get_dynamic_content("insight", "发现新洞察")
+        prob = 0.7 * 0.8
         return ProactivityDecision(
-            should_act=True,
+            should_act=prob >= 0.5,
+            action_probability=prob,
             action_type=ProactivityType.INSIGHT_SHARING,
             content=content,
             reason="发现新洞察",
@@ -265,6 +330,7 @@ class ProactivityEngine:
         if context.user_silence_duration < 7200:
             return ProactivityDecision(
                 should_act=False,
+                action_probability=0.0,
                 action_type=None,
                 content=None,
                 reason="",
@@ -273,8 +339,10 @@ class ProactivityEngine:
             )
         
         content = self._get_dynamic_content("learning", "学习进展")
+        prob = 0.6 * 0.6
         return ProactivityDecision(
-            should_act=True,
+            should_act=prob >= 0.5,
+            action_probability=prob,
             action_type=ProactivityType.LEARNING_UPDATE,
             content=content,
             reason="学习进展",
@@ -285,7 +353,7 @@ class ProactivityEngine:
     def _get_dynamic_content(self, action_type: str, fallback_reason: str) -> str:
         try:
             if action_type == "greeting":
-                db = DatabaseManager.get("data/experience_pool.db")
+                db = get_storage_port("data/experience_pool.db")
                 row = db.query_one(
                     "SELECT raw_input FROM experiences WHERE intent_type != 'proactivity' ORDER BY timestamp DESC LIMIT 1"
                 )
@@ -295,7 +363,7 @@ class ProactivityEngine:
                 return "好久不见，有什么我可以帮助你的吗？"
 
             elif action_type == "follow_up":
-                db = DatabaseManager.get("data/experience_pool.db")
+                db = get_storage_port("data/experience_pool.db")
                 row = db.query_one(
                     "SELECT raw_input, response FROM experiences WHERE intent_type != 'proactivity' AND quality_score >= 50 ORDER BY timestamp DESC LIMIT 1"
                 )
@@ -316,7 +384,7 @@ class ProactivityEngine:
                 return "我在思考中发现了有趣的模式，想和你分享。"
 
             elif action_type == "learning":
-                db = DatabaseManager.get("data/truths.db")
+                db = get_storage_port("data/truths.db")
                 row = db.query_one(
                     "SELECT content FROM truths ORDER BY created_at DESC LIMIT 1"
                 )

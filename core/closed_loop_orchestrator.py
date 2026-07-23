@@ -27,6 +27,11 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
+try:
+    from infrastructure.config_manager import config
+except ImportError:
+    config = None
+
 
 class LoopState(Enum):
     INIT = "init"
@@ -72,9 +77,10 @@ class ClosedLoopOrchestrator:
     """闭环调度器"""
 
     def __init__(self):
-        self.confidence_threshold = 0.6
-        self.quality_threshold = 50.0
-        self.ollama_timeout = 30.0
+        _cfg = config if config else {}
+        self.confidence_threshold = _cfg.get("orchestrator.confidence_threshold", 0.6) if _cfg else 0.6
+        self.quality_threshold = _cfg.get("orchestrator.quality_threshold", 50.0) if _cfg else 50.0
+        self.ollama_timeout = _cfg.get("orchestrator.ollama_timeout_seconds", 30.0) if _cfg else 30.0
         logger.info("🔄 闭环调度器已初始化")
 
     async def orchestrate(
@@ -442,9 +448,9 @@ class ClosedLoopOrchestrator:
             emit_func("step", {"phase": "闭环沉淀", "status": "running", "detail": "积累经验、固化技能..."})
 
         try:
-            from infrastructure.database_manager import DatabaseManager
+            from core.ports.adapters import get_storage_port
             from datetime import datetime
-            db = DatabaseManager.get("data/experience_pool.db")
+            db = get_storage_port("data/experience_pool.db")
             db.execute("""
                 INSERT INTO experiences (raw_input, raw_output, intent_type, success, quality_score, timestamp, duration)
                 VALUES (?, ?, ?, ?, ?, ?, ?)

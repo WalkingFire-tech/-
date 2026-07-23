@@ -74,5 +74,11 @@
       "empathy": 0.4,
       "boundary": 0.7
     }
+  },
+  "gpu_protection": {
+    "disable_ollama": true,
+    "disable_reason": "GPU断电保护-6次意外关机",
+    "max_inference_time_seconds": 30,
+    "cooldown_after_inference_seconds": 5
   }
 }

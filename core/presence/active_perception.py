@@ -72,8 +72,14 @@ class ActivePerceptionEngine:
             "topic_shift": 0.4,
             "activity_shift": 0.3,
             "trust_milestone": 0.7,
-            "intimacy_milestone": 0.6
+            "intimacy_milestone": 0.6,
+            "pattern_emergence": 0.5,
+            "need_emergence": 0.4,
         }
+        self._base_thresholds = dict(self._thresholds)
+        self._threshold_adaptation_rate = 0.05
+        self._signal_frequency: Dict[str, int] = {}
+        self._threshold_window = 50
         self._stats = {
             "total_perceptions": 0,
             "significant_signals": 0,
@@ -221,6 +227,14 @@ class ActivePerceptionEngine:
         if silence_signal:
             signals.append(silence_signal)
 
+        pattern_signal = self._detect_pattern_emergence(current, baseline)
+        if pattern_signal:
+            signals.append(pattern_signal)
+
+        need_signal = self._detect_need_emergence(current, baseline)
+        if need_signal:
+            signals.append(need_signal)
+
         # 神经形态适应：调整信号置信度
         adapted_signals = []
         for sig in signals:
@@ -353,6 +367,111 @@ class ActivePerceptionEngine:
             )
         return None
 
+    def _detect_pattern_emergence(self, current: Dict, baseline: Dict) -> Optional[PerceptionResult]:
+        if len(self._perception_history) < 5:
+            return None
+
+        recent = self._perception_history[-20:]
+        patterns_found = []
+        confidence = 0.0
+
+        topic_counts: Dict[str, int] = {}
+        for p in recent:
+            if p.signal == PerceptionSignal.TOPIC_SHIFT:
+                for t in p.details.get("new_topics", []):
+                    topic_counts[t] = topic_counts.get(t, 0) + 1
+        recurring_topics = {t: c for t, c in topic_counts.items() if c >= 3}
+        if recurring_topics:
+            top_topic = max(recurring_topics, key=recurring_topics.get)
+            patterns_found.append(f"话题'{top_topic}'反复出现({recurring_topics[top_topic]}次)")
+            confidence += 0.3
+
+        emotion_transitions: Dict[str, int] = {}
+        for i in range(1, len(recent)):
+            if recent[i].signal == PerceptionSignal.EMOTION_SHIFT and recent[i - 1].signal == PerceptionSignal.EMOTION_SHIFT:
+                pair = f"{recent[i - 1].details.get('from', '?')}→{recent[i].details.get('to', '?')}"
+                emotion_transitions[pair] = emotion_transitions.get(pair, 0) + 1
+        recurring_emotions = {p: c for p, c in emotion_transitions.items() if c >= 2}
+        if recurring_emotions:
+            top_pair = max(recurring_emotions, key=recurring_emotions.get)
+            patterns_found.append(f"情绪循环'{top_pair}'重复({recurring_emotions[top_pair]}次)")
+            confidence += 0.25
+
+        if len(self._perception_history) >= 10:
+            recent_activity = [p for p in self._perception_history[-10:]
+                               if p.signal == PerceptionSignal.ACTIVITY_CHANGE]
+            if len(recent_activity) >= 3:
+                values = [p.details.get("to", 0.5) for p in recent_activity]
+                if values:
+                    import math
+                    mean = sum(values) / len(values)
+                    variance = sum((v - mean) ** 2 for v in values) / len(values)
+                    if variance < 0.01:
+                        patterns_found.append(f"活跃度稳定在{mean:.2f}（低波动）")
+                        confidence += 0.2
+
+        if not patterns_found:
+            return None
+
+        confidence = min(0.95, confidence)
+        return PerceptionResult(
+            signal=PerceptionSignal.PATTERN_EMERGENCE,
+            description=f"检测到行为模式: {'; '.join(patterns_found)}",
+            confidence=confidence,
+            source="active_perception",
+            timestamp=datetime.now().isoformat(),
+            details={"patterns": patterns_found, "pattern_count": len(patterns_found)},
+        )
+
+    def _detect_need_emergence(self, current: Dict, baseline: Dict) -> Optional[PerceptionResult]:
+        if len(self._perception_history) < 3:
+            return None
+
+        recent = self._perception_history[-15:]
+        needs = []
+        confidence = 0.0
+
+        frustration_count = sum(
+            1 for p in recent
+            if p.signal == PerceptionSignal.EMOTION_SHIFT
+            and p.details.get("to") in ("frustrated", "confused")
+        )
+        if frustration_count >= 3:
+            needs.append("反复挫败/困惑→需要更好的支持引导")
+            confidence += 0.35
+
+        current_dependency = current.get("dependency", 0.2)
+        baseline_dependency = baseline.get("dependency", 0.2)
+        if current_dependency > 0.6 and current_dependency > baseline_dependency * 1.3:
+            needs.append(f"依赖度上升({baseline_dependency:.2f}→{current_dependency:.2f})→需要自主性支持")
+            confidence += 0.3
+
+        recent_topics = current.get("recent_topics", [])
+        baseline_topics = baseline.get("recent_topics", [])
+        unresolved = set(recent_topics) - set(baseline_topics)
+        topic_revisit = set(recent_topics) & set(baseline_topics)
+        if len(topic_revisit) >= 2 and len(unresolved) == 0:
+            needs.append(f"话题{list(topic_revisit)[:3]}反复出现无新进展→需要深度参与")
+            confidence += 0.3
+
+        current_trust = current.get("trust", 0.5)
+        if current_trust < 0.3 and frustration_count >= 2:
+            needs.append(f"低信任度({current_trust:.2f})+反复挫败→需要建立信任")
+            confidence += 0.25
+
+        if not needs:
+            return None
+
+        confidence = min(0.95, confidence)
+        return PerceptionResult(
+            signal=PerceptionSignal.NEED_EMERGENCE,
+            description=f"检测到隐含需求: {'; '.join(needs)}",
+            confidence=confidence,
+            source="active_perception",
+            timestamp=datetime.now().isoformat(),
+            details={"needs": needs, "need_count": len(needs)},
+        )
+
     def _handle_signal(self, signal: PerceptionResult) -> None:
         self._perception_history.append(signal)
         if len(self._perception_history) > self._max_history:
@@ -362,6 +481,8 @@ class ActivePerceptionEngine:
         signal_type = signal.signal.value
         self._stats["by_signal"][signal_type] = self._stats["by_signal"].get(signal_type, 0) + 1
         self._stats["last_signal_time"] = datetime.now().isoformat()
+
+        self._adapt_threshold(signal_type, signal.confidence)
 
         logger.info(f"👁️ 感知信号: {signal.description} (置信度: {signal.confidence:.2f})")
 
@@ -376,7 +497,7 @@ class ActivePerceptionEngine:
         try:
             from core.task_queue import get_task_queue
             tq = get_task_queue()
-            if signal.confidence > 0.7 and signal.signal in (PerceptionSignal.NEED_EMERGENCE, PerceptionSignal.EMOTION_SHIFT):
+            if signal.confidence > 0.7 and signal.signal in (PerceptionSignal.NEED_EMERGENCE, PerceptionSignal.EMOTION_SHIFT, PerceptionSignal.PATTERN_EMERGENCE):
                 tq.submit(
                     task_type="perception_driven",
                     payload={"signal": signal.to_dict(), "action": "proactive_check"},
@@ -398,6 +519,24 @@ class ActivePerceptionEngine:
             else:
                 if value and value != "unknown":
                     self._baseline_state[key] = value
+
+    def _adapt_threshold(self, signal_type: str, confidence: float) -> None:
+        key = signal_type
+        self._signal_frequency[key] = self._signal_frequency.get(key, 0) + 1
+        freq = self._signal_frequency[key]
+        
+        if key not in self._base_thresholds:
+            return
+        
+        base = self._base_thresholds[key]
+        import math
+        adaptation = 1.0 + self._threshold_adaptation_rate * math.log1p(freq)
+        new_threshold = min(0.8, base * adaptation)
+        
+        self._thresholds[key] = new_threshold
+        
+        if freq % 10 == 0:
+            logger.debug(f"感知阈值适应: {key} base={base:.2f} -> {new_threshold:.2f} (freq={freq})")
 
     def get_status(self) -> Dict:
         return {

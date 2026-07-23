@@ -4,12 +4,12 @@
 """
 import json
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import dataclass
 from loguru import logger
 from infrastructure.event_bus import bus
 from infrastructure.config_manager import config
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 @dataclass
@@ -31,13 +31,34 @@ class ActiveLearner:
         self.pending_questions: Dict[str, ClarificationQuestion] = {}
         self.confidence_threshold = config.get("active_learning.confidence_threshold", 0.6)
         self.max_pending = config.get("active_learning.max_pending_questions", 5)
+        self._recent_questions: List[Dict] = []
+        self._max_recent_questions = 50
+        self._redundancy_window_days = 7
+        self._min_info_gain = 0.3
         
         logger.info("主动学习调度器初始化完成")
     
     def should_ask_user(self, intent_type: str, confidence: float,
-                       context: Dict) -> bool:
-        """判断是否应该向用户提问"""
+                       context: Dict = None, session_id: str = "") -> bool:
+        """判断是否应该向用户提问 — 治理器预算+价值过滤+冗余过滤+概率场驱动"""
+        context = context or {}
         
+        try:
+            from meta.governor import meta_governor
+            sid = session_id or context.get("session_id", "default")
+            user_rejected = context.get("user_rejected_last", False)
+            approval = meta_governor.approve_question(sid, user_rejected)
+            if not approval["approved"]:
+                return False
+        except Exception:
+            pass
+
+        if not self._value_filter(intent_type, confidence, context):
+            return False
+
+        if self._is_redundant(intent_type, context):
+            return False
+
         if confidence < self.confidence_threshold:
             return True
         
@@ -50,7 +71,48 @@ class ActiveLearner:
         
         if len(self.pending_questions) >= self.max_pending:
             return False
+
+        try:
+            from core.presence.probability_decision_bridge import get_probability_decision_bridge
+            _bridge = get_probability_decision_bridge()
+            _decision = _bridge.get_decision_context().get("decision_params", {})
+            _proactivity = _decision.get("proactivity_level", 0.5)
+            _info_threshold = _decision.get("information_gain_threshold", 0.5)
+            _ask_prob = 0.1 + 0.4 * _proactivity
+            if confidence < _info_threshold:
+                _ask_prob += 0.2
+            import random
+            if random.random() < _ask_prob:
+                return True
+        except Exception:
+            pass
         
+        return False
+    
+    def _value_filter(self, intent_type: str, confidence: float, context: Dict) -> bool:
+        """价值过滤：信息增益太低的问题不值得问"""
+        current_uncertainty = 1.0 - confidence
+        if current_uncertainty < 0.01:
+            return False
+        expected_reduction = current_uncertainty * 0.5
+        info_gain = expected_reduction
+        if info_gain < self._min_info_gain:
+            logger.debug(f"主动学习价值过滤: 信息增益{info_gain:.2f} < {self._min_info_gain}")
+            return False
+        return True
+    
+    def _is_redundant(self, intent_type: str, context: Dict) -> bool:
+        """冗余过滤：7天内不问同类问题"""
+        now = datetime.now()
+        cutoff = now - timedelta(days=self._redundancy_window_days)
+        self._recent_questions = [
+            q for q in self._recent_questions
+            if datetime.fromisoformat(q["timestamp"]) > cutoff
+        ]
+        similar = [q for q in self._recent_questions if q["intent_type"] == intent_type]
+        if similar:
+            logger.debug(f"主动学习冗余过滤: 7天内已问过{intent_type}")
+            return True
         return False
     
     def generate_clarification(self, user_input: str, intent_type: str,
@@ -102,6 +164,13 @@ class ActiveLearner:
         )
         
         self.pending_questions[question_id] = clarification
+        self._recent_questions.append({
+            "intent_type": intent_type,
+            "question_id": question_id,
+            "timestamp": datetime.now().isoformat(),
+        })
+        if len(self._recent_questions) > self._max_recent_questions:
+            self._recent_questions = self._recent_questions[-self._max_recent_questions:]
         
         bus.publish("clarification_needed", {
             "question_id": question_id,
@@ -115,7 +184,7 @@ class ActiveLearner:
     
     def handle_user_response(self, question_id: str, response: str,
                             user_input: str) -> Dict:
-        """处理用户响应"""
+        """处理用户响应 — 记录拒绝/接受到治理器"""
         
         if question_id not in self.pending_questions:
             logger.warning(f"未知问题ID: {question_id}")
@@ -124,6 +193,17 @@ class ActiveLearner:
         clarification = self.pending_questions[question_id]
         
         del self.pending_questions[question_id]
+
+        try:
+            from meta.governor import meta_governor
+            session_id = clarification.context.get("session_id", "default") if hasattr(clarification, 'context') and clarification.context else "default"
+            negative_responses = {"no", "不", "否", "skip", "跳过", "取消", "cancel", "不需要", "随便"}
+            if response.strip().lower() in negative_responses:
+                meta_governor.record_user_rejection(session_id)
+            else:
+                meta_governor.record_user_acceptance(session_id)
+        except Exception:
+            pass
         
         learning_data = self._extract_learning_data(
             clarification, response, user_input
@@ -217,7 +297,7 @@ class ActiveLearner:
         db_path = config.get("learning_rules.db_path", "data/learning_rules.db")
         
         try:
-            db = DatabaseManager.get(db_path)
+            db = get_storage_port(db_path)
             if data["type"] == "correction":
                 escaped_input = data['user_input'][:30].replace("'", "''")
                 condition = f"raw_input LIKE '%{escaped_input}%'"

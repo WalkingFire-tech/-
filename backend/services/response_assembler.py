@@ -14,7 +14,7 @@ from backend.services.path_handlers._shared import (
     _slow_executor, _save_to_experience_pool, _MAX_RESPONSE_CHARS, SPIRIT_CORE_AVAILABLE,
 )
 from backend.services.path_handlers.ollama_path import fetch_ollama_response as _fetch_ollama_response
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 async def assemble_and_emit(
@@ -66,6 +66,15 @@ async def assemble_and_emit(
         duration=elapsed,
         model_name=best.get("source", "unknown") if best else "unknown"
     )
+
+    try:
+        from core.presence.existence_layer import get_existence_layer
+        _el = get_existence_layer()
+        if hasattr(_el, 'record_interaction'):
+            _quality = int(fitness_score.final_score) if fitness_score else (80 if any(a[1] for a in attempts) else 40)
+            _el.record_interaction(quality_score=_quality, user_feedback=0)
+    except Exception:
+        pass
 
     try:
         from core.trajectory_evolution import trajectory_store
@@ -167,22 +176,40 @@ async def assemble_and_emit(
         if len(final_response) < 500:
             final_response += quality_hint
 
+    try:
+        _sm = _get_self_model()
+        if _sm and final_response and user_input:
+            _quality = _sm.detect_interaction_quality(
+                user_input, final_response, confidence or 0.5, attempts
+            )
+            if _quality["should_proactively_improve"] and _quality["suggestions"]:
+                _best_suggestion = _quality["suggestions"][0]
+                if _best_suggestion not in final_response:
+                    final_response += f"\n\n💡 {_best_suggestion}"
+    except Exception:
+        pass
+
     if final_response and not _is_goal_achieved(user_input, final_response, intent_type, attempts):
         logger.info(f"🔄 目标未达成检测: 回复是半成品，启动持续求解...")
         events.append({"type": "step", "data": {"phase": "目标达成检查", "status": "running", "detail": "检测到回复未真正解决问题，启动持续求解..."}})
+        _original_response = final_response
         try:
             _ti = truth_insights if truth_insights else ""
             ps_resp3, ps_ok3 = await _run_persistent_solve(
                 user_input, attempts, conversation_context,
                 _ti, intent_type, "目标达成求解", _emit)
-            if ps_ok3:
+            if ps_ok3 and ps_resp3 and len(ps_resp3) > len(_original_response) * 0.5:
                 final_response = ps_resp3
                 events.append({"type": "step", "data": {"phase": "目标达成检查", "status": "done", "detail": "✅ 持续求解成功，目标达成"}})
             else:
-                final_response = ps_resp3 or final_response
-                events.append({"type": "step", "data": {"phase": "目标达成检查", "status": "done", "detail": "⚠️ 持续求解后仍需人工介入"}})
+                if ps_resp3 and len(ps_resp3) > len(_original_response):
+                    final_response = ps_resp3
+                else:
+                    final_response = _original_response
+                events.append({"type": "step", "data": {"phase": "目标达成检查", "status": "done", "detail": "⚠️ 持续求解未改善，保留原始回复"}})
         except Exception as _pse3:
             logger.warning(f"目标达成求解异常: {_pse3}")
+            final_response = _original_response
             attempts.append(("目标达成求解", False, f"异常: {str(_pse3)[:40]}"))
 
     result_payload = {
@@ -253,7 +280,7 @@ async def assemble_and_emit(
 
 async def run_background_phase(
     user_input: str, final_response: str, confidence: float,
-    start_time: float, _emit,
+    start_time: float, _emit, session_id: str = "", intent_type: str = "unknown",
 ):
     events = []
 
@@ -294,6 +321,46 @@ async def run_background_phase(
     except Exception as e:
         logger.warning(f"自动学习进化跳过: {e}")
 
+    try:
+        from core.presence.self_assessment import get_self_assessment
+        _sa = get_self_assessment()
+        _sa.assess_conversation(
+            conversation_id=session_id or "unknown",
+            user_input=user_input,
+            system_response=final_response,
+            context={"confidence": confidence, "intent": intent_type},
+        )
+        logger.debug(f"适应度评估完成: score={_sa.current_assessment.overall_score:.2f}" if _sa.current_assessment else "适应度评估跳过")
+    except Exception as e:
+        logger.debug(f"适应度评估跳过: {e}")
+
+    try:
+        from core.layers.l5_evolution import get_l5_evolution
+        _l5 = get_l5_evolution()
+        _l5_experience = {
+            "user_input": user_input,
+            "response": final_response,
+            "validation_result": {"status": "pass" if confidence >= 0.5 else "partial", "confidence": confidence},
+            "processing_time_ms": int((time.time() - start_time) * 1000),
+            "conversation_id": session_id or "unknown",
+        }
+        try:
+            from core.layers.l2_learning import get_l2_learning
+            _l2 = get_l2_learning()
+            _l2_status = _l2.get_learning_status()
+            _l2_stats = _l2_status.get("stats", {})
+            _l5_experience["learning_result"] = {
+                "knowledge_gained": _l2_stats.get("total_knowledge_gained", 0),
+                "avg_knowledge_quality": _l2_stats.get("avg_knowledge_quality", 0),
+                "knowledge_reuse_rate": 0.0,
+            }
+        except Exception:
+            _l5_experience["learning_result"] = {"knowledge_gained": 0}
+        _l5.record_experience(_l5_experience)
+        logger.debug("L5经验记录完成(后台)")
+    except Exception as e:
+        logger.debug(f"L5经验记录跳过: {e}")
+
     if _bg_tasks:
         wait_start = time.time()
         while time.time() - wait_start < 15:
@@ -332,7 +399,7 @@ async def background_deep_thinking(query: str, context: dict, intent_type: str):
 
 async def solve_history_query(query: str) -> str:
     try:
-        db = DatabaseManager.get("data/experience_pool.db")
+        db = get_storage_port("data/experience_pool.db")
         rows = db.query("SELECT raw_input, response FROM experiences ORDER BY timestamp DESC LIMIT 10")
         if rows:
             history_text = "\n".join([f"- {r[0][:30]}... → {r[1][:50]}..." for r in rows[:5]])

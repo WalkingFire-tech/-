@@ -10,15 +10,16 @@ import time
 import math
 from typing import Dict, List, Optional
 from loguru import logger
+from infrastructure.config_manager import config
 from datetime import datetime
 
 
 class AnomalyDetector:
     MIN_SAMPLES = 10
-    ZSCORE_THRESHOLD = 2.5
-    RATE_SPIKE_THRESHOLD = 3.0
 
     def __init__(self):
+        self._zscore_threshold = config.get("defense.zscore_threshold", 2.5)
+        self._rate_spike_threshold = config.get("defense.rate_spike_threshold", 3.0)
         self._baselines: Dict[str, dict] = {}
         self._anomalies: List[dict] = []
 
@@ -44,7 +45,7 @@ class AnomalyDetector:
         if std < 1e-9:
             return None
         z_score = abs(value - mean) / std
-        if z_score > self.ZSCORE_THRESHOLD:
+        if z_score > self._zscore_threshold:
             anomaly = {
                 "metric": name,
                 "value": value,
@@ -65,7 +66,7 @@ class AnomalyDetector:
         if baseline_rate < 1e-9:
             return None
         ratio = current_rate / baseline_rate
-        if ratio > self.RATE_SPIKE_THRESHOLD:
+        if ratio > self._rate_spike_threshold:
             anomaly = {
                 "metric": f"{name}_rate",
                 "value": current_rate,

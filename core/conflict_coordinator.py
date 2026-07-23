@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -101,7 +101,7 @@ class ConflictCoordinator:
         """初始化数据库"""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             CREATE TABLE IF NOT EXISTS conflicts (
                 id TEXT PRIMARY KEY,
@@ -275,7 +275,7 @@ class ConflictCoordinator:
     def _record_arbitration(self, conflict: Conflict, decision: Dict):
         """记录仲裁"""
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO arbitration_log
             (timestamp, conflict_id, decision, reasoning, applied_rule_id)
@@ -301,7 +301,7 @@ class ConflictCoordinator:
     def _load_state(self):
         """加载状态"""
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             
             rows = db.query('''
                 SELECT * FROM conflicts ORDER BY detected_at DESC LIMIT 50
@@ -351,7 +351,7 @@ class ConflictCoordinator:
         """注册规则"""
         self.applied_rules[rule.rule_id] = rule
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT OR REPLACE INTO applied_rules
             (rule_id, source_type, parameter, value, priority, applied_at, evidence)
@@ -368,7 +368,7 @@ class ConflictCoordinator:
     
     def save_conflict(self, conflict: Conflict):
         """保存冲突记录"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT OR REPLACE INTO conflicts
             (id, type, severity, description, source1, source2, detected_at, resolved_at, resolution)

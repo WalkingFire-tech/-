@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 from datetime import datetime
 from loguru import logger
 from tools.base import Tool, ToolCategory, Parameter, ToolResult
-from tools.registry import registry
+from core.tool_registry import tool_registry as registry
 
 
 class ToolGenerator:

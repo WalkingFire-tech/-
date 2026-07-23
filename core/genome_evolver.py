@@ -2,14 +2,16 @@
 基因演化引擎 - 系统参数的遗传算法优化
 """
 import json
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import random
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from loguru import logger
 
+from core.loop_mixin import LoopMixin
 
-class GenomeEvolver:
+
+class GenomeEvolver(LoopMixin):
     """
     基因演化引擎
     
@@ -21,6 +23,7 @@ class GenomeEvolver:
     """
     
     def __init__(self, db_path: str = "data/genome.db"):
+        super().__init__(name="genome_evolver", cooldown_seconds=120.0)
         self.db_path = db_path
         self._init_db()
         self.genes = self._load_genes()
@@ -33,7 +36,7 @@ class GenomeEvolver:
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS genomes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,6 +83,8 @@ class GenomeEvolver:
             "timeout_tolerance": "交互", "depth_preference": "推理", "confidence_bias": "认知",
             "retry_aggression": "交互", "knowledge_solidify_threshold": "知识",
             "model_preference_speed": "推理", "self_doubt_frequency": "反思",
+            "wisdom_truth_balance": "内核", "dimension_switch_sensitivity": "认知",
+            "alignment_vigilance": "内核", "attention_residual_alpha": "注意力",
         }
         
         genes = []
@@ -89,7 +94,7 @@ class GenomeEvolver:
             domain = domain_map.get(key, "通用")
             genes.append((gid, domain, key, "float", bounds[0], bounds[1], 1, str(default_val), ""))
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executemany('''
             INSERT INTO gene_definitions 
             (id, domain, description, datatype, min_value, max_value, mutatable, default_value, unit)
@@ -98,13 +103,13 @@ class GenomeEvolver:
     
     def _load_genes(self) -> Dict:
         """加载基因定义"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         rows = db.query("SELECT * FROM gene_definitions")
         return {row['id']: dict(row) for row in rows}
     
     def _get_active_genome_id(self) -> int:
         """获取活跃基因组ID"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one("SELECT id FROM genomes WHERE is_active = 1 ORDER BY created_at DESC LIMIT 1")
         if row:
             return row[0]
@@ -116,7 +121,7 @@ class GenomeEvolver:
                      is_active: bool = False, generation: int = 0,
                      fitness_details: Dict = None) -> int:
         """保存基因组"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         cursor = db.execute('''
             INSERT INTO genomes (version, gene_values, fitness, fitness_details, created_at, is_active, generation)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -133,7 +138,7 @@ class GenomeEvolver:
     
     def get_gene_value(self, gene_id: str) -> any:
         """获取当前活跃基因值"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one("SELECT gene_values FROM genomes WHERE id = ?", (self.active_genome_id,))
         
         if not row:
@@ -176,7 +181,8 @@ class GenomeEvolver:
             "efficiency": 系统效率 (0-1)
         }
         """
-        like_rate = stats.get("like_rate", 0.5)
+        with self.loop_context():
+            like_rate = stats.get("like_rate", 0.5)
         hit_rate = stats.get("hit_rate", 0.5)
         dialog_red = max(0, stats.get("dialog_reduction", 0))
         external_red = max(0, stats.get("external_reduction", 0))
@@ -192,7 +198,7 @@ class GenomeEvolver:
         )
         
         # 保存适应度
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute("UPDATE genomes SET fitness = ?, fitness_details = ? WHERE id = ?", 
                     (fitness, json.dumps(stats, ensure_ascii=False), self.active_genome_id))
         
@@ -219,7 +225,7 @@ class GenomeEvolver:
                         current_values[gid] = new_val
                         updated = True
             if updated:
-                db = DatabaseManager.get(self.db_path)
+                db = get_storage_port(self.db_path)
                 db.execute(
                     "UPDATE genomes SET gene_values = ? WHERE id = ?",
                     (json.dumps(current_values, ensure_ascii=False), self.active_genome_id),
@@ -235,8 +241,8 @@ class GenomeEvolver:
         
         Returns: 子代基因组ID列表
         """
-        # 获取当前基因值
-        current_values = self._get_genome_values(self.active_genome_id)
+        with self.loop_context():
+            current_values = self._get_genome_values(self.active_genome_id)
         current_generation = self._get_generation(self.active_genome_id)
         
         # 可变异基因
@@ -285,19 +291,19 @@ class GenomeEvolver:
     
     def _get_genome_values(self, genome_id: int) -> Dict:
         """获取基因组值"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one("SELECT gene_values FROM genomes WHERE id = ?", (genome_id,))
         return json.loads(row[0]) if row else {}
     
     def _get_generation(self, genome_id: int) -> int:
         """获取代数"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one("SELECT generation FROM genomes WHERE id = ?", (genome_id,))
         return row[0] if row else 0
     
     def promote_candidate(self, candidate_id: int) -> bool:
         """升级候选基因组为主版本"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         cand_row = db.query_one("SELECT fitness FROM genomes WHERE id = ?", (candidate_id,))
         if not cand_row or cand_row[0] is None:
             return False
@@ -344,7 +350,7 @@ class GenomeEvolver:
             logger.warning(f"进化岛基因组安全违规，拒绝注入: {'; '.join(violations)}")
             return {"status": "rejected", "reason": "safety_violation", "violations": violations}
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''CREATE TABLE IF NOT EXISTS evolution_injections (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             proposal_id TEXT UNIQUE,
@@ -372,7 +378,7 @@ class GenomeEvolver:
         
         步骤：sandbox → inject_1pct → inject_20pct → inject_100pct
         """
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one("SELECT status, candidate_json, snapshot_json FROM evolution_injections WHERE proposal_id=?", (proposal_id,))
         if not row:
             return {"status": "error", "message": "提案不存在"}
@@ -453,7 +459,7 @@ class GenomeEvolver:
 
     def get_evolution_stats(self) -> Dict:
         """获取进化统计"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         
         total_genomes = db.query_one("SELECT COUNT(*) FROM genomes")[0]
         
@@ -470,7 +476,7 @@ class GenomeEvolver:
             ORDER BY recorded_at DESC LIMIT 10
         ''', (self.active_genome_id,))]
         
-        return {
+        stats = {
             "total_genomes": total_genomes,
             "avg_fitness": avg_fitness,
             "max_fitness": max_fitness,
@@ -478,6 +484,8 @@ class GenomeEvolver:
             "active_genome_id": self.active_genome_id,
             "fitness_history": history
         }
+        stats.update(self.get_loop_snapshot())
+        return stats
 
 
 genome_evolver = GenomeEvolver()

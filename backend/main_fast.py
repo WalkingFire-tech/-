@@ -17,6 +17,39 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, StreamingResponse
 from loguru import logger
+import socket as _socket
+import subprocess as _sp
+import re as _re
+
+
+def _ensure_port_available(port: int, max_retries: int = 3):
+    for attempt in range(max_retries):
+        sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        if sock.connect_ex(("127.0.0.1", port)) != 0:
+            sock.close()
+            return True
+        sock.close()
+        try:
+            result = _sp.run(["netstat", "-ano"], capture_output=True, text=True, timeout=5)
+            for line in result.stdout.splitlines():
+                if f":{port}" in line and _re.search(r"LISTENING", line):
+                    pid_match = _re.findall(r"(\d+)$", line.strip())
+                    if pid_match:
+                        pid = int(pid_match[0])
+                        _sp.run(["taskkill", "/F", "/PID", str(pid)],
+                                capture_output=True, timeout=5)
+                        break
+        except Exception:
+            pass
+        time.sleep(2.0)
+    sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    available = sock.connect_ex(("127.0.0.1", port)) != 0
+    sock.close()
+    return available
+
+
+_ensure_port_available(8000)
+
 
 ROOT_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT_DIR))
@@ -41,13 +74,49 @@ os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
 import concurrent.futures
 _executor = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="pioneer")
 
+# ========== 全局异常钩子（捕获所有未处理异常，防止静默崩溃） ==========
+import sys as _sys
+import traceback as _tb
+import threading as _threading
+
+_original_excepthook = _sys.excepthook
+def _global_excepthook(exc_type, exc_value, exc_tb):
+    logger.critical(f"💥 未处理异常: {exc_type.__name__}: {exc_value}")
+    logger.critical("".join(_tb.format_exception(exc_type, exc_value, exc_tb)))
+    if _original_excepthook:
+        _original_excepthook(exc_type, exc_value, exc_tb)
+_sys.excepthook = _global_excepthook
+
+def _thread_excepthook(args):
+    logger.critical(f"💥 线程未处理异常: {args.exc_type.__name__}: {args.exc_value}")
+    logger.critical("".join(_tb.format_exception(args.exc_type, args.exc_value, args.exc_tb)))
+_threading.excepthook = _thread_excepthook
+
+# asyncio 全局异常处理
+try:
+    _loop = asyncio.get_event_loop()
+    _orig_handler = _loop.get_exception_handler()
+    def _asyncio_excepthook(loop, context):
+        msg = context.get("message", "Unknown")
+        exc = context.get("exception")
+        if exc:
+            logger.error(f"💥 asyncio异常: {msg}: {exc}")
+            logger.error("".join(_tb.format_exception(type(exc), exc, exc.__traceback__)))
+        else:
+            logger.error(f"💥 asyncio异常: {msg}")
+        if _orig_handler:
+            _orig_handler(loop, context)
+    _loop.set_exception_handler(_asyncio_excepthook)
+except RuntimeError:
+    pass  # 没有当前事件循环时跳过
+
 from backend.lifespan import lifespan, _proactivity_subscribers, _enqueue_proactivity
 from backend.routers.health import router as health_router
 from backend.routers.system import router as system_router
 from backend.routers.knowledge import router as knowledge_router
 from backend.routers.chat import router as chat_router
 from backend.routers.evolution import router as evolution_router
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 app = FastAPI(
     title="联盟拓荒者 API",
@@ -69,6 +138,12 @@ app.include_router(system_router, prefix="/api")
 app.include_router(knowledge_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(evolution_router, prefix="/api")
+
+try:
+    from backend.folder_browser_api import router as folder_browser_router
+    app.include_router(folder_browser_router, prefix="/api/folder", tags=["folder-browser"])
+except Exception:
+    pass
 
 FRONTEND_DIR = ROOT_DIR / "frontend"
 if FRONTEND_DIR.exists():
@@ -146,7 +221,7 @@ async def proactivity_test():
 
 async def solve_history_query(query: str) -> str:
     try:
-        db = DatabaseManager.get("data/experience_pool.db")
+        db = get_storage_port("data/experience_pool.db")
         rows = db.query("SELECT query, response FROM experiences ORDER BY timestamp DESC LIMIT 10")
 
         if rows:
@@ -160,7 +235,7 @@ async def solve_history_query(query: str) -> str:
 
 async def query_knowledge_base(query: str) -> str:
     try:
-        db = DatabaseManager.get("data/knowledge_store.db")
+        db = get_storage_port("data/knowledge_store.db")
         row = db.query_one("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{query}%",))
         return row[0] if row else None
     except Exception:
@@ -169,7 +244,7 @@ async def query_knowledge_base(query: str) -> str:
 
 async def query_experience_pool(query: str) -> str:
     try:
-        db = DatabaseManager.get("data/experience_pool.db")
+        db = get_storage_port("data/experience_pool.db")
         row = db.query_one("SELECT response FROM experiences WHERE query LIKE ? ORDER BY timestamp DESC LIMIT 1", (f"%{query[:20]}%",))
         return row[0] if row else None
     except Exception:
@@ -224,4 +299,5 @@ def generate_rule_based_response(query: str, intent_type: str) -> str:
 
 if __name__ == "__main__":
     import uvicorn
+    # 端口已在模块级清理，此处直接启动
     uvicorn.run(app, host="0.0.0.0", port=8000, reload_dirs=["backend", "core", "config"])

@@ -19,7 +19,7 @@ import time
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from loguru import logger
@@ -37,7 +37,7 @@ class TrajectoryStore:
     def _init_database(self):
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS trajectories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,7 +105,7 @@ class TrajectoryStore:
         decisions_json = json.dumps(decisions, ensure_ascii=False)
         outcome_json = json.dumps(outcome, ensure_ascii=False)
 
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         cur = db.execute('''
             INSERT INTO trajectories
             (query_hash, query, intent_type, route, steps_json, decisions_json,
@@ -155,7 +155,7 @@ class TrajectoryStore:
                         logger.info(f"🧬 自动修订: 轨迹#{traj_id} (fitness {fitness_score:.0f}→{new_fitness:.0f})")
 
             if fitness_score >= 70:
-                db = DatabaseManager.get(self.db_path)
+                db = get_storage_port(self.db_path)
                 siblings = db.query(
                     "SELECT id, fitness_score FROM trajectories "
                     "WHERE intent_type = ? AND id != ? AND fitness_score >= 60 "
@@ -170,7 +170,7 @@ class TrajectoryStore:
             logger.warning(f"自动进化跳过: {e}")
 
     def get_trajectory(self, traj_id: int) -> Optional[Dict]:
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one('SELECT * FROM trajectories WHERE id = ?', (traj_id,))
         if row:
             d = dict(row)
@@ -189,7 +189,7 @@ class TrajectoryStore:
     ) -> List[Dict]:
         query_hash = self.hash_query(query)
 
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
 
         exact_matches = [dict(row) for row in db.query('''
             SELECT * FROM trajectories
@@ -220,7 +220,7 @@ class TrajectoryStore:
         intent_type: str = None,
         limit: int = 3
     ) -> List[Dict]:
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
 
         if intent_type:
             return [dict(row) for row in db.query('''
@@ -314,7 +314,7 @@ class TrajectoryStore:
             source=f"recombine_{strategy}"
         )
 
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT INTO recombination_log
             (parent_a_id, parent_b_id, child_id, strategy, improvement)
@@ -347,7 +347,7 @@ class TrajectoryStore:
         return new_id
 
     def get_evolution_stats(self) -> Dict:
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         total = db.query_one('SELECT COUNT(*) FROM trajectories')[0]
         avg_fitness = db.query_one('SELECT AVG(fitness_score) FROM trajectories')[0] or 0
         max_gen = db.query_one('SELECT MAX(generation) FROM trajectories')[0] or 0

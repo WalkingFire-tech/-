@@ -38,6 +38,8 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
+from core.loop_mixin import LoopMixin
+
 
 class GapUrgency(Enum):
     LOW = "low"
@@ -68,58 +70,162 @@ class CuriosityAction:
     reason: str = ""
 
 
-class CuriosityEngine:
+class CuriosityEngine(LoopMixin):
     MIN_QUESTION_INTERVAL_SEC = 1800  # 30分钟最多1次向用户提问
     MAX_GAPS_PER_EXPLORATION = 5
 
     def __init__(self):
+        super().__init__(name="curiosity_engine", cooldown_seconds=600.0, max_failures_before_degraded=5)
+        self._cache_ttl_seconds = 600.0  # 10分钟缓存
         self._last_question_time: Optional[datetime] = None
         self._explored_topics: List[str] = []
         self._max_explored = 100
-        self._lock = threading.Lock()
         self._gap_cache: List[KnowledgeGap] = []
-        self._cache_time: Optional[datetime] = None
-        self._cache_ttl = timedelta(minutes=10)
+        self._gap_cache_time: Optional[datetime] = None
+        self._gap_cache_ttl = timedelta(minutes=10)
 
     def explore(self) -> List[KnowledgeGap]:
         """
         主动发现知识缺口——存在层"生长"阶段调用
-
-        聚合4个来源的缺口：
-        1. SelfModel能力缺口（capability_gaps.db）
-        2. 对齐偏离（alignment_violations.db）
-        3. 经验池中的低质量交互（experience_pool.db）
-        4. L5缺陷诊断结果
+        
+        概率驱动：curiosity_strength决定探索概率
+        P(explore) = curiosity_strength
+        低好奇心时可能跳过探索，高好奇心时必定探索
         """
-        gaps = []
+        with self.loop_context():
+            frontier = self.perceive_frontier()
+            curiosity_strength = frontier.get("curiosity_strength", 0.0)
+            
+            import random
+            if random.random() > curiosity_strength:
+                logger.debug(f"好奇心概率门控: strength={curiosity_strength:.2f}, 跳过本次探索")
+                return []
 
-        gaps.extend(self._discover_capability_gaps())
-        gaps.extend(self._discover_alignment_gaps())
-        gaps.extend(self._discover_experience_gaps())
-        gaps.extend(self._discover_defect_gaps())
-        gaps.extend(self._discover_strategy_gaps())
+            gaps = []
 
-        gaps = self._deduplicate(gaps)
-        gaps = self._rank_gaps(gaps)
-        gaps = gaps[:self.MAX_GAPS_PER_EXPLORATION]
+            gaps.extend(self._discover_capability_gaps())
+            gaps.extend(self._discover_alignment_gaps())
+            gaps.extend(self._discover_experience_gaps())
+            gaps.extend(self._discover_defect_gaps())
+            gaps.extend(self._discover_strategy_gaps())
 
-        with self._lock:
-            self._gap_cache = gaps
-            self._cache_time = datetime.now()
+            gaps = self._deduplicate(gaps)
+            gaps = self._rank_gaps(gaps)
+            
+            max_gaps = max(1, int(self.MAX_GAPS_PER_EXPLORATION * curiosity_strength))
+            gaps = gaps[:max_gaps]
 
-        if gaps:
-            gap_summary = ", ".join(f"{g.topic}({g.gap_type})" for g in gaps[:3])
-            logger.info(f"🔍 好奇心探索: 发现{len(gaps)}个知识缺口 → {gap_summary}")
+            # 过滤已探索过的缺口，防止同一缺口反复触发
+            with self._loop_lock:
+                if self._explored_topics:
+                    before = len(gaps)
+                    explored_set = set(self._explored_topics)
+                    gaps = [g for g in gaps if g.topic[:50] not in explored_set]
+                    if len(gaps) < before:
+                        logger.debug(f"好奇去重: 过滤了 {before - len(gaps)} 个已探索缺口")
+                self._gap_cache = gaps
+                self._gap_cache_time = datetime.now()
 
-        return gaps
+            if gaps:
+                gap_summary = ", ".join(f"{g.topic}({g.gap_type})" for g in gaps[:3])
+                logger.info(f"🔍 好奇心探索: 发现{len(gaps)}个知识缺口 → {gap_summary}")
+                self._save_exploration_to_experience_pool(gaps)
+
+            return gaps
+
+    def _save_exploration_to_experience_pool(self, gaps: List[KnowledgeGap]) -> None:
+        """将探索结果写入经验池，让对话系统可检索"""
+        try:
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/experience_pool.db")
+            for g in gaps[:5]:
+                try:
+                    existing = db.query_one(
+                        'SELECT id FROM experiences WHERE raw_input = ? AND intent_type = ? LIMIT 1',
+                        (f"curiosity_explore: {g.topic}", "curiosity_exploration")
+                    )
+                    if existing:
+                        continue
+                    db.execute(
+                        "INSERT INTO experiences (raw_input, response, success, intent_type, quality_score, timestamp) VALUES (?, ?, ?, ?, ?, datetime('now'))",
+                        (f"curiosity_explore: {g.topic}", f"知识缺口({g.gap_type}): {g.topic}. 优先级={g.urgency.value}", 1, "curiosity_exploration", 50),
+                        commit=True,
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def perceive_gaps(self) -> List[KnowledgeGap]:
         """感知当前知识边界——存在层"感知"阶段调用"""
-        with self._lock:
-            if self._cache_time and datetime.now() - self._cache_time < self._cache_ttl:
+        with self._loop_lock:
+            if self._gap_cache_time and datetime.now() - self._gap_cache_time < self._gap_cache_ttl:
                 return self._gap_cache
 
         return self.explore()
+
+    def perceive_frontier(self) -> Dict[str, Any]:
+        """
+        认知前沿扫描：不是"我不知道什么"，而是"已知与未知之间的缝隙"
+        
+        好奇心成长的关键是"安全的不确定性"：
+        - 太确定（全知）→ 无聊，好奇心死亡
+        - 太不确定（全无知）→ 恐惧，好奇心封锁
+        - 恰好的缝隙 → 好奇心最旺盛
+        
+        Returns:
+            frontier: 前沿密度(0-1)，好奇心强度(0-1)，建议探索方向
+        """
+        try:
+            from core.self.model import get_self_model
+            sm = get_self_model()
+            snap = sm.snapshot()
+        except Exception:
+            snap = {}
+
+        profile = snap.get("capability_profile", {})
+        overall_strength = profile.get("overall_strength", 0.0)
+        gaps = profile.get("gaps", [])
+        gap_count = len(gaps)
+
+        tools_registered = profile.get("tools", {}).get("registered", 0)
+        skills_mature = profile.get("skills", {}).get("mature", 0)
+        experience_rate = profile.get("experience", {}).get("success_rate", 0.0)
+        rules_active = profile.get("rules", {}).get("active", 0)
+
+        mastery_score = min(1.0, (tools_registered / 10) * 0.25 + (skills_mature / 5) * 0.25 + experience_rate * 0.25 + min(rules_active / 20, 1.0) * 0.25)
+
+        frontier_density = 0.0
+        if mastery_score > 0.1 and gap_count > 0:
+            frontier_density = min(1.0, gap_count / (mastery_score * 10 + 1))
+        elif mastery_score > 0.7 and gap_count == 0:
+            frontier_density = 0.1
+        elif mastery_score < 0.1:
+            frontier_density = 0.2
+
+        curiosity_strength = 0.0
+        if 0.2 <= frontier_density <= 0.8:
+            curiosity_strength = frontier_density
+        elif frontier_density < 0.2:
+            curiosity_strength = frontier_density * 0.5
+        else:
+            curiosity_strength = max(0.3, 1.0 - frontier_density)
+
+        exploration_direction = "consolidate"
+        if frontier_density > 0.5:
+            exploration_direction = "expand_boundary"
+        elif frontier_density > 0.2:
+            exploration_direction = "deepen_understanding"
+        else:
+            exploration_direction = "consolidate"
+
+        return {
+            "mastery_score": round(mastery_score, 2),
+            "gap_count": gap_count,
+            "frontier_density": round(frontier_density, 2),
+            "curiosity_strength": round(curiosity_strength, 2),
+            "exploration_direction": exploration_direction,
+        }
 
     def generate_question(self) -> Optional[CuriosityAction]:
         """
@@ -130,7 +236,7 @@ class CuriosityEngine:
         2. 有高紧急度的知识缺口
         3. 缺口的学习策略是ask_user
         """
-        with self._lock:
+        with self._loop_lock:
             if self._last_question_time:
                 elapsed = (datetime.now() - self._last_question_time).total_seconds()
                 if elapsed < self.MIN_QUESTION_INTERVAL_SEC:
@@ -160,7 +266,7 @@ class CuriosityEngine:
         if not question:
             question = self._compose_question(gap)
 
-        with self._lock:
+        with self._loop_lock:
             self._last_question_time = datetime.now()
 
         action = CuriosityAction(
@@ -218,8 +324,8 @@ class CuriosityEngine:
     def _discover_capability_gaps(self) -> List[KnowledgeGap]:
         gaps = []
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/capability_gaps.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/capability_gaps.db")
             rows = db.query(
                 "SELECT query, gap_type, attempts, failed_paths FROM capability_gaps "
                 "WHERE resolved=0 ORDER BY attempts DESC LIMIT 10"
@@ -262,8 +368,8 @@ class CuriosityEngine:
     def _discover_alignment_gaps(self) -> List[KnowledgeGap]:
         gaps = []
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/alignment_violations.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/alignment_violations.db")
             rows = db.query(
                 "SELECT module, deviation_type, description, severity FROM deviations "
                 "WHERE status='open' LIMIT 10"
@@ -296,8 +402,8 @@ class CuriosityEngine:
     def _discover_experience_gaps(self) -> List[KnowledgeGap]:
         gaps = []
         try:
-            from infrastructure.database_manager import DatabaseManager
-            db = DatabaseManager.get("data/experience_pool.db")
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/experience_pool.db")
             rows = db.query(
                 "SELECT raw_input, intent_type, quality_score FROM experiences "
                 "WHERE quality_score < 30 ORDER BY timestamp DESC LIMIT 10"
@@ -380,15 +486,15 @@ class CuriosityEngine:
         return template.format(topic=gap.topic[:50])
 
     def mark_explored(self, topic: str):
-        with self._lock:
+        with self._loop_lock:
             self._explored_topics.append(topic[:50])
             if len(self._explored_topics) > self._max_explored:
                 self._explored_topics = self._explored_topics[-self._max_explored:]
 
     def get_status(self) -> Dict[str, Any]:
-        with self._lock:
+        with self._loop_lock:
             gaps = self._gap_cache
-            return {
+            status = {
                 "cached_gaps": len(gaps),
                 "gap_types": list(set(g.gap_type for g in gaps)),
                 "explored_topics": len(self._explored_topics),
@@ -398,6 +504,8 @@ class CuriosityEngine:
                     or (datetime.now() - self._last_question_time).total_seconds() >= self.MIN_QUESTION_INTERVAL_SEC
                 ),
             }
+        status.update(self.get_loop_snapshot())
+        return status
 
     def _discover_strategy_gaps(self) -> List[KnowledgeGap]:
         """从策略库中发现低置信度策略，作为好奇心探索目标"""

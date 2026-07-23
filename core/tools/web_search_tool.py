@@ -32,7 +32,13 @@ class WebSearchTool(ToolInterface):
         return 70
 
     def can_handle(self, query: str, intent_type: str = "") -> bool:
-        search_intents = {"factual", "knowledge", "news", "current_event", "definition"}
+        search_intents = {"factual", "knowledge", "news", "current_event", "definition",
+                          "simple_query", "complex_query", "learning_trigger"}
+        creative_keywords = ["写一首", "作诗", "写诗", "写个故事", "编一个", "创作",
+                             "写一篇", "写一段", "来一首", "来一篇", "写歌", "作词",
+                             "写小说", "写散文", "写童话"]
+        if any(kw in query for kw in creative_keywords):
+            return False
         return intent_type in search_intents or len(query) > 10
 
     async def execute(self, **kwargs) -> ToolResult:

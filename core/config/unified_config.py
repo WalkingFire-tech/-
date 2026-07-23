@@ -99,6 +99,12 @@ class UnifiedConfig:
                     "empathy": 0.4,
                     "boundary": 0.7
                 }
+            },
+            "gpu_protection": {
+                "disable_ollama": False,
+                "disable_reason": "",
+                "max_inference_time_seconds": 30,
+                "cooldown_after_inference_seconds": 5
             }
         }
         

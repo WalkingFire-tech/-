@@ -2,7 +2,7 @@ import re
 from typing import Dict, List, Optional
 from collections import defaultdict
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class PatternMigrator:
@@ -14,7 +14,7 @@ class PatternMigrator:
 
     @classmethod
     def _ensure_table(cls):
-        db = DatabaseManager.get("data/pattern_migrations.db")
+        db = get_storage_port("data/pattern_migrations.db")
         db.execute('''CREATE TABLE IF NOT EXISTS learned_patterns (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             alias_prefix TEXT, standard_prefix TEXT, source TEXT,
@@ -27,7 +27,7 @@ class PatternMigrator:
         standard_pre = re.sub(r'\d+$', '', corrected_entity)
         if not standard_pre or not user_prefix:
             return
-        db = DatabaseManager.get("data/pattern_migrations.db")
+        db = get_storage_port("data/pattern_migrations.db")
         existing = db.query_one(
             'SELECT id FROM learned_patterns WHERE alias_prefix=? AND standard_prefix=?',
             (user_prefix, standard_pre)
@@ -48,7 +48,7 @@ class PatternMigrator:
     @classmethod
     def apply_migration(cls, user_input: str) -> str:
         cls._ensure_table()
-        db = DatabaseManager.get("data/pattern_migrations.db")
+        db = get_storage_port("data/pattern_migrations.db")
         rows = db.query(
             'SELECT alias_prefix, standard_prefix FROM learned_patterns ORDER BY hit_count DESC'
         )
@@ -71,7 +71,7 @@ class PatternMigrator:
             "ttyACM": "COM", "ttyS": "COM",
         }
         cls._ensure_table()
-        db = DatabaseManager.get("data/pattern_migrations.db")
+        db = get_storage_port("data/pattern_migrations.db")
         for alias, standard in base_mappings.items():
             existing = db.query_one(
                 'SELECT id FROM learned_patterns WHERE alias_prefix=? AND standard_prefix=?',

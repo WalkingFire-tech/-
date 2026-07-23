@@ -57,8 +57,10 @@ async def compare_and_select(
     attempts = []
     path_percentages = {}
 
-    def _emit_s(event_type: str, data: dict) -> str:
-        return _emit(event_type, data, event_sink=event_sink)
+    def _emit_s(event_type: str, data: dict):
+        if event_sink is not None:
+            event_sink.emit(event_type, data)
+        return (event_type, data)
 
     if not candidates:
         events.append(_emit_s("step", {"phase": "对比择优", "status": "done", "detail": "无有效候选结果"}))
@@ -71,9 +73,11 @@ async def compare_and_select(
     for c in candidates:
         c["_relevance"] = _compute_relevance(c.get("response", ""), _domain_keywords)
     _before_cnt = len(candidates)
-    candidates = [c for c in candidates if c["_relevance"] > 0.12]
-    if len(candidates) < 1:
-        candidates = candidates
+    _filtered = [c for c in candidates if c["_relevance"] > 0.12]
+    if _filtered:
+        candidates = _filtered
+    else:
+        candidates = sorted(candidates, key=lambda c: c.get("_relevance", 0), reverse=True)[:3]
     for c in candidates:
         c["quality"] = int(c.get("quality", 30) * 0.6 + c["_relevance"] * 40)
 

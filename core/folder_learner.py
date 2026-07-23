@@ -19,7 +19,7 @@ from typing import Dict, List, Optional, Callable, Any
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 from loguru import logger
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 try:
     from core.content_extractors import (
@@ -237,7 +237,7 @@ class FolderLearner:
     
     def _init_db(self):
         """初始化数据库"""
-        db = DatabaseManager.get(self.state_db)
+        db = get_storage_port(self.state_db)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS learned_files (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -280,7 +280,7 @@ class FolderLearner:
             return
         
         try:
-            db = DatabaseManager.get(self.state_db)
+            db = get_storage_port(self.state_db)
             rows = db.query('''
                 SELECT relative_path, file_hash
                 FROM learned_files
@@ -450,7 +450,7 @@ class FolderLearner:
                          status: str, error_msg: str = None,
                          knowledge_count: int = 0, preview: str = None):
         """保存文件学习状态"""
-        db = DatabaseManager.get(self.state_db)
+        db = get_storage_port(self.state_db)
         db.execute('''
             INSERT OR REPLACE INTO learned_files
             (root_path, file_path, relative_path, file_hash, file_size,
@@ -553,7 +553,7 @@ class FolderLearner:
     
     def _record_session(self, start: str, end: str, results: Dict):
         """记录学习会话"""
-        db = DatabaseManager.get(self.state_db)
+        db = get_storage_port(self.state_db)
         status = 'completed' if results["failed"] == 0 else 'completed_with_errors'
         db.execute('''
             INSERT INTO learning_sessions
@@ -617,7 +617,7 @@ class FolderLearner:
         if not self.root_path:
             return {"root_path": None, "total_files": 0}
         
-        db = DatabaseManager.get(self.state_db)
+        db = get_storage_port(self.state_db)
         row = db.query_one('''
             SELECT 
                 COUNT(*) as total,
@@ -643,7 +643,7 @@ class FolderLearner:
         if not self.root_path:
             return []
         
-        db = DatabaseManager.get(self.state_db)
+        db = get_storage_port(self.state_db)
         rows = db.query('''
             SELECT relative_path, error_msg, last_learned
             FROM learned_files
@@ -658,7 +658,7 @@ class FolderLearner:
         if not self.root_path:
             return []
         
-        db = DatabaseManager.get(self.state_db)
+        db = get_storage_port(self.state_db)
         rows = db.query('''
             SELECT relative_path, knowledge_count, last_learned, status
             FROM learned_files

@@ -9,15 +9,16 @@ L4 自修复层 - 自愈开关 (Self-Healing Switch)
 import time
 from typing import Dict, List, Optional, Callable
 from loguru import logger
+from infrastructure.config_manager import config
 from datetime import datetime
 
 
 class SelfHealingSwitch:
-    APOPTOSIS_THRESHOLD = 10
-    REGENERATION_COOLDOWN = 120
-    MAX_REGENERATION_ATTEMPTS = 3
 
     def __init__(self):
+        self._apoptosis_threshold = config.get("defense.apoptosis_threshold", 10)
+        self._regeneration_cooldown = config.get("defense.regeneration_cooldown_seconds", 120)
+        self._max_regeneration_attempts = config.get("defense.max_regeneration_attempts", 3)
         self._modules: Dict[str, dict] = {}
         self._regeneration_registry: Dict[str, Callable] = {}
         self._healing_log: List[dict] = []
@@ -30,7 +31,7 @@ class SelfHealingSwitch:
         if total == 0:
             return "healthy"
         error_rate = failure_count / total
-        if failure_count >= self.APOPTOSIS_THRESHOLD and error_rate > 0.7:
+        if failure_count >= self._apoptosis_threshold and error_rate > 0.7:
             return "apoptosis"
         if error_rate > 0.5 and total >= 5:
             return "degraded"
@@ -57,12 +58,12 @@ class SelfHealingSwitch:
         info = self._modules[module_name]
         if info.get("status") != "apoptosis":
             return False
-        if info.get("regeneration_attempts", 0) >= self.MAX_REGENERATION_ATTEMPTS:
+        if info.get("regeneration_attempts", 0) >= self._max_regeneration_attempts:
             logger.error(f"❌ {module_name}再生失败次数已达上限，需人工介入")
             info["status"] = "dead"
             return False
         elapsed = time.time() - info.get("apoptosis_at", 0)
-        if elapsed < self.REGENERATION_COOLDOWN:
+        if elapsed < self._regeneration_cooldown:
             return False
         info["regeneration_attempts"] = info.get("regeneration_attempts", 0) + 1
         regenerator = self._regeneration_registry.get(module_name)

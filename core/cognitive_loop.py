@@ -15,6 +15,9 @@ from datetime import datetime
 from enum import Enum
 import asyncio
 
+from core.loop_mixin import AsyncLoopMixin as _AsyncLoopMixinBase
+from core.loop_mixin import LoopStatus as _LoopStatus
+
 try:
     from loguru import logger
 except ImportError:
@@ -56,7 +59,7 @@ class LoopMetrics:
     error_rate: float = 0.0
 
 
-class CognitiveLoop:
+class CognitiveLoop(_AsyncLoopMixinBase):
     """
     认知循环 - 学习进化的核心引擎
     
@@ -64,6 +67,7 @@ class CognitiveLoop:
     """
     
     def __init__(self, max_cycles: int = 1000):
+        super().__init__(name="cognitive_loop", cooldown_seconds=120.0, max_failures_before_degraded=3)
         self.max_cycles = max_cycles
         self.state = LoopState.IDLE
         self.cycle_count = 0
@@ -153,41 +157,42 @@ class CognitiveLoop:
         confidence = 0.0
         error = None
         
-        try:
-            self.state = LoopState.PERCEIVING
-            perception_result = await self._perceive(input_signal)
-            signals_processed = perception_result.get("signals_processed", 0)
-            actions_taken.extend(perception_result.get("actions", []))
-            
-            self.state = LoopState.UNDERSTANDING
-            understanding_result = await self._understand(perception_result)
-            insights.extend(understanding_result.get("insights", []))
-            actions_taken.extend(understanding_result.get("actions", []))
-            
-            self.state = LoopState.ACTING
-            action_result = await self._act(understanding_result)
-            knowledge_updated = action_result.get("knowledge_updated", False)
-            actions_taken.extend(action_result.get("actions", []))
-            
-            self.state = LoopState.REFLECTING
-            reflection_result = await self._reflect(action_result)
-            confidence = reflection_result.get("confidence", 0.0)
-            insights.extend(reflection_result.get("insights", []))
-            
-            evaluation_passed = await self._evaluate_cycle(reflection_result)
-            if not evaluation_passed:
-                insights.append("循环评估未通过，需要改进")
-            
-            self.state = LoopState.IDLE
-            
-        except Exception as e:
-            self.state = LoopState.ERROR
-            error = str(e)
-            logger.error(f"认知循环错误: {e}")
-            
-            error_id = self.error_alchemy.record_error(e)
-            alchemy_result = self.error_alchemy.alchemize(error_id)
-            insights.append(f"错误已转化为{len(alchemy_result.signals_extracted)}个学习信号")
+        async with self.async_loop_context():
+            try:
+                self.state = LoopState.PERCEIVING
+                perception_result = await self._perceive(input_signal)
+                signals_processed = perception_result.get("signals_processed", 0)
+                actions_taken.extend(perception_result.get("actions", []))
+                
+                self.state = LoopState.UNDERSTANDING
+                understanding_result = await self._understand(perception_result)
+                insights.extend(understanding_result.get("insights", []))
+                actions_taken.extend(understanding_result.get("actions", []))
+                
+                self.state = LoopState.ACTING
+                action_result = await self._act(understanding_result)
+                knowledge_updated = action_result.get("knowledge_updated", False)
+                actions_taken.extend(action_result.get("actions", []))
+                
+                self.state = LoopState.REFLECTING
+                reflection_result = await self._reflect(action_result)
+                confidence = reflection_result.get("confidence", 0.0)
+                insights.extend(reflection_result.get("insights", []))
+                
+                evaluation_passed = await self._evaluate_cycle(reflection_result)
+                if not evaluation_passed:
+                    insights.append("循环评估未通过，需要改进")
+                
+                self.state = LoopState.IDLE
+                
+            except Exception as e:
+                self.state = LoopState.ERROR
+                error = str(e)
+                logger.error(f"认知循环错误: {e}")
+                
+                error_id = self.error_alchemy.record_error(e)
+                alchemy_result = self.error_alchemy.alchemize(error_id)
+                insights.append(f"错误已转化为{len(alchemy_result.signals_extracted)}个学习信号")
         
         duration_ms = (datetime.now() - start_time).total_seconds() * 1000
         

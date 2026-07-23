@@ -9,25 +9,26 @@ L4 自修复层 - 自动回滚 (Auto Rollback)
 import json
 import time
 import copy
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 from typing import Dict, List, Optional, Any
 from loguru import logger
+from infrastructure.config_manager import config
 from datetime import datetime
 
 
 class AutoRollback:
     MAX_SNAPSHOTS = 50
-    ROLLBACK_ENTROPY_THRESHOLD = 0.7
 
     def __init__(self, db_path: str = "data/defense_snapshots.db"):
         self.db_path = db_path
+        self._rollback_entropy_threshold = config.get("defense.rollback_entropy_threshold", 0.7)
         self._snapshots: Dict[str, List[dict]] = {}
         self._rollback_log: List[dict] = []
         self._init_db()
 
     def _init_db(self):
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS snapshots (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,7 +62,7 @@ class AutoRollback:
         if len(self._snapshots[target]) > self.MAX_SNAPSHOTS:
             self._snapshots[target] = self._snapshots[target][-self.MAX_SNAPSHOTS:]
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute("INSERT INTO snapshots (target, data, created_at) VALUES (?, ?, ?)",
                          (target, json.dumps(data, default=str, ensure_ascii=False)[:10000], datetime.now().isoformat()), commit=True)
         except Exception:
@@ -84,7 +85,7 @@ class AutoRollback:
         if len(self._rollback_log) > 200:
             self._rollback_log = self._rollback_log[-200:]
         try:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute("INSERT INTO rollback_log (target, reason, entropy_before, entropy_after, created_at) VALUES (?, ?, ?, ?, ?)",
                          (target, reason, entropy, 0.0, datetime.now().isoformat()), commit=True)
         except Exception:
@@ -93,7 +94,7 @@ class AutoRollback:
         return snapshot["data"]
 
     def should_rollback(self, entropy: float) -> bool:
-        return entropy > self.ROLLBACK_ENTROPY_THRESHOLD
+        return entropy > self._rollback_entropy_threshold
 
     def get_latest_snapshot(self, target: str) -> Optional[Any]:
         if target in self._snapshots and self._snapshots[target]:

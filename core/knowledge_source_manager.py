@@ -17,7 +17,7 @@
 """
 
 import json
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 import hashlib
 import time
 from datetime import datetime, timedelta
@@ -99,7 +99,7 @@ class KnowledgeSourceManager:
         try:
             self._cache_db.parent.mkdir(parents=True, exist_ok=True)
             
-            db = DatabaseManager.get(str(self._cache_db))
+            db = get_storage_port(str(self._cache_db))
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS knowledge_cache (
                     query_hash TEXT PRIMARY KEY,
@@ -501,7 +501,7 @@ class KnowledgeSourceManager:
         try:
             db_path = config.get("db_path", "data/knowledge_store.db")
             
-            db = DatabaseManager.get(db_path)
+            db = get_storage_port(db_path)
             
             row = db.query_one('''
                 SELECT question, answer, source, quality_score
@@ -556,7 +556,7 @@ class KnowledgeSourceManager:
             return None
         
         try:
-            db = DatabaseManager.get(str(self._cache_db))
+            db = get_storage_port(str(self._cache_db))
             row = db.query_one('''
                 SELECT result, source FROM knowledge_cache
                 WHERE query_hash = ? AND expires_at > ?
@@ -579,7 +579,7 @@ class KnowledgeSourceManager:
             ttl_hours = self.config.get("cache_config", {}).get("ttl_hours", 24)
             expires_at = datetime.now() + timedelta(hours=ttl_hours)
             
-            db = DatabaseManager.get(str(self._cache_db))
+            db = get_storage_port(str(self._cache_db))
             db.execute('''
                 INSERT OR REPLACE INTO knowledge_cache
                 (query_hash, query, source, result, created_at, expires_at)

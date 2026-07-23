@@ -33,7 +33,7 @@ if isinstance(config, dict):
 print("\n[3] ToolRegistry 配置路径统一")
 print("-" * 50)
 
-from tools.registry import ToolRegistry
+from core.tool_registry import ToolRegistry
 
 registry = ToolRegistry()
 print(f"  统计数据库: {registry._stats_db}")

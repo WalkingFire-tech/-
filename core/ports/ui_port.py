@@ -10,3 +10,7 @@ class UIPort(ABC):
     def show_response(self, text: str):
         """显示响应给用户"""
         pass
+
+    def is_available(self) -> bool:
+        """UI是否可用（默认True，子类可覆盖）"""
+        return True

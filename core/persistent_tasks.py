@@ -10,7 +10,7 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 from loguru import logger
 from adapters.llm.ollama_adapter import ollama_chat_request
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class PersistentTaskSystem:
@@ -41,7 +41,7 @@ class PersistentTaskSystem:
         """初始化持久化数据库"""
         self.db_path.parent.mkdir(exist_ok=True)
         
-        db = DatabaseManager.get(str(self.db_path))
+        db = get_storage_port(str(self.db_path))
         db.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
                 task_id TEXT PRIMARY KEY,
@@ -247,7 +247,7 @@ class PersistentTaskSystem:
     async def _try_tools(self, question: str, context: dict) -> Dict:
         """策略3: 调用工具"""
         try:
-            from tools.registry import registry
+            from core.tool_registry import tool_registry as registry
             tools = registry.list_tools()
             
             # 根据问题选择合适的工具
@@ -270,7 +270,7 @@ class PersistentTaskSystem:
     async def _try_search(self, question: str, context: dict) -> Dict:
         """策略4: 搜索知识库"""
         try:
-            db = DatabaseManager.get("data/knowledge_store.db")
+            db = get_storage_port("data/knowledge_store.db")
             row = db.query_one(
                 "SELECT answer FROM knowledge_items WHERE answer LIKE ? LIMIT 1",
                 (f"%{question[:30]}%",)
@@ -303,7 +303,7 @@ class PersistentTaskSystem:
     async def _try_rag(self, question: str, context: dict) -> Dict:
         """策略6: RAG检索"""
         try:
-            db = DatabaseManager.get("data/experience_pool.db")
+            db = get_storage_port("data/experience_pool.db")
             row = db.query_one(
                 "SELECT response FROM experiences WHERE query LIKE ? ORDER BY timestamp DESC LIMIT 1",
                 (f"%{question[:20]}%",)
@@ -340,7 +340,7 @@ if __name__ == "__main__":
     def _save_task(self, task: Dict):
         """持久化任务"""
         try:
-            db = DatabaseManager.get(str(self.db_path))
+            db = get_storage_port(str(self.db_path))
             db.execute("""
                 INSERT OR REPLACE INTO tasks VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
@@ -365,7 +365,7 @@ if __name__ == "__main__":
     def _load_task(self, task_id: str) -> Optional[Dict]:
         """加载任务"""
         try:
-            db = DatabaseManager.get(str(self.db_path))
+            db = get_storage_port(str(self.db_path))
             row = db.query_one("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
             
             if row:

@@ -67,12 +67,16 @@ class PatchProposal:
     entropy_checks: List[Dict] = field(default_factory=list)
 
 
-IMMUTABLE_FILES = {
-    "core/spirit_core.py",
-    "core/truth_accumulator.py",
-    "core/resource_awareness/health_monitor.py",
-    "core/resource_awareness/adaptive_governor.py",
-}
+class PatchStatus(Enum):
+    PROPOSED = "proposed"
+    APPROVED = "approved"
+    SANDBOX_PASSED = "sandbox_passed"
+    INJECT_1PCT = "inject_1pct_done"
+    INJECT_20PCT = "inject_20pct_done"
+    COMPLETED = "completed"
+    ROLLED_BACK = "rolled_back"
+    REJECTED = "rejected"
+
 
 DANGEROUS_PATTERNS = [
     (r'\bos\.system\b', "禁止系统命令执行"),
@@ -90,10 +94,15 @@ DANGEROUS_PATTERNS = [
 class PatchSandbox:
     PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+    @property
+    def IMMUTABLE_FILES(self):
+        from core.self_modification import IMMUTABLE_FILES
+        return IMMUTABLE_FILES
+
     def validate_safety(self, file_path: str, patched_code: str) -> Tuple[bool, List[str]]:
         violations = []
 
-        if file_path in IMMUTABLE_FILES:
+        if file_path in self.IMMUTABLE_FILES:
             violations.append(f"不可变文件: {file_path}")
 
         import re
@@ -123,14 +132,28 @@ class PatchSandbox:
 
             module_name = file_path.replace("/", ".").replace(".py", "")
             parts = module_name.split(".")
+            imported_mod = None
             for i in range(len(parts), 0, -1):
                 try:
                     mod = __import__(".".join(parts[:i]))
                     for part in parts[1:i]:
                         mod = getattr(mod, part)
-                    return True, None
+                    imported_mod = mod
+                    break
                 except (ImportError, AttributeError):
                     continue
+
+            if imported_mod is None:
+                return False, f"模块导入失败: {module_name}"
+
+            if imported_mod and hasattr(imported_mod, '__dict__'):
+                _classes = [v for v in vars(imported_mod).values() if isinstance(v, type)]
+                for cls in _classes[:3]:
+                    if hasattr(cls, '__init__'):
+                        try:
+                            _instance = cls.__new__(cls)
+                        except Exception:
+                            pass
 
             return True, None
         except Exception as e:
@@ -184,6 +207,24 @@ class PatchDeployer:
     def propose(self, file_path: str, original_code: str, patched_code: str,
                 description: str, defect_category: str, confidence: float) -> PatchProposal:
         proposal_id = f"PATCH_{datetime.now().strftime('%Y%m%d%H%M%S')}_{hash(file_path) % 10000:04d}"
+
+        spirit_check = self._check_spirit_alignment(patched_code, description)
+        if not spirit_check["aligned"]:
+            logger.warning(f"🚫 补丁提案{proposal_id}未通过本心一致性校验: {spirit_check['reason']}")
+            proposal = PatchProposal(
+                proposal_id=proposal_id,
+                file=file_path,
+                original_code=original_code,
+                patched_code=patched_code,
+                description=description,
+                defect_category=defect_category,
+                confidence=confidence,
+                created_at=datetime.now().isoformat(),
+            )
+            proposal.status = PatchStatus.REJECTED
+            with self._lock:
+                self._proposals[proposal_id] = proposal
+            return proposal
 
         proposal = PatchProposal(
             proposal_id=proposal_id,
@@ -347,6 +388,96 @@ class PatchDeployer:
                     "created_at": p.created_at,
                 }
                 for p in self._proposals.values()
+            ]
+
+    def monitor_deployed(self) -> List[Dict]:
+        recently_completed = []
+        now = datetime.now()
+        with self._lock:
+            for p in self._proposals.values():
+                if p.status == PatchStatus.COMPLETED and p.created_at:
+                    try:
+                        created = datetime.fromisoformat(p.created_at)
+                        if (now - created).total_seconds() < 3600:
+                            recently_completed.append(p)
+                    except (ValueError, TypeError):
+                        pass
+
+        rollback_actions = []
+        for proposal in recently_completed:
+            degraded = self._detect_degradation(proposal)
+            if degraded:
+                result = self._rollback(proposal.proposal_id, degraded)
+                rollback_actions.append({
+                    "proposal_id": proposal.proposal_id,
+                    "file": proposal.file,
+                    "reason": degraded,
+                    "rollback_result": result.get("status"),
+                })
+        return rollback_actions
+
+    def _detect_degradation(self, proposal: PatchProposal) -> Optional[str]:
+        try:
+            from core.resource_awareness.health_monitor import health_monitor
+            status = health_monitor.get_status()
+            gpu_temp = status.get("gpu_temperature", 0)
+            if isinstance(gpu_temp, (int, float)) and gpu_temp > 90:
+                return f"GPU温度过高: {gpu_temp}°C"
+        except Exception:
+            pass
+
+        try:
+            from core.system_diagnostician import system_diagnostician
+            results = system_diagnostician.run_quick()
+            errors = [r for r in results if r.status == "error"]
+            if len(errors) >= 2:
+                return f"系统诊断发现{len(errors)}个错误"
+        except Exception:
+            pass
+
+        return None
+
+    def _check_spirit_alignment(self, patched_code: str, description: str) -> Dict[str, Any]:
+        try:
+            from core.spirit_core import spirit_core
+            validation = spirit_core.validate_response(patched_code[:3000])
+            if validation.get("status") == "fail":
+                violated = validation.get("violated_principles", [])
+                return {
+                    "aligned": False,
+                    "reason": f"违反精神内核原则: {', '.join(violated[:3])}",
+                    "violations": violated,
+                }
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.debug(f"本心一致性校验跳过: {e}")
+
+        dangerous_patterns = [
+            ("import os.*subprocess", "可能引入不受控的子进程执行"),
+            ("exec\\(", "可能执行动态代码"),
+            ("__import__", "可能动态导入任意模块"),
+            ("os\\.system", "可能执行系统命令"),
+            ("shutil\\.rmtree", "可能执行危险文件删除"),
+        ]
+        import re
+        for pattern, reason in dangerous_patterns:
+            if re.search(pattern, patched_code):
+                return {"aligned": False, "reason": reason, "violations": [reason]}
+
+        return {"aligned": True, "reason": "通过本心一致性校验", "violations": []}
+
+    def get_rollback_history(self) -> List[Dict]:
+        with self._lock:
+            return [
+                {
+                    "id": p.proposal_id,
+                    "file": p.file,
+                    "status": p.status.value,
+                    "description": p.description[:60],
+                }
+                for p in self._proposals.values()
+                if p.status == PatchStatus.ROLLED_BACK
             ]
 
 

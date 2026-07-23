@@ -14,7 +14,7 @@
 
 import re
 import json
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 from typing import Dict, List, Any, Optional, Tuple
 from loguru import logger
 from datetime import datetime
@@ -45,7 +45,7 @@ class EssenceReasoner:
 
     def _init_db(self):
         try:
-            db = DatabaseManager.get("data/essence_reasoning.db")
+            db = get_storage_port("data/essence_reasoning.db")
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS reasoning_chains (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -321,7 +321,7 @@ class EssenceReasoner:
         truths = base_truths.get(domain, [])
 
         try:
-            db = DatabaseManager.get("data/knowledge_store.db")
+            db = get_storage_port("data/knowledge_store.db")
             rows = db.query("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 5", (f"%{domain}%",))
             for row in rows:
                 if row[0] and len(row[0]) > 20:
@@ -682,7 +682,7 @@ class EssenceReasoner:
     def _save_reasoning(self, query: str, response: str, result: Dict):
         """持久化推理结果"""
         try:
-            db = DatabaseManager.get("data/essence_reasoning.db")
+            db = get_storage_port("data/essence_reasoning.db")
             db.execute(
                 """INSERT INTO reasoning_chains 
                    (query, original_response, facts_extracted, reasoning_chain, consistency_check, final_verdict, confidence, timestamp)

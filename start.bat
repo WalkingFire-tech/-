@@ -75,16 +75,9 @@ echo Waiting for server to fully initialize (health check: ready=true)...
 echo (Browser will open automatically when ready, max 90s)
 powershell -ExecutionPolicy Bypass -File "%~dp0wait_and_open.ps1"
 
-REM Try smart starter with watchfiles-based reload (avoids Windows socketpair issue)
-python start_smart.py 2>nul
-if errorlevel 1 (
-    echo   Smart starter failed, trying direct uvicorn with --reload...
-    python -m uvicorn backend.main_fast:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 30 --reload --reload-dir backend --reload-dir core --reload-dir infrastructure --reload-dir config 2>&1 | python -c "import sys,logging; from logging.handlers import TimedRotatingFileHandler; h=TimedRotatingFileHandler('logs/cmd_output.log',when='midnight',backupCount=7,encoding='utf-8'); h.setFormatter(logging.Formatter('%%(asctime)s | %%(message)s')); l=logging.getLogger('cmd'); l.addHandler(h); l.setLevel(logging.INFO); [l.info(line.rstrip()) for line in sys.stdin]" 2>nul
-    if errorlevel 1 (
-        echo   --reload failed, starting without reload...
-        python -m uvicorn backend.main_fast:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 30 2>&1 | python -c "import sys,logging; from logging.handlers import TimedRotatingFileHandler; h=TimedRotatingFileHandler('logs/cmd_output.log',when='midnight',backupCount=7,encoding='utf-8'); h.setFormatter(logging.Formatter('%%(asctime)s | %%(message)s')); l=logging.getLogger('cmd'); l.addHandler(h); l.setLevel(logging.INFO); [l.info(line.rstrip()) for line in sys.stdin]" 2>nul
-    )
-)
+REM Start backend directly — no watchfiles reload (avoids restart cascade), no --reload (production mode)
+echo [4/4] Starting backend (production mode, no auto-reload)...
+python -m uvicorn backend.main_fast:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 30 2>&1 | python -c "import sys,logging; from logging.handlers import TimedRotatingFileHandler; h=TimedRotatingFileHandler('logs/cmd_output.log',when='midnight',backupCount=7,encoding='utf-8'); h.setFormatter(logging.Formatter('%%(asctime)s | %%(message)s')); l=logging.getLogger('cmd'); l.addHandler(h); l.setLevel(logging.INFO); [l.info(line.rstrip()) for line in sys.stdin]" 2>nul
 
 echo.
 echo ========================================

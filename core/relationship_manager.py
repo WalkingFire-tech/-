@@ -17,7 +17,7 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
-from infrastructure.database_manager import DatabaseManager
+from core.ports.adapters import get_storage_port
 
 
 class RelationshipStage(Enum):
@@ -108,7 +108,7 @@ class RelationshipManager:
     
     def _init_database(self):
         """初始化数据库"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.executescript('''
             CREATE TABLE IF NOT EXISTS relationships (
                 user_id TEXT PRIMARY KEY,
@@ -168,7 +168,7 @@ class RelationshipManager:
         )
         
         with self._lock:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             db.execute('''
                 INSERT INTO interactions
                 (interaction_id, user_id, type, timestamp, content, sentiment, impact, context)
@@ -261,7 +261,7 @@ class RelationshipManager:
         if user_id in self.relationships:
             return self.relationships[user_id]
         
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         row = db.query_one(
             'SELECT * FROM relationships WHERE user_id = ?',
             (user_id,)
@@ -299,7 +299,7 @@ class RelationshipManager:
     
     def _save_relationship(self, profile: RelationshipProfile):
         """保存关系档案"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         db.execute('''
             INSERT OR REPLACE INTO relationships
             (user_id, stage, trust_score, depth, understanding,
@@ -405,7 +405,7 @@ class RelationshipManager:
     
     def get_all_relationships(self) -> List[Dict[str, Any]]:
         """获取所有关系"""
-        db = DatabaseManager.get(self.db_path)
+        db = get_storage_port(self.db_path)
         rows = db.query('''
             SELECT user_id, stage, trust_score, depth, interaction_count, last_interaction
             FROM relationships
@@ -428,7 +428,7 @@ class RelationshipManager:
     def decay_trust(self):
         """信任度衰减（时间因素）"""
         with self._lock:
-            db = DatabaseManager.get(self.db_path)
+            db = get_storage_port(self.db_path)
             rows = db.query('SELECT user_id, trust_score FROM relationships')
             
             for row in rows:
