@@ -416,8 +416,8 @@ class SleepConsolidationEngine:
                             commit=True
                         )
                         consumed += 1
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"精神教训DB写入失败: {e}")
                 details['audit_failures_consumed'] = consumed
                 logger.info(f"📋 睡眠整合消费审计日志: {len(audit_failures)}条")
         except Exception as e:

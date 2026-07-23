@@ -23,24 +23,30 @@ class SelfRepairLoop:
         self.root = Path(project_root).resolve()
         self.core_dir = self.root / "core"
 
-    def find_dangling_modules(self) -> List[Path]:
-        """找出 core/ 下没有被任何代码 import 的 .py 文件"""
-        all_py = sorted(self.core_dir.rglob("*.py"))
-        imported = set()
+    def _get_all_imports(self) -> set:
+        """扫描全部 .py 文件，收集所有被导入的完整模块路径"""
+        all_py = list(self.root.rglob("*.py"))
+        imports = set()
 
         for py_file in all_py:
             try:
-                text = py_file.read_text(encoding="utf-8")
-                tree = ast.parse(text)
+                tree = ast.parse(py_file.read_text(encoding="utf-8", errors="replace"))
                 for node in ast.walk(tree):
-                    if isinstance(node, ast.Import):
+                    if isinstance(node, ast.ImportFrom):
+                        if node.module:
+                            imports.add(node.module)  # "core.truth_accumulator"
+                    elif isinstance(node, ast.Import):
                         for alias in node.names:
-                            imported.add(alias.name.split(".")[0])
-                    elif isinstance(node, ast.ImportFrom) and node.module:
-                        mod = node.module.split(".")[0]
-                        imported.add(mod)
+                            imports.add(alias.name)
             except SyntaxError:
                 continue
+
+        return imports
+
+    def find_dangling_modules(self) -> List[Path]:
+        """找出 core/ 下真正零引用的 .py 文件（完整路径匹配）"""
+        all_py = sorted(self.core_dir.rglob("*.py"))
+        all_imports = self._get_all_imports()
 
         dangling = []
         for py_file in all_py:
@@ -50,9 +56,20 @@ class SelfRepairLoop:
                 continue
             if name.startswith("test_"):
                 continue
-            if py_file.parent.name == "OLD":
+            if "OLD" in str(rel):
                 continue
-            if name not in imported and not self._is_init_submodule(py_file):
+
+            # 导出该文件的模块路径 (core.xxx.yyy)
+            module_path = str(rel).replace(os.sep, ".").replace(".py", "")
+
+            # 情况1: 直接导入完整路径
+            is_imported = module_path in all_imports
+
+            # 情况2: 通过 __init__.py 间接导出
+            if not is_imported:
+                is_imported = self._is_init_submodule(py_file)
+
+            if not is_imported:
                 dangling.append(py_file)
 
         return dangling

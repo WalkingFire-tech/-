@@ -178,8 +178,8 @@ class CognitiveDispatcher:
                     (w, correct_intent, source, datetime.now().isoformat()),
                     commit=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"意图词表DB写入失败: {e}")
         
         if added > 0:
             logger.info(f"📚 意图词表自动学习: +{added}个关键词→{correct_intent} (来源:{source})")

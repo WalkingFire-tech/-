@@ -305,13 +305,12 @@ class ClosedLoopOrchestrator:
                     "response": result["response"],
                     "quality": 70,
                 }
-        except Exception:
-            logger.warning("操作降级跳过")
+        except Exception as e:
+            logger.warning(f"Ollama直接回复降级: {e}")
 
         return await self._execute_reasoning(ctx, emit_func)
 
     async def _execute_knowledge_search(self, ctx: LoopContext, emit_func) -> Optional[Dict]:
-        """知识检索：经验池+知识库+向量检索+事实锚点"""
         responses = []
 
         try:
@@ -319,16 +318,16 @@ class ClosedLoopOrchestrator:
             exp = await _fetch_experience(ctx.query)
             if exp and exp.get("response"):
                 responses.append({"source": "经验池", "response": exp["response"], "quality": 65})
-        except Exception:
-            logger.warning("操作降级跳过")
+        except Exception as e:
+            logger.warning(f"经验池检索降级: {e}")
 
         try:
             from backend.chat_stream import _fetch_knowledge
             know = await _fetch_knowledge(ctx.query)
             if know and know.get("response"):
                 responses.append({"source": "知识库", "response": know["response"], "quality": 70})
-        except Exception:
-            logger.warning("操作降级跳过")
+        except Exception as e:
+            logger.warning(f"知识库检索降级: {e}")
 
         try:
             from infrastructure.fact_store import fact_store
@@ -336,8 +335,8 @@ class ClosedLoopOrchestrator:
             if facts:
                 fact_text = "\n".join(f"- {f['subject']} {f['predicate']} {f['object']}" for f in facts)
                 responses.append({"source": "事实锚点", "response": fact_text, "quality": 75})
-        except Exception:
-            logger.warning("操作降级跳过")
+        except Exception as e:
+            logger.warning(f"事实锚点检索降级: {e}")
 
         if responses:
             return max(responses, key=lambda r: r["quality"])
@@ -364,8 +363,8 @@ class ClosedLoopOrchestrator:
                     "response": result["response"],
                     "quality": 75,
                 }
-        except Exception:
-            logger.warning("操作降级跳过")
+        except Exception as e:
+            logger.warning(f"外部API检索降级: {e}")
         return None
 
     async def _phase_evaluation(self, ctx: LoopContext, emit_func):
@@ -467,8 +466,8 @@ class ClosedLoopOrchestrator:
             from infrastructure.fact_store import fact_store
             if ctx.evaluation_passed and ctx.final_response and len(ctx.final_response) > 50:
                 fact_store.extract_and_store(ctx.query, ctx.final_response, source="closed_loop")
-        except Exception:
-            logger.warning("操作降级跳过")
+        except Exception as e:
+            logger.warning(f"事实提取降级: {e}")
 
         try:
             from core.cognition.experience_abstractor import ExperienceAbstractor
@@ -482,8 +481,8 @@ class ClosedLoopOrchestrator:
             })
             if skeleton:
                 logger.info(f"闭环沉淀: 方法论骨架已提取")
-        except Exception:
-            logger.warning("操作降级跳过")
+        except Exception as e:
+            logger.warning(f"方法论骨架提取降级: {e}")
 
         if emit_func:
             emit_func("step", {"phase": "闭环沉淀", "status": "done",
@@ -517,24 +516,24 @@ class ClosedLoopOrchestrator:
             )
             if result and result.get("response") and len(result["response"]) > 20:
                 return result["response"]
-        except Exception:
-            logger.warning("操作降级跳过")
+        except Exception as e:
+            logger.warning(f"动态fallback-Ollama降级: {e}")
 
         try:
             from backend.chat_stream import _fetch_experience
             exp = await _fetch_experience(ctx.query)
             if exp and exp.get("response"):
                 return exp["response"]
-        except Exception:
-            logger.warning("操作降级跳过")
+        except Exception as e:
+            logger.warning(f"动态fallback-经验池降级: {e}")
 
         try:
             from backend.chat_stream import _fetch_knowledge
             know = await _fetch_knowledge(ctx.query)
             if know and know.get("response"):
                 return know["response"]
-        except Exception:
-            logger.warning("操作降级跳过")
+        except Exception as e:
+            logger.warning(f"动态fallback-知识库降级: {e}")
 
         return f"关于「{ctx.query}」，我暂时无法给出满意的回答。请尝试换个方式描述你的问题，或者提供更多背景信息。"
 
