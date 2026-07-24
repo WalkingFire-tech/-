@@ -91,6 +91,25 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
 
     methodology = {}
 
+    try:
+        from core.presence.existence_layer import get_existence_layer
+        _el = get_existence_layer()
+        _existence_ctx = _el.get_existence_context()
+        methodology["existence_context"] = _existence_ctx
+        _methodology_override = _existence_ctx.get("methodology_override", {})
+        if _methodology_override:
+            methodology.update(_methodology_override)
+            logger.info(
+                "🫁 存在层上下文注入: state={}, load={:.2f}, energy={:.2f}, override={}".format(
+                    _existence_ctx["presence_state"],
+                    _existence_ctx["cognitive_load"],
+                    _existence_ctx["energy_level"],
+                    list(_methodology_override.keys())
+                )
+            )
+    except Exception:
+        pass
+
     _dim_orch = None
     if _DIMENSION_ORCHESTRATOR_AVAILABLE:
         try:
