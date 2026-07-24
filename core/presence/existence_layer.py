@@ -798,7 +798,91 @@ class ExistenceLayer(LoopMixin):
         if self._resource_scheduler:
             status["resource_scheduler"] = self._resource_scheduler.get_status()
         return status
-    
+
+    def get_existence_context(self) -> Dict[str, Any]:
+        """
+        存在层上下文接口 — 供 chat_orchestrator 感知当前存在状态
+
+        这是"存在层是基底"的核心接口：
+        不是 chat_stream 轮询状态，而是存在层提供"我现在是什么状态"的上下文。
+        methodology 消费此上下文来决定路径数量、响应深度、在场模式等。
+
+        Returns:
+            {
+                "presence_state": str,       # 当前存在状态
+                "cognitive_load": float,     # 认知负荷
+                "energy_level": float,       # 能量水平
+                "exploration_drive": float,  # 探索驱动力
+                "consolidation_need": float, # 整合需求
+                "rhythm_bpm": float,         # 内在节律
+                "silence_duration": float,   # 沉默时长
+                "homeostatic_balance": float,# 内稳态平衡度
+                "primary_drive": str,        # 主要驱动
+                "methodology_override": dict,# 推荐的 methodology 覆盖
+            }
+        """
+        ctx = {
+            "presence_state": self.state.value,
+            "cognitive_load": 0.0,
+            "energy_level": 0.5,
+            "exploration_drive": 0.5,
+            "consolidation_need": 0.0,
+            "rhythm_bpm": 60.0,
+            "silence_duration": self.metrics.silence_duration,
+            "homeostatic_balance": 1.0,
+            "primary_drive": "none",
+            "methodology_override": {},
+        }
+
+        if self._homeostasis:
+            try:
+                homeo = self._homeostasis.update()
+                ctx["cognitive_load"] = homeo.cognitive_load.current
+                ctx["energy_level"] = homeo.energy_level.current
+                ctx["exploration_drive"] = homeo.exploration_drive.current
+                ctx["consolidation_need"] = homeo.consolidation_need.current
+                ctx["homeostatic_balance"] = homeo.overall_balance
+                ctx["primary_drive"] = homeo.primary_drive.name
+            except Exception:
+                pass
+
+        if self.inner_time:
+            try:
+                it_state = self.inner_time.get_state()
+                ctx["rhythm_bpm"] = it_state.rhythm_bpm
+            except Exception:
+                pass
+
+        ctx["methodology_override"] = self._compute_methodology_override(ctx)
+
+        return ctx
+
+    def _compute_methodology_override(self, ctx: Dict[str, Any]) -> Dict[str, Any]:
+        """基于存在上下文计算 methodology 覆盖"""
+        override = {}
+
+        if ctx["cognitive_load"] > 0.8:
+            override["max_paths"] = 3
+            override["preferred_depth"] = "shallow"
+            override["timeout_factor"] = 0.7
+
+        if ctx["energy_level"] < 0.3:
+            override["disable_local_models"] = True
+            override["max_paths"] = 2
+
+        if ctx["consolidation_need"] > 0.6:
+            override["preferred_depth"] = "moderate"
+            override["consolidation_mode"] = True
+
+        if ctx["exploration_drive"] > 0.7 and ctx["energy_level"] > 0.4:
+            override["explore_growth_edge"] = True
+
+        if ctx["presence_state"] in ("resting", "sleeping"):
+            override["max_paths"] = 2
+            override["preferred_depth"] = "shallow"
+
+        return override
+
     def force_state(self, state: PresenceState):
         """强制切换状态"""
         self.state = state
