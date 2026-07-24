@@ -475,6 +475,14 @@ async def lifespan(app):
     await _start_evolution_loop(app)
     await _register_builtin_tools()
     await _start_existence_layer()
+
+    try:
+        from core.autonomous_cognition import start_autonomous_loop
+        app.state._autonomous_task = asyncio.create_task(start_autonomous_loop())
+        logger.info("P3 Phase5: 自主认知循环已启动（中继形态）")
+    except Exception as e:
+        logger.warning("自主认知循环启动跳过: {}".format(e))
+
     try:
         from core.evolution.pattern_migrator import PatternMigrator
         PatternMigrator.bootstrap()
@@ -508,6 +516,11 @@ async def lifespan(app):
     yield
 
     # === 关闭序列 ===
+    try:
+        from core.autonomous_cognition import stop_autonomous_loop
+        stop_autonomous_loop()
+    except Exception:
+        pass
     await _stop_cognitive_planner(app)
     await _stop_existence_layer()
     await _stop_scheduled_tasks()
