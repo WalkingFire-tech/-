@@ -61,11 +61,21 @@ async def execute_parallel_paths(
     logger.info(f"🚀 进入阶段3: 多策略并行尝试, intent={intent_type}, strategy={methodology['strategy']}")
 
     _presence_mode = methodology.get("presence_mode", False)
+    _behavioral_directive = methodology.get("behavioral_directive", {})
+    _exploration_drive = methodology.get("exploration_drive", _behavioral_directive.get("exploration_drive", 0.5))
+    _consolidation_need = methodology.get("consolidation_need", _behavioral_directive.get("consolidation_need", 0.0))
+    _preferred_depth = methodology.get("preferred_depth", _behavioral_directive.get("preferred_depth", "moderate"))
+    _perspective_mode = methodology.get("perspective_mode", _behavioral_directive.get("perspective_mode", "companion"))
+    _avoid_paths = _behavioral_directive.get("avoid_paths", [])
 
     max_paths = config.get("routing.max_parallel_paths", 9)
     if _presence_mode:
         max_paths = 2
         logger.info(f"🪞 在场模式: max_paths→2，仅保留自我推理+经验池")
+
+    if _consolidation_need > 0.6 and not _presence_mode:
+        max_paths = min(max_paths, 4)
+        logger.info(f"🪞 整合需求高(consolidation={_consolidation_need:.2f}): max_paths→{max_paths}，减少外部探索")
     try:
         from infrastructure.enhanced_model_stats import EnhancedModelStats
         _ems = EnhancedModelStats()
@@ -132,6 +142,17 @@ async def execute_parallel_paths(
     _path_weights = methodology.get("path_weights", {}) if methodology else {}
 
     def _should_run(path_name: str, default: bool = True) -> bool:
+        if _avoid_paths and path_name in _avoid_paths:
+            logger.info(f"⚖️ SelfModel回避: {path_name}近期成功率低，跳过")
+            return False
+        try:
+            from backend.services.orchestrator_helpers import get_self_model_safe
+            _sm = get_self_model_safe()
+            if _sm and not _sm.should_use_path(path_name):
+                logger.info(f"⚖️ SelfModel领域模型: {path_name}置信度过低，跳过")
+                return False
+        except Exception:
+            pass
         if resource_allocation:
             alloc_val = resource_allocation["allocation"].get(path_name, 0.0)
             if alloc_val < 0.1:
@@ -608,6 +629,25 @@ async def execute_parallel_paths(
                 c["quality"] = int(c.get("quality", 50) * penalty)
             elif "经验池" in src:
                 c["quality"] = min(100, int(c.get("quality", 50) * 1.2))
+
+    if _behavioral_directive and not (methodology.get("self_referential") or _presence_mode):
+        _bd_explore = _exploration_drive
+        _bd_consolidate = _consolidation_need
+        _bd_depth = _preferred_depth
+        for c in candidates:
+            src = c.get("source", "")
+            if "外部" in src or "搜索" in src or "DeepSeek" in src:
+                if _bd_consolidate > 0.5:
+                    c["quality"] = int(c.get("quality", 50) * max(0.5, 1.0 - _bd_consolidate * 0.5))
+            if "自我推理" in src:
+                if _bd_depth == "deep":
+                    c["quality"] = min(100, int(c.get("quality", 50) * 1.2))
+            if "经验池" in src or "知识库" in src:
+                if _bd_consolidate > 0.4:
+                    c["quality"] = min(100, int(c.get("quality", 50) * (1.0 + _bd_consolidate * 0.3)))
+            if "Ollama" in src or "本地模型" in src:
+                if _bd_explore > 0.7:
+                    c["quality"] = min(100, int(c.get("quality", 50) * 1.1))
 
     yield _emit_s("step", {"phase": "多策略并行", "status": "done", "detail": f"共获取{len(candidates)}个候选结果（{len(sources_got)}条路径：{'+'.join(sources_got)}）"})
 

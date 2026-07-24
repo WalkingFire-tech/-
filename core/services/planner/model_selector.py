@@ -10,7 +10,7 @@ class ModelSelectorMixin:
 
     def _init_model_selector(self):
         self._model_performance = {}
-        self._default_model = self.config.get("default_model", "qwen2.5-coder:1.5b")
+        self._default_model = "qwen2.5-coder:1.5b"
 
     def _auto_load_models(self):
         """自动加载适配器中的模型"""

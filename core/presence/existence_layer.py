@@ -168,6 +168,22 @@ class ExistenceLayer(LoopMixin):
             logger.info("  ✓ 睡眠整合模块已加载并启动")
         except Exception as e:
             logger.warning(f"  ⚠ 睡眠整合模块未找到: {e}")
+
+        self._homeostasis = None
+        try:
+            from core.presence.homeostasis import get_homeostasis_engine
+            self._homeostasis = get_homeostasis_engine()
+            logger.info("  ✓ 稳态引擎已集成")
+        except Exception as e:
+            logger.warning(f"  ⚠ 稳态引擎未找到: {e}")
+
+        self._intrinsic_motivation = None
+        try:
+            from core.presence.intrinsic_motivation import get_intrinsic_motivation_engine
+            self._intrinsic_motivation = get_intrinsic_motivation_engine()
+            logger.info("  ✓ 内在动机引擎已集成")
+        except Exception as e:
+            logger.warning(f"  ⚠ 内在动机引擎未找到: {e}")
     
     def start(self):
         """启动存在层"""
@@ -254,8 +270,33 @@ class ExistenceLayer(LoopMixin):
                 time.sleep(5.0)
     
     def _update_state(self, silence: float):
-        """更新存在状态 — 概率场驱动+内在节律双通道"""
-        if self._probability_field:
+        """更新存在状态 — 稳态驱动(最高优先级) + 概率场 + 内在节律 + 沉默时长"""
+        if self._homeostasis:
+            try:
+                homeo_state = self._homeostasis.update()
+                recommended = homeo_state.recommended_presence_state
+                state_map = {
+                    "awake": PresenceState.AWAKE,
+                    "perceiving": PresenceState.PERCEIVING,
+                    "growing": PresenceState.GROWING,
+                    "resting": PresenceState.RESTING,
+                    "sleeping": PresenceState.SLEEPING,
+                }
+                new_state = state_map.get(recommended, None)
+                if new_state and new_state != self.state:
+                    old = self.state.value
+                    self.state = new_state
+                    logger.info(
+                        f"🫁 稳态驱动状态切换: {old}→{new_state.value} "
+                        f"(primary_drive={homeo_state.primary_drive.name}, "
+                        f"balance={homeo_state.overall_balance:.2f}, "
+                        f"load={homeo_state.cognitive_load.current:.2f}, "
+                        f"energy={homeo_state.energy_level.current:.2f})"
+                    )
+            except Exception as e:
+                logger.debug(f"稳态驱动跳过: {e}")
+
+        if self._probability_field and self.state != PresenceState.RESTING and self.state != PresenceState.SLEEPING:
             density_signal = 0.0
             if self.inner_time:
                 it_state = self.inner_time.get_state()
@@ -444,6 +485,17 @@ class ExistenceLayer(LoopMixin):
             )
         
         self._lightweight_housekeeping()
+
+        if self._intrinsic_motivation:
+            try:
+                result = self._intrinsic_motivation.execute_top_motivation()
+                if result:
+                    logger.info(
+                        f"🌱 内在动机执行: type={result.get('status')}, "
+                        f"topic={result.get('topic', '')[:40]}"
+                    )
+            except Exception as e:
+                logger.debug(f"内在动机执行跳过: {e}")
 
         if not self.pending_signals:
             exploration_prob = self._compute_exploration_probability()

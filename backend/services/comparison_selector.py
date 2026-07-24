@@ -93,6 +93,28 @@ async def compare_and_select(
                 c["quality"] = int(c.get("quality", 30) * 0.3)
         logger.info(f"🪞 在场模式择优: 自我推理×1.5, Ollama×0.5, 外部×0.3")
 
+    try:
+        from backend.services.orchestrator_helpers import get_self_model_safe
+        _sm = get_self_model_safe()
+        if _sm:
+            _src_to_path = {
+                "Ollama": "ollama", "本地模型": "ollama",
+                "经验池": "experience", "知识库": "knowledge",
+                "外部搜索": "external_api", "DeepSeek": "external_api",
+                "自我推理": "self_reason", "工具调用": "tool",
+                "规则推理": "rule", "事实锚点": "fact",
+            }
+            for c in candidates:
+                src = c.get("source", "")
+                path_name = _src_to_path.get(src, "")
+                if path_name:
+                    priority = _sm.get_path_priority(path_name)
+                    multiplier = priority / 10.0
+                    c["quality"] = int(c.get("quality", 30) * multiplier)
+            logger.info(f"🪞 SelfModel路径优先级注入择优")
+    except Exception:
+        pass
+
     logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] 进入阶段4: 对比择优, {len(candidates)}个候选")
     for i, c in enumerate(candidates):
         logger.warning(f"[ORCH_DIAG] 候选{i}: source={c.get('source')}, quality={c.get('quality')}, resp_len={len(c.get('response',''))}, resp_preview={c.get('response','')[:80]}")

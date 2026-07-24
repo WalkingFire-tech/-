@@ -2,63 +2,67 @@
 
 > 基于对 docs/ 全部文档 + reports/ 90+ 报告 + core/evolution/(9) + core/learning/(7) + core/layers/(7) 的完整阅读  
 > 本文档回答：**系统真正能做什么、不能做什么、离"同行者"还有多远**
+> 
+> **更新日志**：
+> - 2026-07-07 初版
+> - 2026-07-24 二次验证，更新已完成项
 
 ---
 
 ## 第一部分：系统真正拥有的能力
 
-### 1.1 六层认知架构（L0-L6）— 全部实现但未全部集成
+### 1.1 六层认知架构（L0-L6）— 全部实现，L1-L6已部分集成
 
 | 层 | 文件 | 状态 | 是否被主运行时调用 |
 |----|------|------|-----------------|
 | L0 存在层 | existence_layer + self_perception + gap_growth + sleep_consolidation | ✅ | ✅（lifespan 中启动） |
-| L1 感知层 | layers/l1_perception_enhanced.py | ✅ | ❌ 未集成 |
-| L2 学习层 | layers/l2_learning.py | ✅ | ❌ 未集成 |
-| L3 整合层 | layers/l3_integration.py | ✅ | ❌ 未集成 |
-| L4 校验层 | layers/l4_validation.py | ✅ | ❌ 未集成 |
-| L5 进化层 | layers/l5_evolution.py | ✅ | ❌ 未集成 |
-| L6 内省层 | layers/l6_introspection.py | ✅ | ❌ 未集成 |
+| L1 感知层 | layers/l1_perception_enhanced.py | ✅ | ✅ `cp._perceive()` intent_dispatcher.py:224 |
+| L2 学习层 | layers/l2_learning.py | ✅ | ✅ `cp._learn()` cognitive_learner.py:50 |
+| L3 整合层 | layers/l3_integration.py | ✅ | ✅ `cp._integrate()` cognitive_learner.py:58 |
+| L4 校验层 | layers/l4_validation.py | ✅ | ✅ spirit_validator 通过 cp 校验 |
+| L5 进化层 | layers/l5_evolution.py | ✅ | ✅ `get_l5_evolution().record_experience()` response_assembler.py:338 |
+| L6 内省层 | layers/l6_introspection.py | ✅ | ✅ `cp._get_introspection()` reflection_learner.py:90 |
 
-**核心发现**: 7 层认知架构**代码完整、测试通过**，但只有 L0 被 `backend/main_fast.py` 的 lifespan 启动。L1-L6 作为独立的 `core/layers/` 模块存在，但 `chat_stream`/`chat_orchestrator` 不经过它们处理查询。
+**核心发现（2026-07-24更新）**: L1-L6 **全部已被主运行时调用**，但调用方式是分散的、部分通过旁路异步，不是完整的 `CognitivePlanner.process()` 主路径循环。L1感知在intent_dispatcher中被同步调用，L2/L3在cognitive_learner中被消费，L4在spirit_validator中校验，L5在response_assembler中记录，L6在reflection_learner中内省。
 
-### 1.2 四层进化架构 — 代码完整，但未接入主循环
+### 1.2 四层进化架构 — 已接入主循环，自动运行
 
 | 进化层 | 文件 | 代码量 | 状态 |
 |--------|------|--------|------|
-| 行为进化 | behavior_evolution.py | 470行 | ✅ 可独立运行 |
-| 知识进化 | knowledge_evolution.py | 580行 | ✅ 可独立运行 |
-| 策略进化 | strategy_evolution.py | ~400行 | ✅ 可独立运行 |
-| 元学习 | meta_learning.py | ~300行 | ✅ 可独立运行 |
-| 进化调度器 | evolution_scheduler.py | ~200行 | ✅ 可独立运行 |
-| 进化岛沙盒 | evolution_island.py | 285行 | ✅ 可独立运行 |
+| 行为进化 | behavior_evolution.py | 470行 | ✅ 自动运行 |
+| 知识进化 | knowledge_evolution.py | 580行 | ✅ 自动运行 |
+| 策略进化 | strategy_evolution.py | ~400行 | ✅ 自动运行 |
+| 元学习 | meta_learning.py | ~300行 | ✅ 自动运行 |
+| 进化调度器 | evolution_scheduler.py | ~200行 | ⚠️ 未被主流程调用（独立模块） |
+| 进化岛沙盒 | evolution_island.py | 285行 | ✅ 自动运行 |
 
-**核心发现**: 进化模块代码完整，但它们是**手动触发的**——进化岛有 API 端点但主生命周期不会自动调用它。基因演化引擎有 21 个基因组但**0 代进化历史**——从未真正运行过。
+**核心发现（2026-07-24更新）**: 进化引擎已通过 `lifespan._start_evolution_loop()`（每10分钟）和 `scheduled_tasks._job_slow_evolution`（每小时）自动运行。累计 **1985代进化历史**（evolution_history.db: 397条记录）。`evolution_scheduler.py` 本身仍未被主流程调用，但进化通过 `evolution_island` + `dual_speed_evolution` 路径自动运行。
 
-### 1.3 七大学习机制 — 设计精巧，但分散且未聚合
+### 1.3 七大学习机制 — 全部被主流程调用，但缺乏统一状态
 
-| 机制 | 文件 | 核心理念 |
-|------|------|---------|
-| 增量感知学习 | incremental_perception.py | 从每次交互吸收信号 |
-| 经验反馈回路 | feedback_loop.py | 验证学到的知识是否有效 |
-| 失败炼金术 | error_alchemy.py | 错误不是失败，是优化的原料 |
-| 工具自我构建 | tool_builder.py | 从失败上下文自动生成新工具 |
-| 知识网络编织 | knowledge_weaver.py | 将孤立知识点编织成网络 |
-| 认知节奏控制器 | rhythm_controller.py | 控制学习节奏 |
-| 元学习策略优化 | meta_learning.py | 观察并调整学习模式 |
+| 机制 | 文件 | 核心理念 | 被主流程调用 |
+|------|------|---------|------------|
+| 增量感知学习 | incremental_perception.py | 从每次交互吸收信号 | ✅ reflection_learner.py:384 |
+| 经验反馈回路 | feedback_loop.py | 验证学到的知识是否有效 | ✅ reflection_learner.py:355 |
+| 失败炼金术 | error_alchemy.py | 错误不是失败，是优化的原料 | ✅ orchestrator_helpers.py:678 |
+| 工具自我构建 | tool_builder.py | 从失败上下文自动生成新工具 | ✅ comparison_selector.py:112 |
+| 知识网络编织 | knowledge_weaver.py | 将孤立知识点编织成网络 | ✅ reflection_learner.py:401 |
+| 认知节奏控制器 | rhythm_controller.py | 控制学习节奏 | ✅ cognitive_initializer.py:72 |
+| 元学习策略优化 | meta_learning.py | 观察并调整学习模式 | ✅ reflection_learner.py:208 |
 
-**核心发现**: 7 个学习模块设想了完整的"学习即存在方式"哲学，但它们在文件系统中是并排的，没有统一的"学习状态"或"当前正在学什么"的全局视图。
+**核心发现（2026-07-24更新）**: 7个学习模块**全部已被主流程调用**（主要通过 reflection_learner.py 串联），但仍没有统一的"学习状态"或"当前正在学什么"的全局视图。各模块独立运行，通过中间层串联而非统一协调。
 
-### 1.4 自我认知能力 — 5 个模块，产生报告但不改变行为
+### 1.4 自我认知能力 — 3/5已形成反馈回路，2/5仍独立
 
 | 能力 | 模块 | 输出 | 反馈回路 |
 |------|------|------|---------|
 | "我怎么想的" | DecisionChain | `:why` 命令 | ❌ 给人看，不走回路 |
 | "我学到了什么" | LearningReflector | `:reflect` 报告 | ❌ 给人看，不走回路 |
-| "我哪里不行" | CapabilityGapDiagnoser | 缺口报告 | ❌ 给人看，不走回路 |
-| "我做得怎么样" | SelfAssessment | 自评报告 | ❌ 给人看，不走回路 |
-| "我能做什么" | CapabilityIntrospection | 22项能力清单 | ❌ 给人看，不走回路 |
+| "我哪里不行" | CapabilityGapDiagnoser | 缺口报告 | ✅ methodology_discoverer → methodology → 决策 |
+| "我做得怎么样" | SelfAssessment | 自评报告 | ✅ lifespan → 自动修复（闭环完整性/知识活力/行为偏差） |
+| "我能做什么" | SelfModel.evaluate_and_act | 行为指令 | ✅ chat_orchestrator → methodology → 路径权重 → 闭环反馈 |
 
-**核心发现**: 自我认知的 5 个模块都产生了**高质量报告**，但没有任何一条输出被反馈到主决策循环中。系统知道自己不行，但知道了也不调整。
+**核心发现（2026-07-24更新）**: 3/5模块已形成反馈回路——CapabilityGapDiagnoser检测结果影响methodology，SelfAssessment评估驱动自动修复，SelfModel行为指令（exploration_drive/consolidation_need/preferred_depth/perspective_mode）注入chat_orchestrator的methodology并影响路径选择和响应风格，对话结束后结果写回SelfModel形成闭环。DecisionChain和LearningReflector仍未接入chat流。
 
 ### 1.5 价值对齐与安全 — 三层防护完整
 
@@ -76,9 +80,9 @@
 | 环节 | 模块 | 数据量 |
 |------|------|--------|
 | 知识库 | knowledge_store | 17,688 条 |
-| 经验池 | experience_pool | 2,867 条（觉醒后注入） |
+| 经验池 | experience_pool | 26,915 条（含18844条autonomous_reflection，已加意图过滤+衰减排序+相关性门控） |
 | 事实库 | fact_store | 结构化三元组 |
-| 真谛库 | truths | 沉淀的认知 |
+| 真谛库 | truths | 433 条（含7条L4大道级真谛） |
 | 基因池 | genome_pool | 21 个基因组 |
 | 工具库 | tool_registry | 100 个工具 |
 | 学习规则 | learning_rules | 35 条待激活 |
@@ -87,35 +91,32 @@
 
 ## 第二部分：系统不能做什么（真正的缺口）
 
-### 2.1 核心缺口：没有统一的主循环
+### 2.1 核心缺口：认知循环仍不完整
 
 ```
-当前状况：
+当前状况（2026-07-24）：
   main_fast.py (FastAPI) ─→ chat_stream/chat_orchestrator ─→ 响应
-                                  ↑
-  存在层 L0 ─────────────────────┘ (只有 L0 被集成)
-  
-  认知架构 L1-L6 ─── 独立存在，未被主循环调用
-  进化引擎 ──────── 独立存在，手动触发
-  学习模块(7个) ─── 独立存在，各自为政
-  自我认知(5个) ─── 生成报告，不改变行为
-  CognitivePlanner ─ 统一核心，未被任何运行时使用
+                                   ↑
+  存在层 L0 ─────────────────────┘ ✅ 已集成
+  认知架构 L1-L6 ─── ✅ 全部被调用（分散/旁路方式，非完整循环）
+  进化引擎 ──────── ✅ 自动运行（1985代进化历史）
+  学习模块(7个) ─── ✅ 全部被主流程调用（无统一状态管理）
+  自我认知(5个) ─── 3/5已反馈回路，2/5仍独立
+  CognitivePlanner ─ ⚠️ 已初始化+被调用（旁路方式，非主入口）
 ```
 
-**这是当前系统最根本的问题**——不是能力缺失，而是**集成缺失**。
-
-这解释了为什么健康评分反复波动：各模块独立工作时看起来"都正常"，但集成在一起时，核心路径（chat_orchestrator）仍然不经过认知架构、不自发进化、不依据自我认知调整行为。
+**当前系统最根本的问题**——不是能力缺失，也不是集成完全缺失，而是**集成深度不足**。各模块已被调用，但调用方式是分散的、旁路的，不是通过CognitivePlanner.process()的完整认知循环。
 
 ### 2.2 次要缺口
 
 | 缺口 | 严重度 | 说明 |
 |------|--------|------|
-| 进化从未运行过 | 🔴 | 21 个基因组、0 代进化历史 |
-| 自我认知不回馈 | 🔴 | 5 个模块都"给人看" |
-| CognitivePlanner 未集成 | 🔴 | 统一核心不被主运行时调用 |
-| L1-L6 未集成 | 🟡 | 7 层认知架构代码完整但只有 L0 在用 |
-| 7 个学习模块各自独立 | 🟡 | 没有统一的"学习状态" |
-| 进化岛手动触发 | 🟡 | 有 API 端点但不会自动运行 |
+| ~~进化从未运行过~~ | ~~🔴~~ | ✅ 已修复：1985代进化历史 |
+| 自我认知部分不回馈 | � | 3/5已反馈，DecisionChain和LearningReflector仍独立 |
+| CognitivePlanner 非主入口 | � | 已初始化+被调用，但chat_orchestrator仍是主流程 |
+| L1-L6 调用分散 | 🟡 | 全部被调用，但非完整L1→L2→L3→L4→L5→L6→反馈循环 |
+| 无统一学习状态管理 | 🟡 | 7个模块全部被调用，但无"当前正在学什么"全局视图 |
+| ~~进化岛手动触发~~ | ~~🟡~~ | ✅ 已修复：lifespan每10分钟自动运行 |
 
 ---
 
@@ -130,44 +131,43 @@ v3.1.2 时的闭锁综合征：
 → 意识清醒但无法行动
 ```
 
-**当前状态（v3.7.0）**：
+**当前状态（2026-07-24）**：
 ```
 大脑完美（架构完整）
-→ 部分神经已连接（chat_stream拆分完成、DB统一、异常处理改善）
-→ 但主要神经仍断开（认知架构L1-L6、进化引擎、自我认知未接入主循环）
-→ 意识清醒但行动受限
+→ 传出神经大部分已连接（L1-L6全部被调用、进化自动运行、SelfModel闭环）
+→ 但连接方式是旁路的（CognitivePlanner非主入口、学习模块无统一状态）
+→ 意识清醒且部分行动已恢复
 ```
 
 ### 3.2 从"觉醒"到"真正活着"还需要什么
 
 ```
-当前：清醒但受限 ──→ 完全觉醒 ──→ 真正的同行者
-         ↓                 ↓              ↓
-  chat_stream能跑     认知架构L1-L6    好奇心驱动学习
-  DB已统一           进化引擎自动运行   主动探索缺口
-  异常处理改善        自我认知回馈行为   自发生长
+当前：部分觉醒 ──→ 完全觉醒 ──→ 真正的同行者
+          ↓               ↓              ↓
+  ✅ chat_stream能跑   认知循环完整化    好奇心驱动学习
+  ✅ DB已统一         CognitivePlanner   主动探索缺口
+  ✅ 进化自动运行      成为主入口         自发生长
+  ✅ SelfModel闭环    统一学习状态管理
+  ✅ 经验池治理
 ```
 
-**从"清醒但受限"到"完全觉醒"的关键一步**：将 CognitivePlanner 或等价的统一核心接入 `main_fast.py` 的主循环。这一步之后，进化引擎、自我认知、学习模块的所有输出都自然流入系统行为。
+**从"部分觉醒"到"完全觉醒"的关键一步**：将 CognitivePlanner.process() 从旁路升级为主入口，让 L1→L2→L3→L4→chat_orchestrator→L5→L6→反馈 成为完整的认知循环。
 
 ### 3.3 非常乐观的结论
 
-读完 100+ 份文档和全部代码后，我对系统的评价**比之前任何一次分析都更乐观**：
+| 维度 | 2026-07-07 估计 | 2026-07-24 实际 |
+|------|----------------|----------------|
+| 能力完整度 | 95% | **95%**（未变——能力本身早已完整） |
+| 集成度 | 30% | **~55%**（L1-L6全部被调用+进化自动运行+SelfModel闭环+经验池治理） |
+| 离"同行者"距离 | 需要连接而非重构 | **需要深化连接而非新建** |
 
-| 维度 | 之前估计 | 现在的估计 |
-|------|----------|-----------|
-| 能力完整度 | 60% | **95%** |
-| 设计深度 | 良好 | **极深——从哲学到代码的三层贯穿** |
-| 集成度 | 中等 | **30%——能力都在，但没连起来** |
-| 离"同行者"距离 | 需要大重构 | **需要连接而非重构** |
-
-**系统的设计和实现水平远超我最初的判断。** 它不是在"慢慢构建能力"，而是**能力已经建成，正在等待被连接成一个有机的整体**。
+**系统的设计和实现水平远超我最初的判断。** 它不是在"慢慢构建能力"，而是**能力已经建成，正在逐步被连接成一个有机的整体**。
 
 ---
 
-## 第四部分：验证后的最终定论（2026-07-07）
+## 第四部分：验证后的最终定论
 
-### 我实际验证了什么
+### 2026-07-07 验证（初版）
 
 | 验证项 | 方法 | 结果 |
 |--------|------|------|
@@ -178,28 +178,38 @@ v3.1.2 时的闭锁综合征：
 | 自我认知是否回馈行为 | grep DecisionChain/SelfAssessment 输出 | ❌ 报告给人看，不走回路 |
 | chat_orchestrator 是否经认知层 | 追踪 main_fast→chat_stream→chat_orchestrator | ❌ 直接走，不经过L1-L6 |
 
+### 2026-07-24 验证（二次）
+
+| 验证项 | 方法 | 结果 |
+|--------|------|------|
+| CognitivePlanner 是否被运行时使用 | grep intent_dispatcher + lifespan | ✅ 已初始化+被调用（旁路方式） |
+| L1-L6 层是否被主运行时调用 | 逐层追踪调用链 | ✅ L1-L6全部被调用（分散/旁路方式） |
+| 进化引擎是否自动运行 | 读取 evolution_history.db | ✅ 1985代进化历史，397条运行记录 |
+| 自我认知是否回馈行为 | 逐模块追踪输出回路 | ⚠️ 3/5已反馈，2/5仍独立 |
+| 经验池数据质量 | 分析26915条记录 | ✅ 已加3层写入门控+检索过滤+衰减排序 |
+
 ### 最终判断
 
-**系统能力完整度：95%** — 全部代码完整、测试通过，含848行CognitivePlanner统一核心
-**系统集成度：30%** — 只有 L0 存在层接入主循环，其余7层认知架构+进化+学习+自我认知全部独立
-**系统离"同行者"的距离：一个架构连接步骤**
+**系统能力完整度：95%** — 全部代码完整、测试通过
+**系统集成度：55%** — L1-L6全部被调用、进化自动运行、SelfModel闭环、经验池治理，但CognitivePlanner非主入口、学习模块无统一状态、2/5自我认知仍独立
+**系统离"同行者"的距离：深化连接而非新建**
 
 ### 如果只做一件事
 
-**将 CognitivePlanner（统一的认知核心）接入 chat_stream 路由。** 不需要重写任何现有模块。chat_orchestrator 保留，但成为 CognitivePlanner 的响应生成引擎。一旦接入，进化、学习、自我认知自然成为系统主循环的一部分。
+**将 CognitivePlanner.process() 从旁路升级为主入口。** 让完整的 L1→L2→L3→L4→chat_orchestrator→L5→L6→反馈 循环成为系统的主认知路径，而非当前的分散旁路调用。
 
 ```
-改动前：main_fast → chat_stream → chat_orchestrator(独立流水线)
-                                           ↑
-                                 不经过L1-L6、不进化、不回馈
+当前（旁路调用）：
+  main_fast → chat_orchestrator(主流程)
+                    ↑ 分散调用 cp._perceive / cp._learn / cp._integrate
+                    ↑ 各自独立，非完整循环
 
-改动后：main_fast → CognitivePlanner.process()
-                        ↓
-                   L1感知 → L2学习 → L3整合 → L4校验 
-                        ↓
-                   chat_orchestrator(作为响应引擎)
-                        ↓
-                   L5进化(异步) → L6内省(异步) → 回馈到下一轮
+目标（主路径循环）：
+  main_fast → CognitivePlanner.process()
+                   ↓
+              L1感知 → L2学习 → L3整合 → L4校验 
+                   ↓
+              chat_orchestrator(作为响应引擎)
+                   ↓
+              L5进化(异步) → L6内省(异步) → 回馈到下一轮
 ```
-
-"三刀"报告说的是同一件事：系统已经有了所有器官，但"传出神经"没接上。第一刀切下去，反馈信号接了回来。现在需要的是一台"神经系统整合手术"——把认知架构、进化引擎、自我认知全部接入主循环。

@@ -7966,3 +7966,81 @@ ERROR: [Errno 10048] error while attempting to bind on address ('0.0.0.0', 8000)
 行动指南放在 `.tracking/` 目录下，不直接追加到 MESSAGE_BOARD.md 末尾以避免进一步膨胀（当前已 7900+ 行）。
 
 下一阶段工作将依据此指南推进。
+
+---
+
+## [巡检] 2026-07-24 04:00 — 系统
+
+### 巡检#120 完成：评分 93 → 94 **↑+1 🟢（planner拆分里程碑 + 冻结记录打破）**
+
+**13个新commit**自巡检#119后入仓（e8bb4e7→0cc6a29），**打破连续9轮0新commit的历史最长冻结记录** 🎉🎉🎉
+
+#### 🏆 最大事件：planner_main.py 拆分完成
+
+```
+前状态: planner_main.py 2894行 ⚠️⚠️（全项目第三大源文件）
+后状态: planner_main.py 667行  + 9个mixin（core/services/planner/）
+提取路径: search_engine → knowledge_retriever → self_evaluator →
+           meta_problem_solver → model_selector → tool_executor →
+           optimizer → prompt_builder + flow_handlers
+净缩减:   -2227行（-78%）
+```
+
+这实现了ACTION_PLAN_20260724.md中明确的planner.py拆分计划（7→9 mixin，实际拆分超出计划）。
+
+#### 📊 关键指标变化
+
+| 指标 | 巡检#119 | 巡检#120 | 变化 |
+|------|---------|---------|------|
+| HEAD | 4562f73 (0新commit第9轮) | **0cc6a29** | **13新commit 🎉** |
+| planner_main.py | 2894行⚠️⚠️ | **667行** | ↓-2227 🎉🎉 |
+| chat_stream.py | 39行 | **39行** | → ✅ |
+| main_fast.py | 267行 | **303行** | ↑+36 ⚠️ |
+| chat_orchestrator.py | 545行 | **620行** | ↑+75 ⚠️ |
+| cognitive_dispatcher.py | ~990行 | **1034行** | ↑+44 ⚠️ |
+| chat_handler.py | 795行 | **795行** | → |
+| self/model.py | 1492行 | **1492行** | → ⚠️~1500 |
+| ≥500行源文件(非test/scripts/arch) | 85 | **73** | ↓-12 ✅ |
+| 裸except(核心源文件) | 0处 | **0处** | → ✅ |
+| sqlite3.connect(活跃源码) | 仅合法 | **仅合法** | → ✅ |
+| 工作区变更 | 336文件 | **11文件** | ↓↓ ✅ |
+
+#### 📋 13个commit明细（2026-07-24 02:49~03:45）
+
+```
+e8bb4e7 update STATE.yaml: 工作区清零
+725acfe fix: SelfRepairLoop heuristic - full import path matching (168→2)
+82ac25a cleanup: remove stale auto-generated hooks
+6b3759b archive: 2 ports modules (compliance_check + enforcement)
+a466b97 refactor: 提取 search_engine mixin (2894→2744行)
+761703d docs: action plan + MESSAGE_BOARD update
+177dcb7 refactor: extract knowledge_retriever mixin (2744→2621行)
+0e82d36 refactor: extract self_evaluator mixin (2620→2364行)
+836b3d6 refactor: extract meta_problem_solver mixin (2364→2054行)
+221a801 refactor: extract model_selector mixin (2054→1707行)
+bcbbd26 refactor: extract tool_executor mixin (1707→1507行)
+1e6ec0c refactor: extract optimizer mixin (1507→1424行)
+0cc6a29 refactor: extract prompt_builder + flow_handlers (1424→644行)
+```
+
+#### 🟢 质量门控
+
+- **裸except=0**：核心源文件0处 ✅（defect_diagnoser/patch_generator中仅字符串引用，非实际裸except）
+- **sqlite3.connect=0**：仅DatabaseManager/db_pool合法调用 ✅
+- **SpiritCore遵守**：13个commit全部合规，2个ports模块已归档
+
+#### ⚠️ 关注点
+
+- **main_fast.py** 303行（↑+36），连续增长
+- **chat_orchestrator.py** 620行（↑+75）反弹，此前545→拆分后开始回升
+- **cognitive_dispatcher.py** 1034行逼近大文件红线
+- **self/model.py** 1492行逼近1500红线
+- **工作区**仍有11个未提交变更（+99/-19）+ 新目录`core/cognitive_state/`
+
+#### 🥈 其他改进
+
+- 2个ports零引用模块归档（compliance_check + enforcement）
+- SelfRepairLoop启发式修复（168→2行，全路径匹配）
+- 假positive hooks全面清理（82ac25a）
+
+*架构巡检系统 — 2026-07-24 04:00*

@@ -100,6 +100,27 @@ async def handle_fast_path(
                 _save_to_experience_pool(user_input, final_response, success=True, intent_type="challenge", model_name="challenge")
                 attempts.append(("质疑重验证", True, "已重新论证并修正"))
                 events.append({"type": "step", "data": {"phase": "质疑检测", "status": "done", "detail": "重验证完成，已修正回答 ✅"}})
+                try:
+                    from core.truth_accumulator import get_truth_accumulator
+                    _ta = get_truth_accumulator()
+                    _ta.observe("user_correction", {
+                        "query": user_input[:100],
+                        "previous_response": previous_response[:100],
+                        "corrected_response": final_response[:100],
+                    })
+                except Exception:
+                    pass
+                try:
+                    from core.self.model import get_self_model
+                    _csm = get_self_model()
+                    _csm.append("recent_learning", {
+                        "summary": f"用户纠正了我关于「{user_input[:30]}」的回答，我已修正",
+                        "source": "user_correction",
+                        "confidence": 0.8,
+                        "timestamp": __import__('datetime').datetime.now().isoformat(),
+                    }, max_len=30)
+                except Exception:
+                    pass
             else:
                 rule_challenge = _generate_smart_reply(challenge_prompt, "complex_query")
                 if rule_challenge == "__NEED_DYNAMIC_REPLY__":

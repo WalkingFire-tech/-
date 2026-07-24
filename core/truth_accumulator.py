@@ -486,13 +486,20 @@ class TruthAccumulator:
 
                 # 类推匹配：问题的领域是否与真谛适用领域有交集
                 relevance = 0.0
+                _bigram_hits = 0
+                _bigram_attempts = 0
                 for app in applicable:
                     if app in query.lower() or app in domain:
                         relevance += 0.3
-                    # 模糊匹配：问题关键词与适用领域部分重叠
-                    for char in app:
-                        if char in query and len(char) > 1:
-                            relevance += 0.05
+                    else:
+                        _bigram_attempts += 1
+                        app_grams = set(app[i:i+2] for i in range(len(app)-1) if len(app) >= 2)
+                        q_grams = set(query[i:i+2] for i in range(len(query)-1) if len(query) >= 2)
+                        if app_grams and q_grams:
+                            overlap_ratio = len(app_grams & q_grams) / len(app_grams)
+                            if overlap_ratio >= 0.3:
+                                relevance += 0.15 * overlap_ratio
+                                _bigram_hits += 1
 
                 # 领域直接匹配
                 if truth_domain in domain or truth_domain in query:
@@ -515,6 +522,8 @@ class TruthAccumulator:
                     })
 
             results.sort(key=lambda x: (x["relevance"] * 0.6 + x.get("truth_weight", 0.5) * 0.4), reverse=True)
+            if _bigram_attempts > 0:
+                logger.debug(f"🧩 真谛2-gram匹配率: {_bigram_hits}/{_bigram_attempts} = {_bigram_hits/_bigram_attempts:.0%}")
         except Exception:
             logger.warning("操作降级跳过")
 

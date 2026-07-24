@@ -81,6 +81,13 @@ async def _run_slow(func, *args, timeout=90, phase="", **kwargs):
 def _save_to_experience_pool(query: str, response: str, success: bool = True, intent_type: str = "default",
                               quality_score: int = 80, duration: float = 0.0, model_name: str = "unknown"):
     try:
+        if not response or len(response.strip()) < 30:
+            return
+        if not query or len(query.strip()) < 3:
+            return
+        if intent_type in ("autonomous_reflection", "metacognitive_background", "background_collect"):
+            return
+
         try:
             from core.ethics.safe_learning import learn_safely
             safety = learn_safely(response, source=f"experience_pool/{model_name}", metadata={"query": query, "intent_type": intent_type})
@@ -89,6 +96,11 @@ def _save_to_experience_pool(query: str, response: str, success: bool = True, in
                 quality_score = min(quality_score, 40)
         except Exception:
             pass
+
+        from backend.services.path_handlers.experience_path import _keyword_overlap
+        if not _keyword_overlap(query, response, min_ratio=0.05):
+            logger.debug(f"经验写入跳过: 查询与响应无关键词重叠(query={query[:30]})")
+            return
 
         from infrastructure.experience_pool import get_experience_pool
         ep = get_experience_pool()

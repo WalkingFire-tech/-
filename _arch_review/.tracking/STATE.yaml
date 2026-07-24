@@ -1,13 +1,13 @@
 # 架构巡检状态
-# 更新: 2026-08-01 (巡检#119)
+# 更新: 2026-07-24 (巡检#120)
 
-last_check_time: "2026-08-01 (巡检#119)"
-last_commit_hash: "7618964"
-last_commit_message: "wiring: reflection → truth_accumulator (看板#41断裂修复, 15行)"
-uncommitted_changes: 0
-untracked_files: 0
-total_checks: 119
-total_score: 93
-score_trend: stable
-new_messages: 2
-inspector_notes: "→ 93→93 →🟡 stable（混合信号期 — 0新commit🔴**连续第9轮破历史记录**🔴🔴🔴🔴🔴🔴🔴🔴🔴 + ≥500行文件78→85反弹(+7🔴) + 测试354→433(+79✅✅) + 修复E+F落地🎯）。HEAD 4562f73（**0新commit连续第9轮🔴🔴🔴🔴🔴🔴🔴🔴🔴**—刷新8轮历史记录）。工作区336文件变更⬆+11573/-3006。main_fast 267(↑+34✅)/self/model 1492(↑+17⚠️)/chat_handler 795⚠️/chat_orchestrator 545⚠️/planner.py 2894⚠️⚠️/capability_creation_loop 1599⚠️。质量门控全绿✅（bare except=0/sqlite3=0连续27+轮）。测试433(+79✅✅大幅增长)。死代码归档持续23文件✅。修复E端口冲突根治+修复F自参照优先级修正🎯。≥500行文件78→85(+7🔴反弹加剧)。评分解读：station-keeping持续期——质量门控稳固+测试扩张+修复落地 vs 0commit冻结破纪录+大文件反弹加剧。混合信号，评分维持93。下一优先级：提交积压打断冻结记录，聚焦planner.py瘦身。"
+last_check_time: "2026-07-24 (巡检#120)"
+last_commit_hash: "0cc6a29"
+last_commit_message: "refactor: extract prompt_builder + flow_handlers (1424→644行)"
+uncommitted_changes: 11
+untracked_files: 1
+total_checks: 120
+total_score: 94
+score_trend: up
+new_messages: 0
+inspector_notes: "→ 93→94 ↑+1 🟢（planner拆分里程碑🎉 + 13新commit打破9轮冻结记录🎉🎉）。HEAD 0cc6a29（**13新commit自7618964** — 打断连续9轮冻结记录）。planner_main.py 2894→667（-2227行🎉🎉历史级瘦身）+ 9 mixin提取。chat_orchestrator 620(↑+75⚠️)/cognitive_dispatcher 1034(↑+44⚠️)/self/model 1492(→⚠️)/chat_handler 795(→)/main_fast 303(↑+36⚠️)。≥500行源文件85→73(↓-12✅)。质量门控全绿✅（bare except=0/sqlite3=0持续）。工作区336→11文件(↓↓✅)。2 ports模块归档+SelfRepairLoop修复+假positive hooks清理。但大文件73仍多，chat_orchestrator回弹⚠️。下一优先级：提交工作区积压，聚焦cognitive_dispatcher瘦身。"

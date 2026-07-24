@@ -12,7 +12,7 @@ class SelfEvaluatorMixin:
 
     def _init_evaluator(self):
         self._evaluation_history = []
-        self._confidence_threshold = self.config.get("confidence_threshold", 0.7)
+        self._confidence_threshold = 0.7
 
     def _report_capability_boundary(self) -> str:
         """报告能力边界"""

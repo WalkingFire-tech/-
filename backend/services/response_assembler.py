@@ -189,6 +189,21 @@ async def assemble_and_emit(
     except Exception:
         pass
 
+    try:
+        _sm_learn = _get_self_model()
+        if _sm_learn and final_response:
+            _rl = _sm_learn.snapshot().get("recent_learning", [])
+            if _rl:
+                _latest = _rl[-1]
+                _learn_summary = _latest.get("summary", "")
+                _learn_src = _latest.get("source", "")
+                if _learn_summary and _learn_src == "L2_learning":
+                    _growth_line = f"\n\n🌱 **我学到了**：{_learn_summary[:120]}"
+                    if _growth_line not in final_response and "我学到了" not in final_response:
+                        final_response += _growth_line
+    except Exception:
+        pass
+
     if final_response and not _is_goal_achieved(user_input, final_response, intent_type, attempts):
         logger.info(f"🔄 目标未达成检测: 回复是半成品，启动持续求解...")
         events.append({"type": "step", "data": {"phase": "目标达成检查", "status": "running", "detail": "检测到回复未真正解决问题，启动持续求解..."}})

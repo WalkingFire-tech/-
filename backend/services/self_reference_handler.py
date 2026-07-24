@@ -340,6 +340,10 @@ def _compose_experience_narrative(query: str, core: dict, state: dict, direction
     if recent_events:
         parts.append(f"最近的认知活动：{recent_events}")
     
+    thinking_detail = _get_current_thinking_detail()
+    if thinking_detail:
+        parts.append(thinking_detail)
+    
     if primary_dim:
         dim_narrative = {
             "dialogue": "对话维度占主导——我正沉浸在与你的交互中。",
@@ -404,5 +408,30 @@ def _get_recent_event_summary() -> str:
             parts.append(f"{name}×{count}")
         
         return "、".join(parts)
+    except Exception:
+        return ""
+
+
+def _get_current_thinking_detail() -> str:
+    """从SelfModel.current_thinking获取具体的思考方向"""
+    try:
+        from core.self.model import get_self_model
+        sm = get_self_model()
+        snap = sm.snapshot()
+        thinking = snap.get("current_thinking", [])
+        if not thinking:
+            return ""
+        recent = thinking[-5:]
+        path_steps = [t for t in recent if t.get("phase") in ("path_selection", "selection")]
+        if not path_steps:
+            return ""
+        latest = path_steps[-1]
+        reasoning = latest.get("reasoning", "")
+        source = latest.get("selected_source") or latest.get("top_source", "")
+        conf = latest.get("confidence", 0)
+        if source and conf > 0:
+            conf_text = "比较有把握" if conf >= 0.7 else "还在斟酌" if conf >= 0.4 else "不太确定"
+            return f"关于你刚才的问题，我正在考虑的方向：{reasoning}。目前最可能的方向是{source}，{conf_text}。"
+        return ""
     except Exception:
         return ""

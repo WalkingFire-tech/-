@@ -8,7 +8,7 @@ class ToolExecutorMixin:
     """工具执行能力：优先工具调用、反射级检查、防御链"""
 
     def _init_tool_executor(self):
-        self._tool_timeout = self.config.get("tool_timeout", 10.0)
+        self._tool_timeout = 10.0
 
     def _try_tool_first(self, intent: Intent) -> Optional[str]:
         """优先尝试工具执行"""

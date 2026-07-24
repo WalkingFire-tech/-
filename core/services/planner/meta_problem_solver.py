@@ -11,7 +11,7 @@ class MetaProblemSolverMixin:
 
     def _init_meta_solver(self) -> None:
         self._decomposition_cache: Dict[str, object] = {}
-        self._max_recursion_depth = self.config.get("max_recursion", 3)
+        self._max_recursion_depth = 3
         self._current_depth = 0
 
     def _decompose_and_execute(self, intent: Intent) -> Optional[str]:
