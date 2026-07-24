@@ -154,12 +154,14 @@ async def fetch_external_learning(query: str, conversation_context: str = "") ->
             timeout=25
         )
         if results:
+            from backend.services.path_handlers.experience_path import _keyword_overlap
             parts = []
             sources = set()
             for item in results:
                 if item.content and len(item.content) > 30:
-                    parts.append(item.content)
-                    sources.add(item.source)
+                    if _keyword_overlap(query, item.content, min_ratio=0.08):
+                        parts.append(item.content)
+                        sources.add(item.source)
             if parts:
                 source_label = f"外部学习({'+'.join(sorted(sources))})"
                 return {"source": source_label, "response": "\n\n".join(parts), "quality": 70}

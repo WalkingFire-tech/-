@@ -278,7 +278,20 @@ class CognitiveResidual:
         self._reuse_count = 0
         self._db_path = "data/cbnr_l3_state.db"
         self._embedding_available: Optional[bool] = None
+        self._state_manager = None
+        self._css_selector = None
         self._load_search_tree()
+        try:
+            from core.cognitive_state.manager import CognitiveStateManager
+            self._state_manager = CognitiveStateManager()
+        except Exception as e:
+            logger.warning(f"认知状态管理器初始化降级: {e}")
+        try:
+            from core.cognitive_state.embedding_cache import EmbeddingCache, CSSSelector
+            self._css_selector = CSSSelector(EmbeddingCache(), subset_size=30)
+            logger.info("🧮 CSS列选择器已初始化")
+        except Exception as e:
+            logger.warning(f"CSS选择器初始化降级: {e}")
 
     def process(self, current_input: Dict[str, Any], bottleneck_result: Dict[str, Any]) -> ResidualResult:
         self._process_count += 1
@@ -339,6 +352,10 @@ class CognitiveResidual:
         
         logger.warning(f"认知残差: 复用率={reuse_rate:.1%}, 搜索树={self._search_tree.size()}, 假设={orchestrator_count}, 拒绝={critic_rejections}")
         
+        if self._state_manager:
+            quality = result.quality_score if hasattr(result, 'quality_score') else 0.5
+            self._state_manager.update(quality)
+        
         return result
 
     def _retrieve_previous_state(self, input_data: Dict) -> Optional[Dict]:
@@ -387,6 +404,17 @@ class CognitiveResidual:
             return None
 
     def _semantic_retrieve(self, topic: str) -> Optional[Dict]:
+        if self._state_manager and not self._state_manager.should_use_semantic_retrieve():
+            return {
+                "_state_id": "keyword_fallback",
+                "_sensing_mode": "blind",
+                "_blind_reason": "low_budget_keyword_mode",
+                "similar_input": None,
+                "previous_response": None,
+                "previous_quality": 0,
+                "semantic_similarity": 0.0,
+            }
+
         query_emb = self._compute_embedding(topic)
         if query_emb is None:
             return {
@@ -399,11 +427,83 @@ class CognitiveResidual:
                 "semantic_similarity": 0.0,
             }
 
+        if self._state_manager:
+            self._state_manager.cache_embedding(f"query:{topic[:50]}", query_emb)
+
+        if self._css_selector:
+            result = self._semantic_retrieve_css(query_emb)
+            if result:
+                return result
+
+        return self._semantic_retrieve_fallback(query_emb)
+
+    def _semantic_retrieve_css(self, query_emb: np.ndarray) -> Optional[Dict]:
+        """CSS路径：用预计算的代表性子集做检索，O(K) embedding比较"""
+        try:
+            texts, embeddings = self._css_selector.get_subset()
+            if not embeddings:
+                return None
+
+            best_idx = -1
+            best_sim = 0.4
+            query_norm = np.linalg.norm(query_emb)
+
+            for i, emb in enumerate(embeddings):
+                emb_norm = np.linalg.norm(emb)
+                if emb_norm < 1e-8:
+                    continue
+                cos_sim = float(np.dot(query_emb, emb) / (query_norm * emb_norm + 1e-8))
+                if cos_sim > best_sim:
+                    best_sim = cos_sim
+                    best_idx = i
+
+            if best_idx < 0:
+                return None
+
+            try:
+                db = get_storage_port("data/experience_pool.db")
+                row = db.query_one(
+                    "SELECT raw_input, response, quality_score FROM experiences WHERE raw_input LIKE ? LIMIT 1",
+                    (f"%{texts[best_idx][:30]}%",)
+                )
+                if row:
+                    return {
+                        "_state_id": "css_retrieved",
+                        "similar_input": row[0][:100],
+                        "previous_response": row[1][:100],
+                        "previous_quality": row[2],
+                        "semantic_similarity": best_sim,
+                        "_retrieval_path": "css_subset",
+                    }
+            except Exception:
+                pass
+
+            return {
+                "_state_id": "css_embedding_only",
+                "similar_input": texts[best_idx][:100],
+                "previous_response": None,
+                "previous_quality": 0,
+                "semantic_similarity": best_sim,
+                "_retrieval_path": "css_subset",
+            }
+        except Exception as e:
+            logger.warning(f"CSS检索降级: {e}")
+            return None
+
+    def _semantic_retrieve_fallback(self, query_emb: np.ndarray) -> Optional[Dict]:
+        """降级路径：实时计算 embedding（原有逻辑）"""
         try:
             db = get_storage_port("data/experience_pool.db")
-            rows = db.query(
-                "SELECT raw_input, response, quality_score FROM experiences ORDER BY quality_score DESC LIMIT 50"
-            )
+            max_candidates = self._state_manager.get_max_candidates() if self._state_manager else 0
+            if max_candidates > 0:
+                rows = db.query(
+                    "SELECT raw_input, response, quality_score FROM experiences ORDER BY quality_score DESC LIMIT ?",
+                    (max_candidates,)
+                )
+            else:
+                rows = db.query(
+                    "SELECT raw_input, response, quality_score FROM experiences ORDER BY quality_score DESC LIMIT 50"
+                )
             if not rows:
                 return None
 
@@ -455,6 +555,11 @@ class CognitiveResidual:
         return delta
 
     def _residual_add(self, previous: Optional[Dict], delta: Dict) -> Dict[str, Any]:
+        if self._state_manager:
+            delta = self._state_manager.filter_delta(delta)
+            if "hypotheses" in delta:
+                delta["hypotheses"] = self._state_manager.truncate_list_field(delta["hypotheses"])
+
         new_state = dict(delta)
         
         if previous:

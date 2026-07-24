@@ -12,7 +12,9 @@ SelfModel — 系统的自我意识入口
 
 import threading
 import time
+from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum, auto
 from typing import Any, Dict, List, Optional
 
 try:
@@ -22,6 +24,94 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 from core.loop_mixin import LoopMixin
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 领域模型 — 自我认知的结构化表示（迁移自 self_extern/model.py）
+# ──────────────────────────────────────────────────────────────────────────────
+
+class ConfidenceLevel(Enum):
+    UNKNOWN = auto()
+    EXPLORING = auto()
+    COMPETENT = auto()
+    MASTERED = auto()
+    DEGRADED = auto()
+
+
+@dataclass
+class Capability:
+    name: str
+    description: str
+    confidence: ConfidenceLevel
+    evidence: List[str] = field(default_factory=list)
+    last_updated: str = field(default_factory=lambda: datetime.now().isoformat())
+    success_count: int = 0
+    failure_count: int = 0
+
+    @property
+    def success_rate(self) -> float:
+        total = self.success_count + self.failure_count
+        return self.success_count / total if total > 0 else 0.0
+
+    def record_attempt(self, success: bool, evidence: Optional[str] = None):
+        if success:
+            self.success_count += 1
+        else:
+            self.failure_count += 1
+        if evidence:
+            self.evidence.append(f"[{datetime.now().isoformat()}] {'ok' if success else 'fail'} {evidence}")
+            self.evidence = self.evidence[-20:]
+        self.last_updated = datetime.now().isoformat()
+        rate = self.success_rate
+        if self.success_count + self.failure_count < 5:
+            self.confidence = ConfidenceLevel.EXPLORING
+        elif rate > 0.85:
+            self.confidence = ConfidenceLevel.MASTERED
+        elif rate > 0.6:
+            self.confidence = ConfidenceLevel.COMPETENT
+        elif rate > 0.3:
+            self.confidence = ConfidenceLevel.EXPLORING
+        else:
+            self.confidence = ConfidenceLevel.DEGRADED
+
+
+@dataclass
+class Limitation:
+    domain: str
+    description: str
+    uncertainty: float = 0.5
+    discovered_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    last_encountered: Optional[str] = None
+    mitigation: Optional[str] = None
+    is_temporary: bool = False
+
+    def encounter(self):
+        self.last_encountered = datetime.now().isoformat()
+
+
+@dataclass
+class GrowthEdge:
+    topic: str
+    motivation: str
+    progress: float = 0.0
+    priority: int = 5
+    started_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    last_active: str = field(default_factory=lambda: datetime.now().isoformat())
+    related_capabilities: List[str] = field(default_factory=list)
+
+    def advance(self, delta: float, activity: str):
+        self.progress = min(1.0, self.progress + delta)
+        self.last_active = datetime.now().isoformat()
+
+
+@dataclass
+class SelfHistoryEvent:
+    timestamp: str
+    event_type: str
+    description: str
+    before: Optional[Dict] = None
+    after: Optional[Dict] = None
+    trigger: Optional[str] = None
 
 _SELF_STATE_DB = "data/self_model_state.db"
 
@@ -68,7 +158,14 @@ class SelfModel(LoopMixin):
         self.recent_learning: List[Dict[str, Any]] = []
         self.growth_edges: List[Dict[str, Any]] = []
 
+        self._domain_capabilities: Dict[str, Capability] = {}
+        self._domain_limitations: Dict[str, Limitation] = {}
+        self._domain_growth_edges: Dict[str, GrowthEdge] = {}
+        self._self_history: List[SelfHistoryEvent] = []
+        self._cognitive_load: float = 0.0
+
         self._restore_from_db()
+        self._init_path_capabilities_from_profile()
 
     def update(self, category: str, data: Dict[str, Any]) -> None:
         """增量更新某个认知维度"""
@@ -239,8 +336,14 @@ class SelfModel(LoopMixin):
         if learning:
             self.update("cognitive_layers", {"L2_learning": learning})
             if learning.get("knowledge_gained"):
+                _kg = learning.get("knowledge_gained", 0)
+                _sources = learning.get("sources", [])
+                _src_text = "、".join(_sources[:3]) if _sources else "认知学习"
+                _summary = learning.get("summary", "")
+                if not _summary or len(_summary) < 10:
+                    _summary = f"从{_src_text}中获得了{_kg}项新认知"
                 self.append("recent_learning", {
-                    "summary": str(learning.get("knowledge_gained", ""))[:200],
+                    "summary": _summary[:200],
                     "source": "L2_learning",
                     "confidence": learning.get("confidence", 0.5),
                     "timestamp": ts,
@@ -254,6 +357,25 @@ class SelfModel(LoopMixin):
 
         if introspection:
             self.update("cognitive_layers", {"L6_introspection": introspection})
+
+        try:
+            from core.truth_accumulator import get_truth_accumulator
+            _ta = get_truth_accumulator()
+            _ta_stats = _ta.get_stats()
+            _ta_total = _ta_stats.get("total_truths", 0)
+            _ta_top = _ta_stats.get("top_truths", [])
+            if _ta_total > 0 and _ta_top:
+                _latest_truth = _ta_top[0].get("name", "")
+                if _latest_truth and (not self.recent_learning or
+                        not any(t.get("source") == "truth_sync" for t in self.recent_learning[-5:])):
+                    self.append("recent_learning", {
+                        "summary": f"真谛库新增洞察：{_latest_truth}（共{_ta_total}条真谛）",
+                        "source": "truth_sync",
+                        "confidence": 0.7,
+                        "timestamp": ts,
+                    }, max_len=30)
+        except Exception:
+            pass
 
         if not self.health:
             try:
@@ -427,6 +549,25 @@ class SelfModel(LoopMixin):
             + (1.0 - directive["consolidation_need"]) * 0.2
             + min(1.0, density + 0.3) * 0.2
         )
+
+        try:
+            caps = self.capabilities or {}
+            low_paths = caps.get("low_performance_paths", [])
+            if low_paths:
+                directive["avoid_paths"] = low_paths
+                directive["exploration_drive"] = max(0.1, directive["exploration_drive"] - len(low_paths) * 0.05)
+        except Exception:
+            pass
+
+        degraded_paths = [
+            name.replace("path_", "", 1) for name, cap in self._domain_capabilities.items()
+            if cap.confidence == ConfidenceLevel.DEGRADED
+        ]
+        if degraded_paths:
+            existing_avoid = directive.get("avoid_paths", [])
+            merged = list(set(existing_avoid + degraded_paths))
+            directive["avoid_paths"] = merged
+            directive["exploration_drive"] = max(0.1, directive["exploration_drive"] - len(degraded_paths) * 0.05)
 
         rel = self.relationship or {}
         trust = rel.get("trust", 0.5)
@@ -822,25 +963,37 @@ class SelfModel(LoopMixin):
         return result
 
     def _extract_capabilities(self, cp) -> Dict[str, Any]:
+        result = {}
         try:
             from core.capability_introspection import CapabilityIntrospection
             ci = CapabilityIntrospection()
             if hasattr(ci, 'get_capability_summary'):
-                return ci.get_capability_summary()
+                result = ci.get_capability_summary()
         except Exception:
             pass
 
         try:
-            from core.ports.adapters import get_storage_port
-            db = get_storage_port("data/knowledge_store.db")
-            tools = db.query_one("SELECT COUNT(*) FROM tools")
-            return {
-                "tools_count": tools[0] if tools else 0,
-            }
+            from core.path_weight_manager import PathWeightManager
+            pwm = PathWeightManager()
+            weights = pwm.get_all_weights()
+            if weights:
+                result["path_weights"] = weights
+                low_perf = {k: v for k, v in weights.items() if v.get("success_rate", 1.0) < 0.4}
+                if low_perf:
+                    result["low_performance_paths"] = list(low_perf.keys())
         except Exception:
             pass
 
-        return {}
+        if not result:
+            try:
+                from core.ports.adapters import get_storage_port
+                db = get_storage_port("data/knowledge_store.db")
+                tools = db.query_one("SELECT COUNT(*) FROM tools")
+                result = {"tools_count": tools[0] if tools else 0}
+            except Exception:
+                pass
+
+        return result
 
     def _extract_capability_profile(self) -> Dict[str, Any]:
         """聚合各学习模块的运行时能力画像"""
@@ -1427,6 +1580,40 @@ class SelfModel(LoopMixin):
                     self._update_count = saved["_update_count"]
                 restored = True
                 logger.info("🪞 SelfModel 从DB恢复自我状态成功")
+
+            domain_row = db.query_one("SELECT value FROM self_state WHERE key='domain_models'")
+            if domain_row and domain_row[0]:
+                import json as _json
+                domain_data = _json.loads(domain_row[0])
+                for k, v in domain_data.get("domain_capabilities", {}).items():
+                    self._domain_capabilities[k] = Capability(
+                        name=v["name"], description=v["description"],
+                        confidence=ConfidenceLevel[v["confidence"]],
+                        evidence=v.get("evidence", []),
+                        success_count=v.get("success_count", 0),
+                        failure_count=v.get("failure_count", 0),
+                        last_updated=v.get("last_updated", datetime.now().isoformat()),
+                    )
+                for k, v in domain_data.get("domain_limitations", {}).items():
+                    self._domain_limitations[k] = Limitation(
+                        domain=v["domain"], description=v["description"],
+                        uncertainty=v.get("uncertainty", 0.5),
+                        mitigation=v.get("mitigation"),
+                        is_temporary=v.get("is_temporary", False),
+                    )
+                for k, v in domain_data.get("domain_growth_edges", {}).items():
+                    self._domain_growth_edges[k] = GrowthEdge(
+                        topic=v["topic"], motivation=v["motivation"],
+                        progress=v.get("progress", 0.0),
+                        priority=v.get("priority", 5),
+                    )
+                if self._domain_capabilities or self._domain_limitations or self._domain_growth_edges:
+                    logger.info(
+                        f"🪞 SelfModel 领域模型恢复: "
+                        f"{len(self._domain_capabilities)} caps, "
+                        f"{len(self._domain_limitations)} lims, "
+                        f"{len(self._domain_growth_edges)} edges"
+                    )
         except Exception as e:
             logger.debug(f"SelfModel DB恢复跳过: {e}")
 
@@ -1457,6 +1644,295 @@ class SelfModel(LoopMixin):
 
         logger.info("🪞 SelfModel 从能力DB降级恢复成功")
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # 领域模型核心 API — 迁移自 self_extern/model.py
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def integrate_experience(
+        self,
+        experience: Dict[str, Any],
+        reflection: Optional[Dict[str, Any]] = None
+    ):
+        """
+        整合一次体验 — "学习是改变自我结构"的核心实现
+
+        不是把经验存到数据库，而是根据经验更新自我认知。
+
+        Args:
+            experience: {
+                "intent": str,
+                "paths_used": [str],
+                "path_results": {str: {"success": bool, "quality": float, "error": Optional[str]}},
+                "final_response": str,
+            }
+            reflection: {"insights": [str], "violations": [str], "suggestions": [str]}
+        """
+        paths_results = experience.get("path_results", {})
+
+        for path_name, result in paths_results.items():
+            cap_name = f"path_{path_name}"
+            if cap_name not in self._domain_capabilities:
+                self._domain_capabilities[cap_name] = Capability(
+                    name=cap_name,
+                    description=f"通过 {path_name} 路径处理查询的能力",
+                    confidence=ConfidenceLevel.EXPLORING
+                )
+
+            cap = self._domain_capabilities[cap_name]
+            success = result.get("success", False)
+            quality = result.get("quality", 0.5)
+            is_success = success and quality > 0.6
+            evidence = f"{experience.get('intent', 'unknown')}: quality={quality:.2f}"
+            if result.get("error"):
+                evidence += f", error={result['error'][:50]}"
+
+            cap.record_attempt(is_success, evidence)
+
+            if cap.failure_count >= 3 and cap.success_rate < 0.3:
+                lim_name = f"path_{path_name}_unreliable"
+                if lim_name not in self._domain_limitations:
+                    self._domain_limitations[lim_name] = Limitation(
+                        domain=path_name,
+                        description=f"{path_name} 路径近期成功率极低 ({cap.success_rate:.1%})",
+                        uncertainty=0.2,
+                        mitigation=f"优先使用其他路径，暂时跳过 {path_name}",
+                        is_temporary=True
+                    )
+                    self._record_self_history(
+                        "limitation_discovered",
+                        f"发现 {path_name} 不可靠",
+                        trigger=f"连续失败 {cap.failure_count} 次"
+                    )
+
+        for path_name, result in paths_results.items():
+            error = result.get("error")
+            if error:
+                if "timeout" in error.lower():
+                    lim_name = f"{path_name}_timeout"
+                    if lim_name not in self._domain_limitations:
+                        self._domain_limitations[lim_name] = Limitation(
+                            domain=f"{path_name}/timeout",
+                            description=f"{path_name} 频繁超时",
+                            uncertainty=0.3,
+                            mitigation="缩短超时阈值或增加重试",
+                            is_temporary=True
+                        )
+                elif "connection" in error.lower():
+                    lim_name = f"{path_name}_connectivity"
+                    if lim_name not in self._domain_limitations:
+                        self._domain_limitations[lim_name] = Limitation(
+                            domain=f"{path_name}/connectivity",
+                            description=f"{path_name} 连接不稳定",
+                            uncertainty=0.4,
+                            mitigation="检查网络或服务状态",
+                            is_temporary=True
+                        )
+
+        if reflection:
+            for insight in reflection.get("insights", []):
+                if any(kw in insight.lower() for kw in ["需要", "不够", "缺乏", "薄弱"]):
+                    topic = insight[:30].strip()
+                    if topic not in self._domain_growth_edges:
+                        self._domain_growth_edges[topic] = GrowthEdge(
+                            topic=topic,
+                            motivation=insight,
+                            priority=7
+                        )
+                        self._record_self_history(
+                            "growth_edge_identified",
+                            f"发现学习方向: {topic}",
+                            trigger="reflection insight"
+                        )
+                    existing = [
+                        g for g in self.growth_edges
+                        if isinstance(g, dict) and g.get("topic") == topic
+                    ]
+                    if not existing:
+                        self.growth_edges.append({
+                            "topic": topic,
+                            "motivation": insight,
+                            "priority": 7,
+                            "progress": 0.0,
+                            "discovered_at": datetime.now().isoformat(),
+                        })
+
+            for violation in reflection.get("violations", []):
+                self._record_self_history("value_violation", violation, trigger="spirit_check")
+
+        self._cognitive_load = self._estimate_cognitive_load(experience)
+        self._sync_to_capability_profile()
+
+        logger.info(
+            f"🪞 体验整合: domain_caps={len(self._domain_capabilities)}, "
+            f"domain_lims={len(self._domain_limitations)}, "
+            f"domain_edges={len(self._domain_growth_edges)}, "
+            f"load={self._cognitive_load:.2f}"
+        )
+
+    def should_use_path(self, path_name: str) -> bool:
+        """
+        基于自我模型，判断是否应启动某条路径
+
+        "我知道 Ollama 最近总超时，先不启动它"
+        """
+        cap_name = f"path_{path_name}"
+
+        if cap_name in self._domain_capabilities:
+            cap = self._domain_capabilities[cap_name]
+            if cap.confidence == ConfidenceLevel.DEGRADED:
+                logger.info(f"🪞 SelfModel: 跳过 {path_name} (degraded, {cap.success_rate:.1%} success)")
+                return False
+            if cap.confidence == ConfidenceLevel.UNKNOWN and cap.failure_count > 0:
+                logger.info(f"🪞 SelfModel: 跳过 {path_name} (unknown but has failures)")
+                return False
+
+        lim_name = f"path_{path_name}_unreliable"
+        if lim_name in self._domain_limitations:
+            lim = self._domain_limitations[lim_name]
+            if not lim.is_temporary:
+                return False
+            if lim.uncertainty < 0.3:
+                logger.info(f"🪞 SelfModel: 跳过 {path_name} (reliable limitation: {lim.description})")
+                return False
+
+        low_paths = self.capabilities.get("low_performance_paths", [])
+        if path_name in low_paths:
+            logger.info(f"🪞 SelfModel: 跳过 {path_name} (legacy low_performance_paths)")
+            return False
+
+        return True
+
+    def get_path_priority(self, path_name: str) -> int:
+        """获取路径优先级（1-10），供路径调度使用"""
+        cap_name = f"path_{path_name}"
+        if cap_name not in self._domain_capabilities:
+            return 5
+        cap = self._domain_capabilities[cap_name]
+        priority_map = {
+            ConfidenceLevel.MASTERED: 10,
+            ConfidenceLevel.COMPETENT: 8,
+            ConfidenceLevel.EXPLORING: 5,
+            ConfidenceLevel.UNKNOWN: 4,
+            ConfidenceLevel.DEGRADED: 1,
+        }
+        return priority_map.get(cap.confidence, 5)
+
+    def get_active_growth_edges(self, max_priority: int = 10) -> List[GrowthEdge]:
+        """获取当前活跃的学习方向"""
+        return [
+            edge for edge in self._domain_growth_edges.values()
+            if edge.priority <= max_priority and edge.progress < 1.0
+        ]
+
+    def _record_self_history(
+        self,
+        event_type: str,
+        description: str,
+        before: Optional[Dict] = None,
+        after: Optional[Dict] = None,
+        trigger: Optional[str] = None
+    ):
+        event = SelfHistoryEvent(
+            timestamp=datetime.now().isoformat(),
+            event_type=event_type,
+            description=description,
+            before=before,
+            after=after,
+            trigger=trigger
+        )
+        self._self_history.append(event)
+        self._self_history = self._self_history[-200:]
+        logger.info(f"🪞 Self history: [{event_type}] {description}")
+
+    def get_path_self_awareness(self) -> Dict[str, Any]:
+        """导出路径自我认知快照（供前端/日志/调试）"""
+        return {
+            "path_capabilities": {
+                name: {
+                    "confidence": cap.confidence.name,
+                    "success_rate": cap.success_rate,
+                    "success_count": cap.success_count,
+                    "failure_count": cap.failure_count,
+                    "last_updated": cap.last_updated,
+                }
+                for name, cap in self._domain_capabilities.items()
+            },
+            "limitations": {
+                name: {
+                    "description": lim.description,
+                    "uncertainty": lim.uncertainty,
+                    "is_temporary": lim.is_temporary,
+                }
+                for name, lim in self._domain_limitations.items()
+            },
+            "cognitive_load": self._cognitive_load,
+            "history_count": len(self._self_history),
+        }
+
+    def _estimate_cognitive_load(self, experience: Dict[str, Any]) -> float:
+        load = 0.0
+        num_paths = len(experience.get("paths_used", []))
+        load += min(0.3, num_paths * 0.05)
+        path_results = experience.get("path_results", {})
+        error_count = sum(1 for r in path_results.values() if r.get("error"))
+        load += min(0.4, error_count * 0.1)
+        intent = experience.get("intent", "")
+        if any(kw in intent.lower() for kw in ["复杂", "深度", "分析", "比较", "架构"]):
+            load += 0.2
+        return min(1.0, load)
+
+    def _init_path_capabilities_from_profile(self):
+        """启动时从现有 capability_profile 初始化路径能力"""
+        try:
+            profile = self._extract_capability_profile()
+            path_weights = profile.get("path_weights", {})
+            for path_name, weight_data in path_weights.items():
+                cap_name = f"path_{path_name}"
+                if cap_name in self._domain_capabilities:
+                    continue
+                success_rate = weight_data.get("success_rate", 0.5)
+                if success_rate > 0.85:
+                    conf = ConfidenceLevel.MASTERED
+                elif success_rate > 0.6:
+                    conf = ConfidenceLevel.COMPETENT
+                elif success_rate > 0.3:
+                    conf = ConfidenceLevel.EXPLORING
+                else:
+                    conf = ConfidenceLevel.DEGRADED
+                self._domain_capabilities[cap_name] = Capability(
+                    name=cap_name,
+                    description=f"通过 {path_name} 路径处理查询的能力（从 profile 初始化）",
+                    confidence=conf
+                )
+                total = weight_data.get("total_calls", 0)
+                if total > 0:
+                    cap = self._domain_capabilities[cap_name]
+                    cap.success_count = int(total * success_rate)
+                    cap.failure_count = total - cap.success_count
+            if path_weights:
+                logger.info(f"🪞 从 capability_profile 初始化了 {len(path_weights)} 条路径能力")
+        except Exception as e:
+            logger.debug(f"路径能力初始化跳过: {e}")
+
+    def _sync_to_capability_profile(self):
+        """将 _domain_capabilities 同步到现有 capability_profile"""
+        try:
+            if self._domain_capabilities:
+                avg_rate = sum(
+                    c.success_rate for c in self._domain_capabilities.values()
+                ) / len(self._domain_capabilities)
+                self.capability_profile["overall_strength"] = avg_rate
+            low = [
+                name.replace("path_", "")
+                for name, cap in self._domain_capabilities.items()
+                if cap.confidence == ConfidenceLevel.DEGRADED
+            ]
+            if low:
+                self.capability_profile["low_performance_paths"] = low
+                self.capabilities["low_performance_paths"] = low
+        except Exception as e:
+            logger.debug(f"同步到 capability_profile 跳过: {e}")
+
     def persist_state(self) -> None:
         """持久化当前自我状态到DB"""
         try:
@@ -1469,9 +1945,37 @@ class SelfModel(LoopMixin):
             import json
             snap = self.snapshot()
             del snap["_meta"]
+
+            domain_data = {
+                "domain_capabilities": {
+                    k: {
+                        "name": v.name, "description": v.description,
+                        "confidence": v.confidence.name, "evidence": v.evidence[-10:],
+                        "success_count": v.success_count, "failure_count": v.failure_count,
+                        "last_updated": v.last_updated,
+                    } for k, v in self._domain_capabilities.items()
+                },
+                "domain_limitations": {
+                    k: {
+                        "domain": v.domain, "description": v.description,
+                        "uncertainty": v.uncertainty, "is_temporary": v.is_temporary,
+                        "mitigation": v.mitigation,
+                    } for k, v in self._domain_limitations.items()
+                },
+                "domain_growth_edges": {
+                    k: {
+                        "topic": v.topic, "motivation": v.motivation,
+                        "progress": v.progress, "priority": v.priority,
+                    } for k, v in self._domain_growth_edges.items()
+                },
+            }
             db.execute(
                 "INSERT OR REPLACE INTO self_state (key, value, updated_at) VALUES (?, ?, ?)",
                 ("snapshot", json.dumps(snap, default=str, ensure_ascii=False), datetime.now().isoformat()),
+            )
+            db.execute(
+                "INSERT OR REPLACE INTO self_state (key, value, updated_at) VALUES (?, ?, ?)",
+                ("domain_models", json.dumps(domain_data, default=str, ensure_ascii=False), datetime.now().isoformat()),
             )
             logger.debug("🪞 SelfModel 状态已持久化")
         except Exception as e:

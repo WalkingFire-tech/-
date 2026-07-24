@@ -64,6 +64,9 @@ async def early_consume_cognitive_learning(
     if _cognitive_learning and _cognitive_learning.get("knowledge_gained", 0) > 0:
         _l2_sources = _cognitive_learning.get("sources", [])
         _l2_conf = _cognitive_learning.get("confidence", 0.5)
+        _l2_kg = _cognitive_learning.get("knowledge_gained", 0)
+        _l2_src_text = "、".join(str(s) for s in _l2_sources[:3]) if _l2_sources else "认知学习"
+        _cognitive_learning["summary"] = f"从{_l2_src_text}中获得了{_l2_kg}项新认知"
         _l2_knowledge_context = f"\n【L2认知学习-新获得知识】(置信度{_l2_conf:.0%}, 来源:{','.join(str(s) for s in _l2_sources[:3])})"
         if _cognitive_integration and _cognitive_integration.get("core_knowledge"):
             for _ck in _cognitive_integration["core_knowledge"][:3]:

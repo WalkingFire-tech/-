@@ -459,6 +459,17 @@ class AdaptiveGovernor(LoopMixin):
         }
 
 
+    def get_cognitive_budget(self) -> float:
+        """返回认知预算 0.0-1.0"""
+        mode = self.get_effective_mode()
+        if mode == OperatingMode.EMERGENCY:
+            return 0.2
+        elif mode == OperatingMode.CONSERVATIVE:
+            return 0.5
+        else:
+            return 1.0
+
+
 _governor: Optional[AdaptiveGovernor] = None
 _governor_lock = threading.Lock()
 

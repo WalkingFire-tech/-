@@ -226,6 +226,29 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
         except Exception:
             pass
 
+    # ========== 阶段1.8：自我认知行为指令注入（闭环核心） ==========
+    _sm_directive = None
+    try:
+        _sm_for_directive = _get_self_model()
+        if _sm_for_directive:
+            _sm_directive = _sm_for_directive.get_behavioral_directive()
+            if _sm_directive:
+                methodology["behavioral_directive"] = _sm_directive
+                methodology["exploration_drive"] = _sm_directive.get("exploration_drive", 0.5)
+                methodology["consolidation_need"] = _sm_directive.get("consolidation_need", 0.0)
+                methodology["preferred_depth"] = _sm_directive.get("preferred_depth", "moderate")
+                methodology["response_pace"] = _sm_directive.get("response_pace", "normal")
+                methodology["perspective_mode"] = _sm_directive.get("perspective_mode", "companion")
+                methodology["relationship_style"] = _sm_directive.get("relationship_style", "balanced")
+                logger.info(
+                    f"🪞 行为指令注入: exploration={_sm_directive.get('exploration_drive', 0.5):.2f}, "
+                    f"consolidation={_sm_directive.get('consolidation_need', 0.0):.2f}, "
+                    f"depth={_sm_directive.get('preferred_depth', 'moderate')}, "
+                    f"perspective={_sm_directive.get('perspective_mode', 'companion')}"
+                )
+    except Exception:
+        pass
+
     # ========== 阶段2：简单意图直接回复（提取到fast_path_handler.py） ==========
     from backend.services.fast_path_handler import handle_fast_path
     _fp_result = await handle_fast_path(
@@ -328,6 +351,20 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
     except Exception:
         pass
 
+    _thinking_sm = _get_self_model()
+    if _thinking_sm and candidates:
+        _top_sources = sorted(
+            [(c.get("source", "未知"), c.get("quality", 0)) for c in candidates if c.get("response")],
+            key=lambda x: -x[1]
+        )[:3]
+        _thinking_sm.append("current_thinking", {
+            "phase": "path_selection",
+            "reasoning": f"从{len(candidates)}个候选中选择，前3: {'、'.join(s[0] for s in _top_sources)}",
+            "confidence": max((c.get("quality", 0) for c in candidates), default=0) / 100.0,
+            "top_source": _top_sources[0][0] if _top_sources else "unknown",
+            "timestamp": __import__('datetime').datetime.now().isoformat(),
+        }, max_len=20)
+
     # ========== 阶段4：对比择优（提取到comparison_selector.py） ==========
 
     try:
@@ -363,6 +400,16 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
     path_percentages.update(_cs_result["path_percentages"])
     for _ev in _cs_result["events"]:
         yield _ev
+
+    _sel_sm = _get_self_model()
+    if _sel_sm and best:
+        _sel_sm.append("current_thinking", {
+            "phase": "selection",
+            "reasoning": f"择优选择{best.get('source', '未知')}，质量={best.get('quality', 0)}",
+            "confidence": best.get("quality", 0) / 100.0 if best.get("quality") else 0.5,
+            "selected_source": best.get("source", "unknown"),
+            "timestamp": __import__('datetime').datetime.now().isoformat(),
+        }, max_len=20)
 
     # ========== 阶段4.2：多智能体辩论（提取到debate_handler.py） ==========
     from backend.services.debate_handler import run_debate
@@ -506,6 +553,8 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
         cognitive_learning=_cognitive_learning if '_cognitive_learning' in locals() else None,
         cognitive_integration=_cognitive_integration if '_cognitive_integration' in locals() else None,
         cognitive_validation=_cognitive_validation if '_cognitive_validation' in locals() else None,
+        methodology=methodology,
+        attempts=attempts,
     )
 
     # ========== 终极保护：全路径失败 → 永不放弃引擎 ==========

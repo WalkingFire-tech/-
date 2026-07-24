@@ -11,6 +11,13 @@ from infrastructure.experience_pool import ExperiencePool
 from infrastructure.self_audit import SelfAudit
 from infrastructure.config_manager import config
 from core.ports.adapters import get_storage_port
+from core.services.planner.search_engine import SearchEngineMixin
+from core.services.planner.knowledge_retriever import KnowledgeRetrieverMixin
+from core.services.planner.self_evaluator import SelfEvaluatorMixin
+from core.services.planner.meta_problem_solver import MetaProblemSolverMixin
+from core.services.planner.model_selector import ModelSelectorMixin
+from core.services.planner.tool_executor import ToolExecutorMixin
+from core.services.planner.optimizer import OptimizerMixin
 from loguru import logger
 import time
 from datetime import datetime
@@ -68,7 +75,15 @@ except Exception as e:
     logger.warning(f"v2.0认知进化架构加载失败: {e}")
 
 
-class DataDrivenPlanner:
+class DataDrivenPlanner(
+    SearchEngineMixin,
+    KnowledgeRetrieverMixin,
+    SelfEvaluatorMixin,
+    MetaProblemSolverMixin,
+    ModelSelectorMixin,
+    ToolExecutorMixin,
+    OptimizerMixin,
+):
     """完全数据驱动的规划器"""
     
     def __init__(self, adapters: dict, adapters_lock=None):
@@ -195,6 +210,14 @@ class DataDrivenPlanner:
             self.relationship_model = None
             self.self_review_engine = None
             self.active_perception = None
+        
+        self._init_search()
+        self._init_knowledge()
+        self._init_evaluator()
+        self._init_meta_solver()
+        self._init_model_selector()
+        self._init_tool_executor()
+        self._init_optimizer()
     
     def get_last_call_info(self):
         return self.last_call_info

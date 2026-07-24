@@ -12,7 +12,7 @@ class SearchEngineMixin:
 
     def _init_search(self):
         self._search_cache = {}
-        self._search_timeout = self.config.get("search_timeout", 5.0)
+        self._search_timeout = 5.0
 
     def _try_search_enhanced_answer(self, intent: Intent) -> Optional[str]:
         search_results = None

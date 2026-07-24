@@ -16,6 +16,8 @@ async def sync_post_response(
     cognitive_learning: dict = None,
     cognitive_integration: dict = None,
     cognitive_validation: dict = None,
+    methodology: dict = None,
+    attempts: list = None,
 ) -> None:
     """响应后认知同步 + 学习规则晋升"""
     try:
@@ -38,8 +40,43 @@ async def sync_post_response(
                 "trust": min(0.5 + _sm._update_count * 0.01, 1.0),
                 "phase": "established" if _sm._update_count > 10 else "initial",
             })
+            if methodology and methodology.get("behavioral_directive"):
+                _directive_consumed = {
+                    "exploration_drive": methodology.get("exploration_drive", 0.5),
+                    "consolidation_need": methodology.get("consolidation_need", 0.0),
+                    "preferred_depth": methodology.get("preferred_depth", "moderate"),
+                    "perspective_mode": methodology.get("perspective_mode", "companion"),
+                    "interaction_confidence": confidence,
+                    "interaction_success": confidence > 0.5 and bool(final_response and len(final_response) > 50),
+                }
+                _sm.record_cognitive_cycle(introspection=_directive_consumed)
+                logger.debug(f"🪞 行为指令闭环: directive已反馈给SelfModel, success={_directive_consumed['interaction_success']}")
             if _sm._update_count % 20 == 0:
                 _sm.persist_state()
+
+            if attempts:
+                try:
+                    _path_results = {}
+                    _paths_used = []
+                    for _a in attempts:
+                        if isinstance(_a, (list, tuple)) and len(_a) >= 2:
+                            _pn = _a[0]
+                            _ps = bool(_a[1])
+                            _paths_used.append(_pn)
+                            _path_results[_pn] = {
+                                "success": _ps,
+                                "quality": confidence if _ps else 0.1,
+                                "error": _a[2] if len(_a) > 2 and not _ps else None,
+                            }
+                    if _path_results:
+                        _sm.integrate_experience({
+                            "intent": user_input[:100],
+                            "paths_used": _paths_used,
+                            "path_results": _path_results,
+                            "final_response": final_response[:200] if final_response else "",
+                        })
+                except Exception as _ie:
+                    logger.debug(f"integrate_experience跳过: {_ie}")
         except Exception as e:
             logger.debug(f"SelfModel同步跳过: {e}")
 

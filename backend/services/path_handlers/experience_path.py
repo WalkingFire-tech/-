@@ -5,7 +5,7 @@ from backend.services.path_handlers._shared import _check_vector_available, _fas
 from core.ports.adapters import get_storage_port
 
 
-def _extract_keywords(query: str, max_kw: int = 4) -> list:
+def _extract_keywords(query: str, max_kw: int = 8) -> list:
     _stop_pattern = re.compile(r'什么是|如何|为什么|是不是|能不能|有没有|好不好|说一下|讲一下|请问|告诉|知道|帮忙|帮助|解释|描述|可以|能够')
     cleaned = _stop_pattern.sub(' ', query)
     cleaned = re.sub(r'[？?！!。，,、；;：:""''（）()\[\]【】\s]+', ' ', cleaned)
@@ -17,11 +17,21 @@ def _extract_keywords(query: str, max_kw: int = 4) -> list:
         if re.match(r'^[a-zA-Z0-9]{1,}$', seg):
             tokens.append(seg)
         else:
-            for m in re.finditer(r'[a-zA-Z0-9]{1,}|[\u4e00-\u9fff]{2,4}', seg):
-                t = m.group()
+            # 重叠2-gram切分中文，避免贪心{2,4}造成无意义词边界
+            cn_grams = re.findall(r'(?=([\u4e00-\u9fff]{2}))', seg)
+            for t in cn_grams:
                 if t not in ("什么", "怎么", "如何", "为什么", "可以", "能够", "告诉", "知道") and not t.startswith("的"):
                     tokens.append(t)
-    return tokens[:max_kw]
+            for m in re.finditer(r'[a-zA-Z0-9]{2,}', seg):
+                tokens.append(m.group())
+    # 去重保序
+    seen = set()
+    unique = []
+    for t in tokens:
+        if t not in seen:
+            seen.add(t)
+            unique.append(t)
+    return unique[:max_kw]
 
 
 def _build_keyword_sql(keywords: list) -> tuple:
@@ -30,6 +40,20 @@ def _build_keyword_sql(keywords: list) -> tuple:
     conditions = " OR ".join(["raw_input LIKE ?" for _ in keywords])
     params = [f"%{kw}%" for kw in keywords]
     return conditions, params
+
+
+def _decay_order() -> str:
+    """经验池排序：quality_score * 时间衰减因子，7天半衰期"""
+    return "quality_score * EXP(-0.1 * (julianday('now') - julianday(timestamp))) DESC"
+
+
+_EXCLUDED_INTENT_TYPES = ("autonomous_reflection", "metacognitive_background", "background_collect")
+
+
+def _intent_filter() -> str:
+    """排除系统自言自语类型的经验"""
+    excludes = ", ".join(f"'{t}'" for t in _EXCLUDED_INTENT_TYPES)
+    return f"intent_type NOT IN ({excludes})"
 
 
 def get_last_response(query: str) -> str:
@@ -111,17 +135,18 @@ async def fetch_experience(query: str, ports: dict = None) -> dict:
             if kws:
                 cond, params = _build_keyword_sql(kws)
                 rows = db.query(
-                    f"SELECT response, quality_score FROM experiences WHERE {cond} ORDER BY quality_score DESC, timestamp DESC LIMIT 5",
+                    f"SELECT response, quality_score FROM experiences WHERE {cond} AND {_intent_filter()} ORDER BY {_decay_order()} LIMIT 5",
                     tuple(params)
                 )
             else:
-                rows = db.query("SELECT response, quality_score FROM experiences WHERE raw_input LIKE ? ORDER BY timestamp DESC LIMIT 3", (f"%{query[:20]}%",))
+                rows = db.query(f"SELECT response, quality_score FROM experiences WHERE raw_input LIKE ? AND {_intent_filter()} ORDER BY {_decay_order()} LIMIT 3", (f"%{query[:20]}%",))
             return rows
         rows = await asyncio.wait_for(loop.run_in_executor(_fast_executor, _query_exp), timeout=5)
         if rows:
-            best = max(rows, key=lambda r: r[1] if r[1] else 50)
-            if best[0] and len(best[0]) > 30:
-                result = {"source": "经验池", "response": best[0], "quality": best[1] or 50}
+            relevant = [(r, r[1] or 50) for r in rows if r[0] and len(r[0]) > 30 and _keyword_overlap(query, r[0] or "")]
+            if relevant:
+                best = max(relevant, key=lambda x: x[1])
+                result = {"source": "经验池", "response": best[0][0], "quality": best[1]}
                 try:
                     from core.trajectory_evolution import trajectory_store
                     similar_trajs = trajectory_store.find_similar_trajectories(query, min_fitness=60, limit=1)
@@ -140,6 +165,16 @@ async def fetch_experience(query: str, ports: dict = None) -> dict:
     return None
 
 
+def _keyword_overlap(query_text: str, candidate_text: str, min_ratio: float = 0.10) -> bool:
+    """检查查询与候选文本的关键词重叠率，低于阈值视为不相关"""
+    q_kws = set(_extract_keywords(query_text, max_kw=16))
+    c_kws = set(_extract_keywords(candidate_text, max_kw=16))
+    if not q_kws:
+        return True
+    overlap = len(q_kws & c_kws)
+    return overlap / len(q_kws) >= min_ratio
+
+
 def get_experience_context(query: str) -> str:
     """从经验池检索相似问题的历史回复，作为Ollama的上下文注入"""
     try:
@@ -148,19 +183,22 @@ def get_experience_context(query: str) -> str:
         if kws:
             cond, params = _build_keyword_sql(kws)
             rows = db.query(
-                f"SELECT raw_input, response, quality_score FROM experiences WHERE {cond} ORDER BY quality_score DESC, timestamp DESC LIMIT 3",
+                f"SELECT raw_input, response, quality_score FROM experiences WHERE {cond} AND {_intent_filter()} ORDER BY {_decay_order()} LIMIT 10",
                 tuple(params)
             )
         else:
             rows = db.query(
-                "SELECT raw_input, response, quality_score FROM experiences WHERE raw_input LIKE ? ORDER BY quality_score DESC, timestamp DESC LIMIT 2",
+                f"SELECT raw_input, response, quality_score FROM experiences WHERE raw_input LIKE ? AND {_intent_filter()} ORDER BY {_decay_order()} LIMIT 5",
                 (f"%{query[:20]}%",)
             )
         if rows:
             context_parts = []
             for row in rows:
                 if row[1] and len(row[1]) > 30 and (row[2] or 0) >= 50:
-                    context_parts.append(f"之前对类似问题「{row[0][:40]}」的回答：{row[1][:200]}")
+                    if _keyword_overlap(query, row[0] or ""):
+                        context_parts.append(f"之前对类似问题「{row[0][:40]}」的回答：{row[1][:200]}")
+                        if len(context_parts) >= 3:
+                            break
             if context_parts:
                 return "\n".join(context_parts)
     except Exception as e:
