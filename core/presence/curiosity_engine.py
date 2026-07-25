@@ -154,10 +154,10 @@ class CuriosityEngine(LoopMixin):
                         (f"curiosity_explore: {g.topic}", f"知识缺口({g.gap_type}): {g.topic}. 优先级={g.urgency.value}", 1, "curiosity_exploration", 50),
                         commit=True,
                     )
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception as e:
+                    logger.warning(f"操作降级跳过: {e}")
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     def perceive_gaps(self) -> List[KnowledgeGap]:
         """感知当前知识边界——存在层"感知"阶段调用"""

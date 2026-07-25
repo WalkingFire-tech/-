@@ -132,8 +132,8 @@ def analyze_disks(disks):
             free_gb = float(disk.get('FreeSpace', '0')) / (1024**3)
             usage = ((size_gb - free_gb) / size_gb * 100) if size_gb > 0 else 0
             disk_info.append({"drive": disk.get('Caption', '?'), "size_gb": round(size_gb,2), "free_gb": round(free_gb,2), "usage_percent": round(usage,1)})
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
     return {"disks": disk_info}
 
 if __name__ == "__main__":

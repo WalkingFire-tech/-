@@ -362,8 +362,8 @@ class SystemHealthMonitor:
             gs = get_gpu_stats()
             if gs.get("available"):
                 gpu_temp = gs.get("temperature", 0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         if (mem > self.thresholds["memory_critical"]
                 or avail < self.thresholds["available_memory_min_gb"]
@@ -593,8 +593,8 @@ class SystemHealthMonitor:
                 gs = get_gpu_stats()
                 if gs.get("available"):
                     gpu_temp = gs.get("temperature", 0)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
             if gpu_temp >= 85:
                 return 3
             return 5

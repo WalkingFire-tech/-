@@ -80,8 +80,8 @@ async def early_consume_cognitive_learning(
             try:
                 from core.presence.inner_time import inner_time_engine, CognitiveEventType
                 inner_time_engine.tick(CognitiveEventType.LEARN, intensity=0.7, description="cognitive_learning_early")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
     return {
         "cognitive_learning": _cognitive_learning,

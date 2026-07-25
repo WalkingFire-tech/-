@@ -83,8 +83,8 @@ def _query_core_alignment() -> Dict[str, Any]:
             result["principle_count"] = values.get("principles_count", 0)
             result["recent_violations"] = values.get("violations_count", 0)
             result["aligned"] = result["recent_violations"] == 0
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
     return result
 
 
@@ -96,8 +96,8 @@ def _query_state_perception() -> Dict[str, Any]:
         result["maturity"] = sm.get_maturity_score()
         result["maturity_avg"] = sum(v for v in result["maturity"].values() if isinstance(v, (int, float))) / max(len(result["maturity"]), 1)
         result["self_description"] = sm.describe_self()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from core.presence.inner_time import inner_time_engine
@@ -105,16 +105,16 @@ def _query_state_perception() -> Dict[str, Any]:
         result["inner_time_tick"] = state.tick_count
         result["inner_time_phase"] = state.phase.value if hasattr(state.phase, 'value') else str(state.phase)
         result["inner_time_flow"] = round(state.flow_rate, 2)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from core.cognition.dimension_orchestrator import get_dimension_orchestrator
         dim = get_dimension_orchestrator()
         alignment = dim.decide_primary_dimension(query="")
         result["primary_dimension"] = alignment.primary_dimension.value if hasattr(alignment.primary_dimension, 'value') else str(alignment.primary_dimension)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     return result
 
@@ -128,15 +128,15 @@ def _query_direction_sensing() -> Dict[str, Any]:
         result["curiosity_strength"] = frontier.get("curiosity_strength", 0.0)
         result["exploration_direction"] = frontier.get("exploration_direction", None)
         result["frontier_density"] = frontier.get("frontier_density", 0.0)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from core.learning.strategy_evolver import get_strategy_evolver
         evolver = get_strategy_evolver()
         result["recent_evolution"] = evolver.get_recent_adjustment() if hasattr(evolver, 'get_recent_adjustment') else None
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     return result
 
@@ -352,8 +352,8 @@ def _try_causal_trace(query: str, context_type: str) -> str:
         if deep_trace.get("guidance"):
             _causal_trace_stats["hits"] += 1
             return deep_trace["guidance"][:200]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
     return ""
 
 

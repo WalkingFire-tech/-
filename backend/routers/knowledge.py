@@ -242,9 +242,10 @@ async def get_recent_learning():
 @router.get("/facts/search")
 async def search_facts(q: str = "", limit: int = 10):
     try:
-        from infrastructure.fact_store import fact_store
+        from core.ports.adapters import get_fact_store_port
+        fs = get_fact_store_port()
         if q:
-            results = fact_store.search_by_keywords(q, limit=limit)
+            results = await fs.search_by_keywords(q, limit=limit)
         else:
             results = []
         return {"query": q, "results": results, "count": len(results)}
@@ -255,8 +256,8 @@ async def search_facts(q: str = "", limit: int = 10):
 @router.get("/facts/stats")
 async def fact_stats():
     try:
-        from infrastructure.fact_store import fact_store
-        return fact_store.get_stats()
+        from core.ports.adapters import get_fact_store_port
+        return get_fact_store_port().get_stats()
     except Exception as e:
         return {"error": str(e)}
 
@@ -264,8 +265,9 @@ async def fact_stats():
 @router.post("/facts/add")
 async def add_fact(request: dict):
     try:
-        from infrastructure.fact_store import fact_store
-        assertion_id = fact_store.add_assertion(
+        from core.ports.adapters import get_fact_store_port
+        fs = get_fact_store_port()
+        assertion_id = fs.add_assertion(
             question=request.get("question", ""),
             subject=request.get("subject", ""),
             predicate=request.get("predicate", ""),
@@ -281,8 +283,9 @@ async def add_fact(request: dict):
 @router.post("/facts/correct")
 async def correct_fact(request: dict):
     try:
-        from infrastructure.fact_store import fact_store
-        fact_store.add_correction(
+        from core.ports.adapters import get_fact_store_port
+        fs = get_fact_store_port()
+        fs.add_correction(
             question=request.get("question", ""),
             old_subject=request.get("old_subject", ""),
             old_predicate=request.get("old_predicate", ""),

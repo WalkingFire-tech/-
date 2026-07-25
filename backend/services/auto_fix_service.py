@@ -10,8 +10,8 @@ def never_give_up_response(user_input: str, attempts: list) -> str:
             FailureClassifier.classify_and_fix_sync(
                 {"status": "knowledge_gap"}, user_input,
                 {"failed_methods": failed_methods[:5], "total_attempts": len(attempts)})
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
     try:
         from core.spirit_core import spirit_core
         attempt_dicts = []

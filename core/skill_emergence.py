@@ -489,8 +489,8 @@ class SkillEmergence:
                                 return RegistryToolResult(
                                     success=True, data=str(result),
                                     source=tool_name, quality=60)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"操作降级跳过: {e}")
 
                     if skill_type in ("reasoning", "analysis") and query:
                         try:
@@ -501,8 +501,8 @@ class SkillEmergence:
                                 return RegistryToolResult(
                                     success=True, data=resp["response"],
                                     source=tool_name, quality=50)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"操作降级跳过: {e}")
 
                     return RegistryToolResult(
                         success=True,

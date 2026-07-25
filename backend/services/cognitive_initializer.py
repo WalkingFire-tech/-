@@ -42,8 +42,8 @@ async def initialize_cognition(
     try:
         from core.cognition.dimension_orchestrator import get_dimension_orchestrator
         dim_orch = get_dimension_orchestrator()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from core.presence.inner_time import inner_time_engine, CognitiveEventType
@@ -63,8 +63,8 @@ async def initialize_cognition(
                 elif _it_state.current_phase == "growing":
                     methodology["inner_time_learning"] = True
                     logger.info(f"⏱️ 内在时间: GROWING阶段(density={_it_state.cognitive_density:.2f}), 优先学习路径")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
     except ImportError:
         pass
 
@@ -78,8 +78,8 @@ async def initialize_cognition(
         elif _rhythm_snapshot.phase.value == "innovation":
             logger.info(f"🧠 认知节律: 创新阶段, 能量={_rhythm_snapshot.energy_level:.1%}")
             methodology["rhythm_innovative"] = True
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from core.spirit_core import spirit_core
@@ -88,8 +88,8 @@ async def initialize_cognition(
             top = spirit_resonances[0]
             logger.info(f"🎻 精神共振: {top['principle']} (强度={top['strength']}) → {top['drive_direction']}")
             methodology["spirit_drive"] = top["drive_direction"]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from backend.services.orchestrator_helpers import get_self_model_safe
@@ -106,12 +106,12 @@ async def initialize_cognition(
             _it_s = inner_time_engine.get_state()
             awareness_data["inner_phase"] = _it_s.current_phase
             awareness_data["cognitive_density"] = round(_it_s.cognitive_density, 2)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         if awareness_data:
             events.append(("awareness", awareness_data))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from core.presence.curiosity_engine import CuriosityEngine
@@ -119,8 +119,8 @@ async def initialize_cognition(
         curiosity_frontier = _ce.perceive_frontier()
         if curiosity_frontier and curiosity_frontier.get("curiosity_strength", 0) > 0.5:
             logger.info(f"🔍 好奇心前沿: 强度={curiosity_frontier['curiosity_strength']:.2f}, 方向={curiosity_frontier.get('exploration_direction', 'N/A')}")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from infrastructure.chat_history import get_chat_history

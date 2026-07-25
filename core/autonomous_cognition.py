@@ -95,8 +95,8 @@ def _pick_growth_edge():
         edges = sm.get_active_growth_edges(max_priority=7)
         if edges:
             return edges[0]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from core.presence.curiosity_engine import get_curiosity_engine
@@ -110,8 +110,8 @@ def _pick_growth_edge():
                 motivation=getattr(gap, 'topic', ''),
                 priority=5,
             )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     return None
 
@@ -132,8 +132,8 @@ async def _run_cognitive_cycle(edge) -> bool:
     try:
         from core.presence.inner_time import inner_time_engine, CognitiveEventType
         inner_time_engine.tick(CognitiveEventType.EXPLORE, intensity=0.5, description="autonomous:{}".format(topic[:30]))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     input_stream = {
         "query": motivation,
@@ -345,8 +345,8 @@ def _try_share_with_user(topic: str, thought_text: str, confidence: float, quali
                 topic[:30], trust, confidence
             )
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
 
 def _try_push_sse_event(topic: str, thought_text: str, confidence: float):
@@ -358,5 +358,5 @@ def _try_push_sse_event(topic: str, thought_text: str, confidence: float):
             "confidence": confidence,
             "cycle": _CYCLE_COUNT,
         })
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")

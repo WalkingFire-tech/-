@@ -25,8 +25,8 @@ def _inject_evolved_genome(genome: dict, fitness: float = 0.0):
         if not _flags.get("evolution_safety_protocol", True):
             logger.info("进化岛安全协议已禁用(feature flag)，跳过基因组注入")
             return
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
     from core.genome_evolver import genome_evolver
     proposal = genome_evolver.propose_evolution_injection(genome, fitness, source="evolution_island")
     if proposal.get("status") == "rejected":
@@ -274,8 +274,8 @@ async def _start_evolution_loop(app):
                             (best_fitness, result.get("stats", {}).get("generations", 0), json.dumps(result.get("best_genome", {}), ensure_ascii=False), datetime.now().isoformat()),
                             commit=True
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"操作降级跳过: {e}")
 
                 app.state.evolution_running = False
             except Exception as e:
@@ -476,8 +476,8 @@ async def lifespan(app):
     try:
         from core.autonomous_cognition import stop_autonomous_loop
         stop_autonomous_loop()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
     await _stop_cognitive_planner(app)
     await _stop_existence_layer()
     await _stop_scheduled_tasks()
@@ -542,9 +542,5 @@ async def _background_startup(app):
         logger.info("✅ 后台初始化完成，所有子系统就绪")
     except Exception as e:
         logger.error(f"后台启动序列异常: {e}")
-        app.state.initialized = True
-        app.state.startup_complete = True
-        logger.info("✅ 后端服务初始化完成，所有子系统就绪")
-    except Exception as e:
-        logger.error(f"后台启动序列异常: {e}")
+
         app.state.startup_complete = True

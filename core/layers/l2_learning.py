@@ -125,8 +125,8 @@ class L2LearningLayer:
             db.execute("CREATE INDEX IF NOT EXISTS idx_ki_question ON knowledge_items(question)")
             db.execute("CREATE INDEX IF NOT EXISTS idx_ki_quality ON knowledge_items(quality_score DESC)")
             db.execute("CREATE INDEX IF NOT EXISTS idx_ki_status ON knowledge_items(status)")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         _migration_cols = {
             "source_url": "TEXT",

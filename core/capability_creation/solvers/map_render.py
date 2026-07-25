@@ -65,8 +65,8 @@ async def solve_map_render(query: str, serial_solve_fn=None) -> Dict:
     try:
         import webbrowser
         webbrowser.open(filepath)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     return {
         "success": True,

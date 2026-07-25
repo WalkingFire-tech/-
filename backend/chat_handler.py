@@ -194,8 +194,8 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
                     final_response = f"{calc_match.group(1)} = {result}"
                     attempts.append(("计算器", True, "calc fast path"))
                     return {"response": final_response, "attempts": attempts, "intent": intent_type, "confidence": 0.95}
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
     elif intent_type == "weather":
         try:
@@ -231,8 +231,8 @@ async def chat_never_giveup(user_input: str, context: dict) -> dict:
                         source="dialogue_engine",
                         signals=[{"type": "learning_opportunity", "intent": dialogue_result.understanding.surface_intent}]
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"操作降级跳过: {e}")
             if dialogue_result:
                 attempts.append(("对话理解", True, f"角色={dialogue_result.scene_hint.primary_role.value}"))
         except Exception as _de:
@@ -648,8 +648,8 @@ def _generate_smart_reply(query: str, intent_type: str) -> str:
     if ext_response:
         try:
             _save_to_experience_pool(query, ext_response, success=True, intent_type="external_fallback", model_name="deepseek")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return ext_response
 
     # 路径3:基于intent_type的模板选择(最后兜底)
@@ -713,15 +713,15 @@ def _generate_smart_reply(query: str, intent_type: str) -> str:
         if SPIRIT_CORE_AVAILABLE:
             from core.spirit_core import spirit_core
             spirit_core._record_lesson(query, [{"method": "关键词模板", "success": False, "error": "无匹配关键词分支，使用默认模板"}])
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     # 使用统一契约中的兜底模板，而非硬编码字符串
     try:
         from core.response_quality_contract import FALLBACK_TEMPLATES
         return FALLBACK_TEMPLATES["default"].format(query=query)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     return f"""关于"{query}",我目前的理解还不够深入,但我的思考方向:
 
@@ -792,5 +792,5 @@ def _record_knowledge_gap(query: str, intent_type: str) -> None:
             (query.strip()[:200], intent_type or "unknown", "chat_handler", time.time()),
             commit=True,
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")

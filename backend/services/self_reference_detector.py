@@ -123,8 +123,8 @@ def generate_self_reference_response(query: str) -> dict:
     try:
         from core.self.model import get_self_model
         self_model = get_self_model()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     maturity = {}
     maturity_score = 0.5
@@ -132,15 +132,15 @@ def generate_self_reference_response(query: str) -> dict:
         try:
             maturity = self_model.get_maturity_score()
             maturity_score = sum(v for v in maturity.values() if isinstance(v, (int, float))) / max(len(maturity), 1)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     self_description = ""
     if self_model and hasattr(self_model, 'describe_self'):
         try:
             self_description = self_model.describe_self()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     if self_description:
         response = self_description

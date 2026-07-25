@@ -374,8 +374,8 @@ class SelfModel(LoopMixin):
                         "confidence": 0.7,
                         "timestamp": ts,
                     }, max_len=30)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         if not self.health:
             try:
@@ -427,8 +427,8 @@ class SelfModel(LoopMixin):
                 "cognitive_density": it_state.cognitive_density,
                 "rhythm_bpm": it_state.rhythm_bpm,
             })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     def get_status_summary(self) -> Dict[str, Any]:
         snap = self.snapshot()
@@ -485,8 +485,8 @@ class SelfModel(LoopMixin):
             from core.presence.existence_layer import get_existence_layer
             el = get_existence_layer()
             directive["presence_state"] = el.state.value if hasattr(el.state, 'value') else str(el.state)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.presence.inner_time import inner_time_engine
@@ -494,8 +494,8 @@ class SelfModel(LoopMixin):
             directive["inner_time_phase"] = it_state.current_phase
             directive["cognitive_density"] = it_state.cognitive_density
             directive["rhythm_bpm"] = it_state.rhythm_bpm
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         density = directive["cognitive_density"]
         ps = directive["presence_state"]
@@ -530,8 +530,8 @@ class SelfModel(LoopMixin):
             frontier = engine.perceive_frontier()
             curiosity_strength = frontier.get("curiosity_strength", 0.0)
             directive["exploration_drive"] = min(1.0, directive["exploration_drive"] + curiosity_strength * 0.3)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.spirit_core import get_spirit_core
@@ -540,8 +540,8 @@ class SelfModel(LoopMixin):
             if resonances:
                 top_strength = resonances[0].get("strength", 0.0)
                 directive["exploration_drive"] = min(1.0, directive["exploration_drive"] * (0.8 + top_strength * 0.2))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         directive["action_probability"] = (
             directive["exploration_drive"] * 0.4
@@ -556,8 +556,8 @@ class SelfModel(LoopMixin):
             if low_paths:
                 directive["avoid_paths"] = low_paths
                 directive["exploration_drive"] = max(0.1, directive["exploration_drive"] - len(low_paths) * 0.05)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         degraded_paths = [
             name.replace("path_", "", 1) for name, cap in self._domain_capabilities.items()
@@ -742,8 +742,8 @@ class SelfModel(LoopMixin):
                 scores["external_calibration"] = calibration.get("external_score", 0)
                 scores["self_assessment_drift"] = calibration.get("drift", 0)
                 scores["drift_direction"] = calibration.get("drift_direction", "aligned")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
         return scores
 
@@ -758,8 +758,8 @@ class SelfModel(LoopMixin):
                 "violations_count": len(status.get("violations", [])),
                 "lessons_count": len(status.get("lessons_learned", [])),
             }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.ports.adapters import get_storage_port
@@ -859,8 +859,8 @@ class SelfModel(LoopMixin):
                     "interaction_count": total[0],
                     "phase": "established" if total[0] > 20 else "initial",
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return {}
 
@@ -889,8 +889,8 @@ class SelfModel(LoopMixin):
             db = get_storage_port("data/gene_pool.db")
             mutations = db.query_one("SELECT COUNT(*) FROM mutations WHERE timestamp > datetime('now', '-7 days')")
             result["recent_mutations"] = mutations[0] if mutations else 0
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.cognition.trust_chain import trust_chain_builder
@@ -898,8 +898,8 @@ class SelfModel(LoopMixin):
             stats = trust_chain_builder.get_stats()
             result["trust_chain_depth"] = stats.get("max_depth", 0)
             result["trust_chain_nodes"] = stats.get("total_nodes", 0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return result
 
@@ -920,8 +920,8 @@ class SelfModel(LoopMixin):
             result["reality_check_runs"] = status.get("checks_run", 0)
             result["latest_alignment"] = status.get("latest_alignment")
             result["latest_gaps"] = status.get("latest_gaps", 0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.introspection.coordination_assessor import coordination_assessor
@@ -935,8 +935,8 @@ class SelfModel(LoopMixin):
                     "confidence": 0.9,
                     "productive": True,
                 }
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
             try:
                 from core.presence.existence_layer import get_existence_layer
                 el = get_existence_layer()
@@ -945,8 +945,8 @@ class SelfModel(LoopMixin):
                     "confidence": 0.8,
                     "productive": el.is_running(),
                 }
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
             module_reports["self_model"] = {
                 "health": 0.7,
                 "confidence": 0.7,
@@ -957,8 +957,8 @@ class SelfModel(LoopMixin):
                 result["coordination"] = snapshot.coordination
                 result["coordination_trend"] = snapshot.trend
                 result["coordination_overall"] = snapshot.overall
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return result
 
@@ -969,8 +969,8 @@ class SelfModel(LoopMixin):
             ci = CapabilityIntrospection()
             if hasattr(ci, 'get_capability_summary'):
                 result = ci.get_capability_summary()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.path_weight_manager import PathWeightManager
@@ -981,8 +981,8 @@ class SelfModel(LoopMixin):
                 low_perf = {k: v for k, v in weights.items() if v.get("success_rate", 1.0) < 0.4}
                 if low_perf:
                     result["low_performance_paths"] = list(low_perf.keys())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         if not result:
             try:
@@ -990,8 +990,8 @@ class SelfModel(LoopMixin):
                 db = get_storage_port("data/knowledge_store.db")
                 tools = db.query_one("SELECT COUNT(*) FROM tools")
                 result = {"tools_count": tools[0] if tools else 0}
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
         return result
 
@@ -1127,8 +1127,8 @@ class SelfModel(LoopMixin):
             if latest:
                 result["latest_score"] = latest[0]
                 result["latest_time"] = latest[1]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.self.external_calibration import external_calibration
@@ -1137,16 +1137,16 @@ class SelfModel(LoopMixin):
                 result["external_score"] = cal.get("external_score", 0)
                 result["drift"] = cal.get("drift", 0)
                 result["drift_direction"] = cal.get("drift_direction", "unknown")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.cognition.conflict_resolver import conflict_resolver
             stats = conflict_resolver.get_stats()
             result["knowledge_conflicts_detected"] = stats.get("total_conflicts", 0)
             result["conflicts_resolved"] = stats.get("resolved", 0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return result
 
@@ -1161,8 +1161,8 @@ class SelfModel(LoopMixin):
                 "total_reflections": total[0] if total else 0,
                 "recent_24h": recent[0] if recent else 0,
             }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.ports.adapters import get_storage_port
@@ -1171,8 +1171,8 @@ class SelfModel(LoopMixin):
             return {
                 "existence_reflections": total[0] if total else 0,
             }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return {}
 
@@ -1187,8 +1187,8 @@ class SelfModel(LoopMixin):
                 "total_memories": total[0] if total else 0,
                 "self_dimension": self_dim[0] if self_dim else 0,
             }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return {}
 
@@ -1347,8 +1347,8 @@ class SelfModel(LoopMixin):
                         "reason": f"好奇心驱动: {len(high_urgency)}个高紧急度知识缺口",
                         "handler": self._action_curiosity_driven_learning,
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         for a in actions:
             try:
@@ -1410,8 +1410,8 @@ class SelfModel(LoopMixin):
                             asyncio.ensure_future(
                                 capability_creation_loop.handle(row[0], context={"intent_type": row[1], "trigger": "self_model_gap"})
                             )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"操作降级跳过: {e}")
                     else:
                         loop.run_until_complete(capability_gap_learner.try_resolve_gap(gap))
                         try:
@@ -1419,8 +1419,8 @@ class SelfModel(LoopMixin):
                             loop.run_until_complete(
                                 capability_creation_loop.handle(row[0], context={"intent_type": row[1], "trigger": "self_model_gap"})
                             )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"操作降级跳过: {e}")
                 except RuntimeError:
                     asyncio.run(capability_gap_learner.try_resolve_gap(gap))
         except Exception as e:
@@ -1487,8 +1487,8 @@ class SelfModel(LoopMixin):
                     engine = get_proactivity_engine()
                     if hasattr(engine, 'suggest_engagement'):
                         engine.suggest_engagement()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"操作降级跳过: {e}")
         except Exception as e:
             logger.debug(f"SelfModel quality_improvement failed: {e}")
 

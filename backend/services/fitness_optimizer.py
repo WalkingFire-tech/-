@@ -169,8 +169,8 @@ async def optimize_fitness(
         _af3 = await _auto_fix_checkpoint(attempts, methodology, user_input, intent_type, "验证迭代后")
         if _af3["fixes_applied"] > 0:
             events.append({"type": "step", "data": {"phase": "自我修复", "status": "done", "detail": f"🔧 验证阶段修复{_af3['fixes_applied']}项，已调整策略"}})
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     return {
         "final_response": final_response, "fitness_score": fitness_score,

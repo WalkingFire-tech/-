@@ -148,8 +148,8 @@ class SelfReflection:
                 "retention": min(1.0, len(knowledge_used or []) * 0.2 + 0.3),
                 "context": {"intent_type": (context or {}).get("intent_type", "unknown")},
             })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         
         logger.info(f"✅ 自我复盘完成: 置信度={confidence_level:.2f}, 深度={reflection_depth}")
         

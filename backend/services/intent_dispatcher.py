@@ -100,8 +100,8 @@ async def dispatch_intent(
                         ("field_blind", f"场域失明: embedding不可用, query={user_input[:50]}", 3, "M2_field_context"),
                         commit=True
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"操作降级跳过: {e}")
 
             if _fc_new_topic:
                 methodology.setdefault("field_topic_shift", True)
@@ -150,8 +150,8 @@ async def dispatch_intent(
                     methodology["prefer_knowledge_path"] = True
                     methodology["skip_tool_path"] = True
                     logger.info(f"🧠 SelfModel: 工具不足({_tool_count}个), 优先知识路径")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         raw_intent, raw_conf = dispatcher._quick_intent_classification(user_input)
         logger.info(f"🔍 意图识别: query='{user_input}' dispatch_intent={intent_type} raw_intent={raw_intent} route={route}")
@@ -172,8 +172,8 @@ async def dispatch_intent(
         try:
             from core.presence.inner_time import inner_time_engine, CognitiveEventType
             inner_time_engine.tick(CognitiveEventType.SELF_REFERENCE, intensity=0.7, description=f"self_ref:{user_input[:30]}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         try:
             _sm = _get_self_model()
             if _sm and hasattr(_sm, 'record_cognitive_cycle'):
@@ -181,8 +181,8 @@ async def dispatch_intent(
                     perception={"self_referential": True, "query": user_input[:50]},
                     validation={},
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         methodology["self_referential"] = True
 
         if is_direct_self_reference(user_input):
@@ -215,8 +215,8 @@ async def dispatch_intent(
         _af1 = await _auto_fix_checkpoint(attempts, methodology, user_input, intent_type, "意图识别后")
         if _af1["fixes_applied"] > 0:
             events.append({"type": "step", "data": {"phase": "自我修复", "status": "done", "detail": f"🔧 意图阶段修复{_af1['fixes_applied']}项，已调整策略"}})
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     cp = _get_cognitive_planner()
     if cp:

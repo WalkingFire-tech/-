@@ -435,8 +435,8 @@ class TruthAccumulator:
                 overlap = len(insight_2grams & stmt_2grams) / min(len(insight_2grams), len(stmt_2grams))
                 if overlap > 0.6:
                     return row['name'] if isinstance(row, dict) else row[0]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return None
 
     def _reinforce_by_name(self, name: str):
@@ -447,8 +447,8 @@ class TruthAccumulator:
             if row:
                 count = row['evidence_count'] if isinstance(row, dict) else row[0]
                 db.execute("UPDATE truths SET evidence_count=? WHERE name=?", (count + 1, name), commit=True)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     def _save_truth(self, name: str, level: str, domain: str, statement: str, source: str):
         """保存真谛 — 新真谛必须通过筛子评估，不通过则标记pending_verification"""
@@ -644,8 +644,8 @@ class TruthAccumulator:
                 trigger_monitor.record("compute_truth_weight.high", triggered=weight >= 0.7)
                 trigger_monitor.record("compute_truth_weight.medium", triggered=0.3 <= weight < 0.7)
                 trigger_monitor.record("compute_truth_weight.low", triggered=weight < 0.3)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
             return weight
 

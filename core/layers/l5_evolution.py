@@ -784,8 +784,8 @@ class L5EvolutionLayer:
                     l2.search_threshold = new_value
                     sync_count += 1
                     logger.debug(f"同步 {gene.name}={new_value:.3f} -> L2")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"操作降级跳过: {e}")
 
             self.collector.collect(LayerStateReport(
                 layer_name="L5",

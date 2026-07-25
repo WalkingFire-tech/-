@@ -269,7 +269,9 @@ async def get_health_metrics():
 @router.get("/events/stats")
 async def get_event_stats():
     try:
-        from infrastructure.event_bus import bus, EventTypes
+        from core.ports.adapters import get_event_bus_port
+        bus = get_event_bus_port()
+        from infrastructure.event_bus import EventTypes
         return {
             "stats": bus.get_stats(),
             "event_types": {
@@ -289,7 +291,8 @@ async def get_event_stats():
 @router.get("/events/history/{event_type}")
 async def get_event_history(event_type: str, limit: int = 20):
     try:
-        from infrastructure.event_bus import bus
+        from core.ports.adapters import get_event_bus_port
+        bus = get_event_bus_port()
         return {"events": bus.get_history(event_type=event_type, limit=limit)}
     except Exception as e:
         return {"error": str(e)}

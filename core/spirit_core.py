@@ -402,8 +402,8 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
             trigger_monitor.record("validate_response", triggered=True)
             trigger_monitor.record("validate_response.logical", triggered=True, degraded=not checks.get("logical", True))
             trigger_monitor.record("validate_response.valid", triggered=result["valid"], degraded=not result["valid"])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return result
     
@@ -732,16 +732,16 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
             trigger_monitor.record("resonate.has_match", triggered=len(resonances) > 0, empty_result=len(resonances) == 0)
             if resonances:
                 trigger_monitor.record(f"resonate.principle.{resonances[0]['principle']}", triggered=True)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.defense import check_safety
             _safety = check_safety(context)
             if _safety and not _safety.get("safe", True):
                 logger.warning(f"SDRS防御拦截: {_safety.get('reason', '')}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return resonances
 

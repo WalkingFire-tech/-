@@ -62,8 +62,8 @@ class PatchGenerator:
             _hash_loc = _hle.locate(file_path, original_code)
             if _hash_loc:
                 logger.debug(f"Hashline定位成功: hash={_hash_loc.content_hash[:8]}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         category = defect.get("category", "")
         description = defect.get("description", "")
 

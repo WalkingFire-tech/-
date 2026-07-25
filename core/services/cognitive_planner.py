@@ -402,8 +402,8 @@ class CognitivePlanner:
                 if _subtasks and len(_subtasks) > 1:
                     logger.info(f"子任务拆解: {len(_subtasks)}个子任务")
                     perception["subtasks"] = _subtasks
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
             intent_type = perception.get("intent", "general")
 
@@ -418,8 +418,8 @@ class CognitivePlanner:
                         self.trigger_monitor.record("plan_template.reuse", triggered=True)
                 elif self.trigger_monitor:
                     self.trigger_monitor.record("plan_template.reuse", triggered=False)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
             if self.active_learner and self.meta_governor:
                 try:

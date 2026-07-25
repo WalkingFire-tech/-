@@ -76,8 +76,8 @@ class FlowHandlersMixin:
             try:
                 result = model.generate(intent.raw_text, task_type="complex")
                 return result[0] if isinstance(result, tuple) else result
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
         return "让我仔细思考一下你的问题..."
 
     def _is_complex_task(self, intent: Intent) -> bool:

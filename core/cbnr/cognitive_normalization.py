@@ -469,8 +469,8 @@ class CognitiveNormalization:
             if abs(delta) > 0:
                 gene_pool.mutate("attention_residual_alpha", delta, trigger="attention_fidelity_feedback")
                 logger.debug(f"注意力残差反馈: avg_fid={avg_fid:.2f}, α {current_alpha:.3f}→{current_alpha+delta:.3f}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         
         pred_error = attn.get("avg_prediction_error", 0.5)
         focus_boost = attn.get("focus_boost", 1.0)

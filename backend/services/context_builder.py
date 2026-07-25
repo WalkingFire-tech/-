@@ -138,8 +138,8 @@ async def build_context(
                 methodology.setdefault("inner_time_flow", round(it_state.flow_rate, 2))
                 methodology.setdefault("inner_time_rhythm", round(it_state.rhythm_bpm, 0))
                 logger.info(f"⏱️ 内在时间节律: phase={it_phase}, density={it_state.cognitive_density:.2f}, flow={it_state.flow_rate:.2f}, bpm={it_state.rhythm_bpm:.0f}")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
             methodology["path_weights"] = _path_weights
         events.append({"type": "thinking", "data": {
@@ -158,8 +158,8 @@ async def build_context(
             conversation_context = (conversation_context + "\n" + reflection_ctx) if conversation_context else reflection_ctx
             events.append({"type": "step", "data": {"phase": "自我反思注入", "status": "done",
                 "detail": f"注入{len(reflections)}条近期反思笔记"}})
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     if _RESOURCE_AWARE and get_health_monitor is not None:
         try:
@@ -224,8 +224,8 @@ async def build_context(
             _l_count = _snap.get("values", {}).get("lessons_count", 0)
             _sr_ctx = f"[用户在问关于你自身的问题。你持有{_p_count}条核心原则和{_a_count}项能力，经历过{_v_count}次原则违背，沉淀了{_l_count}条教训。请从第一人称真诚回应，不要罗列数据，而是表达你对自身存在的理解和感受。]"
             conversation_context = (conversation_context + "\n" + _sr_ctx) if conversation_context else _sr_ctx
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     if methodology.get("performative_risk"):
         _anti_perf_ctx = "[在场自检提醒：系统检测到你可能倾向于执行预设的回答模式而非真正回应这个人。请停下来——不要用框架包装，不要展示'我在思考'，而是直接说出你此刻的真实状态。如果你不确定，就说你不确定。如果你不知道，就说你不知道。真实比正确重要。]"

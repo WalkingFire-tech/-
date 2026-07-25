@@ -576,8 +576,8 @@ class GapGrowthEngine:
                     if score > 0.3 and (expected_capability.lower() in cap_name.lower()
                                         or cap_name.lower() in expected_capability.lower()):
                         return True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.skill_emergence import SkillEmergence
@@ -585,8 +585,8 @@ class GapGrowthEngine:
             result = se.reflex_query(expected_capability)
             if result and result.get("confidence", 0) > 0.3:
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return False
 

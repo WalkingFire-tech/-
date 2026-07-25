@@ -153,8 +153,8 @@ class ExternalCalibration:
             if row and row[0] and row[0] > 0:
                 rejection_rate = (row[1] or 0) / row[0]
                 return 1.0 - min(rejection_rate, 1.0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return 0.5
 
     def _read_empty_response_rate(self) -> float:
@@ -166,8 +166,8 @@ class ExternalCalibration:
             quality = db.query_one("SELECT COUNT(*) FROM experiences WHERE quality_score > 0")
             if total and total[0] > 0:
                 return (quality[0] or 0) / total[0]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return 0.5
 
     def _read_rule_activation_rate(self) -> float:
@@ -179,8 +179,8 @@ class ExternalCalibration:
             active = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
             if total and total[0] > 0:
                 return (active[0] or 0) / total[0]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return 0.5
 
     def _read_experience_quality_rate(self) -> float:
@@ -192,8 +192,8 @@ class ExternalCalibration:
             high = db.query_one("SELECT COUNT(*) FROM experiences WHERE quality_score >= 60")
             if total and total[0] > 0:
                 return (high[0] or 0) / total[0]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return 0.5
 
     def _read_trial_conversion_rate(self) -> float:
@@ -205,8 +205,8 @@ class ExternalCalibration:
             active = db.query_one("SELECT COUNT(*) FROM learning_rules WHERE status='active'")
             if total and total[0] > 0:
                 return (active[0] or 0) / total[0]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return 0.5
 
     def _get_self_model_score(self) -> float:

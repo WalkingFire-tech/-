@@ -90,16 +90,16 @@ async def sync_post_response(
             "route": route,
             "response_length": len(final_response) if final_response else 0,
         })
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from core.presence.probability_field import get_probability_field
         pf = get_probability_field()
         quality_signal = confidence * (1.0 if final_response and len(final_response) > 50 else 0.5)
         pf.update(signal=quality_signal)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from core.ports.adapters import get_storage_port
@@ -121,10 +121,10 @@ async def sync_post_response(
                             if _sr >= 0.6:
                                 _rule_db.execute("UPDATE learning_rules SET status='active' WHERE id=?", (_rr["id"],), commit=True)
                                 logger.info(f"✅ 试用期规则 #{_rr['id']} 激活 (成功率: {_sr:.1%})")
-            except Exception:
-                pass
-    except Exception:
-        pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from core.world_model import get_world_model
@@ -136,7 +136,7 @@ async def sync_post_response(
         for _uv in _unverified:
             try:
                 _wm.verify(_uv[1], _actual_outcome)
-            except Exception:
-                pass
-    except Exception:
-        pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")

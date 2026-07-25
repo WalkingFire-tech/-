@@ -98,8 +98,8 @@ async def fetch_ollama(query: str, model: str, timeout: int = 60, conversation_c
             _reason = _cfg.get("gpu_protection.disable_reason", "GPU保护模式")
             logger.warning(f"Ollama已禁用(GPU保护): {_reason}")
             return {"response": "", "source": "ollama_disabled", "error": _reason}
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
     async with _get_ollama_semaphore():
         global _ollama_last_inference_time
         _num_predict = 1024

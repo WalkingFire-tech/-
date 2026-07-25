@@ -55,8 +55,8 @@ async def fetch_external_api(query: str, conversation_context: str = "", truth_i
             }
             hint = perspective_hints.get(pm, perspective_hints["companion"])
             messages.append({"role": "system", "content": hint})
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         messages.append({"role": "user", "content": query})
         

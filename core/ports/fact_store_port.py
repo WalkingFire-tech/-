@@ -13,25 +13,37 @@ class FactStorePort(ABC):
 
     @abstractmethod
     async def search_by_keywords(self, text: str, limit: int = 10) -> List[Dict]:
-        """按关键词搜索事实，返回 [{"subject": str, "predicate": str, "object": str, "confidence": float, ...}]"""
         ...
 
     @abstractmethod
     async def extract_and_store(self, text: str, source: str = "auto") -> int:
-        """从文本中提取三元组并存储，返回新增数量"""
         ...
 
     @abstractmethod
     async def get_negations(self, subject: str) -> List[Dict]:
-        """获取某主体的否定事实"""
         ...
 
     @abstractmethod
     async def mark_used(self, fact_id: int) -> None:
-        """标记事实已被使用（用于优先级追踪）"""
+        ...
+
+    @abstractmethod
+    def add_assertion(self, question: str = "", subject: str = "",
+                      predicate: str = "", obj: str = "",
+                      source: str = "auto", confidence: float = 0.9) -> int:
+        ...
+
+    @abstractmethod
+    def add_correction(self, question: str = "", old_subject: str = "",
+                       old_predicate: str = "", old_obj: str = "",
+                       new_subject: str = "", new_predicate: str = "",
+                       new_obj: str = "", correction_source: str = "user_correction") -> None:
+        ...
+
+    @abstractmethod
+    def get_stats(self) -> Dict:
         ...
 
     @abstractmethod
     def is_available(self) -> bool:
-        """事实存储是否可用"""
         ...
