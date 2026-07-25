@@ -85,11 +85,11 @@ class SimulatedGenome:
         
         if random.random() < rate:
             child.retrieval_threshold = max(0.4, min(0.8, 
-                child.retrieval_threshold + random.uniform(-0.1, 0.1)))
+                child.retrieval_threshold + random.uniform(-0.2, 0.2)))
         
         if random.random() < rate:
             child.external_threshold = max(0.3, min(0.7,
-                child.external_threshold + random.uniform(-0.1, 0.1)))
+                child.external_threshold + random.uniform(-0.2, 0.2)))
         
         if random.random() < rate:
             child.memory_decay = max(0.9, min(0.99,
@@ -97,15 +97,26 @@ class SimulatedGenome:
         
         if random.random() < rate:
             child.exploration = max(0.0, min(1.0,
-                child.exploration + random.uniform(-0.2, 0.2)))
+                child.exploration + random.uniform(-0.4, 0.4)))
         
         if random.random() < rate:
             child.social = max(0.0, min(1.0,
-                child.social + random.uniform(-0.2, 0.2)))
+                child.social + random.uniform(-0.4, 0.4)))
         
         if random.random() < rate:
             child.answer_style = max(0.0, min(1.0,
-                child.answer_style + random.uniform(-0.2, 0.2)))
+                child.answer_style + random.uniform(-0.4, 0.4)))
+
+        if random.random() < 0.1:
+            import math
+            attr = random.choice(['retrieval_threshold', 'external_threshold', 
+                                   'exploration', 'social', 'answer_style'])
+            current = getattr(child, attr)
+            lo = {'retrieval_threshold': 0.4, 'external_threshold': 0.3,
+                  'exploration': 0.0, 'social': 0.0, 'answer_style': 0.0}[attr]
+            hi = {'retrieval_threshold': 0.8, 'external_threshold': 0.7,
+                  'exploration': 1.0, 'social': 1.0, 'answer_style': 1.0}[attr]
+            setattr(child, attr, random.uniform(lo, hi))
         
         return child
 

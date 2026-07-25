@@ -14,6 +14,10 @@ from adapters.llm.ollama_adapter import ollama_chat_request
 class ExternalLearner:
     """主动向外部资源学习"""
     
+    _UNAVAILABLE_COOLDOWN = 300
+    _deepseek_unavailable_until = 0.0
+    _ollama_unavailable_until = 0.0
+    
     def __init__(self, config: Dict = None, db_path: str = "data/knowledge_store.db"):
         self.config = config or {}
         self.db_path = db_path
@@ -136,7 +140,9 @@ class ExternalLearner:
     def ask_llm(self, prompt: str, system_prompt: str = None) -> str:
         """调用更强大的LLM获取答案或反思 — 优先外部API，降级到本地Ollama"""
         
-        if self.llm_api_key:
+        _now = __import__('time').time()
+        
+        if self.llm_api_key and _now > self._deepseek_unavailable_until:
             try:
                 import requests
                 import urllib3
@@ -160,24 +166,38 @@ class ExternalLearner:
                         "temperature": 0.7,
                         "max_tokens": 2000
                     },
-                    timeout=30,
+                    timeout=15,
                     verify=False
                 )
                 logger.info(f"外部LLM响应状态码: {response.status_code}")
 
                 if response.status_code == 200:
                     data = response.json()
-                    logger.info(f"外部LLM响应数据: {data}")
                     return data["choices"][0]["message"]["content"]
+                elif response.status_code in (400, 401, 403):
+                    self._deepseek_unavailable_until = _now + self._UNAVAILABLE_COOLDOWN
+                    logger.warning(f"外部LLM认证/配置错误({response.status_code})，标记不可用{self._UNAVAILABLE_COOLDOWN}s")
                 else:
                     logger.error(f"外部LLM失败({response.status_code})，尝试本地Ollama")
             except Exception as e:
                 logger.error(f"外部LLM失败: {e}，尝试本地Ollama")
-                import traceback
-                logger.error(traceback.format_exc())
+        elif self.llm_api_key:
+            logger.debug(f"外部LLM标记不可用，剩余{self._deepseek_unavailable_until - _now:.0f}s")
 
-        logger.info(f"降级到本地Ollama")
-        return self._ask_local_ollama(prompt, system_prompt)
+        if _now > self._ollama_unavailable_until:
+            logger.info(f"降级到本地Ollama")
+            result = self._ask_local_ollama(prompt, system_prompt)
+            if result:
+                return result
+            self._ollama_unavailable_until = _now + self._UNAVAILABLE_COOLDOWN
+            logger.warning(f"Ollama不可用，标记不可用{self._UNAVAILABLE_COOLDOWN}s")
+        
+        return json.dumps({
+            "intent": "无可用LLM",
+            "common_mistakes": ["外部API和本地Ollama均不可用"],
+            "parsing_strategies": ["请配置DEEPSEEK_API_KEY或启动Ollama"],
+            "experience_notes": "无法获取深度分析"
+        }, ensure_ascii=False)
     
     def _ask_local_ollama(self, prompt: str, system_prompt: str = None) -> str:
         """使用本地Ollama模型进行推理"""
@@ -196,7 +216,7 @@ class ExternalLearner:
                 model=model,
                 prompt=prompt,
                 system_prompt=system_prompt,
-                timeout=60
+                timeout=15
             )
             
             content = result.get("content", "")

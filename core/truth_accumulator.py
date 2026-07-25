@@ -348,7 +348,6 @@ class TruthAccumulator:
         failed_methods = [a[0] for a in failed]
         success_methods = [a[0] for a in successful]
 
-        # 识别转折模式
         turnaround_patterns = [
             {
                 "pattern": ["规则推理", "Ollama"],
@@ -374,16 +373,13 @@ class TruthAccumulator:
 
         for pattern in turnaround_patterns:
             if any(m in failed_methods for m in pattern["pattern"][:1]) and any(m in success_methods for m in pattern["pattern"][1:]):
+                existing = self._find_similar_truth(pattern["insight"])
+                if existing:
+                    self._reinforce_by_name(existing)
+                    return existing
                 truth_name = f"转折洞察_{pattern['domain']}_{datetime.now().strftime('%m%d%H%M')}"
                 self._save_truth(truth_name, "L3", pattern["domain"], pattern["insight"], "转折提炼")
                 return truth_name
-
-        # 通用转折洞察
-        if failed and successful:
-            insight = f"在'{query[:20]}'中，{','.join(failed_methods[:2])}失败，但{','.join(success_methods[:2])}成功——说明{success_methods[0]}比{failed_methods[0]}更适合此类问题"
-            truth_name = f"转折洞察_通用_{datetime.now().strftime('%m%d%H%M')}"
-            self._save_truth(truth_name, "L3", "通用", insight, "转折提炼")
-            return truth_name
 
         return None
 
@@ -418,6 +414,41 @@ class TruthAccumulator:
 
         except Exception:
             logger.warning("操作降级跳过")
+
+    def _find_similar_truth(self, insight: str) -> Optional[str]:
+        """查找已有相似真谛，避免重复写入"""
+        try:
+            db = get_storage_port(self.db_path)
+            rows = db.query("SELECT name, statement FROM truths WHERE is_active=1")
+            insight_2grams = set()
+            for i in range(len(insight) - 1):
+                insight_2grams.add(insight[i:i+2])
+            if len(insight_2grams) < 2:
+                return None
+            for row in rows:
+                stmt = row['statement'] if isinstance(row, dict) else row[1]
+                stmt_2grams = set()
+                for i in range(len(stmt) - 1):
+                    stmt_2grams.add(stmt[i:i+2])
+                if len(stmt_2grams) < 2:
+                    continue
+                overlap = len(insight_2grams & stmt_2grams) / min(len(insight_2grams), len(stmt_2grams))
+                if overlap > 0.6:
+                    return row['name'] if isinstance(row, dict) else row[0]
+        except Exception:
+            pass
+        return None
+
+    def _reinforce_by_name(self, name: str):
+        """按名称佐证已有真谛"""
+        try:
+            db = get_storage_port(self.db_path)
+            row = db.query_one("SELECT evidence_count FROM truths WHERE name=?", (name,))
+            if row:
+                count = row['evidence_count'] if isinstance(row, dict) else row[0]
+                db.execute("UPDATE truths SET evidence_count=? WHERE name=?", (count + 1, name), commit=True)
+        except Exception:
+            pass
 
     def _save_truth(self, name: str, level: str, domain: str, statement: str, source: str):
         """保存真谛 — 新真谛必须通过筛子评估，不通过则标记pending_verification"""

@@ -109,7 +109,7 @@ class HomeostaticState:
         if self.consolidation_need.direction == "excess" and self.consolidation_need.urgency > 0.4:
             return "sleeping"
         if self.exploration_drive.direction == "deficit" and self.exploration_drive.urgency > 0.3:
-            if self.energy_level.current > 0.4 and self.cognitive_load.current > 0.1:
+            if self.energy_level.current > 0.4 and self.cognitive_load.current > 0.25:
                 return "growing"
         if self.cognitive_load.is_balanced and self.energy_level.is_balanced:
             return "perceiving"

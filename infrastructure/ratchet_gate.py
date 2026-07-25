@@ -43,6 +43,23 @@ class RatchetGate:
         self.db_path = db_path
         self._init_db()
 
+    def _is_system_degraded(self) -> bool:
+        try:
+            from core.resource_awareness.adaptive_governor import get_adaptive_governor
+            governor = get_adaptive_governor()
+            mode = governor.get_effective_mode()
+            return mode in ("conservative", "emergency")
+        except Exception:
+            pass
+        try:
+            from core.self.model import get_self_model
+            sm = get_self_model()
+            directive = sm.behavioral_directive()
+            return directive.get("pathway_state") == "DEGRADED"
+        except Exception:
+            pass
+        return False
+
     def _init_db(self):
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
@@ -142,15 +159,26 @@ class RatchetGate:
         min_imp = min_improvement or self.MIN_IMPROVEMENT_RATIO
         delta = candidate_score - ratchet_level
 
+        tolerance = self.MAX_REGRESSION_TOLERANCE
+        degraded = self._is_system_degraded()
+        if degraded:
+            tolerance = self.MAX_REGRESSION_TOLERANCE * 5
+            if delta >= -tolerance:
+                reason_prefix = "[降级通道] "
+            else:
+                reason_prefix = "[降级通道] "
+        else:
+            reason_prefix = ""
+
         if candidate_score >= ratchet_level * min_imp:
             approved = True
-            reason = f"提升{delta:.4f}超过门槛{ratchet_level * min_imp - ratchet_level:.4f}"
-        elif delta >= -self.MAX_REGRESSION_TOLERANCE:
+            reason = f"{reason_prefix}提升{delta:.4f}超过门槛{ratchet_level * min_imp - ratchet_level:.4f}"
+        elif delta >= -tolerance:
             approved = True
-            reason = f"微小回退{abs(delta):.4f}在容忍范围内"
+            reason = f"{reason_prefix}微小回退{abs(delta):.4f}在容忍范围内(tol={tolerance:.2f})"
         else:
             approved = False
-            reason = f"回退{abs(delta):.4f}超过容忍度{self.MAX_REGRESSION_TOLERANCE}"
+            reason = f"{reason_prefix}回退{abs(delta):.4f}超过容忍度{tolerance:.2f}"
 
         decision = RatchetDecision(
             approved=approved,

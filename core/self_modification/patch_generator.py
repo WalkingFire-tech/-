@@ -84,7 +84,10 @@ class PatchGenerator:
     def generate_llm_patch(self, defect: Dict, source: str) -> Optional[Patch]:
         file_path = defect.get("file", "")
         if file_path in _get_immutable_files():
-            logger.warning(f"不可变文件，跳过补丁生成: {file_path}")
+            patch = self._handle_immutable_file(file_path, defect, source)
+            if patch:
+                return patch
+            logger.info(f"不可变文件补丁生成失败，跳过: {file_path}")
             return None
 
         prompt = self._build_prompt(defect, source)
@@ -130,6 +133,115 @@ class PatchGenerator:
                 logger.warning(f"补丁包含危险模式: {pattern}")
                 return False
         return True
+
+    def _handle_immutable_file(self, file_path: str, defect: Dict, source: str) -> Optional[Patch]:
+        """
+        不可变文件策略：从"完全拒绝"变成"生成补丁但标记待审批"。
+        补丁进入待审批队列，需要人类批准才能部署。
+        """
+        category = defect.get("category", "")
+        description = defect.get("description", "")
+
+        strategy_patch = self._query_strategy_library(category, description, source)
+        if strategy_patch:
+            strategy_patch.file = file_path
+            strategy_patch.validated = False
+            self._store_pending_patch(strategy_patch, file_path, defect)
+            return strategy_patch
+
+        patch = self._try_category_patch(category, description, defect, source)
+        if patch:
+            patch.file = file_path
+            patch.validated = False
+            self._store_pending_patch(patch, file_path, defect)
+            return patch
+
+        logger.info(f"🔧 L5: {file_path} 是核心文件，无可自动生成的补丁，记录缺陷待人工审查")
+        self._store_pending_patch(None, file_path, defect)
+        return None
+
+    def _try_category_patch(self, category: str, description: str, defect: Dict, source: str) -> Optional[Patch]:
+        """根据缺陷类别尝试生成补丁"""
+        if category == "exception_handling" and "裸except" in description:
+            return self._patch_bare_except(defect, source)
+        if category == "database" or "sqlite3" in description:
+            return self._patch_sqlite3_migration(defect, source)
+        if category == "performance" and "time.sleep" in description:
+            return self._patch_sync_sleep(defect, source)
+        if category == "code_smell":
+            return self._patch_code_smell(defect, source)
+        return None
+
+    def _patch_code_smell(self, defect: Dict, source: str) -> Optional[Patch]:
+        """处理代码坏味道缺陷——生成描述性补丁记录"""
+        lines = source.splitlines()
+        line_num = defect.get("line", 0) - 1
+        if 0 <= line_num < len(lines):
+            original = lines[line_num].rstrip()
+            return Patch(
+                file=defect.get("file", ""),
+                original=original,
+                replacement=f"# TODO: {defect.get('description', 'code smell')} — 需人工审查",
+                description=f"代码坏味道标记: {defect.get('description', '')}",
+                defect_category="code_smell",
+                confidence=0.2,
+            )
+        return None
+
+    def _store_pending_patch(self, patch: Optional[Patch], file_path: str, defect: Dict):
+        """将待审批补丁/缺陷存入数据库"""
+        try:
+            import sqlite3
+            from datetime import datetime as _dt
+            conn = sqlite3.connect("data/pending_patches.db", check_same_thread=False)
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS pending_patches (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT,
+                    target_file TEXT,
+                    patch_content TEXT,
+                    status TEXT,
+                    risk_level TEXT,
+                    approval_reason TEXT,
+                    defect_category TEXT,
+                    defect_description TEXT,
+                    approved_by TEXT,
+                    approved_at TEXT
+                )
+            """)
+            patch_data = ""
+            risk_level = "high"
+            if patch:
+                patch_data = json.dumps({
+                    "file": patch.file,
+                    "original": patch.original,
+                    "replacement": patch.replacement,
+                    "description": patch.description,
+                    "confidence": patch.confidence,
+                }, ensure_ascii=False)
+                risk_level = "medium" if patch.confidence > 0.8 else "high"
+
+            cursor.execute(
+                "INSERT INTO pending_patches "
+                "(timestamp, target_file, patch_content, status, risk_level, approval_reason, defect_category, defect_description) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    _dt.now().isoformat(),
+                    file_path,
+                    patch_data,
+                    "pending_human_approval",
+                    risk_level,
+                    f"目标文件 {file_path} 是核心模块，自动部署被阻止。建议人工审查补丁后批准。",
+                    defect.get("category", ""),
+                    defect.get("description", ""),
+                ),
+            )
+            conn.commit()
+            conn.close()
+            logger.info(f"📝 补丁/缺陷已记录待审批队列: {file_path} ({defect.get('category', '')})")
+        except Exception as e:
+            logger.warning(f"待审批补丁存储失败: {e}")
 
     def _patch_bare_except(self, defect: Dict, source: str) -> Optional[Patch]:
         lines = source.splitlines()

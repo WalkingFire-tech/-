@@ -103,7 +103,14 @@ class ProbabilityFieldDrift:
         signal_term = self.config.alpha * (effective_signal - self.mean) * dt
         recovery_term = self.config.beta * (self.config.mu_0 - self.mean) * dt
         breath_term = breath * 0.8 * dt
-        self.mean += signal_term + recovery_term + breath_term + epsilon
+
+        spontaneous = 0.0
+        if self.mean < 0.2 and effective_signal < 0.1:
+            spontaneous = random.gauss(0.05, 0.02) * dt
+            if self.update_count % 30 == 0:
+                logger.debug(f"🌊 自发探索扰动: mean={self.mean:.3f}, spontaneous={spontaneous:.4f}")
+
+        self.mean += signal_term + recovery_term + breath_term + epsilon + spontaneous
 
         var_signal = self.config.gamma * (abs(effective_signal) - self.variance) * dt
         var_recovery = self.config.delta * (self.config.sigma_0 - self.variance) * dt
