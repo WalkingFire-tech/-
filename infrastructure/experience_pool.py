@@ -86,9 +86,11 @@ class ExperiencePool:
                 "plan": plan,
                 "duration": duration,
                 "user_feedback": user_feedback,
+                "raw_input": raw_input,
+                "response": response,
             })
-        except Exception:
-            logger.warning("操作降级跳过")
+        except Exception as e:
+            logger.warning(f"因果图学习跳过: {e}")
         
         return experience_id
     
