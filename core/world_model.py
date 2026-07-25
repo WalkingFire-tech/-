@@ -376,6 +376,12 @@ class WorldModel:
         if causal_path and len(causal_path) >= 2:
             self._update_edge_confidence_in_conn(causal_path[0], causal_path[-1], was_correct)
 
+        if not was_correct and causal_path and len(causal_path) >= 2:
+            try:
+                self._generate_counterfactual_from_failure(causal_path, pred_state, actual_outcome)
+            except Exception:
+                pass
+
         prediction = Prediction(predicted_state=pred_state, probability=prob, confidence=conf, causal_path=causal_path)
         return PredictionResult(
             prediction=prediction,
@@ -1116,6 +1122,28 @@ class WorldModel:
                 (new_prob, new_conf, datetime.now().isoformat(), source_id, target_id),
                 commit=True
             )
+
+    def _generate_counterfactual_from_failure(self, causal_path: list, predicted: Dict, actual: Dict):
+        pred_outcome = predicted.get("outcome", "unknown")
+        actual_outcome = actual.get("outcome", "unknown")
+        if len(causal_path) >= 2:
+            actual_action = causal_path[-1] if causal_path[-1].startswith("method:") else causal_path[0]
+            alternatives = self._db.query(
+                "SELECT target_id FROM causal_edges WHERE source_id = ? AND target_id != ? LIMIT 3",
+                (causal_path[0], causal_path[-1])
+            )
+            for alt in alternatives:
+                alt_action = alt[0]
+                lesson = f"预测{pred_outcome}但实际{actual_outcome}，若选{alt_action}替代{actual_action}可能改善"
+                self.save_counterfactual(
+                    intent=causal_path[0],
+                    actual_action=actual_action,
+                    alternative_action=alt_action,
+                    actual_score=0.0,
+                    alt_score=0.5,
+                    would_be_better=True,
+                    lesson=lesson
+                )
 
     def _evaluate_prediction(self, predicted: Dict, actual: Dict) -> bool:
         if predicted.get("outcome") == actual.get("outcome"):
