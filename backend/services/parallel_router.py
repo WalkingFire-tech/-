@@ -720,19 +720,11 @@ async def execute_parallel_paths(
         try:
             from infrastructure.experience_pool import get_experience_pool
             _pool = get_experience_pool()
-            _similar = _pool.get_high_quality_experiences(intent_type=intent_type, min_quality=70, limit=3)
+            _similar = _pool.search_successful_responses(intent_type=intent_type, min_quality=70, limit=3)
             if not _similar:
-                _similar = _pool.get_high_quality_experiences(min_quality=50, limit=3)
+                _similar = _pool.search_successful_responses(min_quality=50, limit=3)
             for exp in _similar:
-                _resp = exp.get("plan", "")
-                if not _resp or len(_resp) < 30:
-                    try:
-                        _db = _pool._db()
-                        _row = _db.query_one("SELECT response FROM experiences WHERE raw_input = ? LIMIT 1", (exp.get("raw_input", ""),))
-                        if _row and _row[0] and len(_row[0]) > 30:
-                            _resp = _row[0]
-                    except Exception:
-                        pass
+                _resp = exp.get("response", "")
                 if _resp and len(_resp) > 30:
                     _rescue_candidates.append({
                         "source": "自救:经验池回溯",

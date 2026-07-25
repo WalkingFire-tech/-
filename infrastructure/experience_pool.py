@@ -152,6 +152,33 @@ class ExperiencePool:
         rows = db.query(query, params)
         return [dict(row) for row in rows]
 
+    def get_response_by_raw_input(self, raw_input: str) -> Optional[str]:
+        """根据raw_input查询response字段（公共接口，替代直接访问_db）"""
+        try:
+            db = self._db()
+            row = db.query_one("SELECT response FROM experiences WHERE raw_input = ? LIMIT 1", (raw_input,))
+            return row[0] if row else None
+        except Exception:
+            return None
+
+    def search_successful_responses(self, intent_type: str = None, min_quality: int = 50, limit: int = 5) -> List[Dict]:
+        """搜索高质量经验的完整信息（含response），用于自救回溯"""
+        query = '''
+            SELECT intent_type, raw_input, plan, model_name, quality_score, response
+            FROM experiences
+            WHERE quality_score >= ? AND response IS NOT NULL AND LENGTH(response) > 30
+        '''
+        params = [min_quality]
+        if intent_type:
+            query += ' AND intent_type = ?'
+            params.append(intent_type)
+        query += ' ORDER BY quality_score DESC LIMIT ?'
+        params.append(limit)
+
+        db = self._db()
+        rows = db.query(query, params)
+        return [dict(row) for row in rows]
+
 
 _experience_pool_instance = None
 _experience_pool_lock = threading.Lock()
