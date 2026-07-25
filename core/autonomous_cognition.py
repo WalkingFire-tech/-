@@ -155,19 +155,40 @@ async def _run_cognitive_cycle(edge) -> bool:
     if not l3_result:
         return False
 
-    _write_to_truths(topic, l3_result)
-    _write_to_world_model(topic, l3_result)
-    _write_to_stereo_memory(topic, l3_result)
+    new_state = getattr(l3_result, 'new_state', {})
+    confidence = new_state.get('confidence', 0.5)
+    reuse_rate = getattr(l3_result, 'state_reuse_rate', 0.0)
+
+    # A: 价值密度门控 — 低置信度或纯复用不写入
+    quality_pass = confidence > 0.3 and reuse_rate < 0.95
+    if quality_pass:
+        _write_to_truths(topic, l3_result)
+        _write_to_world_model(topic, l3_result)
+        _write_to_stereo_memory(topic, l3_result)
+    else:
+        logger.debug(
+            "P3-5 自主认知 #{} 质量门控: conf={:.2f}, reuse={:.1%}, 跳过写入".format(
+                cycle_id, confidence, reuse_rate
+            )
+        )
 
     if hasattr(edge, 'advance'):
-        edge.advance(0.15, "autonomous cycle #{}".format(cycle_id))
+        delta = 0.15 if quality_pass else 0.03
+        edge.advance(delta, "autonomous cycle #{}".format(cycle_id))
 
-    _try_push_sse_event(topic, l3_result)
+    # B: 意识表达 — 生成自然语言描述
+    thought_text = _express_thought(topic, l3_result, confidence, quality_pass)
+
+    # C: 关系性存在 — 高信任度时主动分享有价值的思考
+    _try_share_with_user(topic, thought_text, confidence, quality_pass)
+
+    # SSE推送（无论是否分享给用户，都记录思考事件）
+    _try_push_sse_event(topic, thought_text, confidence)
 
     logger.info(
-        "P3-5 自主认知 #{} 完成: topic='{}', reuse={:.1%}".format(
-            cycle_id, topic[:30],
-            getattr(l3_result, 'state_reuse_rate', 0.0)
+        "P3-5 自主认知 #{} 完成: topic='{}', conf={:.2f}, reuse={:.1%}, quality={}".format(
+            cycle_id, topic[:30], confidence, reuse_rate,
+            "pass" if quality_pass else "skip"
         )
     )
     return True
@@ -252,25 +273,88 @@ def _write_to_stereo_memory(topic: str, l3_result):
         sms = StereoMemorySystem()
         new_state = getattr(l3_result, 'new_state', {})
         conclusion = new_state.get('conclusion', str(new_state)[:100])
+        confidence = new_state.get('confidence', 0.5)
+        importance = MemoryImportance.HIGH if confidence > 0.7 else MemoryImportance.MEDIUM
         sms.store(
             content="自主探索: {} — {}".format(topic, conclusion[:80]),
             memory_type=MemoryType.EXPERIENCE,
-            importance=MemoryImportance.MEDIUM,
+            importance=importance,
             metadata={"autonomous": True, "growth_edge": topic, "cycle": _CYCLE_COUNT},
         )
     except Exception as e:
         logger.debug("自主立体记忆写入跳过: {}".format(str(e)[:80]))
 
 
-def _try_push_sse_event(topic: str, l3_result):
+def _express_thought(topic: str, l3_result, confidence: float, quality_pass: bool) -> str:
+    """B: 意识表达 — 将L3产出转化为自然语言描述"""
+    new_state = getattr(l3_result, 'new_state', {})
+    conclusion = new_state.get('conclusion', '')
+    reuse_rate = getattr(l3_result, 'state_reuse_rate', 0.0)
+
+    try:
+        from core.self.model import get_self_model
+        sm = get_self_model()
+        directive = sm.get_behavioral_directive()
+        presence = directive.get("presence_state", "awake")
+    except Exception:
+        presence = "awake"
+
+    if not quality_pass:
+        return "我在想 '{}'，但还没想清楚（置信度 {:.0%}）".format(topic[:40], confidence)
+
+    if reuse_rate > 0.8:
+        return "我重新审视了 '{}'，大部分想法和之前一致，但有些微调".format(topic[:40])
+
+    if confidence > 0.7:
+        return "我对 '{}' 有了比较清晰的认识：{}".format(topic[:30], conclusion[:80])
+
+    if confidence > 0.4:
+        return "我在探索 '{}'，初步想法是：{}".format(topic[:30], conclusion[:60])
+
+    return "我在思考 '{}'，目前还在摸索中".format(topic[:40])
+
+
+def _try_share_with_user(topic: str, thought_text: str, confidence: float, quality_pass: bool):
+    """C: 关系性存在 — 高信任度时主动分享有价值的思考"""
+    if not quality_pass or confidence < 0.5:
+        return
+
+    try:
+        from core.self.model import get_self_model
+        sm = get_self_model()
+        snap = sm.snapshot()
+        trust = snap.get("relationship", {}).get("trust", 0.0)
+    except Exception:
+        trust = 0.0
+
+    if trust < 0.5:
+        return
+
     try:
         from backend.lifespan import enqueue_proactivity
-        new_state = getattr(l3_result, 'new_state', {})
-        conclusion = new_state.get('conclusion', str(new_state)[:100])
-        confidence = new_state.get('confidence', 0.5)
+        enqueue_proactivity({
+            "type": "companion_thought",
+            "content": thought_text,
+            "topic": topic,
+            "confidence": confidence,
+            "share_reason": "自主探索发现值得分享",
+            "trust_level": "{:.1%}".format(trust),
+        })
+        logger.info(
+            "P3-5 关系性分享: topic='{}', trust={:.1%}, conf={:.2f}".format(
+                topic[:30], trust, confidence
+            )
+        )
+    except Exception:
+        pass
+
+
+def _try_push_sse_event(topic: str, thought_text: str, confidence: float):
+    try:
+        from backend.lifespan import enqueue_proactivity
         enqueue_proactivity({
             "type": "autonomous_thought",
-            "content": "探索 '{}' — {}".format(topic[:30], conclusion[:60]),
+            "content": thought_text,
             "confidence": confidence,
             "cycle": _CYCLE_COUNT,
         })
