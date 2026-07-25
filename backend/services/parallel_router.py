@@ -709,6 +709,133 @@ async def execute_parallel_paths(
     except Exception as e:
         logger.warning(f"Beam search跳过: {e}")
 
+    # ========== 汇聚后自救：所有路径失败/极低质量时触发 ==========
+    _effective_candidates = [c for c in candidates if c.get("response") and len(c.get("response", "")) > 20 and c.get("quality", 0) >= 30]
+    if len(_effective_candidates) == 0:
+        logger.warning(f"🧩 所有路径失败(0个有效候选)，启动汇聚后自救")
+        yield _emit_s("step", {"phase": "汇聚自救", "status": "running", "detail": "所有路径失败，启动自救：查经验池→尝试工具→内部推理..."})
+
+        _rescue_candidates = []
+
+        try:
+            from infrastructure.experience_pool import get_experience_pool
+            _pool = get_experience_pool()
+            _similar = _pool.get_high_quality_experiences(intent_type=intent_type, min_quality=70, limit=3)
+            if not _similar:
+                _similar = _pool.get_high_quality_experiences(min_quality=50, limit=3)
+            for exp in _similar:
+                _resp = exp.get("plan", "")
+                if not _resp or len(_resp) < 30:
+                    try:
+                        _db = _pool._db()
+                        _row = _db.query_one("SELECT response FROM experiences WHERE raw_input = ? LIMIT 1", (exp.get("raw_input", ""),))
+                        if _row and _row[0] and len(_row[0]) > 30:
+                            _resp = _row[0]
+                    except Exception:
+                        pass
+                if _resp and len(_resp) > 30:
+                    _rescue_candidates.append({
+                        "source": "自救:经验池回溯",
+                        "response": _resp[:2000],
+                        "quality": min(65, exp.get("quality_score", 50)),
+                    })
+            if _rescue_candidates:
+                logger.info(f"🧩 自救: 经验池回溯找到{len(_rescue_candidates)}条历史成功经验")
+        except Exception as e:
+            logger.warning(f"自救经验池查询跳过: {e}")
+
+        if not _rescue_candidates:
+            try:
+
+                from core.learning.tool_builder import ToolSelfBuilder, ToolNeed, NeedPriority
+                _tb = ToolSelfBuilder()
+                _need = ToolNeed(
+                    need_id=f"rescue_{int(time.time())}",
+                    description=user_input[:200],
+                    priority=NeedPriority.HIGH,
+                    context={"intent_type": intent_type, "source": "parallel_router_rescue"},
+                )
+                _build = _tb.build_tool(_need)
+                if _build.success and _build.tool and _build.tool.code:
+                    _tool_code = _build.tool.code
+                    _dangerous = any(p in _tool_code for p in ["os.system", "subprocess", "rm -rf", "shutil.rmtree", "__import__", "eval(", "exec("])
+                    if _dangerous:
+                        _rescue_candidates.append({
+                            "source": "自救:工具生成(需审核)",
+                            "response": f"生成了工具方案，但包含潜在风险操作，需人工确认：\n{_tool_code[:500]}...",
+                            "quality": 25,
+                            "requires_approval": True,
+                        })
+                    else:
+                        _rescue_candidates.append({
+                            "source": "自救:工具生成",
+                            "response": f"为解决此问题生成了专用工具：\n{_tool_code[:1500]}",
+                            "quality": 35,
+                        })
+                    logger.info(f"🧩 自救: 工具生成成功 tool_id={_build.tool.tool_id} safe={not _dangerous}")
+            except Exception as e:
+                logger.warning(f"自救工具生成跳过: {e}")
+
+        if not _rescue_candidates:
+            try:
+                from core.world_model import get_world_model
+                _wm = get_world_model()
+                _pred = _wm.predict(
+                    {"intent": intent_type, "query": user_input[:50]},
+                    intent_type,
+                    exploration_depth=2,
+                )
+                if _pred and getattr(_pred, "confidence", 0) > 0.2:
+                    _outcome = getattr(_pred, "predicted_state", {})
+                    if isinstance(_outcome, dict):
+                        _outcome_str = _outcome.get("outcome", "无明确结论")
+                    else:
+                        _outcome_str = str(_outcome)[:200]
+                    _rescue_candidates.append({
+                        "source": "自救:因果模型推理",
+                        "response": f"基于历史因果模型推断：{_outcome_str}",
+                        "quality": int(getattr(_pred, "confidence", 0.2) * 60),
+                    })
+                    logger.info(f"🧩 自救: world_model因果推理 confidence={getattr(_pred, 'confidence', 0):.2f}")
+            except Exception as e:
+                logger.warning(f"自救因果推理跳过: {e}")
+
+        if not _rescue_candidates:
+            try:
+                from backend.services.orchestrator_helpers import self_reason
+                _sr_result = await self_reason(user_input, conversation_context, truth_insights)
+                if _sr_result and _sr_result.get("response") and len(_sr_result["response"]) > 20:
+                    _rescue_candidates.append({
+                        "source": "自救:内部推理",
+                        "response": _sr_result["response"][:2000],
+                        "quality": _sr_result.get("quality", 30),
+                    })
+                    logger.info("🧩 自救: 内部推理生成兜底响应")
+            except Exception as e:
+                logger.warning(f"自救内部推理跳过: {e}")
+
+        if _rescue_candidates:
+            candidates.extend(_rescue_candidates)
+            logger.info(f"🧩 汇聚自救: 补充{len(_rescue_candidates)}个候选")
+            yield _emit_s("step", {"phase": "汇聚自救", "status": "done", "detail": f"自救补充{len(_rescue_candidates)}个候选(来源: {'+'.join(c.get('source','?') for c in _rescue_candidates)})"})
+        else:
+            logger.warning("🧩 汇聚自救: 所有自救手段均失败")
+            yield _emit_s("step", {"phase": "汇聚自救", "status": "done", "detail": "所有自救手段均失败，将使用永不放弃引擎"})
+
+        try:
+            from core.presence.existence_layer import get_existence_layer
+            _el = get_existence_layer()
+            if _el:
+                _el.receive_signal({
+                    "type": "all_paths_failed",
+                    "query": user_input[:100],
+                    "intent_type": intent_type,
+                    "rescue_count": len(_rescue_candidates),
+                    "timestamp": time.time(),
+                })
+        except Exception as e:
+            logger.debug(f"存在层阻碍上报跳过: {e}")
+
     yield candidates
 
 

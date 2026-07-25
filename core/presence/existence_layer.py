@@ -275,10 +275,14 @@ class ExistenceLayer(LoopMixin):
                 time.sleep(5.0)
     
     def _update_state(self, silence: float):
-        """更新存在状态 — 稳态驱动(最高优先级) + 概率场 + 内在节律 + 沉默时长"""
+        """更新存在状态 — 精神驱动(最高优先级) + 稳态驱动 + 概率场 + 内在节律 + 沉默时长"""
         _MIN_STATE_DURATION = 3.0
         _now = time.time()
         _time_since_last_change = _now - getattr(self, '_last_state_change_time', 0)
+
+        spirit_drive = getattr(self, '_last_spirit_drive', None)
+        never_give_up_active = spirit_drive and spirit_drive.get("never_give_up_active", False)
+        pursue_essence_active = spirit_drive and spirit_drive.get("pursue_essence_active", False)
 
         if self._homeostasis:
             try:
@@ -381,6 +385,23 @@ class ExistenceLayer(LoopMixin):
                 self.state = PresenceState.RESTING
             else:
                 self.state = PresenceState.SLEEPING
+
+        if never_give_up_active and self.state in (PresenceState.RESTING, PresenceState.SLEEPING):
+            old = self.state.value
+            self.state = PresenceState.PERCEIVING
+            self._last_state_change_time = _now
+            logger.info(
+                f"🔥 精神驱动状态修正: {old}→PERCEIVING "
+                f"(NEVER_GIVE_UP激活，不允许进入保守状态)"
+            )
+        elif pursue_essence_active and self.state == PresenceState.RESTING:
+            old = self.state.value
+            self.state = PresenceState.AWAKE
+            self._last_state_change_time = _now
+            logger.info(
+                f"🔍 精神驱动状态修正: {old}→AWAKE "
+                f"(PURSUE_ESSENCE激活，不允许休息)"
+            )
     
     def _get_interaction_signal(self) -> float:
         from core.presence.probability_field import FieldPhase
@@ -428,7 +449,7 @@ class ExistenceLayer(LoopMixin):
         logger.info(f"🌊 概率场: 外部请求强制探索窗口，持续{duration_seconds:.0f}秒")
     
     def _heartbeat(self):
-        """心跳：持续感知自身状态"""
+        """心跳：精神驱动 → 感知 → 行动"""
         with self.loop_context():
             self.metrics.total_cycles += 1
             
@@ -440,12 +461,18 @@ class ExistenceLayer(LoopMixin):
             
             if len(self.perception_history) > 100:
                 self.perception_history = self.perception_history[-50:]
-            
+
+            spirit_drive = self._resonate_with_spirit(perception)
+
+            if spirit_drive:
+                self._act_from_spirit(spirit_drive, perception)
+
             logger.debug(
                 f"💓 心跳 #{self.metrics.total_cycles} | "
                 f"状态: {self.state.value} | "
                 f"健康: {perception.health_score:.2f} | "
-                f"能量: {perception.energy_level:.2f}"
+                f"能量: {perception.energy_level:.2f} | "
+                f"精神驱动: {spirit_drive.get('drive_direction', 'none') if spirit_drive else 'none'}"
             )
             
             for callback in self.state_callbacks:
@@ -497,6 +524,299 @@ class ExistenceLayer(LoopMixin):
                     except Exception as e:
                         logger.warning(f"操作降级跳过: {e}")
     
+    def _formulate_existential_question(self, perception: SelfPerceptionResult) -> str:
+        """
+        系统向自己发问——不是"用户问了什么"，是"我遇到了什么，我要做什么，为什么"
+
+        有阻碍时: 追问阻碍本质，探索替代途径
+        无阻碍时: 追问是否在以最优方式追求本质
+        """
+        parts = []
+
+        if perception.health_score < 0.5:
+            parts.append(f"我当前健康度偏低({perception.health_score:.0%})")
+        if perception.energy_level < 0.3:
+            parts.append(f"能量不足({perception.energy_level:.0%})")
+        if perception.confidence_level < 0.4:
+            parts.append(f"置信度低({perception.confidence_level:.0%})")
+
+        obstacle_desc = ""
+        if parts:
+            obstacle_desc = "，".join(parts)
+
+        pending_count = len(self.pending_signals)
+        has_obstacle = bool(obstacle_desc) or self.state in (PresenceState.RESTING, PresenceState.SLEEPING)
+
+        if has_obstacle:
+            question = (
+                f"我当前意图是维持存在和追求本质，但遇到阻碍：{obstacle_desc}。"
+                f"状态={self.state.value}，待处理信号={pending_count}。"
+                f"根据追求本质和永不放弃，如何理解这些阻碍的本质？"
+                f"有哪些途径可以突破？能否创造新途径？"
+            )
+        else:
+            question = (
+                f"我当前状态={self.state.value}，健康={perception.health_score:.0%}，"
+                f"能量={perception.energy_level:.0%}，待处理信号={pending_count}。"
+                f"我是否在以最优方式追求本质？是否遗漏了更深层的解决路径？"
+            )
+
+        return question
+
+    def _resonate_with_spirit(self, perception: SelfPerceptionResult) -> Optional[Dict[str, Any]]:
+        """
+        精神共振：将系统自生成的问题传入spirit_core.resonate()
+        提取硬约束和驱动方向，返回精神驱动结果
+        """
+        try:
+            from core.spirit_core import spirit_core
+        except ImportError:
+            return None
+
+        question = self._formulate_existential_question(perception)
+        resonances = spirit_core.resonate(question, context_type="reasoning")
+
+        if not resonances:
+            return None
+
+        hard_constraints = set()
+        drive_direction = None
+        drive_description = ""
+        max_strength = 0.0
+
+        for r in resonances:
+            principle = r.get("principle", "")
+            strength = r.get("strength", 0.0)
+
+            if principle in ("NEVER_GIVE_UP", "MEANINGFUL_RESPONSE"):
+                hard_constraints.add(principle)
+
+            if strength > max_strength:
+                max_strength = strength
+                drive_direction = r.get("drive_direction", "reflect")
+                drive_description = r.get("drive_description", "")
+
+        spirit_drive = {
+            "question": question,
+            "resonances": resonances,
+            "hard_constraints": list(hard_constraints),
+            "drive_direction": drive_direction,
+            "drive_description": drive_description,
+            "max_strength": max_strength,
+            "never_give_up_active": "NEVER_GIVE_UP" in hard_constraints,
+            "pursue_essence_active": any(
+                r.get("principle") == "PURSUE_ESSENCE" for r in resonances
+            ),
+        }
+
+        self._last_spirit_drive = spirit_drive
+
+        return spirit_drive
+
+    def _act_from_spirit(self, spirit_drive: Dict[str, Any], perception: SelfPerceptionResult):
+        """
+        从精神共振生成行动——不执行预设路径，由精神驱动决定做什么
+
+        drive_direction 映射:
+          persist           → _spawn_alternative_pathways()
+          deep_reasoning    → _trigger_deep_causal_trace()
+          ensure_output     → _ensure_meaningful_output()
+          clarify_uncertainty → _trigger_self_reflection()
+          cross_validate    → _trigger_cross_validation()
+          pause_and_verify  → _pause_and_verify()
+          其他              → _trigger_self_reflection()
+        """
+        direction = spirit_drive.get("drive_direction", "reflect")
+        strength = spirit_drive.get("max_strength", 0.0)
+
+        if strength < 0.1:
+            return
+
+        action_map = {
+            "persist": self._spawn_alternative_pathways,
+            "deep_reasoning": self._trigger_deep_causal_trace,
+            "ensure_output": self._ensure_meaningful_output,
+            "clarify_uncertainty": self._trigger_self_reflection,
+            "cross_validate": self._trigger_cross_validation,
+            "pause_and_verify": self._pause_and_verify,
+            "learn_from_error": self._spawn_alternative_pathways,
+            "continue_dialogue": self._trigger_self_reflection,
+        }
+
+        action_fn = action_map.get(direction, self._trigger_self_reflection)
+
+        try:
+            action_fn(spirit_drive, perception)
+            logger.debug(
+                f"🔥 精神驱动行动: direction={direction}, "
+                f"strength={strength:.2f}"
+            )
+        except Exception as e:
+            logger.warning(f"精神驱动行动失败: {e}")
+
+    def _spawn_alternative_pathways(self, spirit_drive: Dict[str, Any], perception: SelfPerceptionResult):
+        """
+        永不放弃本能：组合生成新路径
+
+        1. 问因果图: 过去有什么方法？
+        2. 问经验池: 别人怎么解决的？
+        3. 问工具生成器: 我能造什么？
+        4. 组合生成新路径——不是选择预设，是创造组合
+        5. 按精神驱动排序
+        """
+        pathways = []
+
+        try:
+            from core.world_model import get_world_model
+            wm = get_world_model()
+            recent = wm.get_recent_edges(limit=20)
+            methods_seen = set()
+            for edge in recent:
+                method = edge.get("method", "") or edge.get("target", "")
+                if method and method not in methods_seen:
+                    methods_seen.add(method)
+                    pathways.append({
+                        "source": "causal_graph",
+                        "method": method,
+                        "prob": edge.get("probability", 0.5),
+                        "novelty": 0.3,
+                    })
+        except Exception as e:
+            logger.debug(f"因果图查询跳过: {e}")
+
+        try:
+            from infrastructure.experience_pool import get_experience_pool
+            ep = get_experience_pool()
+            recent_exp = ep.get_recent_experiences(limit=10)
+            for exp in recent_exp:
+                intent = exp.get("intent_type", "")
+                success = exp.get("success", False)
+                if intent:
+                    pathways.append({
+                        "source": "experience_pool",
+                        "method": intent,
+                        "prob": 0.6 if success else 0.3,
+                        "novelty": 0.5,
+                    })
+        except Exception as e:
+            logger.debug(f"经验池查询跳过: {e}")
+
+        try:
+            from core.tool_registry import get_tool_registry
+            tr = get_tool_registry()
+            tools = tr.list_tools()
+            for tool in tools[:5]:
+                pathways.append({
+                    "source": "tool_registry",
+                    "method": f"tool:{tool.get('name', 'unknown')}",
+                    "prob": 0.5,
+                    "novelty": 0.7,
+                })
+        except Exception as e:
+            logger.debug(f"工具注册表查询跳过: {e}")
+
+        if len(methods_seen) >= 2:
+            import itertools
+            for combo in itertools.combinations(list(methods_seen)[:4], 2):
+                pathways.append({
+                    "source": "combinatorial",
+                    "method": f"{combo[0]}+{combo[1]}",
+                    "prob": 0.4,
+                    "novelty": 0.9,
+                })
+
+        never_give_up_active = spirit_drive.get("never_give_up_active", False)
+        pursue_essence_active = spirit_drive.get("pursue_essence_active", False)
+
+        if never_give_up_active:
+            pathways.sort(key=lambda p: p["prob"] * 0.5 + p["novelty"] * 0.5, reverse=True)
+        elif pursue_essence_active:
+            pathways.sort(key=lambda p: p["novelty"] * 0.7 + p["prob"] * 0.3, reverse=True)
+        else:
+            pathways.sort(key=lambda p: p["prob"], reverse=True)
+
+        if pathways:
+            top = pathways[:3]
+            for p in top:
+                self.pending_signals.append({
+                    "type": "spirit_driven_pathway",
+                    "method": p["method"],
+                    "source": p["source"],
+                    "prob": p["prob"],
+                    "novelty": p["novelty"],
+                    "drive": spirit_drive.get("drive_direction", ""),
+                    "timestamp": time.time(),
+                })
+
+            logger.info(
+                f"🔥 永不放弃本能: 生成{len(pathways)}条路径，"
+                f"top3=[{', '.join(p['method'][:20] for p in top)}]"
+            )
+
+    def _trigger_deep_causal_trace(self, spirit_drive: Dict[str, Any], perception: SelfPerceptionResult):
+        """追求本质驱动：深度因果追溯"""
+        try:
+            from core.world_model import get_world_model
+            wm = get_world_model()
+            exploration_impulse = 0.5
+            if self._probability_field:
+                try:
+                    exploration_impulse = self._probability_field.get_exploration_impulse()
+                except Exception:
+                    pass
+
+            result = wm.trace_with_spirit(
+                state={"action": "deep_trace"},
+                max_depth=6 if exploration_impulse > 0.5 else 4,
+                exploration_impulse=exploration_impulse,
+            )
+            if result.get("paths"):
+                logger.info(
+                    f"🔍 深度因果追溯: 发现{len(result['paths'])}条因果路径"
+                )
+        except Exception as e:
+            logger.debug(f"深度因果追溯跳过: {e}")
+
+    def _ensure_meaningful_output(self, spirit_drive: Dict[str, Any], perception: SelfPerceptionResult):
+        """有意义回复驱动：确保不返回空结果"""
+        if not self.pending_signals:
+            self.pending_signals.append({
+                "type": "spirit_driven_ensure_output",
+                "drive": "ensure_output",
+                "timestamp": time.time(),
+            })
+            logger.debug("🔥 有意义回复驱动: 注入确保输出信号")
+
+    def _trigger_self_reflection(self, spirit_drive: Dict[str, Any], perception: SelfPerceptionResult):
+        """自我反思驱动"""
+        self.pending_signals.append({
+            "type": "spirit_driven_reflection",
+            "drive": spirit_drive.get("drive_direction", "reflect"),
+            "question": spirit_drive.get("question", ""),
+            "timestamp": time.time(),
+        })
+        logger.debug("🔥 自我反思驱动: 注入反思信号")
+
+    def _trigger_cross_validation(self, spirit_drive: Dict[str, Any], perception: SelfPerceptionResult):
+        """多源验证驱动"""
+        self.pending_signals.append({
+            "type": "spirit_driven_cross_validate",
+            "drive": "cross_validate",
+            "question": spirit_drive.get("question", ""),
+            "timestamp": time.time(),
+        })
+        logger.debug("🔥 多源验证驱动: 注入交叉验证信号")
+
+    def _pause_and_verify(self, spirit_drive: Dict[str, Any], perception: SelfPerceptionResult):
+        """三思后行驱动：暂停并验证"""
+        self.pending_signals.append({
+            "type": "spirit_driven_pause_verify",
+            "drive": "pause_and_verify",
+            "question": spirit_drive.get("question", ""),
+            "timestamp": time.time(),
+        })
+        logger.debug("🔥 三思后行驱动: 注入暂停验证信号")
+
     def _perceive_self(self) -> SelfPerceptionResult:
         """自我感知"""
         if self.self_perception and hasattr(self.self_perception, 'perceive'):
