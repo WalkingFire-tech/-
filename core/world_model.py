@@ -53,6 +53,8 @@ class CausalEdge:
     confidence: float
     evidence_count: int = 0
     last_verified: str = ""
+    alpha: float = 1.0
+    beta: float = 1.0
 
 
 @dataclass
@@ -105,6 +107,8 @@ class WorldModel:
                 probability REAL,
                 confidence REAL,
                 evidence_count INTEGER DEFAULT 0,
+                alpha REAL DEFAULT 1.0,
+                beta REAL DEFAULT 1.0,
                 last_verified TEXT,
                 created_at TEXT,
                 PRIMARY KEY (source_id, target_id, edge_type)
@@ -133,6 +137,30 @@ class WorldModel:
                 created_at TEXT
             )
         ''')
+
+        self._migrate_alpha_beta()
+
+    def _migrate_alpha_beta(self):
+        db = self._db
+        try:
+            cols = db.query("PRAGMA table_info(causal_edges)")
+            col_names = [c[1] for c in cols]
+            if "alpha" not in col_names:
+                db.execute("ALTER TABLE causal_edges ADD COLUMN alpha REAL DEFAULT 1.0", commit=True)
+                db.execute("ALTER TABLE causal_edges ADD COLUMN beta REAL DEFAULT 1.0", commit=True)
+                rows = db.query("SELECT source_id, target_id, edge_type, probability, evidence_count FROM causal_edges WHERE alpha IS NULL OR alpha = 1.0")
+                for row in rows:
+                    src, tgt, etype, prob, count = row
+                    count = max(count, 1)
+                    a = max(1.0, prob * count)
+                    b = max(1.0, (1.0 - prob) * count)
+                    db.execute(
+                        "UPDATE causal_edges SET alpha=?, beta=? WHERE source_id=? AND target_id=? AND edge_type=?",
+                        (a, b, src, tgt, etype), commit=True
+                    )
+                logger.info(f"贝叶斯alpha/beta迁移完成: {len(rows)}条边")
+        except Exception as e:
+            logger.warning(f"alpha/beta迁移跳过: {e}")
 
     def add_causal_node(self, node_id: str, node_type: str, content: str, properties: Dict = None) -> bool:
         db = self._db
@@ -736,19 +764,36 @@ class WorldModel:
             return {"patterns_found": 0, "error": str(e)}
 
     def _upsert_edge(self, source_id: str, target_id: str,
-                     edge_type: CausalEdgeType, prob: float, base_conf: float):
+                     edge_type: CausalEdgeType, prob: float, base_conf: float,
+                     quality_score: float = 50.0):
         existing = self._get_edge(source_id, target_id, edge_type)
         if existing:
-            new_prob = (existing.probability * existing.evidence_count + prob) / (existing.evidence_count + 1)
-            new_conf = min(1.0, existing.confidence + 0.1)
+            alpha = getattr(existing, 'alpha', None) or max(1.0, existing.probability * existing.evidence_count)
+            beta = getattr(existing, 'beta', None) or max(1.0, (1.0 - existing.probability) * existing.evidence_count)
+            q = quality_score / 100.0
+            alpha += q
+            beta += (1.0 - q)
+            new_prob = alpha / (alpha + beta)
+            new_conf = 1.0 - (1.0 / (alpha + beta)) ** 0.5
             db = self._db
             db.execute(
-                'UPDATE causal_edges SET probability=?, confidence=?, evidence_count=evidence_count+1, last_verified=? WHERE source_id=? AND target_id=? AND edge_type=?',
-                (new_prob, new_conf, datetime.now().isoformat(), source_id, target_id, edge_type.value),
+                'UPDATE causal_edges SET probability=?, confidence=?, evidence_count=evidence_count+1, alpha=?, beta=?, last_verified=? WHERE source_id=? AND target_id=? AND edge_type=?',
+                (new_prob, new_conf, alpha, beta, datetime.now().isoformat(), source_id, target_id, edge_type.value),
                 commit=True
             )
         else:
-            self.add_causal_edge(source_id, target_id, edge_type, prob, base_conf)
+            q = quality_score / 100.0
+            alpha = 1.0 + q
+            beta = 1.0 + (1.0 - q)
+            prob_bayesian = alpha / (alpha + beta)
+            conf_bayesian = 1.0 - (1.0 / (alpha + beta)) ** 0.5
+            now = datetime.now().isoformat()
+            db = self._db
+            db.execute(
+                'INSERT OR REPLACE INTO causal_edges (source_id, target_id, edge_type, probability, confidence, evidence_count, alpha, beta, last_verified, created_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)',
+                (source_id, target_id, edge_type.value, prob_bayesian, conf_bayesian, alpha, beta, now, now),
+                commit=True
+            )
 
     def get_related_nodes(self, node_id: str, max_depth: int = 2, max_results: int = 10) -> List[Dict]:
         discovered = []
@@ -1247,12 +1292,13 @@ class WorldModel:
     def _get_edge(self, source_id: str, target_id: str, edge_type: CausalEdgeType) -> Optional[CausalEdge]:
         db = self._db
         row = db.query_one(
-            'SELECT source_id, target_id, edge_type, probability, confidence, evidence_count, last_verified FROM causal_edges WHERE source_id=? AND target_id=? AND edge_type=?',
+            'SELECT source_id, target_id, edge_type, probability, confidence, evidence_count, last_verified, alpha, beta FROM causal_edges WHERE source_id=? AND target_id=? AND edge_type=?',
             (source_id, target_id, edge_type.value)
         )
         if row:
             return CausalEdge(source_id=row[0], target_id=row[1], edge_type=CausalEdgeType(row[2]),
-                              probability=row[3], confidence=row[4], evidence_count=row[5], last_verified=row[6])
+                              probability=row[3], confidence=row[4], evidence_count=row[5], last_verified=row[6],
+                              alpha=row[7] or 1.0, beta=row[8] or 1.0)
         return None
 
     def _update_edge_confidence(self, source_id: str, target_id: str, was_correct: bool):
@@ -1261,20 +1307,22 @@ class WorldModel:
     def _update_edge_confidence_in_conn(self, source_id: str, target_id: str, was_correct: bool):
         db = self._db
         row = db.query_one(
-            'SELECT probability, confidence, evidence_count FROM causal_edges WHERE source_id=? AND target_id=?',
+            'SELECT probability, confidence, evidence_count, alpha, beta FROM causal_edges WHERE source_id=? AND target_id=?',
             (source_id, target_id)
         )
         if row:
-            old_prob, old_conf, count = row
+            old_prob, old_conf, count, alpha, beta = row
+            alpha = alpha if alpha and alpha > 0 else max(1.0, old_prob * max(count, 1))
+            beta = beta if beta and beta > 0 else max(1.0, (1.0 - old_prob) * max(count, 1))
             if was_correct:
-                new_prob = old_prob + (1.0 - old_prob) * 0.1
-                new_conf = min(1.0, old_conf + 0.05)
+                alpha += 1.0
             else:
-                new_prob = old_prob * 0.9
-                new_conf = max(0.1, old_conf - 0.1)
+                beta += 1.0
+            new_prob = alpha / (alpha + beta)
+            new_conf = 1.0 - (1.0 / (alpha + beta)) ** 0.5
             db.execute(
-                'UPDATE causal_edges SET probability=?, confidence=?, evidence_count=evidence_count+1, last_verified=? WHERE source_id=? AND target_id=?',
-                (new_prob, new_conf, datetime.now().isoformat(), source_id, target_id),
+                'UPDATE causal_edges SET probability=?, confidence=?, evidence_count=evidence_count+1, alpha=?, beta=?, last_verified=? WHERE source_id=? AND target_id=?',
+                (new_prob, new_conf, alpha, beta, datetime.now().isoformat(), source_id, target_id),
                 commit=True
             )
 
