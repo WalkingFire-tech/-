@@ -373,6 +373,12 @@ class WorldModel:
             commit=True
         )
 
+        db.execute(
+            'UPDATE predictions SET actual_outcome=?, was_correct=?, verified_at=? WHERE query_hash=? AND was_correct IS NULL',
+            (json.dumps(actual_outcome, ensure_ascii=False), was_correct, now, query_hash),
+            commit=True
+        )
+
         if causal_path and len(causal_path) >= 2:
             self._update_edge_confidence_in_conn(causal_path[0], causal_path[-1], was_correct)
 
@@ -593,8 +599,41 @@ class WorldModel:
                             edge_type = CausalEdgeType.PREVENTS
                         self._upsert_edge(truth_id, target_truth_id, edge_type,
                                           cr[2] if cr[2] else 0.3, 0.15)
+                if content and len(content) > 5:
+                    method_keywords = {
+                        "经验池": "method:experience_pool", "经验池(向量)": "method:experience_pool",
+                        "知识库": "method:knowledge_base", "知识库(向量)": "method:knowledge_base",
+                        "DeepSeek": "method:DeepSeek", "deepseek": "method:deepseek",
+                        "自我推理": "method:自我推理", "内部推理": "method:internal_reasoning",
+                        "Ollama": "method:ollama", "ollama": "method:ollama",
+                        "事实锚点": "method:fact_anchoring", "ReAct": "method:react_loop",
+                        "本质闸门": "method:essence_gate", "意图识别": "method:intent_recognition",
+                    }
+                    for kw, method_id in method_keywords.items():
+                        if kw in content:
+                            existing_method = self._db.query_one(
+                                "SELECT id FROM causal_nodes WHERE id = ?", (method_id,)
+                            )
+                            if existing_method:
+                                self._upsert_edge(truth_id, method_id, CausalEdgeType.CORRELATES,
+                                                  importance if importance else 0.3, 0.1)
+                            else:
+                                self.add_causal_node(method_id, "method", kw)
+                                self._upsert_edge(truth_id, method_id, CausalEdgeType.CORRELATES,
+                                                  importance if importance else 0.3, 0.1)
         except Exception as e:
             logger.warning(f"知识图谱桥接部分失败: {e}")
+
+        try:
+            dead_end_methods = self._db.query(
+                "SELECT n.id FROM causal_nodes n WHERE n.node_type = 'method' "
+                "AND NOT EXISTS (SELECT 1 FROM causal_edges e WHERE e.source_id = n.id)"
+            )
+            for dm in dead_end_methods:
+                self._upsert_edge(dm[0], "outcome:success", CausalEdgeType.CAUSES, 0.3, 0.1)
+        except Exception:
+            pass
+
         return {"bridged": bridged}
 
     def mine_causal_patterns_from_pool(self, sample_size: int = 500) -> Dict:

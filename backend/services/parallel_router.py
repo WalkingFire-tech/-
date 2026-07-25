@@ -125,15 +125,36 @@ async def execute_parallel_paths(
     try:
         from core.world_model import get_world_model
         wm = get_world_model()
+        _path_to_causal = {
+            "rule_reasoning": "internal",
+            "ollama_model": "ollama",
+            "experience_retrieval": "experience_pool",
+            "knowledge_search": "knowledge_base",
+        }
+        _causal_actions = list(_path_to_causal.values())
         pre_enactment = wm.pre_enact(
             {"intent": intent_type, "query": user_input[:50]},
-            ["rule_reasoning", "ollama_model", "experience_retrieval", "knowledge_search"],
+            _causal_actions,
             intent_type
         )
         if pre_enactment.get("has_high_confidence") and pre_enactment.get("recommendation"):
             rec = pre_enactment["recommendation"]
             world_model_hint = rec.get("action", "")
-            logger.info(f"世界模型预演: 推荐={world_model_hint} 置信度={rec.get('confidence',0):.2f}")
+            _causal_to_path = {v: k for k, v in _path_to_causal.items()}
+            mapped_path = _causal_to_path.get(world_model_hint, world_model_hint)
+            logger.info(f"世界模型预演: 推荐={world_model_hint}→{mapped_path} 置信度={rec.get('confidence',0):.2f}")
+            hint_weight = min(1.5, 0.5 + rec.get("confidence", 0.5))
+            if mapped_path:
+                methodology.setdefault("path_weights", {})
+                methodology["path_weights"][mapped_path] = hint_weight
+            for alt in pre_enactment.get("alternatives", []):
+                alt_action = alt.get("action", "")
+                if alt.get("confidence", 1.0) < 0.2:
+                    methodology.setdefault("behavioral_directive", {})
+                    methodology["behavioral_directive"].setdefault("avoid_paths", [])
+                    alt_mapped = _causal_to_path.get(alt_action, alt_action)
+                    if alt_mapped not in methodology["behavioral_directive"]["avoid_paths"]:
+                        methodology["behavioral_directive"]["avoid_paths"].append(alt_mapped)
     except Exception:
         logger.warning("操作降级跳过")
 

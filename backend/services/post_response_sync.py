@@ -131,9 +131,12 @@ async def sync_post_response(
         _wm = get_world_model()
         _actual_outcome = {"outcome": "success"} if confidence > 0.5 and final_response and len(final_response) > 50 else {"outcome": "failure"}
         _unverified = _wm._db.query(
-            "SELECT query_hash FROM predictions WHERE was_correct IS NULL ORDER BY created_at DESC LIMIT 1"
+            "SELECT id, query_hash FROM predictions WHERE was_correct IS NULL ORDER BY id DESC LIMIT 3"
         )
-        if _unverified:
-            _wm.verify(_unverified[0][0], _actual_outcome)
+        for _uv in _unverified:
+            try:
+                _wm.verify(_uv[1], _actual_outcome)
+            except Exception:
+                pass
     except Exception:
         pass
