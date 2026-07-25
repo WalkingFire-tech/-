@@ -995,5 +995,6 @@ def get_world_model() -> WorldModel:
     if _world_model is None:
         with _world_model_lock:
             if _world_model is None:
-                _world_model = WorldModel()
+                instance = WorldModel()
+                _world_model = instance
     return _world_model

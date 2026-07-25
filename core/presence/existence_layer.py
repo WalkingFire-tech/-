@@ -458,14 +458,17 @@ class ExistenceLayer(LoopMixin):
                 self._generate_reflection(perception)
 
             if self._should_force_explore() and self.metrics.total_cycles % 30 == 0:
-                try:
-                    from core.world_model import get_world_model
-                    _wm = get_world_model()
-                    _mine_result = _wm.mine_causal_patterns_from_pool(sample_size=200)
-                    if _mine_result.get("patterns_found", 0) > 0:
-                        logger.info(f"⛏️ 强制探索: 因果模式挖掘发现{_mine_result['patterns_found']}个模式")
-                except Exception as _wm_e:
-                    logger.debug(f"因果模式挖掘跳过: {_wm_e}")
+                _now = time.time()
+                if _now - getattr(self, '_last_mine_time', 0) > 300:
+                    try:
+                        from core.world_model import get_world_model
+                        _wm = get_world_model()
+                        _mine_result = _wm.mine_causal_patterns_from_pool(sample_size=200)
+                        self._last_mine_time = _now
+                        if _mine_result.get("patterns_found", 0) > 0:
+                            logger.info(f"⛏️ 强制探索: 因果模式挖掘发现{_mine_result['patterns_found']}个模式")
+                    except Exception as _wm_e:
+                        logger.debug(f"因果模式挖掘跳过: {_wm_e}")
 
             if self.inner_time and hasattr(self.inner_time, 'check_self_events'):
                 signal_pack = self.get_signal_pack()
