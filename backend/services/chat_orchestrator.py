@@ -382,7 +382,34 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
                 "query_preview": user_input[:60],
             })
 
-    # ========== 阶段3：多策略并行尝试 ==========
+    # ========== 阶段3：决策预演 + 多策略并行尝试 ==========
+    _pre_enact_hint = None
+    if not final_response:
+        try:
+            from core.world_model import get_world_model
+            _wm = get_world_model()
+            _possible_actions = ["experience_pool", "knowledge_base", "local_model", "external_api"]
+            _current_state = {"intent": intent_type, "query_length": len(user_input)}
+            _pre_enact_result = _wm.pre_enact(_current_state, _possible_actions, intent=intent_type)
+            if _pre_enact_result and _pre_enact_result.get("has_high_confidence"):
+                _rec = _pre_enact_result["recommendation"]
+                _pre_enact_hint = {
+                    "recommended": _rec["action"],
+                    "confidence": _rec["confidence"],
+                    "probability": _rec["probability"],
+                }
+                methodology["pre_enact_hint"] = _pre_enact_hint
+                if _rec["confidence"] >= 0.7:
+                    methodology["preferred_path"] = _rec["action"]
+                _avoid = [a["action"] for a in _pre_enact_result.get("alternatives", [])
+                          if a.get("confidence", 1.0) < 0.2]
+                if _avoid:
+                    methodology.setdefault("behavioral_directive", {})
+                    methodology["behavioral_directive"].setdefault("avoid_paths", [])
+                    methodology["behavioral_directive"]["avoid_paths"].extend(_avoid)
+        except Exception:
+            pass
+
     if not final_response:
         yield _emit_s("thinking", {
             "phase": f"我正在用多种策略同时思考你的问题",
@@ -406,7 +433,7 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
             _n_candidates = len(candidates) if 'candidates' in dir() else 0
             _chain.add_step("L3", "推理", user_input[:100],
                             f"{_n_candidates}个候选",
-                            f"多策略并行完成", 0.6)
+                            f"多策略并行完成(pre_enact={'推荐:'+_pre_enact_hint['recommended'] if _pre_enact_hint else '无'})", 0.6)
         except Exception:
             pass
     try:

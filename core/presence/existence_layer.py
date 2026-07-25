@@ -470,6 +470,15 @@ class ExistenceLayer(LoopMixin):
                     except Exception as _wm_e:
                         logger.debug(f"因果模式挖掘跳过: {_wm_e}")
 
+                    try:
+                        if _now - getattr(self, '_last_bridge_time', 0) > 1800:
+                            _bridge_result = _wm.bridge_from_knowledge_graph()
+                            self._last_bridge_time = _now
+                            if _bridge_result.get("bridged", 0) > 0:
+                                logger.info(f"🌉 知识图谱桥接: {_bridge_result['bridged']}个概念接入因果图")
+                    except Exception as _br_e:
+                        logger.debug(f"知识图谱桥接跳过: {_br_e}")
+
             if self.inner_time and hasattr(self.inner_time, 'check_self_events'):
                 signal_pack = self.get_signal_pack()
                 detected = signal_pack.get("detected_signals", [])

@@ -129,7 +129,7 @@ async def sync_post_response(
     try:
         from core.world_model import get_world_model
         _wm = get_world_model()
-        _actual_outcome = "success" if confidence > 0.5 and final_response and len(final_response) > 50 else "failure"
+        _actual_outcome = {"outcome": "success"} if confidence > 0.5 and final_response and len(final_response) > 50 else {"outcome": "failure"}
         _unverified = _wm._db.query(
             "SELECT query_hash FROM predictions WHERE was_correct IS NULL ORDER BY created_at DESC LIMIT 1"
         )
