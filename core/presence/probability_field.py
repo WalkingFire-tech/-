@@ -166,6 +166,9 @@ class ProbabilityFieldDrift:
     def sample_probability(self) -> float:
         return max(0.0, min(1.0, self.mean))
 
+    def get_exploration_impulse(self) -> float:
+        return max(0.0, min(1.0, self.mean))
+
     def get_tendency(self) -> Dict[str, float]:
         return {
             "exploration": self.mean,

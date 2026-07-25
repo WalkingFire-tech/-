@@ -185,9 +185,13 @@ class WorldModel:
         return True
 
     def predict(self, current_state: Dict, intent: str = "", top_k: int = 3,
-                injected_edges: List = None) -> Prediction:
+                injected_edges: List = None, exploration_depth: int = 1) -> Prediction:
         query_hash = self._hash_state(current_state, intent)
         relevant_edges = self._find_relevant_edges(current_state, intent)
+
+        if exploration_depth > 1:
+            expanded = self._expand_indirect_edges(relevant_edges, exploration_depth)
+            relevant_edges.extend(expanded)
 
         if injected_edges:
             existing_keys = {(e.source_id, e.target_id, e.edge_type if isinstance(e, CausalEdge) else CausalEdge(e.get("edge_type", "causes"))) for e in relevant_edges}
@@ -298,11 +302,22 @@ class WorldModel:
 
     def pre_enact(self, current_state: Dict, possible_actions: List[str], intent: str = "") -> Dict:
         MIN_SCORE_THRESHOLD = 0.05
+
+        exploration_impulse = 0.0
+        try:
+            from core.presence.probability_field import get_probability_field
+            pf = get_probability_field()
+            exploration_impulse = pf.get_exploration_impulse()
+        except Exception:
+            pass
+
+        exploration_depth = 1 + int(exploration_impulse * 3)
+
         raw_results = []
         for action in possible_actions:
             state_with_action = dict(current_state)
             state_with_action["action"] = action
-            pred = self.predict(state_with_action, intent)
+            pred = self.predict(state_with_action, intent, exploration_depth=exploration_depth)
             score = pred.probability * pred.confidence
             raw_results.append({
                 "action": action,
@@ -312,6 +327,32 @@ class WorldModel:
                 "causal_path": pred.causal_path,
                 "score": score,
             })
+
+        hypothetical_options = []
+        if exploration_impulse > 0.7:
+            known_methods = {a for a in possible_actions}
+            rows = self._db.query(
+                "SELECT DISTINCT substr(source_id, 8) FROM causal_edges WHERE source_id LIKE 'method:%' AND edge_type != ? LIMIT 10",
+                ("prevents",)
+            )
+            for row in rows:
+                method = row[0]
+                if method and method not in known_methods:
+                    state_with_action = dict(current_state)
+                    state_with_action["action"] = method
+                    pred = self.predict(state_with_action, intent, exploration_depth=1)
+                    score = pred.probability * pred.confidence
+                    if score >= MIN_SCORE_THRESHOLD:
+                        hypothetical_options.append({
+                            "action": method,
+                            "predicted_outcome": pred.predicted_state,
+                            "probability": pred.probability,
+                            "confidence": pred.confidence,
+                            "causal_path": pred.causal_path,
+                            "hypothetical": True,
+                        })
+                        logger.debug(f"假设action评估: {method} score={score:.4f}")
+            known_methods.update(r[0] for r in rows if r[0])
         
         filtered = [r for r in raw_results if r["score"] >= MIN_SCORE_THRESHOLD]
         results = filtered if filtered else raw_results[:1]
@@ -325,8 +366,10 @@ class WorldModel:
         return {
             "recommendation": recommendation,
             "alternatives": results[1:],
+            "hypothetical_options": hypothetical_options,
             "total_paths_explored": len(results),
             "has_high_confidence": (recommendation is not None and recommendation.get("confidence", 0) >= 0.5),
+            "exploration_impulse": round(exploration_impulse, 3),
         }
 
     def multi_step_predict(self, current_state: Dict, action_sequence: List[str], intent: str = "", max_depth: int = 3) -> Dict:
@@ -915,21 +958,22 @@ class WorldModel:
         return paths[:5]
 
     def trace_with_spirit(self, query: str, context_type: str = "query") -> Dict:
-        """
-        P5-3a: 精神共振驱动的因果追溯
-        
-        当共振检测到PURSUE_ESSENCE/LOGICAL_SELF_CONSISTENT时，
-        自动触发深层因果链追溯，而非停留在表面预测。
-        
-        Returns:
-            {"resonances": list, "causal_paths": list, "deep_trace": dict, "truth_feedback": dict}
-        """
         spirit_resonances = []
         try:
             from core.spirit_core import spirit_core
             spirit_resonances = spirit_core.resonate(query, context_type=context_type)
         except Exception as e:
             logger.warning(f"操作降级跳过: {e}")
+
+        exploration_impulse = 0.0
+        try:
+            from core.presence.probability_field import get_probability_field
+            pf = get_probability_field()
+            exploration_impulse = pf.get_exploration_impulse()
+        except Exception:
+            pass
+
+        max_depth = 4 if exploration_impulse <= 0.5 else 6
 
         top_principles = [r["principle"] for r in spirit_resonances[:3]] if spirit_resonances else []
 
@@ -941,7 +985,7 @@ class WorldModel:
             _outcome_targets = ["outcome:success", "outcome:high_quality_fast", "outcome:medium_quality"]
             for seed in search_terms[:3]:
                 for target in _outcome_targets:
-                    paths = self.find_causal_paths(seed, target, max_depth=4)
+                    paths = self.find_causal_paths(seed, target, max_depth=max_depth)
                     causal_paths.extend(paths)
             if causal_paths:
                 best = max(causal_paths, key=lambda p: p["score"]) if causal_paths else None
@@ -966,9 +1010,9 @@ class WorldModel:
                 success_paths = []
                 failure_paths = []
                 for target in ["outcome:success", "outcome:high_quality_fast"]:
-                    success_paths.extend(self.find_causal_paths(seed, target, max_depth=3))
+                    success_paths.extend(self.find_causal_paths(seed, target, max_depth=max_depth))
                 for target in ["outcome:failure"]:
-                    failure_paths.extend(self.find_causal_paths(seed, target, max_depth=3))
+                    failure_paths.extend(self.find_causal_paths(seed, target, max_depth=max_depth))
                 if success_paths and failure_paths:
                     contradictions.append({
                         "seed": seed,
@@ -998,6 +1042,27 @@ class WorldModel:
 
         truth_feedback = self._compute_truth_feedback(spirit_resonances, causal_paths)
 
+        counterfactual_exploration = None
+        if exploration_impulse > 0.5 and causal_paths:
+            best_path = max(causal_paths, key=lambda p: p.get("score", 0)) if causal_paths else None
+            if best_path and len(best_path.get("path", [])) >= 2:
+                last_node = best_path["path"][-1]
+                alt_edges = self._db.query(
+                    "SELECT target_id, probability FROM causal_edges WHERE source_id = ? AND target_id != ? AND edge_type != ? LIMIT 3",
+                    (best_path["path"][-2] if len(best_path["path"]) >= 2 else last_node, last_node, "prevents")
+                )
+                alternatives = []
+                for alt in alt_edges:
+                    alternatives.append({"alternative": alt[0], "probability": alt[1]})
+                if alternatives:
+                    counterfactual_exploration = {
+                        "trigger": "high_exploration_impulse",
+                        "impulse": round(exploration_impulse, 3),
+                        "original_path": best_path["path"],
+                        "alternatives": alternatives,
+                    }
+                    logger.debug(f"反事实预演触发: impulse={exploration_impulse:.2f}, {len(alternatives)}个替代路径")
+
         try:
             from core.monitoring.runtime_trigger_monitor import trigger_monitor
             trigger_monitor.record("trace_with_spirit", triggered=True)
@@ -1012,6 +1077,8 @@ class WorldModel:
             "causal_paths": causal_paths[:5],
             "deep_trace": deep_trace,
             "truth_feedback": truth_feedback,
+            "counterfactual_exploration": counterfactual_exploration,
+            "exploration_impulse": round(exploration_impulse, 3),
         }
 
     def _extract_causal_seeds(self, query: str) -> List[str]:
@@ -1226,6 +1293,39 @@ class WorldModel:
 
         filtered.sort(key=lambda p: p["probability"] * p["confidence"], reverse=True)
         return filtered
+
+    def _expand_indirect_edges(self, direct_edges: List[CausalEdge], max_depth: int) -> List[CausalEdge]:
+        expanded = []
+        db = self._db
+        visited_targets = {e.target_id for e in direct_edges}
+        frontier = list(visited_targets)
+        for depth in range(max_depth - 1):
+            next_frontier = []
+            if not frontier:
+                break
+            placeholders = ",".join(["?" for _ in frontier[:20]])
+            rows = db.query(
+                f"SELECT source_id, target_id, edge_type, probability, confidence, evidence_count, last_verified, alpha, beta FROM causal_edges WHERE source_id IN ({placeholders}) AND edge_type != ? LIMIT 30",
+                frontier[:20] + ["prevents"]
+            )
+            for row in rows:
+                src, tgt, etype, prob, conf, count, verified, alpha, beta = row
+                if tgt in visited_targets:
+                    continue
+                visited_targets.add(tgt)
+                next_frontier.append(tgt)
+                decay = 0.8 ** (depth + 1)
+                expanded.append(CausalEdge(
+                    source_id=src, target_id=tgt,
+                    edge_type=CausalEdgeType(etype),
+                    probability=prob * decay,
+                    confidence=conf * decay,
+                    evidence_count=count,
+                    last_verified=verified or "",
+                    alpha=alpha or 1.0, beta=beta or 1.0,
+                ))
+            frontier = next_frontier
+        return expanded
 
     def _find_relevant_edges(self, state: Dict, intent: str = "") -> List[CausalEdge]:
         edges = []
