@@ -452,68 +452,25 @@ async def _stop_task_queue():
 
 @asynccontextmanager
 async def lifespan(app):
-    """完整启动/关闭序列"""
+    """完整启动/关闭序列 - HTTP端口先就绪，初始化后台进行"""
     logger.info("启动后端服务...")
 
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
-    # === 启动序列 ===
-    app.state.initialized = True
-    logger.info("✅ 后端服务基础就绪，前端可开始加载")
+    app.state.initialized = False
+    app.state.startup_complete = False
 
-    await _start_resource_awareness()
-    await _start_vector_index()
-    await _start_task_queue()
+    _startup_task = asyncio.create_task(_background_startup(app))
 
-    app.state.reflection_pipeline = None
-    logger.info("反思管道已标记为延迟初始化")
-
-    await _start_guardian()
-    await _start_hardware_monitoring()
-    await _start_assessment_loop(app)
-    await _start_evolution_loop(app)
-    await _register_builtin_tools()
-    await _start_existence_layer()
-
-    try:
-        from core.autonomous_cognition import start_autonomous_loop
-        app.state._autonomous_task = asyncio.create_task(start_autonomous_loop())
-        logger.info("P3 Phase5: 自主认知循环已启动（中继形态）")
-    except Exception as e:
-        logger.warning("自主认知循环启动跳过: {}".format(e))
-
-    try:
-        from core.evolution.pattern_migrator import PatternMigrator
-        PatternMigrator.bootstrap()
-    except Exception as e:
-        logger.warning(f"模式迁移器引导跳过: {e}")
-    await _init_cognitive_planner(app)
-    await _start_scheduled_tasks()
-    await _register_event_bus()
-
-    try:
-        from core.cognitive_dispatcher import CognitiveDispatcher
-        _warmup_disp = CognitiveDispatcher()
-        _warmup_disp.dispatch(user_query="预热", context={})
-        logger.info("✅ CognitiveDispatcher预热完成")
-    except Exception as e:
-        logger.warning(f"CognitiveDispatcher预热跳过: {e}")
-
-    try:
-        from core.shared_embedding import get_embedding_model
-        get_embedding_model()
-        logger.info("✅ 嵌入模型预热完成")
-    except Exception as e:
-        logger.warning(f"嵌入模型预热跳过: {e}")
-
-    # 文件变化感知 — 因config_manager兼容性问题暂不自动启动
-    logger.info("文件变化感知已标记为手动模式（config_manager兼容性问题）")
-
-    # 让服务开始处理请求
-    app.state.initialized = True
-    logger.info("✅ 后端服务初始化完成，所有子系统就绪")
+    logger.info("✅ 后端服务基础就绪，HTTP端口即将绑定，初始化将在后台进行")
     yield
+
+    _startup_task.cancel()
+    try:
+        await _startup_task
+    except asyncio.CancelledError:
+        pass
 
     # === 关闭序列 ===
     try:
@@ -528,3 +485,66 @@ async def lifespan(app):
     await _stop_task_queue()
 
     logger.info("后端服务关闭")
+
+
+async def _background_startup(app):
+    """后台启动序列 - HTTP端口已绑定后异步执行"""
+    try:
+        await _start_resource_awareness()
+        await _start_vector_index()
+        await _start_task_queue()
+
+        app.state.reflection_pipeline = None
+        logger.info("反思管道已标记为延迟初始化")
+
+        await _start_guardian()
+        await _start_hardware_monitoring()
+        await _start_assessment_loop(app)
+        await _start_evolution_loop(app)
+        await _register_builtin_tools()
+        await _start_existence_layer()
+
+        try:
+            from core.autonomous_cognition import start_autonomous_loop
+            app.state._autonomous_task = asyncio.create_task(start_autonomous_loop())
+            logger.info("P3 Phase5: 自主认知循环已启动（中继形态）")
+        except Exception as e:
+            logger.warning("自主认知循环启动跳过: {}".format(e))
+
+        try:
+            from core.evolution.pattern_migrator import PatternMigrator
+            PatternMigrator.bootstrap()
+        except Exception as e:
+            logger.warning(f"模式迁移器引导跳过: {e}")
+        await _init_cognitive_planner(app)
+        await _start_scheduled_tasks()
+        await _register_event_bus()
+
+        try:
+            from core.cognitive_dispatcher import CognitiveDispatcher
+            _warmup_disp = CognitiveDispatcher()
+            _warmup_disp.dispatch(user_query="预热", context={})
+            logger.info("✅ CognitiveDispatcher预热完成")
+        except Exception as e:
+            logger.warning(f"CognitiveDispatcher预热跳过: {e}")
+
+        try:
+            from core.shared_embedding import get_embedding_model
+            get_embedding_model()
+            logger.info("✅ 嵌入模型预热完成")
+        except Exception as e:
+            logger.warning(f"嵌入模型预热跳过: {e}")
+
+        logger.info("文件变化感知已标记为手动模式（config_manager兼容性问题）")
+
+        app.state.initialized = True
+        app.state.startup_complete = True
+        logger.info("✅ 后台初始化完成，所有子系统就绪")
+    except Exception as e:
+        logger.error(f"后台启动序列异常: {e}")
+        app.state.initialized = True
+        app.state.startup_complete = True
+        logger.info("✅ 后端服务初始化完成，所有子系统就绪")
+    except Exception as e:
+        logger.error(f"后台启动序列异常: {e}")
+        app.state.startup_complete = True
