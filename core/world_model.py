@@ -497,6 +497,67 @@ class WorldModel:
             return plan
         return fallback
 
+    def bridge_from_knowledge_graph(self, kg=None) -> Dict:
+        if kg is None:
+            try:
+                from core.knowledge_graph import KnowledgeGraph
+                kg = KnowledgeGraph()
+            except Exception:
+                return {"bridged": 0, "error": "knowledge_graph_unavailable"}
+        bridged = 0
+        try:
+            db = get_storage_port(kg.db_path) if hasattr(kg, 'db_path') else None
+            if db is None:
+                return {"bridged": 0, "error": "no_db"}
+            concept_rows = db.query(
+                "SELECT id, content, importance FROM nodes WHERE node_type = 'concept' LIMIT 200"
+            )
+            for row in concept_rows:
+                kg_id, content, importance = row[0], row[1], row[2]
+                topic_id = f"topic:{content[:20]}"
+                existing = self._db.query_one(
+                    "SELECT id FROM causal_nodes WHERE id = ?", (topic_id,)
+                )
+                if not existing:
+                    self.add_causal_node(topic_id, "topic", content)
+                    bridged += 1
+                conn_rows = db.query(
+                    "SELECT target_id, connection_type, strength FROM connections WHERE source_id = ?",
+                    (kg_id,)
+                )
+                for cr in conn_rows:
+                    target_row = db.query_one("SELECT content FROM nodes WHERE id = ?", (cr[0],))
+                    if target_row:
+                        target_topic_id = f"topic:{target_row[0][:20]}"
+                        existing_target = self._db.query_one(
+                            "SELECT id FROM causal_nodes WHERE id = ?", (target_topic_id,)
+                        )
+                        if not existing_target:
+                            self.add_causal_node(target_topic_id, "topic", target_row[0])
+                            bridged += 1
+                        edge_type = CausalEdgeType.CORRELATES
+                        if cr[1] == "depends_on":
+                            edge_type = CausalEdgeType.ENABLES
+                        elif cr[1] == "contradicts":
+                            edge_type = CausalEdgeType.PREVENTS
+                        self._upsert_edge(topic_id, target_topic_id, edge_type,
+                                          cr[2] if cr[2] else 0.3, 0.15)
+            pattern_rows = db.query(
+                "SELECT id, content, importance FROM nodes WHERE node_type = 'pattern' LIMIT 100"
+            )
+            for row in pattern_rows:
+                kg_id, content, importance = row[0], row[1], row[2]
+                pattern_id = f"pattern:kg_{kg_id}"
+                existing = self._db.query_one(
+                    "SELECT id FROM causal_nodes WHERE id = ?", (pattern_id,)
+                )
+                if not existing:
+                    self.add_causal_node(pattern_id, "success_pattern", content)
+                    bridged += 1
+        except Exception as e:
+            logger.warning(f"知识图谱桥接部分失败: {e}")
+        return {"bridged": bridged}
+
     def mine_causal_patterns_from_pool(self, sample_size: int = 500) -> Dict:
         """
         从经验池主动挖掘因果模式——'拉模式'，让因果图从真实数据中生长。
