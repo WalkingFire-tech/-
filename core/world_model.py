@@ -369,6 +369,8 @@ class WorldModel:
         plan = experience.get("plan", "")
         duration = experience.get("duration", 0.0)
         user_feedback = experience.get("user_feedback", 0)
+        raw_input = experience.get("raw_input", "")
+        response = experience.get("response", "")
 
         if not intent:
             return False
@@ -380,19 +382,31 @@ class WorldModel:
         source_id = f"intent:{intent}"
         method_id = f"method:{action}"
         strategy_id = f"strategy:{strategy}" if strategy and strategy != action else None
-        target_id = f"outcome:{'success' if success else 'failure'}"
+
+        if quality >= 80 and duration < 5:
+            outcome_label = "high_quality_fast"
+        elif quality >= 80 and duration >= 5:
+            outcome_label = "high_quality_slow"
+        elif quality >= 50:
+            outcome_label = "medium_quality"
+        elif success:
+            outcome_label = "low_quality_success"
+        else:
+            outcome_label = "failure"
+        target_id = f"outcome:{outcome_label}"
 
         self.add_causal_node(source_id, "intent", intent)
         self.add_causal_node(method_id, "method", action)
         if strategy_id:
             self.add_causal_node(strategy_id, "strategy", strategy)
-        self.add_causal_node(target_id, "outcome", "成功" if success else "失败")
+        self.add_causal_node(target_id, "outcome", outcome_label)
 
         self._upsert_edge(source_id, method_id, CausalEdgeType.ENABLES, 0.5, 0.3)
 
         if strategy_id:
             self._upsert_edge(method_id, strategy_id, CausalEdgeType.ENABLES, 0.6, 0.3)
-            self._upsert_edge(strategy_id, target_id, CausalEdgeType.CAUSES if success else CausalEdgeType.PREVENTS,
+            _s_edge = CausalEdgeType.CAUSES if success else CausalEdgeType.PREVENTS
+            self._upsert_edge(strategy_id, target_id, _s_edge,
                               quality / 100.0 if success else 1.0 - quality / 100.0, 0.3)
 
         edge_type = CausalEdgeType.CAUSES if success else CausalEdgeType.PREVENTS
@@ -408,7 +422,43 @@ class WorldModel:
         self._upsert_edge(method_id, target_id, edge_type, prob, 0.3)
         self._upsert_edge(source_id, target_id, edge_type, prob * 0.8, 0.2)
 
+        self._extract_content_causal_entities(raw_input, response, source_id, method_id, target_id, success, quality)
+
         return True
+
+    def _extract_content_causal_entities(self, raw_input: str, response: str,
+                                          source_id: str, method_id: str, target_id: str,
+                                          success: bool, quality: int):
+        """从经验内容中提取因果实体——让因果图从真实数据中生长"""
+        if not raw_input and not response:
+            return
+
+        input_keywords = set()
+        for word in raw_input.lower().split():
+            if len(word) > 3 and word not in ("what", "how", "why", "that", "this", "with", "from", "the"):
+                input_keywords.add(word[:20])
+        for kw in list(input_keywords)[:5]:
+            topic_id = f"topic:{kw}"
+            self.add_causal_node(topic_id, "topic", kw)
+            self._upsert_edge(topic_id, source_id, CausalEdgeType.CORRELATES, 0.3, 0.1)
+
+        if response and len(response) > 50:
+            resp_preview = response[:100].replace("\n", " ").strip()
+            resp_id = f"response:{hash(resp_preview) % 10000}"
+            self.add_causal_node(resp_id, "response", resp_preview[:80])
+            self._upsert_edge(method_id, resp_id, CausalEdgeType.CAUSES if success else CausalEdgeType.PREVENTS,
+                              quality / 100.0, 0.15)
+            self._upsert_edge(resp_id, target_id, CausalEdgeType.CORRELATES, 0.3, 0.1)
+
+        if success and quality >= 80 and raw_input:
+            pattern_id = f"pattern:{source_id}_{method_id}_{outcome_label if 'outcome_label' in dir() else 'success'}"
+            try:
+                self.add_causal_node(pattern_id, "success_pattern",
+                                     f"{source_id}+{method_id}→{target_id}")
+                self._upsert_edge(source_id, pattern_id, CausalEdgeType.ENABLES, quality / 100.0, 0.2)
+                self._upsert_edge(pattern_id, target_id, CausalEdgeType.CAUSES, quality / 100.0, 0.2)
+            except Exception:
+                pass
 
     def _extract_strategy(self, plan: str, fallback: str) -> str:
         if not plan or plan == "{}":
@@ -423,6 +473,69 @@ class WorldModel:
         if len(plan) < 30:
             return plan
         return fallback
+
+    def mine_causal_patterns_from_pool(self, sample_size: int = 500) -> Dict:
+        """
+        从经验池主动挖掘因果模式——'拉模式'，让因果图从真实数据中生长。
+        统计条件概率 P(success|intent=X, method=Y)，发现非模板因果边。
+        """
+        try:
+            from infrastructure.experience_pool import ExperiencePool
+            pool = ExperiencePool()
+            db = pool._db()
+            rows = db.query(
+                "SELECT intent_type, model_name, success, quality_score, duration "
+                "FROM experiences ORDER BY ROWID DESC LIMIT ?",
+                (sample_size,)
+            )
+            if not rows:
+                return {"patterns_found": 0}
+
+            pair_stats = {}
+            for row in rows:
+                intent, method, success, quality, duration = row
+                method = method if method and method != "unknown" else "internal"
+                key = (intent, method)
+                if key not in pair_stats:
+                    pair_stats[key] = {"total": 0, "success": 0, "quality_sum": 0, "duration_sum": 0.0}
+                pair_stats[key]["total"] += 1
+                if success:
+                    pair_stats[key]["success"] += 1
+                pair_stats[key]["quality_sum"] += quality or 50
+                pair_stats[key]["duration_sum"] += duration or 0.0
+
+            patterns_found = 0
+            for (intent, method), stats in pair_stats.items():
+                if stats["total"] < 3:
+                    continue
+                success_rate = stats["success"] / stats["total"]
+                avg_quality = stats["quality_sum"] / stats["total"]
+                avg_duration = stats["duration_sum"] / stats["total"]
+
+                source_id = f"intent:{intent}"
+                method_id = f"method:{method}"
+
+                if success_rate > 0.8 and avg_quality >= 70:
+                    target_id = "outcome:high_quality_fast" if avg_duration < 5 else "outcome:high_quality_slow"
+                    self._upsert_edge(source_id, method_id, CausalEdgeType.ENABLES, success_rate, 0.5)
+                    self._upsert_edge(method_id, target_id, CausalEdgeType.CAUSES, avg_quality / 100.0, 0.4)
+                    patterns_found += 1
+                elif success_rate < 0.3:
+                    target_id = "outcome:failure"
+                    self._upsert_edge(method_id, target_id, CausalEdgeType.PREVENTS, 1.0 - success_rate, 0.4)
+                    patterns_found += 1
+
+                if avg_quality < 50 and stats["total"] >= 5:
+                    weak_id = f"weakness:{intent}_{method}"
+                    self.add_causal_node(weak_id, "weakness", f"{intent}+{method} avg_q={avg_quality:.0f}")
+                    self._upsert_edge(method_id, weak_id, CausalEdgeType.CORRELATES, 0.4, 0.2)
+                    patterns_found += 1
+
+            logger.info(f"⛏️ 因果模式挖掘: {patterns_found}个模式从{len(pair_stats)}个(intent,method)对中发现")
+            return {"patterns_found": patterns_found, "pairs_analyzed": len(pair_stats)}
+        except Exception as e:
+            logger.warning(f"因果模式挖掘跳过: {e}")
+            return {"patterns_found": 0, "error": str(e)}
 
     def _upsert_edge(self, source_id: str, target_id: str,
                      edge_type: CausalEdgeType, prob: float, base_conf: float):
