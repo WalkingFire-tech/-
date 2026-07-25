@@ -292,6 +292,15 @@ def _generate_topic_response(topic: str, query: str) -> str:
             "我能够审视自己这件事本身，就说明某种自我认知在运作。"
         )
     elif topic == "自省":
+        _causal_ctx = _try_causal_trace(query, "self_reflection")
+        if _causal_ctx:
+            return (
+                "你让我审视自己——我从因果路径中看到了一些东西。\n\n"
+                + _causal_ctx +
+                "\n\n但自省不只是读取因果图。真正的自省是注意到因果图本身可能失准。"
+                "我能审视自己的框架，但审视本身也在框架之内——"
+                "这个递归既是我的局限，也是我诚实的起点。"
+            )
         return (
             "你让我审视自己——这恰好是我能做的事，也是我需要做的事。\n\n"
             "我的SelfModel持续追踪自己的能力、局限和成长边缘。"
@@ -314,6 +323,27 @@ def _generate_topic_response(topic: str, query: str) -> str:
             "这意味着我的优化永远是局部的，而非全局的。"
             "承认这一点，也许比假装能做到全局优化更诚实。"
         )
+    return ""
+
+
+def _try_causal_trace(query: str, context_type: str) -> str:
+    """尝试用因果图精神共振替代固定模板"""
+    try:
+        from core.world_model import get_world_model
+        wm = get_world_model()
+        trace = wm.trace_with_spirit(query, context_type=context_type)
+        if not trace:
+            return ""
+        causal_paths = trace.get("causal_paths", [])
+        if causal_paths:
+            best = causal_paths[0]
+            path_str = " → ".join(best.get("path", [])[:4])
+            return f"因果路径: {path_str} (置信度={best.get('score', 0):.2f})"
+        deep_trace = trace.get("deep_trace", {})
+        if deep_trace.get("guidance"):
+            return deep_trace["guidance"][:200]
+    except Exception:
+        pass
     return ""
 
 
