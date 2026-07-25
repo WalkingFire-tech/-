@@ -260,20 +260,35 @@ class CriticAgent:
 
 class CognitiveResidual:
     """
-    认知残差层
+    认知残差层 — Attention Residuals (AttnRes) 增强
+    
+    核心升级：从"等权残差"到"注意力残差"
+    - 旧: new_state = delta + previous_context(3字段)
+    - 新: new_state = AttnRes(history_states, delta) + gate * delta
+    
+    灵感来源: Kimi Attention Residuals (2026)
+    - 每层用注意力机制回头看所有前序状态，自己决定"该从哪里拿多少"
+    - Block AttnRes: 块内标准残差(效率), 块间注意力聚合(精度)
+    - 硬遗忘: Top-K掩码, 低价值历史权重归零
     
     四步残差处理：
     1. 检索历史状态 - 从记忆层检索相关的历史认知状态
     2. 计算增量 - 只学习与历史状态不同的部分
-    3. 残差连接 - 输出 = 历史状态 + 增量
+    3. 注意力残差连接 - 选择性聚合历史 + 门控增量
     4. 状态更新 - 缓存新状态供未来复用
     """
+
+    _BLOCK_SIZE = 8
+    _MAX_ATTENTION_WINDOW = 32
+    _TOP_K_HISTORY = 5
 
     def __init__(self):
         self._search_tree = SearchTree()
         self._orchestrator = OrchestratorAgent()
         self._critic = CriticAgent()
         self._state_cache: Dict[str, Dict] = {}
+        self._state_history: List[Dict] = []
+        self._max_history = 64
         self._process_count = 0
         self._reuse_count = 0
         self._db_path = "data/cbnr_l3_state.db"
@@ -560,23 +575,178 @@ class CognitiveResidual:
             if "hypotheses" in delta:
                 delta["hypotheses"] = self._state_manager.truncate_list_field(delta["hypotheses"])
 
+        attended_context = self._attnres_aggregate(delta)
+
         new_state = dict(delta)
-        
-        if previous:
+
+        if attended_context:
+            new_state["_attnres_context"] = attended_context
+            new_state["_has_experience_base"] = True
+        elif previous:
             new_state["_previous_context"] = previous.get("similar_input", "")
             new_state["_previous_quality"] = previous.get("previous_quality", 0)
             new_state["_has_experience_base"] = True
         else:
             new_state["_has_experience_base"] = False
-        
+
+        gate_alpha = self._compute_gate_alpha()
+        if gate_alpha != 1.0:
+            for key in ("hypotheses",):
+                if key in new_state and isinstance(new_state[key], list):
+                    for item in new_state[key]:
+                        if isinstance(item, dict) and "confidence" in item:
+                            item["confidence"] = item["confidence"] * gate_alpha
+
         best_path = self._search_tree.get_best_path()
         if best_path:
             new_state["_best_reasoning_path"] = [n.content[:50] for n in best_path]
             new_state["_path_confidence"] = best_path[-1].confidence if best_path else 0.5
-        
+
         new_state["has_meaningful_output"] = bool(delta.get("hypotheses") or delta.get("topic"))
-        
+
         return new_state
+
+    def _attnres_aggregate(self, current_delta: Dict) -> Optional[Dict]:
+        """
+        Attention Residuals聚合 — 从历史状态中选择性提取信息
+        
+        核心思想(Kimi AttnRes):
+        - 不再等权累加所有历史，而是用注意力机制选择性聚合
+        - query = 当前delta的语义表示
+        - key/value = 历史状态的语义表示
+        - Block策略: 块内标准残差, 块间注意力
+        - 硬遗忘: Top-K掩码, 只保留最相关的K个历史
+        """
+        if len(self._state_history) < 2:
+            return None
+
+        current_topic = current_delta.get("topic", "")
+        if not current_topic:
+            return None
+
+        query_vec = self._compute_embedding(current_topic)
+        if query_vec is None:
+            return self._block_attnres_fallback(current_topic)
+
+        blocks = self._build_blocks()
+        if not blocks:
+            return None
+
+        attention_scores = []
+        for block_idx, block in enumerate(blocks):
+            block_rep = self._get_block_representation(block, query_vec)
+            if block_rep is not None:
+                score = float(np.dot(query_vec, block_rep) / (np.linalg.norm(query_vec) * np.linalg.norm(block_rep) + 1e-8))
+            else:
+                score = 0.1
+            attention_scores.append((score, block_idx, block))
+
+        attention_scores.sort(key=lambda x: -x[0])
+        top_k = min(self._TOP_K_HISTORY, len(attention_scores))
+        selected = attention_scores[:top_k]
+
+        threshold = 0.15
+        selected = [(s, bi, b) for s, bi, b in selected if s > threshold]
+
+        if not selected:
+            return None
+
+        total_score = sum(s for s, _, _ in selected)
+        aggregated = {
+            "_attnres_mode": "attention",
+            "_selected_blocks": len(selected),
+            "_total_blocks": len(blocks),
+        }
+
+        for score, block_idx, block in selected:
+            weight = score / total_score if total_score > 0 else 0
+            best_state = max(block, key=lambda s: s.get("_quality", 0))
+            aggregated[f"_history_{block_idx}"] = {
+                "topic": best_state.get("topic", "")[:60],
+                "quality": best_state.get("_quality", 0),
+                "weight": round(weight, 3),
+            }
+
+        if selected:
+            best_score, best_idx, best_block = selected[0]
+            best_state = max(best_block, key=lambda s: s.get("_quality", 0))
+            aggregated["_primary_context"] = best_state.get("topic", "")[:100]
+            aggregated["_primary_quality"] = best_state.get("_quality", 0)
+
+        return aggregated
+
+    def _build_blocks(self) -> List[List[Dict]]:
+        """Block AttnRes: 将历史状态分成块, 块内标准残差, 块间注意力"""
+        if not self._state_history:
+            return []
+
+        blocks = []
+        for i in range(0, len(self._state_history), self._BLOCK_SIZE):
+            block = self._state_history[i:i + self._BLOCK_SIZE]
+            if block:
+                blocks.append(block)
+        return blocks
+
+    def _get_block_representation(self, block: List[Dict], query_vec: np.ndarray) -> Optional[np.ndarray]:
+        """获取块的语义表示 — 用块内最高质量状态的embedding作为代表"""
+        best_state = max(block, key=lambda s: s.get("_quality", 0))
+        topic = best_state.get("topic", "")
+        if not topic:
+            return None
+        return self._compute_embedding(topic)
+
+    def _block_attnres_fallback(self, current_topic: str) -> Optional[Dict]:
+        """embedding不可用时的降级: 基于关键词重叠的注意力"""
+        if not self._state_history:
+            return None
+
+        current_words = set(current_topic.lower().split())
+        if not current_words:
+            return None
+
+        scored = []
+        for state in self._state_history[-self._MAX_ATTENTION_WINDOW:]:
+            topic = state.get("topic", "")
+            words = set(topic.lower().split())
+            overlap = len(current_words & words) / max(len(current_words | words), 1)
+            if overlap > 0.1:
+                scored.append((overlap, state))
+
+        scored.sort(key=lambda x: -x[0])
+        top = scored[:self._TOP_K_HISTORY]
+
+        if not top:
+            return None
+
+        aggregated = {
+            "_attnres_mode": "keyword_fallback",
+            "_selected_blocks": len(top),
+        }
+        best_score, best_state = top[0]
+        aggregated["_primary_context"] = best_state.get("topic", "")[:100]
+        aggregated["_primary_quality"] = best_state.get("_quality", 0)
+
+        return aggregated
+
+    def _compute_gate_alpha(self) -> float:
+        """
+        门控缩放 — 概率场联动
+        探索期alpha大(放大增量), 保守期alpha小(压缩增量)
+        """
+        try:
+            from core.presence.existence_layer import get_existence_layer
+            el = get_existence_layer()
+            if el and hasattr(el, '_probability_field') and el._probability_field:
+                tendency = el._probability_field.get_tendency()
+                exploration = tendency.get("exploration", 0.3)
+                if exploration < 0.2:
+                    return 0.6
+                elif exploration > 0.5:
+                    return 1.2
+                return 1.0
+        except Exception:
+            pass
+        return 1.0
 
     def _fallback_path(self, input_data: Dict, previous: Optional[Dict]) -> Dict[str, Any]:
         fallback = {
@@ -600,7 +770,17 @@ class CognitiveResidual:
     def _update_state(self, new_state: Dict) -> str:
         state_id = hashlib.md5(f"{new_state.get('topic', '')}{time.time()}".encode()).hexdigest()[:10]
         new_state["_state_id"] = state_id
+        new_state["_quality"] = new_state.get("_previous_quality", 50)
+        if new_state.get("has_meaningful_output"):
+            new_state["_quality"] = max(new_state["_quality"], 60)
         self._state_cache[state_id] = new_state
+
+        self._state_history.append({k: v for k, v in new_state.items() if k in (
+            "topic", "_quality", "_state_id", "_attnres_context", "_previous_context",
+            "has_meaningful_output", "_incremental", "_base_quality",
+        )})
+        if len(self._state_history) > self._max_history:
+            self._state_history = self._state_history[-self._max_history:]
         
         if len(self._state_cache) > 100:
             oldest = min(self._state_cache.items(), key=lambda x: x[1].get("timestamp", 0))
