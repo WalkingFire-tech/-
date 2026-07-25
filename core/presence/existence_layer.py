@@ -115,6 +115,11 @@ class ExistenceLayer(LoopMixin):
         self._reflection_db = self.persistence_dir / "reflection_journal.db"
         self._init_reflection_db()
 
+        self._startup_time = time.time()
+        self._force_explore_until = 0.0
+        self._last_user_interaction_time = time.time()
+        self._consecutive_conservative_count = 0
+
         self._probability_field = None
         try:
             from core.presence.probability_field import get_probability_field, ExperiencePoolConsolidator, PathWeightDecay
@@ -271,6 +276,10 @@ class ExistenceLayer(LoopMixin):
     
     def _update_state(self, silence: float):
         """更新存在状态 — 稳态驱动(最高优先级) + 概率场 + 内在节律 + 沉默时长"""
+        _MIN_STATE_DURATION = 3.0
+        _now = time.time()
+        _time_since_last_change = _now - getattr(self, '_last_state_change_time', 0)
+
         if self._homeostasis:
             try:
                 homeo_state = self._homeostasis.update()
@@ -286,6 +295,7 @@ class ExistenceLayer(LoopMixin):
                 if new_state and new_state != self.state:
                     old = self.state.value
                     self.state = new_state
+                    self._last_state_change_time = _now
                     logger.info(
                         f"🫁 稳态驱动状态切换: {old}→{new_state.value} "
                         f"(primary_drive={homeo_state.primary_drive.name}, "
@@ -299,6 +309,8 @@ class ExistenceLayer(LoopMixin):
         if self._probability_field and self.state not in (PresenceState.RESTING, PresenceState.SLEEPING):
             if self._homeostasis and self._homeostasis.state.overall_balance < 0.5:
                 pass
+            elif _time_since_last_change < _MIN_STATE_DURATION:
+                pass
             else:
                 density_signal = 0.0
                 if self.inner_time:
@@ -307,6 +319,10 @@ class ExistenceLayer(LoopMixin):
                 
                 interaction_signal = self._get_interaction_signal()
                 combined_signal = density_signal * 0.6 + interaction_signal * 0.4
+
+                if self._should_force_explore():
+                    combined_signal = max(combined_signal, 0.5)
+                    self._consecutive_conservative_count = 0
                 
                 self._probability_field.update(signal=combined_signal, dt=1.0)
                 
@@ -328,6 +344,7 @@ class ExistenceLayer(LoopMixin):
                 if new_state != self.state:
                     old = self.state.value
                     self.state = new_state
+                    self._last_state_change_time = time.time()
                     logger.info(
                         f"🌊 概率场驱动状态切换: {old}→{new_state.value} "
                         f"(探索={exploration:.3f}, 张力={tension:.3f}, "
@@ -347,6 +364,7 @@ class ExistenceLayer(LoopMixin):
             if new_state != self.state:
                 old = self.state.value
                 self.state = new_state
+                self._last_state_change_time = time.time()
                 logger.info(
                     f"🫀 内在节律驱动状态切换: {old}→{new_state.value} "
                     f"(密度={state.cognitive_density:.3f}, 流速={state.flow_rate:.2f}, "
@@ -385,6 +403,29 @@ class ExistenceLayer(LoopMixin):
         })
         if len(self._recent_interactions) > 100:
             self._recent_interactions = self._recent_interactions[-100:]
+        self._last_user_interaction_time = time.time()
+        self._consecutive_conservative_count = 0
+
+    def _should_force_explore(self) -> bool:
+        """
+        强制探索窗口：打破保守惯性。
+        1. 启动后5分钟内 — 系统需要快速建立认知地图
+        2. 用户30分钟无交互 — 系统需要自我维持
+        3. 外部请求的强制探索窗口
+        """
+        now = time.time()
+        if now - self._startup_time < 300:
+            return True
+        if now - self._last_user_interaction_time > 1800:
+            return True
+        if now < self._force_explore_until:
+            return True
+        return False
+
+    def request_force_explore(self, duration_seconds: float = 300):
+        """外部模块请求强制探索窗口"""
+        self._force_explore_until = time.time() + duration_seconds
+        logger.info(f"🌊 概率场: 外部请求强制探索窗口，持续{duration_seconds:.0f}秒")
     
     def _heartbeat(self):
         """心跳：持续感知自身状态"""
@@ -510,7 +551,7 @@ class ExistenceLayer(LoopMixin):
             try:
                 from core.presence.curiosity_engine import get_curiosity_engine
                 engine = get_curiosity_engine()
-                gaps = engine.explore()
+                gaps = engine.explore(force=self._should_force_explore())
                 if gaps:
                     self.metrics.growing_cycles += 1
                     gap_topics = [g.topic[:30] for g in gaps[:3]]

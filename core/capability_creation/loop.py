@@ -121,8 +121,21 @@ class CapabilityCreationLoop:
         _looks_like_command = any(kw in q_lower for kw in _SHELL_KEYWORDS) or (
             not any('\u4e00' <= c <= '\u9fff' for c in query[:10])
         )
-        if _looks_like_command:
-            logger.info("🔄 尝试通用shell方案")
+        _is_self_improvement = any(kw in q_lower for kw in [
+            "如何", "怎么", "怎样", "方法", "途径", "学习", "提升",
+            "优化", "改进", "更好", "效率", "能力", "技能",
+            "为什么", "原理", "本质", "机制", "知识",
+        ])
+        _is_autonomous = context.get("trigger") in ("gap_growth", "curiosity_driven", "self_model_gap", "autonomous")
+        _is_capability_gap = context.get("capability_gap_detected", False)
+
+        if _looks_like_command or _is_self_improvement or _is_autonomous or _is_capability_gap:
+            trigger_reason = "command" if _looks_like_command else (
+                "self_improvement" if _is_self_improvement else (
+                    "autonomous" if _is_autonomous else "capability_gap"
+                )
+            )
+            logger.info(f"🔄 尝试通用方案 (触发: {trigger_reason})")
             attempt = CreationAttempt(query, "shell_fallback")
             try:
                 result = await try_shell_execution(query)
@@ -144,7 +157,7 @@ class CapabilityCreationLoop:
                 attempt.finish(False, error=str(e))
                 self.attempts.append(attempt)
         else:
-            logger.info("🔄 跳过shell方案（非命令式查询）")
+            logger.info(f"🔄 能力创造跳过: 无匹配模式且无触发条件 (query={query[:30]})")
 
         return {
             "handled": False,

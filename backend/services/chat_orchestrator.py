@@ -77,6 +77,14 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
     final_response = None
     intent_type = "unknown"
     try:
+        from core.presence.existence_layer import get_existence_layer
+        _el = get_existence_layer()
+        if _el:
+            _el._last_user_interaction_time = time.time()
+            _el._consecutive_conservative_count = 0
+    except Exception:
+        pass
+    try:
         from backend.services.orchestrator_state import OrchestratorState
         _orch_state = OrchestratorState()
         _orch_state.intent_type = intent_type

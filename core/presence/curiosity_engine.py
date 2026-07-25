@@ -84,20 +84,23 @@ class CuriosityEngine(LoopMixin):
         self._gap_cache_time: Optional[datetime] = None
         self._gap_cache_ttl = timedelta(minutes=10)
 
-    def explore(self) -> List[KnowledgeGap]:
+    def explore(self, force: bool = False) -> List[KnowledgeGap]:
         """
         主动发现知识缺口——存在层"生长"阶段调用
         
         概率驱动：curiosity_strength决定探索概率
         P(explore) = curiosity_strength
         低好奇心时可能跳过探索，高好奇心时必定探索
+        
+        Args:
+            force: 强制探索（绕过概率门控），由强制探索窗口触发
         """
         with self.loop_context():
             frontier = self.perceive_frontier()
             curiosity_strength = frontier.get("curiosity_strength", 0.0)
             
             import random
-            if random.random() > curiosity_strength:
+            if not force and random.random() > curiosity_strength:
                 logger.debug(f"好奇心概率门控: strength={curiosity_strength:.2f}, 跳过本次探索")
                 return []
 
@@ -207,7 +210,7 @@ class CuriosityEngine(LoopMixin):
         if 0.2 <= frontier_density <= 0.8:
             curiosity_strength = frontier_density
         elif frontier_density < 0.2:
-            curiosity_strength = frontier_density * 0.5
+            curiosity_strength = max(0.15, frontier_density)
         else:
             curiosity_strength = max(0.3, 1.0 - frontier_density)
 

@@ -306,7 +306,7 @@ class TestSystemHealthMonitor:
 
     def test_is_memory_rising_fast(self, monitor):
         """测试内存快速上升检测"""
-        monitor._memory_trend = [0.5, 0.55, 0.6, 0.65, 0.7]
+        monitor._memory_trend = [0.5, 0.55, 0.6, 0.65, 0.75]
         assert monitor._is_memory_rising_fast() == True
 
     def test_is_memory_not_rising_fast(self, monitor):

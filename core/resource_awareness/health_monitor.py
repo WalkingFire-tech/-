@@ -373,11 +373,20 @@ class SystemHealthMonitor:
                 or gpu_temp >= 90):
             return OperatingMode.EMERGENCY
 
-        if (mem > self.thresholds["memory_warn"]
-                or threads > self.thresholds["thread_warn"]
-                or cpu > self.thresholds["cpu_warn"]
-                or gpu > self.thresholds["gpu_memory_warn"]
-                or gpu_temp >= 80):
+        conservative_reason = None
+        if mem > self.thresholds["memory_warn"]:
+            conservative_reason = f"mem={mem:.1%}>warn={self.thresholds['memory_warn']:.0%}"
+        elif threads > self.thresholds["thread_warn"]:
+            conservative_reason = f"threads={threads}>warn={self.thresholds['thread_warn']}"
+        elif cpu > self.thresholds["cpu_warn"]:
+            conservative_reason = f"cpu={cpu:.1%}>warn={self.thresholds['cpu_warn']:.0%}"
+        elif gpu > self.thresholds["gpu_memory_warn"]:
+            conservative_reason = f"gpu={gpu:.1%}>warn={self.thresholds['gpu_memory_warn']:.0%}"
+        elif gpu_temp >= 80:
+            conservative_reason = f"gpu_temp={gpu_temp}C>=80"
+
+        if conservative_reason:
+            logger.debug(f"🫀 conservative触发: {conservative_reason}")
             return OperatingMode.CONSERVATIVE
 
         if self._is_memory_rising_fast():
@@ -394,7 +403,10 @@ class SystemHealthMonitor:
             return False
         recent = self._memory_trend[-5:]
         delta = recent[-1] - recent[0]
-        return delta > 0.1
+        if delta > 0.2:
+            logger.debug(f"🫀 内存快速上升: delta={delta:.1%} ({recent[0]:.1%}→{recent[-1]:.1%})")
+            return True
+        return False
 
     def _is_vram_tight(self) -> bool:
         """检测VRAM是否紧张（Ollama模型占用+当前使用接近上限）"""
@@ -404,6 +416,8 @@ class SystemHealthMonitor:
         if self._ollama_active == 0 and self._snapshot.gpu_memory < 0.01:
             return False
         estimated_ollama = self._snapshot.ollama_estimated_vram_gb
+        if self._ollama_active == 0:
+            estimated_ollama = 0.0
         current_usage = self._snapshot.gpu_memory
         if current_usage > 0:
             estimated_used = vram_total * current_usage + estimated_ollama * 0.3
