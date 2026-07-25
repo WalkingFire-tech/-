@@ -494,6 +494,34 @@ async def run_reflection_learning(
         events.append({"type": "step", "data": {"phase": "反思学习", "status": "done",
                               "detail": f"学习了{len(_learned)}项, {len(_failed)}项跳过"}})
 
+    try:
+        from core.learning_reflector import learning_reflector
+        _event_type = "success" if overall_success else "failure"
+        _conf_before = 0.5
+        _conf_after = confidence if confidence else 0.5
+        _knowledge_gained = sum(1 for o in learning_outcomes if o.get("success"))
+        learning_reflector.record_learning_event(
+            event_type=_event_type,
+            question=user_input[:200],
+            action_taken=best.get("source", "unknown") if best else "unknown",
+            result="success" if overall_success else "partial_failure",
+            knowledge_gained=_knowledge_gained,
+            confidence_before=_conf_before,
+            confidence_after=_conf_after,
+            metadata={"intent_type": intent_type, "attempts_count": len(attempts)},
+        )
+    except Exception as _lr_e:
+        logger.debug(f"LearningReflector记录跳过: {_lr_e}")
+
+    try:
+        from core.decision_chain import decision_chain_manager
+        _last_chain = decision_chain_manager.get_last_chain()
+        if _last_chain and _last_chain.steps:
+            _chain_summary = [f"{s.layer_name}:{s.output_data[:50]}" for s in _last_chain.steps]
+            reflection += f"; 🔗 决策链:{'/'.join(_chain_summary)}"
+    except Exception:
+        pass
+
     return {
         "reflection": reflection,
         "learning_outcomes": learning_outcomes,

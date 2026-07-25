@@ -76,6 +76,13 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
     failed_steps = []
     final_response = None
     intent_type = "unknown"
+
+    _chain = None
+    try:
+        from core.decision_chain import decision_chain_manager
+        _chain = decision_chain_manager.start_new_chain()
+    except Exception:
+        pass
     try:
         from core.presence.existence_layer import get_existence_layer
         _el = get_existence_layer()
@@ -201,7 +208,13 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
     for _ev in _ctx_result["events"]:
         yield _emit_s(_ev["type"], _ev["data"])
 
-    # ========== 阶段1-1.5：意图识别+L1认知感知+规则匹配（提取到intent_dispatcher.py） ==========
+    if _chain:
+        try:
+            _chain.add_step("L2", "理解", user_input[:100],
+                            f"continuity={_continuity_signal:.2f}, presence={_presence_state}",
+                            f"上下文构建完成", 0.7)
+        except Exception:
+            pass
     from backend.services.intent_dispatcher import dispatch_intent as _dispatch_intent
     _id_result = await _dispatch_intent(
         user_input=user_input, context=context, history=history,
@@ -227,6 +240,13 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
         yield _emit_s(_ev["type"], _ev["data"])
     if _id_result["should_return"]:
         return
+
+    if _chain:
+        try:
+            _chain.add_step("L1", "感知", user_input[:100], intent_type,
+                            f"route={route}, confidence={confidence:.2f}", confidence)
+        except Exception:
+            pass
 
     if _INNER_TIME_AVAILABLE and _stimulus_type.value not in ("internal", "scheduled"):
         inner_time_engine.tick(CognitiveEventType.REASON, intensity=0.8, description="intent_dispatched")
@@ -273,6 +293,16 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
                     f"depth={_sm_directive.get('preferred_depth', 'moderate')}, "
                     f"perspective={_sm_directive.get('perspective_mode', 'companion')}"
                 )
+    except Exception:
+        pass
+
+    try:
+        from core.learning_reflector import learning_reflector
+        _lr_report = learning_reflector.generate_learning_report(period="day")
+        if _lr_report and _lr_report.recommendations:
+            methodology["learning_recommendations"] = _lr_report.recommendations[:3]
+        if _lr_report and _lr_report.avg_improvement < 5.0:
+            methodology["knowledge_quality_boost"] = True
     except Exception:
         pass
 
@@ -371,6 +401,14 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
                 yield event_or_candidates
 
     # 闭环2检查点2：多策略并行后
+    if _chain:
+        try:
+            _n_candidates = len(candidates) if 'candidates' in dir() else 0
+            _chain.add_step("L3", "推理", user_input[:100],
+                            f"{_n_candidates}个候选",
+                            f"多策略并行完成", 0.6)
+        except Exception:
+            pass
     try:
         _af2 = await _auto_fix_checkpoint(attempts, methodology, user_input, intent_type, "多策略并行后")
         if _af2["fixes_applied"] > 0:
@@ -427,6 +465,16 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
     path_percentages.update(_cs_result["path_percentages"])
     for _ev in _cs_result["events"]:
         yield _ev
+
+    if _chain:
+        try:
+            _best_src = best.get("source", "unknown") if best else "unknown"
+            _best_q = best.get("quality", 0) if best else 0
+            _chain.add_step("L4", "验证", f"{len(candidates)}个候选",
+                            f"选择:{_best_src}(质量={_best_q})",
+                            f"对比择优完成", min(1.0, _best_q / 100.0) if _best_q else 0.5)
+        except Exception:
+            pass
 
     _sel_sm = _get_self_model()
     if _sel_sm and best:
@@ -569,7 +617,17 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
     for _ev in _rl_result["events"]:
         yield _emit_s(_ev["type"], _ev["data"])
 
-    # ========== 阶段7.5：SelfModel同步聚合（提取到post_response_sync.py） ==========
+    if _chain:
+        try:
+            _n_outcomes = len(_learning_outcomes) if _learning_outcomes else 0
+            _chain.add_step("L5", "进化", user_input[:100],
+                            f"{_n_outcomes}项学习成果",
+                            f"反思学习完成", 0.6)
+            _chain.set_final_output(final_response[:200] if final_response else "", confidence if 'confidence' in locals() else 0.5)
+            from core.decision_chain import decision_chain_manager
+            decision_chain_manager.complete_chain()
+        except Exception:
+            pass
     from backend.services.post_response_sync import sync_post_response
     await sync_post_response(
         user_input=user_input, final_response=final_response or "",
