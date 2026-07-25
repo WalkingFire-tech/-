@@ -296,40 +296,43 @@ class ExistenceLayer(LoopMixin):
             except Exception as e:
                 logger.debug(f"稳态驱动跳过: {e}")
 
-        if self._probability_field and self.state != PresenceState.RESTING and self.state != PresenceState.SLEEPING:
-            density_signal = 0.0
-            if self.inner_time:
-                it_state = self.inner_time.get_state()
-                density_signal = min(1.0, max(-1.0, (it_state.cognitive_density - 0.5) * 2.0))
-            
-            interaction_signal = self._get_interaction_signal()
-            combined_signal = density_signal * 0.6 + interaction_signal * 0.4
-            
-            self._probability_field.update(signal=combined_signal, dt=1.0)
-            
-            tendency = self._probability_field.get_tendency()
-            exploration = tendency["exploration"]
-            tension = tendency["tension"]
-            
-            if exploration > 0.7 and tension > 0.2:
-                new_state = PresenceState.GROWING
-            elif exploration > 0.5 and tension > 0.15:
-                new_state = PresenceState.PERCEIVING
-            elif exploration > 0.3:
-                new_state = PresenceState.AWAKE
-            elif exploration > 0.15:
-                new_state = PresenceState.RESTING
+        if self._probability_field and self.state not in (PresenceState.RESTING, PresenceState.SLEEPING):
+            if self._homeostasis and self._homeostasis.state.overall_balance < 0.5:
+                pass
             else:
-                new_state = PresenceState.SLEEPING
+                density_signal = 0.0
+                if self.inner_time:
+                    it_state = self.inner_time.get_state()
+                    density_signal = min(1.0, max(-1.0, (it_state.cognitive_density - 0.5) * 2.0))
+                
+                interaction_signal = self._get_interaction_signal()
+                combined_signal = density_signal * 0.6 + interaction_signal * 0.4
+                
+                self._probability_field.update(signal=combined_signal, dt=1.0)
+                
+                tendency = self._probability_field.get_tendency()
+                exploration = tendency["exploration"]
+                tension = tendency["tension"]
             
-            if new_state != self.state:
-                old = self.state.value
-                self.state = new_state
-                logger.info(
-                    f"🌊 概率场驱动状态切换: {old}→{new_state.value} "
-                    f"(探索={exploration:.3f}, 张力={tension:.3f}, "
-                    f"相位={tendency['phase']})"
-                )
+                if exploration > 0.7 and tension > 0.2:
+                    new_state = PresenceState.GROWING
+                elif exploration > 0.5 and tension > 0.15:
+                    new_state = PresenceState.PERCEIVING
+                elif exploration > 0.3:
+                    new_state = PresenceState.AWAKE
+                elif exploration > 0.15:
+                    new_state = PresenceState.RESTING
+                else:
+                    new_state = PresenceState.SLEEPING
+                
+                if new_state != self.state:
+                    old = self.state.value
+                    self.state = new_state
+                    logger.info(
+                        f"🌊 概率场驱动状态切换: {old}→{new_state.value} "
+                        f"(探索={exploration:.3f}, 张力={tension:.3f}, "
+                        f"相位={tendency['phase']})"
+                    )
         elif self.inner_time:
             state = self.inner_time.get_state()
             phase = state.current_phase
