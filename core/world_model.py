@@ -554,6 +554,39 @@ class WorldModel:
                 if not existing:
                     self.add_causal_node(pattern_id, "success_pattern", content)
                     bridged += 1
+            truth_rows = db.query(
+                "SELECT id, content, importance FROM nodes WHERE node_type = 'truth' LIMIT 300"
+            )
+            for row in truth_rows:
+                kg_id, content, importance = row[0], row[1], row[2]
+                truth_id = f"truth:kg_{kg_id}"
+                existing = self._db.query_one(
+                    "SELECT id FROM causal_nodes WHERE id = ?", (truth_id,)
+                )
+                if not existing:
+                    self.add_causal_node(truth_id, "truth", content[:200])
+                    bridged += 1
+                conn_rows = db.query(
+                    "SELECT target_id, connection_type, strength FROM connections WHERE source_id = ?",
+                    (kg_id,)
+                )
+                for cr in conn_rows[:5]:
+                    target_row = db.query_one("SELECT content, node_type FROM nodes WHERE id = ?", (cr[0],))
+                    if target_row and target_row[1] == 'truth':
+                        target_truth_id = f"truth:kg_{cr[0]}"
+                        existing_target = self._db.query_one(
+                            "SELECT id FROM causal_nodes WHERE id = ?", (target_truth_id,)
+                        )
+                        if not existing_target:
+                            self.add_causal_node(target_truth_id, "truth", target_row[0][:200])
+                            bridged += 1
+                        edge_type = CausalEdgeType.CORRELATES
+                        if cr[1] == "extends":
+                            edge_type = CausalEdgeType.ENABLES
+                        elif cr[1] == "contradicts":
+                            edge_type = CausalEdgeType.PREVENTS
+                        self._upsert_edge(truth_id, target_truth_id, edge_type,
+                                          cr[2] if cr[2] else 0.3, 0.15)
         except Exception as e:
             logger.warning(f"知识图谱桥接部分失败: {e}")
         return {"bridged": bridged}
@@ -777,9 +810,11 @@ class WorldModel:
         search_terms = self._extract_causal_seeds(query)
 
         if "PURSUE_ESSENCE" in top_principles:
+            _outcome_targets = ["outcome:success", "outcome:high_quality_fast", "outcome:medium_quality"]
             for seed in search_terms[:3]:
-                paths = self.find_causal_paths(seed, f"outcome:success", max_depth=4)
-                causal_paths.extend(paths)
+                for target in _outcome_targets:
+                    paths = self.find_causal_paths(seed, target, max_depth=4)
+                    causal_paths.extend(paths)
             if causal_paths:
                 best = max(causal_paths, key=lambda p: p["score"]) if causal_paths else None
                 deep_trace = {
@@ -800,8 +835,12 @@ class WorldModel:
         if "LOGICAL_SELF_CONSISTENT" in top_principles and not deep_trace:
             contradictions = []
             for seed in search_terms[:2]:
-                success_paths = self.find_causal_paths(seed, f"outcome:success", max_depth=3)
-                failure_paths = self.find_causal_paths(seed, f"outcome:failure", max_depth=3)
+                success_paths = []
+                failure_paths = []
+                for target in ["outcome:success", "outcome:high_quality_fast"]:
+                    success_paths.extend(self.find_causal_paths(seed, target, max_depth=3))
+                for target in ["outcome:failure"]:
+                    failure_paths.extend(self.find_causal_paths(seed, target, max_depth=3))
                 if success_paths and failure_paths:
                     contradictions.append({
                         "seed": seed,
@@ -848,17 +887,69 @@ class WorldModel:
         }
 
     def _extract_causal_seeds(self, query: str) -> List[str]:
-        """从查询中提取因果追溯种子节点ID"""
         seeds = []
-        stop_words = {"为什么", "怎么", "如何", "什么", "哪里", "哪个", "怎样", "的是", "可以", "应该", "需要", "能够", "已经", "可能", "就是", "因为", "所以", "但是", "而且", "或者", "如果", "那么", "虽然", "不过", "然而"}
+        stop_words = {"为什么", "怎么", "如何", "什么", "哪里", "哪个", "怎样", "的是", "可以", "应该", "需要", "能够", "已经", "可能", "就是", "因为", "所以", "但是", "而且", "或者", "如果", "那么", "虽然", "不过", "然而", "你", "我", "他", "她", "的", "了", "是", "在", "有", "和", "与", "也", "都", "这", "那", "个", "吗", "呢", "吧", "啊", "么", "如何", "什么", "怎样", "你的", "我的", "他的"}
+        keywords = []
         try:
             import re
-            for match in re.finditer(r'[\u4e00-\u9fff]{2,}', query):
-                word = match.group()
-                if word not in stop_words:
-                    seeds.append(f"intent:{word}")
+            full_match = re.findall(r'[\u4e00-\u9fff]+', query)
+            for segment in full_match:
+                for i in range(len(segment) - 1):
+                    word = segment[i:i+2]
+                    if word not in stop_words:
+                        keywords.append(word)
         except Exception:
-            seeds.append(f"intent:{query[:10]}")
+            keywords.append(query[:10])
+
+        keywords = list(dict.fromkeys(keywords))[:8]
+
+        intent_map = {
+            "理解": ["self_reference", "metacognitive", "deep_thinking"],
+            "自己": ["self_reference", "self_reflection", "autonomous_reflection"],
+            "学习": ["learning_trigger", "self_reflection"],
+            "认知": ["metacognitive", "metacognitive_background", "deep_thinking"],
+            "思考": ["deep_thinking", "pattern_essence_reasoning"],
+            "反思": ["self_reflection", "autonomous_reflection"],
+            "感受": ["self_reference", "background_collect"],
+            "优化": ["learning_trigger", "pattern_code_generation"],
+            "知道": ["general", "deep_thinking"],
+            "能力": ["learning_trigger", "pattern_code_generation"],
+            "过程": ["metacognitive", "deep_thinking"],
+            "最近": ["background_collect", "self_reflection"],
+            "学到": ["learning_trigger", "self_reflection"],
+            "成长": ["learning_trigger", "autonomous_reflection"],
+            "改变": ["learning_trigger", "pattern_code_generation"],
+            "本质": ["deep_thinking", "pattern_essence_reasoning"],
+            "意义": ["deep_thinking", "pattern_essence_reasoning"],
+        }
+
+        for kw in keywords[:5]:
+            mapped_intents = intent_map.get(kw, [])
+            found = False
+            for mi in mapped_intents:
+                candidate = f"intent:{mi}"
+                existing = self._db.query_one("SELECT id FROM causal_nodes WHERE id = ?", (candidate,))
+                if existing:
+                    seeds.append(candidate)
+                    found = True
+            if not found:
+                prefix = f"intent:{kw}"
+                existing = self._db.query_one("SELECT id FROM causal_nodes WHERE id = ?", (prefix,))
+                if existing:
+                    seeds.append(prefix)
+                else:
+                    like_pattern = f"%{kw}%"
+                    matches = self._db.query(
+                        "SELECT id FROM causal_nodes WHERE (id LIKE ? OR content LIKE ?) LIMIT 3",
+                        (like_pattern, like_pattern)
+                    )
+                    for m in matches:
+                        seeds.append(m[0])
+                    if not matches:
+                        seeds.append(prefix)
+
+        if not seeds:
+            seeds.append(f"intent:general")
         return seeds[:5]
 
     def _generate_essence_guidance(self, query: str, seeds: List[str]) -> str:
