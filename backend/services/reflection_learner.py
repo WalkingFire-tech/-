@@ -115,8 +115,8 @@ async def run_reflection_learning(
                     submit_success_pattern(f"查询成功: {user_input[:50]}", source="reflection")
                 else:
                     submit_error_pattern(f"查询失败: {user_input[:50]}", source="reflection")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
         else:
             logger.debug("认知副作用(记忆/关系/信号): 旁路已包含，跳过")
 
@@ -330,8 +330,8 @@ async def run_reflection_learning(
         if hasattr(_quality, 'overall_score') and _quality.overall_score < 0.4:
             logger.warning(f"知识质量低: {_quality.reasons[:2] if _quality.reasons else ''}")
             reflection += f"; 📉 知识质量:{_quality.overall_score:.2f}"
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from core.ethics import learn_safely
@@ -443,8 +443,8 @@ async def run_reflection_learning(
                             "keywords": list(set(str(_ex.get("content", "")).lower().split()[:8])),
                             "quality_score": int(_ex.get("importance", 0.5) * 100),
                         }
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
             if len(_cr_nodes) >= 2:
                 _conflicts = conflict_resolver.detect_conflicts(_cr_nodes)
                 if _conflicts:
@@ -519,8 +519,8 @@ async def run_reflection_learning(
         if _last_chain and _last_chain.steps:
             _chain_summary = [f"{s.layer_name}:{s.output_data[:50]}" for s in _last_chain.steps]
             reflection += f"; 🔗 决策链:{'/'.join(_chain_summary)}"
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     return {
         "reflection": reflection,

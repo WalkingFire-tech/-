@@ -39,8 +39,8 @@ def _ensure_port_available(port: int, max_retries: int = 3):
                         _sp.run(["taskkill", "/F", "/PID", str(pid)],
                                 capture_output=True, timeout=5)
                         break
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         time.sleep(2.0)
     sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
     available = sock.connect_ex(("127.0.0.1", port)) != 0
@@ -142,8 +142,8 @@ app.include_router(evolution_router, prefix="/api")
 try:
     from backend.folder_browser_api import router as folder_browser_router
     app.include_router(folder_browser_router, prefix="/api/folder", tags=["folder-browser"])
-except Exception:
-    pass
+except Exception as e:
+    logger.warning(f"操作降级跳过: {e}")
 
 FRONTEND_DIR = ROOT_DIR / "frontend"
 if FRONTEND_DIR.exists():

@@ -63,6 +63,6 @@ def initialize_ports(context: dict) -> dict:
         _ports["experience"] = get_experience_port()
         _ports["storage"] = get_storage_port()
         context.setdefault("_ports", _ports)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
     return _ports

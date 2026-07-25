@@ -162,7 +162,7 @@ class WorldModel:
         relevant_edges = self._find_relevant_edges(current_state, intent)
 
         if injected_edges:
-            existing_keys = {(e.source_id, e.target_id, e.edge_type if isinstance(e, CausalEdge) else CausalEdgeType(e.get("edge_type", "causes"))) for e in relevant_edges}
+            existing_keys = {(e.source_id, e.target_id, e.edge_type if isinstance(e, CausalEdge) else CausalEdge(e.get("edge_type", "causes"))) for e in relevant_edges}
             converted = []
             for ie in injected_edges:
                 if isinstance(ie, dict):
@@ -190,6 +190,35 @@ class WorldModel:
                 causal_path=[],
                 alternatives=[]
             )
+
+        action = current_state.get("action", "")
+        if action:
+            paths = self._build_causal_paths(action, intent, relevant_edges)
+            if paths:
+                best = paths[0]
+                predicted_state = {
+                    "outcome": best["outcome"],
+                    "trigger": best["path"][0] if best["path"] else action,
+                    "edge_type": "causes",
+                    "path_type": best.get("path_type", "multi_step"),
+                }
+                alternatives = []
+                for p in paths[1:top_k]:
+                    alternatives.append({
+                        "outcome": p["outcome"],
+                        "probability": p["probability"],
+                        "edge_type": "causes",
+                        "path_type": p.get("path_type", "multi_step"),
+                    })
+                prediction = Prediction(
+                    predicted_state=predicted_state,
+                    probability=best["probability"],
+                    confidence=best["confidence"],
+                    causal_path=best["path"],
+                    alternatives=alternatives
+                )
+                self._save_prediction(query_hash, prediction)
+                return prediction
 
         sorted_edges = sorted(relevant_edges, key=lambda e: (
             2 if getattr(e, '_injected', False) else (1 if e.edge_type in (CausalEdgeType.CAUSES, CausalEdgeType.PREVENTS) else 0),
@@ -240,18 +269,27 @@ class WorldModel:
             logger.warning("操作降级跳过")
 
     def pre_enact(self, current_state: Dict, possible_actions: List[str], intent: str = "") -> Dict:
-        results = []
+        MIN_SCORE_THRESHOLD = 0.05
+        raw_results = []
         for action in possible_actions:
             state_with_action = dict(current_state)
             state_with_action["action"] = action
             pred = self.predict(state_with_action, intent)
-            results.append({
+            score = pred.probability * pred.confidence
+            raw_results.append({
                 "action": action,
                 "predicted_outcome": pred.predicted_state,
                 "probability": pred.probability,
                 "confidence": pred.confidence,
                 "causal_path": pred.causal_path,
+                "score": score,
             })
+        
+        filtered = [r for r in raw_results if r["score"] >= MIN_SCORE_THRESHOLD]
+        results = filtered if filtered else raw_results[:1]
+        
+        for r in results:
+            r.pop("score", None)
         
         results.sort(key=lambda r: r["probability"] * r["confidence"], reverse=True)
         
@@ -385,8 +423,8 @@ class WorldModel:
         if not was_correct and causal_path and len(causal_path) >= 2:
             try:
                 self._generate_counterfactual_from_failure(causal_path, pred_state, actual_outcome)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
         prediction = Prediction(predicted_state=pred_state, probability=prob, confidence=conf, causal_path=causal_path)
         return PredictionResult(
@@ -492,8 +530,8 @@ class WorldModel:
                                      f"{source_id}+{method_id}→{target_id}")
                 self._upsert_edge(source_id, pattern_id, CausalEdgeType.ENABLES, quality / 100.0, 0.2)
                 self._upsert_edge(pattern_id, target_id, CausalEdgeType.CAUSES, quality / 100.0, 0.2)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
     def _extract_strategy(self, plan: str, fallback: str) -> str:
         if not plan or plan == "{}":
@@ -503,8 +541,8 @@ class WorldModel:
             p = json.loads(plan) if isinstance(plan, str) else plan
             if isinstance(p, dict):
                 return p.get("strategy", p.get("approach", p.get("method", fallback)))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         if len(plan) < 30:
             return plan
         return fallback
@@ -631,8 +669,8 @@ class WorldModel:
             )
             for dm in dead_end_methods:
                 self._upsert_edge(dm[0], "outcome:success", CausalEdgeType.CAUSES, 0.3, 0.1)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return {"bridged": bridged}
 
@@ -845,8 +883,8 @@ class WorldModel:
         try:
             from core.spirit_core import spirit_core
             spirit_resonances = spirit_core.resonate(query, context_type=context_type)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         top_principles = [r["principle"] for r in spirit_resonances[:3]] if spirit_resonances else []
 
@@ -921,8 +959,8 @@ class WorldModel:
             trigger_monitor.record("trace_with_spirit.deep_trace", triggered=deep_trace is not None)
             trigger_monitor.record("trace_with_spirit.causal_paths", triggered=len(causal_paths) > 0, empty_result=len(causal_paths) == 0)
             trigger_monitor.record("trace_with_spirit.guidance", triggered=deep_trace is not None and "guidance" in (deep_trace or {}), degraded=deep_trace is not None and deep_trace.get("best_path") is None)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return {
             "resonances": spirit_resonances[:3],
@@ -1069,6 +1107,81 @@ class WorldModel:
             "edge_type_distribution": edge_type_dist,
         }
 
+    def _build_causal_paths(self, action: str, intent: str, relevant_edges: List[CausalEdge]) -> List[Dict]:
+        db = self._db
+        method_node = f"method:{action}"
+        paths = []
+
+        direct_edges = [e for e in relevant_edges if e.source_id == method_node]
+        if not direct_edges:
+            rows = db.query(
+                'SELECT source_id, target_id, edge_type, probability, confidence, evidence_count, last_verified FROM causal_edges WHERE source_id = ? ORDER BY probability * confidence DESC LIMIT 10',
+                (method_node,)
+            )
+            for row in rows:
+                direct_edges.append(CausalEdge(
+                    source_id=row[0], target_id=row[1],
+                    edge_type=CausalEdgeType(row[2]),
+                    probability=row[3], confidence=row[4],
+                    evidence_count=row[5], last_verified=row[6]
+                ))
+
+        for edge in direct_edges:
+            if edge.edge_type == CausalEdgeType.PREVENTS:
+                continue
+            path_prob = edge.probability
+            path_conf = edge.confidence
+            path_nodes = [method_node, edge.target_id]
+
+            outcome_edges = db.query(
+                'SELECT source_id, target_id, edge_type, probability, confidence FROM causal_edges WHERE source_id = ? AND edge_type != ? ORDER BY probability * confidence DESC LIMIT 5',
+                (edge.target_id, CausalEdgeType.PREVENTS.value)
+            )
+            if outcome_edges:
+                best_outcome = outcome_edges[0]
+                path_prob *= best_outcome[3]
+                path_conf *= best_outcome[4]
+                path_nodes.append(best_outcome[1])
+                outcome = best_outcome[1]
+            else:
+                outcome = edge.target_id
+
+            paths.append({
+                "path": path_nodes,
+                "probability": path_prob,
+                "confidence": path_conf,
+                "outcome": outcome,
+                "path_type": "multi_step",
+            })
+
+        if intent:
+            intent_node = f"intent:{intent}"
+            intent_edges = db.query(
+                'SELECT target_id, probability, confidence FROM causal_edges WHERE source_id = ? AND edge_type = ? LIMIT 5',
+                (intent_node, CausalEdgeType.ENABLES.value)
+            )
+            for ie in intent_edges:
+                target_method = ie[0]
+                if target_method == method_node:
+                    for p in paths:
+                        p["probability"] *= ie[1]
+                        p["confidence"] *= ie[2]
+
+        prevents_edges = db.query(
+            'SELECT target_id, probability FROM causal_edges WHERE source_id = ? AND edge_type = ?',
+            (method_node, CausalEdgeType.PREVENTS.value)
+        )
+        prevented_outcomes = {r[0]: r[1] for r in prevents_edges}
+        filtered = []
+        for p in paths:
+            outcome = p["outcome"]
+            if outcome in prevented_outcomes:
+                p["probability"] *= (1.0 - prevented_outcomes[outcome])
+            filtered.append(p)
+
+        filtered.sort(key=lambda p: p["probability"] * p["confidence"], reverse=True)
+        return filtered
+
     def _find_relevant_edges(self, state: Dict, intent: str = "") -> List[CausalEdge]:
         edges = []
         search_terms = []
@@ -1077,8 +1190,11 @@ class WorldModel:
             search_terms.append(f"intent:{intent}")
         for k, v in state.items():
             if isinstance(v, str) and len(v) > 0:
-                search_terms.append(f"intent:{v}")
-                search_terms.append(f"outcome:{v}")
+                if k == "action":
+                    search_terms.append(f"method:{v}")
+                else:
+                    search_terms.append(f"intent:{v}")
+                    search_terms.append(f"outcome:{v}")
 
         if not search_terms:
             return edges

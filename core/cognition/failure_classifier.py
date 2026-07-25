@@ -164,8 +164,8 @@ class AutoFixExecutor:
             result = cd.dispatch(user_query)
             if result and result.get("standard_entity"):
                 return {"fix_applied": True, "detail": f"实体归一化成功: {result['standard_entity']}", "standard_entity": result["standard_entity"]}
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return {"fix_applied": False, "detail": "实体归一化未能提取参数"}
 
     @staticmethod
@@ -176,8 +176,8 @@ class AutoFixExecutor:
             result = cd.dispatch(user_query, force_slow_path=True)
             if result and result.get("intent_type"):
                 return {"fix_applied": True, "detail": f"慢路径重分类: {result['intent_type']}", "corrected_intent": result["intent_type"]}
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return {"fix_applied": False, "detail": "慢路径重分类未产生不同结果"}
 
     @staticmethod
@@ -204,8 +204,8 @@ class AutoFixExecutor:
             result = cd.dispatch(user_query)
             if result and result.get("standard_entity"):
                 return {"fix_applied": True, "detail": f"别名映射成功: {result['standard_entity']}", "standard_entity": result["standard_entity"]}
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return {"fix_applied": False, "detail": "别名映射未能解析实体"}
 
     @staticmethod
@@ -217,8 +217,8 @@ class AutoFixExecutor:
             created = loop.check_and_create(user_query, intent_type)
             if created:
                 return {"fix_applied": True, "detail": f"能力创造回路已触发", "tool_created": True}
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return {"fix_applied": False, "detail": "能力创造回路未能生成工具"}
 
     @staticmethod
@@ -236,8 +236,8 @@ class AutoFixExecutor:
             learner = CapabilityGapLearner()
             learner.record_gap(user_query, ctx.get("intent_type", "unknown"))
             return {"fix_applied": True, "detail": "能力缺口已记录+外部学习待触发", "gap_recorded": True}
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return {"fix_applied": False, "detail": "能力缺口记录失败"}
 
     @staticmethod
@@ -462,20 +462,20 @@ class FailureClassifier:
             )''', commit=True)
             try:
                 db.execute('ALTER TABLE failures ADD COLUMN severity TEXT', commit=True)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
             try:
                 db.execute('ALTER TABLE failures ADD COLUMN layer TEXT', commit=True)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
             try:
                 db.execute('ALTER TABLE failures ADD COLUMN auto_fix_applied INTEGER DEFAULT 0', commit=True)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
             try:
                 db.execute('ALTER TABLE failures ADD COLUMN auto_fix_detail TEXT', commit=True)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
             prompt = cls.get_learning_prompt(category, user_query)
             import json
             from datetime import datetime

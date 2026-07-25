@@ -72,8 +72,8 @@ async def verify_essence(
                         source="essence_reasoning",
                     )
                     logger.debug(f"本质洞察→真谛候选: {user_input[:30]} (置信度{essence_confidence:.0%})")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"操作降级跳过: {e}")
 
             events.append({"type": "awareness", "data": {
                 "essence_verdict": essence_result.get("verdict", "")[:60],

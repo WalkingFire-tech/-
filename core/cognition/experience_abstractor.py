@@ -126,8 +126,8 @@ class ExperienceAbstractor:
             score = emb_similarity(text_a, text_b)
             if score > 0.0:
                 return score
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return None
 
     @classmethod

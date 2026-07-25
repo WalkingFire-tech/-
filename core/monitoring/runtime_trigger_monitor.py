@@ -87,8 +87,8 @@ class RuntimeTriggerMonitor:
                     total = row[0]
                     trig = row[1]
                     return trig / max(total, 1)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
             return None
         return c["triggered"] / max(c["total"], 1)
 
@@ -115,8 +115,8 @@ class RuntimeTriggerMonitor:
             rows = db.query("SELECT branch_id FROM trigger_stats")
             for r in rows:
                 all_branches.add(r[0])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         for branch_id in sorted(all_branches):
             rate = self.get_trigger_rate(branch_id)

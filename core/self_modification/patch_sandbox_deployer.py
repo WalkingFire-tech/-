@@ -152,8 +152,8 @@ class PatchSandbox:
                     if hasattr(cls, '__init__'):
                         try:
                             _instance = cls.__new__(cls)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"操作降级跳过: {e}")
 
             return True, None
         except Exception as e:
@@ -423,8 +423,8 @@ class PatchDeployer:
             gpu_temp = status.get("gpu_temperature", 0)
             if isinstance(gpu_temp, (int, float)) and gpu_temp > 90:
                 return f"GPU温度过高: {gpu_temp}°C"
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.system_diagnostician import system_diagnostician
@@ -432,8 +432,8 @@ class PatchDeployer:
             errors = [r for r in results if r.status == "error"]
             if len(errors) >= 2:
                 return f"系统诊断发现{len(errors)}个错误"
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return None
 

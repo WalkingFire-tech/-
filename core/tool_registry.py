@@ -131,6 +131,59 @@ class ToolInterface(ABC):
         return True
 
 
+class _FuncToolWrapper(ToolInterface):
+
+    def __init__(self, name: str, func, category: str = "general",
+                 description: str = "", timeout: float = 15.0,
+                 priority: int = 50, parameters: Dict = None):
+        self._tool_name = name
+        self._func = func
+        self._cat = category
+        self._desc = description
+        self._timeout = timeout
+        self._priority = priority
+        self._params = parameters or {"query": {"type": "string", "description": "输入参数"}}
+
+    @property
+    def name(self) -> str:
+        return self._tool_name
+
+    @property
+    def description(self) -> str:
+        return self._desc
+
+    @property
+    def parameters(self) -> Dict:
+        return self._params
+
+    @property
+    def category(self) -> str:
+        return self._cat
+
+    @property
+    def timeout(self) -> float:
+        return self._timeout
+
+    @property
+    def priority(self) -> int:
+        return self._priority
+
+    async def execute(self, **kwargs) -> ToolResult:
+        try:
+            import asyncio as _asyncio
+            if _asyncio.iscoroutinefunction(self._func):
+                result = await self._func(**kwargs)
+            else:
+                result = await run_tool_async(self._func, **kwargs, timeout=self._timeout)
+            if isinstance(result, ToolResult):
+                return result
+            if isinstance(result, dict):
+                return ToolResult(success=True, data=result, source=self._tool_name, quality=50)
+            return ToolResult(success=True, data=str(result) if result else "", source=self._tool_name, quality=50)
+        except Exception as e:
+            return ToolResult(success=False, error=str(e), source=self._tool_name)
+
+
 class LegacyToolAdapter(ToolInterface):
     """适配器：将旧版 tools/base.Tool 包装为 ToolInterface，实现双注册表统一。"""
 
@@ -221,6 +274,16 @@ class ToolRegistry:
             self._categories[cat].append(name)
         logger.warning(f"工具已注册: {name} (分类:{cat}, 超时:{tool.timeout}s)")
         return True
+
+    def register_tool(self, name: str, func, category: str = "general",
+                      description: str = "", timeout: float = 15.0,
+                      priority: int = 50, parameters: Dict = None) -> bool:
+        wrapper = _FuncToolWrapper(
+            name=name, func=func, category=category,
+            description=description, timeout=timeout,
+            priority=priority, parameters=parameters,
+        )
+        return self.register(wrapper)
 
     def unregister(self, name: str) -> bool:
         if name not in self._tools:
@@ -440,8 +503,8 @@ class ToolExecutor:
             if not _flags.get("auto_pip_install", True):
                 logger.info(f"AutoInstall: auto_pip_install已禁用(feature flag)，跳过安装 {module_name}")
                 return False
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         if module_name in _INSTALLED_IN_SESSION:
             return True
         _PIP_PACKAGE_MAP = {
@@ -630,8 +693,8 @@ def register_builtin_tools():
         from core.unified_reader import UnifiedReader
         _ur = UnifiedReader()
         tool_registry.register_tool("unified_read", _ur.read, category="io", description="统一读取接口：本地文件/PDF/SQLite/网页")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"UnifiedReader注册失败: {e}")
 
     logger.info(f"工具注册完成: {tool_registry.tool_count}个工具")
 

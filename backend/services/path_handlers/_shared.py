@@ -94,8 +94,8 @@ def _save_to_experience_pool(query: str, response: str, success: bool = True, in
             if not safety.get("accepted", True):
                 logger.warning(f"学习内容未通过价值对齐检查: {safety.get('issues', [])}")
                 quality_score = min(quality_score, 40)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         from backend.services.path_handlers.experience_path import _keyword_overlap
         if not _keyword_overlap(query, response, min_ratio=0.05):

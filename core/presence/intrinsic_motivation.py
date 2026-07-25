@@ -130,8 +130,8 @@ class IntrinsicMotivationEngine:
                         priority=0.5,
                         source="CuriosityEngine",
                     ))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         new_motivations.sort(key=lambda m: m.priority, reverse=True)
         self._motivations = new_motivations[:10]
@@ -243,8 +243,8 @@ class IntrinsicMotivationEngine:
             if hasattr(engine, 'consolidate'):
                 engine.consolidate()
                 return {"status": "consolidated", "topic": motivation.topic}
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return {"status": "skipped", "topic": motivation.topic}
 
     def get_status(self) -> Dict[str, Any]:

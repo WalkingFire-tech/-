@@ -480,8 +480,8 @@ def is_goal_achieved(user_input: str, response: str, intent_type: str, attempts:
                 from core.cognition.failure_classifier import FailureClassifier, FailureCategory
                 FailureClassifier.classify_and_fix_sync(
                     {"status": "hallucination"}, user_input, {"fabricated": True})
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
             return False
 
     if is_operational:
@@ -671,8 +671,8 @@ def alchemize_error(error: Exception, context: dict = None, phase: str = "unknow
         if not isinstance(error, CampfireError):
             error = CampfireError(str(error), category=context.get("phase", "unknown"))
         logger.warning(f"🧯 {error.friendly_message()}")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
     try:
         if _error_alchemy_instance is None:
             from core.learning.error_alchemy import ErrorAlchemy

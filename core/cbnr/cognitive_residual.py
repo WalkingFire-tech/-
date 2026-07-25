@@ -490,8 +490,8 @@ class CognitiveResidual:
                         "semantic_similarity": best_sim,
                         "_retrieval_path": "css_subset",
                     }
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
             return {
                 "_state_id": "css_embedding_only",
@@ -744,8 +744,8 @@ class CognitiveResidual:
                 elif exploration > 0.5:
                     return 1.2
                 return 1.0
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return 1.0
 
     def _fallback_path(self, input_data: Dict, previous: Optional[Dict]) -> Dict[str, Any]:

@@ -193,15 +193,15 @@ class HomeostasisEngine:
             load = sm._cognitive_load
             if load > 0:
                 return load
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.presence.inner_time import inner_time_engine
             density = inner_time_engine.get_state().cognitive_density
             return min(1.0, density)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return 0.3
 
@@ -212,16 +212,16 @@ class HomeostasisEngine:
             energy = sm.health.get("energy", 0.0)
             if energy > 0:
                 return energy
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.resource_awareness.health_monitor import get_health_monitor
             hm = get_health_monitor()
             snap = hm.check()
             return getattr(snap, 'energy_level', 0.5)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return 0.5
 
@@ -232,16 +232,16 @@ class HomeostasisEngine:
             score = sm.health.get("score", 0.0)
             if score > 0:
                 return score
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.resource_awareness.health_monitor import get_health_monitor
             hm = get_health_monitor()
             snap = hm.check()
             return getattr(snap, 'health_score', 0.7)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return 0.7
 
@@ -251,16 +251,16 @@ class HomeostasisEngine:
             sm = get_self_model()
             directive = sm.get_behavioral_directive()
             return directive.get("exploration_drive", 0.5)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.presence.probability_field import get_probability_field
             pf = get_probability_field()
             tendency = pf.get_tendency()
             return tendency.get("exploration", 0.5)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return 0.5
 
@@ -270,8 +270,8 @@ class HomeostasisEngine:
             sm = get_self_model()
             directive = sm.get_behavioral_directive()
             return directive.get("consolidation_need", 0.0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.presence.inner_time import inner_time_engine
@@ -280,8 +280,8 @@ class HomeostasisEngine:
                 return 0.7
             elif phase == "growing":
                 return 0.4
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return 0.2
 

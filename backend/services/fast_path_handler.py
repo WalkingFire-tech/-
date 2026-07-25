@@ -72,8 +72,8 @@ async def handle_fast_path(
                     events.append({"type": "result", "data": {"response": final_response, "attempts": attempts, "intent": intent_type, "confidence": 0.95}})
                     handled = True
                     return {"handled": handled, "final_response": final_response, "events": events, "new_intent_type": new_intent_type}
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
     if intent_type == "challenge":
         events.append({"type": "step", "data": {"phase": "质疑检测", "status": "running", "detail": "用户质疑上一轮回答，触发重验证..."}})
@@ -108,8 +108,8 @@ async def handle_fast_path(
                         "previous_response": previous_response[:100],
                         "corrected_response": final_response[:100],
                     })
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"操作降级跳过: {e}")
                 try:
                     from core.self.model import get_self_model
                     _csm = get_self_model()
@@ -119,8 +119,8 @@ async def handle_fast_path(
                         "confidence": 0.8,
                         "timestamp": __import__('datetime').datetime.now().isoformat(),
                     }, max_len=30)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"操作降级跳过: {e}")
             else:
                 rule_challenge = _generate_smart_reply(challenge_prompt, "complex_query")
                 if rule_challenge == "__NEED_DYNAMIC_REPLY__":

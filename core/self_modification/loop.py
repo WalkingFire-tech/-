@@ -306,8 +306,8 @@ class SelfModificationLoop(LoopMixin):
                 "success": success,
                 "quality_score": 80 if success else 20,
             })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     def _write_audit_log(self, file_path: str, defect_dict: Dict, patch, result_status: str,
                          wm_verdict: Dict = None, is_self_mod: bool = False,
@@ -359,8 +359,8 @@ class SelfModificationLoop(LoopMixin):
                 ),
                 commit=True,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     def _defect_to_dict(self, defect) -> Dict[str, Any]:
         if hasattr(defect, "__dataclass_fields__"):
@@ -436,8 +436,8 @@ class SelfModificationLoop(LoopMixin):
                     try:
                         import json
                         meta = json.loads(d["metadata"])
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"操作降级跳过: {e}")
                 rules.append({
                     "condition": d.get("condition", ""),
                     "action": d.get("action", ""),

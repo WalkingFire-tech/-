@@ -332,8 +332,8 @@ class PersistentTaskQueue:
             _pending = _tp.get_pending_tasks()
             if _pending:
                 logger.debug(f"TaskPlanner: {len(_pending)}个待处理任务")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     def _is_idle(self) -> bool:
         """检测系统是否空闲（用户无交互超过阈值）"""
@@ -845,13 +845,13 @@ class PersistentTaskQueue:
                     context=gap[:200],
                     confidence=0.6,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
             try:
                 from core.learning.intrinsic_reward import intrinsic_reward
                 intrinsic_reward.reward("learn_new_knowledge", f"学习了{gap[:40]}")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
             return f"学习了{len(learned_items)}项: {'; '.join(learned_items)}"
         return f"知识缺口学习未获得有效结果: {gap[:50]}"
 

@@ -82,8 +82,8 @@ async def execute_parallel_paths(
         _cost_hint = _ems.get_cost_estimate(max_paths)
         if _cost_hint:
             methodology["cost_estimate"] = _cost_hint
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from core.presence.probability_decision_bridge import get_probability_decision_bridge
@@ -96,8 +96,8 @@ async def execute_parallel_paths(
         if _prob_paths < max_paths:
             max_paths = _prob_paths
             logger.info(f"🌉 概率场驱动路径数: diversity={_diversity:.2f} → {max_paths}路径")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     resource_mode = "normal"
     resource_allocation = None
@@ -172,8 +172,8 @@ async def execute_parallel_paths(
             if _sm and not _sm.should_use_path(path_name):
                 logger.info(f"⚖️ SelfModel领域模型: {path_name}置信度过低，跳过")
                 return False
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         if resource_allocation:
             alloc_val = resource_allocation["allocation"].get(path_name, 0.0)
             if alloc_val < 0.1:
@@ -205,8 +205,8 @@ async def execute_parallel_paths(
                 logger.warning(f"⚖️ Ollama路径被governor阻止: {_ollama_decision.message}")
             elif _ollama_decision.degraded_to:
                 logger.info(f"⚖️ Ollama路径被governor降级: {_ollama_decision.degraded_to}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         
         if _ollama_decision is None or _ollama_decision.allowed:
             try:
@@ -239,8 +239,8 @@ async def execute_parallel_paths(
             _search_decision = get_adaptive_governor().decide(ActionType.EXTERNAL_SEARCH)
             if not _search_decision.allowed:
                 logger.warning(f"⚖️ 外部搜索被governor阻止: {_search_decision.message}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         if _search_decision is None or _search_decision.allowed:
             ext_task = asyncio.create_task(fetch_external_api(user_input, conversation_context=conversation_context, truth_insights=truth_insights))
     ext_learn_task = None
@@ -451,8 +451,8 @@ async def execute_parallel_paths(
                     pending_set = _keep_light_tasks
                     if not pending_set:
                         break
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         heartbeat_sec += 3
 

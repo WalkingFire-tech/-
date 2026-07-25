@@ -74,8 +74,8 @@ def _get_experience_port():
         port = get_experience_port()
         if port.is_available():
             return port
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
     return None
 
 

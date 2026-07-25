@@ -27,8 +27,8 @@ async def post_response_processing(
         try:
             from core.presence.inner_time import inner_time_engine, CognitiveEventType
             inner_time_engine.tick(CognitiveEventType.OUTPUT, intensity=1.0, description="response_sent")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     if dim_orch:
         try:
@@ -36,8 +36,8 @@ async def post_response_processing(
             dim_orch.update_dimension(CognitiveDimension.SYMBOLIC, confidence, f"route={route}")
             _alignment = dim_orch.decide_primary_dimension(user_input[:50])
             logger.debug(f"维度编排: 主={_alignment.primary_dimension.value}, 平衡={_alignment.wisdom_truth_vector:.2f}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     try:
         from core.metacognition.agent import metacognitive_agent
@@ -47,7 +47,7 @@ async def post_response_processing(
         if stag.get("stagnation_detected"):
             pert = stag.get("perturbation", {})
             logger.info(f"🔄 自厌信号: {pert.get('action')} — {pert.get('reason')}")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     return {"events": events}

@@ -119,8 +119,8 @@ class DynamicProbabilityField:
             from core.presence.probability_field import get_probability_field
             pf = get_probability_field()
             pf.update(signal=confidence)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return self.get_distribution()
 
@@ -168,8 +168,8 @@ class DynamicProbabilityField:
                 return True
             if _diversity < 0.4:
                 return False
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return base
 
     def get_exploration_guidance(self) -> Dict:

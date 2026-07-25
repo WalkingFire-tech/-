@@ -57,8 +57,8 @@ class EmbeddingCache:
             conn.close()
             if row and row[0]:
                 return np.frombuffer(row[0], dtype=np.float32).reshape(-1)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return None
 
     def put(self, text: str, embedding: np.ndarray) -> None:

@@ -440,8 +440,8 @@ class SleepConsolidationEngine:
                     result = ip.perceive(sig)
                     if result.patterns_detected:
                         details.setdefault('perception_patterns', []).extend(result.patterns_detected)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"操作降级跳过: {e}")
             logger.info(f"🔍 增量感知: 处理{len(recent)}条记忆信号")
         except Exception as e:
             logger.warning(f"增量感知挂接跳过: {e}")
@@ -529,8 +529,8 @@ class SleepConsolidationEngine:
                     result = fbl.validate(fb)
                     if result.validated:
                         validated_count += 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"操作降级跳过: {e}")
             details['feedback_validated'] = validated_count
             logger.info(f"🔄 反馈回路验证: {validated_count}条知识")
         except Exception as e:

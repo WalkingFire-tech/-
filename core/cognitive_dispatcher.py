@@ -317,8 +317,8 @@ class CognitiveDispatcher:
         try:
             from core.cognition.experience_abstractor import ExperienceAbstractor
             field["scent"] = ExperienceAbstractor.extract_scent(query)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return field
 
@@ -506,8 +506,8 @@ class CognitiveDispatcher:
             from backend.services.self_reference_detector import is_self_referential
             if is_self_referential(query):
                 return "self_reference", 0.9
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         # 匹配优先级：self_reference > hardware > challenge > complex > simple > 其他
         # hardware优先于challenge：当用户说"时间不对"时更可能是要求重新执行硬件操作

@@ -225,15 +225,15 @@ class ProbabilityDecisionBridge:
             el = get_existence_layer()
             if hasattr(el, '_probability_field') and el._probability_field:
                 return el._probability_field.get_tendency()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.presence.probability_field import get_probability_field
             pf = get_probability_field()
             return pf.get_tendency()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return {"exploration": 0.5, "stability": 0.5, "tension": 0.15,
                 "entropy": 0.95, "activity": 0.075, "phase": "BREATH"}
@@ -243,8 +243,8 @@ class ProbabilityDecisionBridge:
             from core.self.model import get_self_model
             sm = get_self_model()
             return sm.get_behavioral_directive()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return {}
 
     def _get_signal_pack(self) -> Dict[str, Any]:
@@ -253,8 +253,8 @@ class ProbabilityDecisionBridge:
             el = get_existence_layer()
             if hasattr(el, 'get_signal_pack'):
                 return el.get_signal_pack()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return {}
 
     def _compute_path_weight_modulators(

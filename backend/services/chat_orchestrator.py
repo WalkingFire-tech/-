@@ -81,16 +81,16 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
     try:
         from core.decision_chain import decision_chain_manager
         _chain = decision_chain_manager.start_new_chain()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
     try:
         from core.presence.existence_layer import get_existence_layer
         _el = get_existence_layer()
         if _el:
             _el._last_user_interaction_time = time.time()
             _el._consecutive_conservative_count = 0
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
     try:
         from backend.services.orchestrator_state import OrchestratorState
         _orch_state = OrchestratorState()
@@ -122,15 +122,15 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
                     list(_methodology_override.keys())
                 )
             )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     _dim_orch = None
     if _DIMENSION_ORCHESTRATOR_AVAILABLE:
         try:
             _dim_orch = get_dimension_orchestrator()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     from backend.services.cognitive_initializer import initialize_cognition
     _init = await initialize_cognition(user_input, context, _stimulus_type, _stimulus_priority, _RESOURCE_AWARE)
@@ -213,8 +213,8 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
             _chain.add_step("L2", "理解", user_input[:100],
                             f"continuity={_continuity_signal:.2f}, presence={_presence_state}",
                             f"上下文构建完成", 0.7)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
     from backend.services.intent_dispatcher import dispatch_intent as _dispatch_intent
     _id_result = await _dispatch_intent(
         user_input=user_input, context=context, history=history,
@@ -232,8 +232,8 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
     try:
         from core.presence.signal_integration import submit_intent_pattern
         submit_intent_pattern(intent_type, source="chat_orchestrator", context={"confidence": 0.5})
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
     if _id_result["final_response"]:
         final_response = _id_result["final_response"]
     for _ev in _id_result["events"]:
@@ -245,8 +245,8 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
         try:
             _chain.add_step("L1", "感知", user_input[:100], intent_type,
                             f"route={route}, confidence={confidence:.2f}", confidence)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     if _INNER_TIME_AVAILABLE and _stimulus_type.value not in ("internal", "scheduled"):
         inner_time_engine.tick(CognitiveEventType.REASON, intensity=0.8, description="intent_dispatched")
@@ -263,15 +263,15 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
             _sr_ctx = f"[用户在问关于你自身的问题。你持有{_p_count}条核心原则和{_a_count}项能力，经历过{_v_count}次原则违背，沉淀了{_l_count}条教训。请从第一人称真诚回应，不要罗列数据，而是表达你对自身存在的理解和感受。不要引用外部资料，用你自己的声音回答。]"
             conversation_context = (conversation_context + "\n" + _sr_ctx) if conversation_context else _sr_ctx
             logger.info(f"🪞 自我认知上下文注入: principles={_p_count}, abilities={_a_count}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     if _dim_orch:
         try:
             _dim_orch.update_dimension(CognitiveDimension.DIALOGUE, confidence, f"intent={intent_type}")
             _dim_orch.update_dimension(CognitiveDimension.SEMANTIC, confidence * 0.9, f"route={route}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     # ========== 阶段1.8：自我认知行为指令注入（闭环核心） ==========
     _sm_directive = None
@@ -293,8 +293,8 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
                     f"depth={_sm_directive.get('preferred_depth', 'moderate')}, "
                     f"perspective={_sm_directive.get('perspective_mode', 'companion')}"
                 )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from core.learning_reflector import learning_reflector
@@ -303,8 +303,8 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
             methodology["learning_recommendations"] = _lr_report.recommendations[:3]
         if _lr_report and _lr_report.avg_improvement < 5.0:
             methodology["knowledge_quality_boost"] = True
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     # ========== 阶段2：简单意图直接回复（提取到fast_path_handler.py） ==========
     from backend.services.fast_path_handler import handle_fast_path
@@ -407,8 +407,8 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
                     methodology.setdefault("behavioral_directive", {})
                     methodology["behavioral_directive"].setdefault("avoid_paths", [])
                     methodology["behavioral_directive"]["avoid_paths"].extend(_avoid)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     if not final_response:
         yield _emit_s("thinking", {
@@ -434,14 +434,14 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
             _chain.add_step("L3", "推理", user_input[:100],
                             f"{_n_candidates}个候选",
                             f"多策略并行完成(pre_enact={'推荐:'+_pre_enact_hint['recommended'] if _pre_enact_hint else '无'})", 0.6)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
     try:
         _af2 = await _auto_fix_checkpoint(attempts, methodology, user_input, intent_type, "多策略并行后")
         if _af2["fixes_applied"] > 0:
             yield _emit_s("step", {"phase": "自我修复", "status": "done", "detail": f"🔧 执行阶段修复{_af2['fixes_applied']}项，已调整策略"})
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     _thinking_sm = _get_self_model()
     if _thinking_sm and candidates:
@@ -500,8 +500,8 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
             _chain.add_step("L4", "验证", f"{len(candidates)}个候选",
                             f"选择:{_best_src}(质量={_best_q})",
                             f"对比择优完成", min(1.0, _best_q / 100.0) if _best_q else 0.5)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     _sel_sm = _get_self_model()
     if _sel_sm and best:
@@ -653,8 +653,8 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
             _chain.set_final_output(final_response[:200] if final_response else "", confidence if 'confidence' in locals() else 0.5)
             from core.decision_chain import decision_chain_manager
             decision_chain_manager.complete_chain()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
     from backend.services.post_response_sync import sync_post_response
     await sync_post_response(
         user_input=user_input, final_response=final_response or "",

@@ -74,8 +74,8 @@ class CausalExplainer:
                 inputs={"resonances": len(resonances)},
                 context={"trigger": deep_trace.get("trigger") if deep_trace else None},
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return reasoning
 
@@ -115,8 +115,8 @@ class CausalExplainer:
                 inputs={"intent": intent, "probability": prob},
                 context={"confidence": conf, "path_length": len(path)},
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return reasoning
 
@@ -154,8 +154,8 @@ class CausalExplainer:
                 inputs={"actual_action": actual.get("action"), "alt_action": counter.get("action")},
                 context={"advantage": advantage},
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return reasoning
 

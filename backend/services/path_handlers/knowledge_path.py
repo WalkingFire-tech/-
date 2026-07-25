@@ -10,8 +10,8 @@ def _get_vector_port():
         port = get_vector_store_port()
         if port.is_available():
             return port
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
     return None
 
 

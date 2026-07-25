@@ -519,8 +519,8 @@ class ReActEngine(AsyncLoopMixin):
                         FailureClassifier.classify_and_fix_sync(
                             {"status": "mismatch", "reason": "tool_not_found"}, query,
                             {"intent_type": intent_type, "error": str(e)[:100]})
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"操作降级跳过: {e}")
 
                 return None
 

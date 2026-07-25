@@ -112,8 +112,8 @@ async def compare_and_select(
                     multiplier = priority / 10.0
                     c["quality"] = int(c.get("quality", 30) * multiplier)
             logger.info(f"🪞 SelfModel路径优先级注入择优")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     logger.info(f"⏱️ [T+{time.time()-start_time:.1f}s] 进入阶段4: 对比择优, {len(candidates)}个候选")
     for i, c in enumerate(candidates):
@@ -221,8 +221,8 @@ async def compare_and_select(
         try:
             from core.cognition.dimension_orchestrator import CognitiveDimension
             _dim_orch.update_dimension(CognitiveDimension.CAUSAL, confidence, f"best_source={best.get('source','') if best else 'none'}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
     return {
         "best": best,

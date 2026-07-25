@@ -73,8 +73,8 @@ async def assemble_and_emit(
         if hasattr(_el, 'record_interaction'):
             _quality = int(fitness_score.final_score) if fitness_score else (80 if any(a[1] for a in attempts) else 40)
             _el.record_interaction(quality_score=_quality, user_feedback=0)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from core.trajectory_evolution import trajectory_store
@@ -186,8 +186,8 @@ async def assemble_and_emit(
                 _best_suggestion = _quality["suggestions"][0]
                 if _best_suggestion not in final_response:
                     final_response += f"\n\n💡 {_best_suggestion}"
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         _sm_learn = _get_self_model()
@@ -201,8 +201,8 @@ async def assemble_and_emit(
                     _growth_line = f"\n\n🌱 **我学到了**：{_learn_summary[:120]}"
                     if _growth_line not in final_response and "我学到了" not in final_response:
                         final_response += _growth_line
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     if final_response and not _is_goal_achieved(user_input, final_response, intent_type, attempts):
         logger.info(f"🔄 目标未达成检测: 回复是半成品，启动持续求解...")
@@ -255,8 +255,8 @@ async def assemble_and_emit(
         _sm = _get_self_model()
         if _sm:
             result_payload["behavioral_directive"] = _sm.get_behavioral_directive()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"操作降级跳过: {e}")
 
     try:
         from infrastructure.hardware_monitor import set_ollama_cooldown

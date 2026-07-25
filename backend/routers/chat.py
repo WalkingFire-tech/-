@@ -6,7 +6,7 @@ import json
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from loguru import logger
-from core.ports.adapters import get_storage_port
+from core.ports.adapters import get_storage_port, get_chat_history_port
 
 router = APIRouter()
 
@@ -58,8 +58,8 @@ async def chat(request: dict):
             el = ExistenceLayer()
             if hasattr(el, 'current_state'):
                 system_state = el.current_state
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         if system_state in ("growing", "resting"):
             try:
@@ -75,8 +75,8 @@ async def chat(request: dict):
                         "route": "timeout_degraded",
                         "attempts": [("经验池降级", True, f"系统{system_state}状态")],
                     }
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
         try:
             from core.spirit_core import spirit_core
@@ -161,8 +161,8 @@ async def chat_stream(request: dict):
                         continue
                     elif _action and _action.type == "inject":
                         data.update(_action.payload)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"操作降级跳过: {e}")
                 yield f"data: {json.dumps({'type': event_type, **data}, ensure_ascii=False, cls=SafeEncoder)}\n\n"
         except Exception as e:
             logger.error(f"流式生成器异常: {e}")
@@ -268,8 +268,7 @@ async def feedback(request: dict):
 @router.get("/chat-history/sessions")
 async def get_chat_sessions(limit: int = 20, offset: int = 0):
     try:
-        from infrastructure.chat_history import get_chat_history
-        ch = get_chat_history()
+        ch = get_chat_history_port()
         return {"sessions": ch.get_sessions(limit, offset), "stats": ch.get_stats()}
     except Exception as e:
         return {"error": str(e), "sessions": []}
@@ -278,8 +277,7 @@ async def get_chat_sessions(limit: int = 20, offset: int = 0):
 @router.get("/chat-history/sessions/{session_id}")
 async def get_chat_session_messages(session_id: str, limit: int = 100, before_id: int = 0):
     try:
-        from infrastructure.chat_history import get_chat_history
-        ch = get_chat_history()
+        ch = get_chat_history_port()
         return {"session_id": session_id, "messages": ch.get_messages(session_id, limit, before_id)}
     except Exception as e:
         return {"error": str(e), "messages": []}
@@ -288,8 +286,7 @@ async def get_chat_session_messages(session_id: str, limit: int = 100, before_id
 @router.post("/chat-history/sessions")
 async def create_chat_session(request: dict):
     try:
-        from infrastructure.chat_history import get_chat_history
-        ch = get_chat_history()
+        ch = get_chat_history_port()
         session_id = ch.create_session(
             session_id=request.get("session_id"),
             title=request.get("title", "")
@@ -302,8 +299,7 @@ async def create_chat_session(request: dict):
 @router.delete("/chat-history/sessions/{session_id}")
 async def delete_chat_session(session_id: str):
     try:
-        from infrastructure.chat_history import get_chat_history
-        ch = get_chat_history()
+        ch = get_chat_history_port()
         ch.delete_session(session_id)
         return {"status": "ok"}
     except Exception as e:
@@ -313,8 +309,7 @@ async def delete_chat_session(session_id: str):
 @router.get("/chat-history/search")
 async def search_chat_history(q: str = "", limit: int = 20):
     try:
-        from infrastructure.chat_history import get_chat_history
-        ch = get_chat_history()
+        ch = get_chat_history_port()
         return {"results": ch.search(q, limit)}
     except Exception as e:
         return {"error": str(e), "results": []}
@@ -323,7 +318,6 @@ async def search_chat_history(q: str = "", limit: int = 20):
 @router.get("/chat-history/stats")
 async def get_chat_history_stats():
     try:
-        from infrastructure.chat_history import get_chat_history
-        return get_chat_history().get_stats()
+        return get_chat_history_port().get_stats()
     except Exception as e:
         return {"error": str(e)}

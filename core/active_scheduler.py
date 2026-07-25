@@ -325,8 +325,8 @@ class ActiveScheduler:
                         total_q = recent['total'] or 1
                         dialog_reduction = min(1.0, real_q / max(1, total_q))
                         external_reduction = min(1.0, ext_calls / max(1, total_q))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
             
             return {
                 "like_rate": like_rate,

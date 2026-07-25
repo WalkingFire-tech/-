@@ -228,8 +228,8 @@ class ExistenceLayer(LoopMixin):
             try:
                 self._set_thread_priority("above_normal")
                 logger.info("  ✓ 存在层线程优先级已提升（above_normal）")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
         
         last_heartbeat = time.time()
         last_growth = time.time()
@@ -494,8 +494,8 @@ class ExistenceLayer(LoopMixin):
                 if self.gap_growth and hasattr(self.gap_growth, 'process_signals'):
                     try:
                         self.gap_growth.process_signals(signals_to_process)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"操作降级跳过: {e}")
     
     def _perceive_self(self) -> SelfPerceptionResult:
         """自我感知"""
@@ -645,16 +645,16 @@ class ExistenceLayer(LoopMixin):
                 result = self._consolidator.consolidate(intensity=min(1.0, intensity))
                 if any(v > 0 for v in result.values()):
                     logger.debug(f"🧹 经验池整理: {result}")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
         if self._path_decay:
             try:
                 result = self._path_decay.decay()
                 if result.get("decayed", 0) > 0:
                     logger.debug(f"📉 路径权重衰减: {result}")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
     
     def _compute_exploration_probability(self) -> float:
         """
@@ -668,8 +668,8 @@ class ExistenceLayer(LoopMixin):
             engine = get_curiosity_engine()
             frontier = engine.perceive_frontier()
             curiosity_strength = frontier.get("curiosity_strength", 0.3)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         resonance_boost = 1.0
         try:
@@ -679,8 +679,8 @@ class ExistenceLayer(LoopMixin):
             if resonances:
                 top_strength = resonances[0].get("strength", 0.0)
                 resonance_boost = 0.7 + top_strength * 0.3
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         density_factor = 0.5
         if self.inner_time:
@@ -702,7 +702,7 @@ class ExistenceLayer(LoopMixin):
         
         self.metrics.resting_cycles += 1
         
-        logger.warning(f"😴 休息状态: 进行轻量整合...")
+        logger.debug(f"😴 休息状态: 进行轻量整合...")
         
         if len(self.pending_signals) > 50:
             self.pending_signals = self.pending_signals[-30:]
@@ -760,8 +760,8 @@ class ExistenceLayer(LoopMixin):
                 detected_signals.append(signal_type)
                 if signal_type == "pattern_emergence":
                     pattern_emergence_count = count
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         self_score_trend = 0.0
         try:
@@ -770,15 +770,15 @@ class ExistenceLayer(LoopMixin):
             scores = sm.get_maturity_score()
             overall = scores.get("overall", 0)
             self_score_trend = overall - 0.5
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         probability_field = {}
         if self._probability_field:
             try:
                 probability_field = self._probability_field.get_tendency()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
         return {
             "detected_signals": detected_signals,
@@ -909,15 +909,15 @@ class ExistenceLayer(LoopMixin):
                 ctx["consolidation_need"] = homeo.consolidation_need.current
                 ctx["homeostatic_balance"] = homeo.overall_balance
                 ctx["primary_drive"] = homeo.primary_drive.name
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
         if self.inner_time:
             try:
                 it_state = self.inner_time.get_state()
                 ctx["rhythm_bpm"] = it_state.rhythm_bpm
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
         ctx["methodology_override"] = self._compute_methodology_override(ctx)
 
@@ -1023,8 +1023,8 @@ class ExistenceLayer(LoopMixin):
                         quality = 80
                     if note and any(kw in note for kw in ["建议", "优化", "提升", "发现"]):
                         quality = min(95, quality + 10)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"操作降级跳过: {e}")
                 ep.add_experience(
                     intent_type="autonomous_reflection",
                     raw_input=f"[自主反思/{phase}]",
@@ -1036,8 +1036,8 @@ class ExistenceLayer(LoopMixin):
                     duration=0.0,
                     response=note,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
         except Exception as e:
             logger.debug(f"反思笔记生成跳过: {e}")
 
@@ -1055,8 +1055,8 @@ class ExistenceLayer(LoopMixin):
             llm_note = self._compose_llm_reflection(phase, perception, template_note)
             if llm_note and len(llm_note) > len(template_note) * 1.5:
                 return llm_note
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         return template_note
 
@@ -1068,8 +1068,8 @@ class ExistenceLayer(LoopMixin):
             try:
                 from backend.chat_handler import _get_available_ollama_model
                 model = _get_available_ollama_model("reflection")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
             if not model:
                 return None
 
@@ -1095,8 +1095,8 @@ class ExistenceLayer(LoopMixin):
             content = result.get("content", "")
             if content and len(content) > 20:
                 return content.strip()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return None
 
     def _compose_template_reflection(self, phase: str, perception: SelfPerceptionResult) -> str:
@@ -1136,8 +1136,8 @@ class ExistenceLayer(LoopMixin):
                 weak = [k for k, v in scores.items() if k != "overall" and v < 0.2]
                 if weak:
                     parts.append(f"自我成熟度{overall:.0%}，{'+'.join(weak[:3])}维度仍薄弱。")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         if self.pending_signals:
             parts.append(f"有{len(self.pending_signals)}个待处理信号。")

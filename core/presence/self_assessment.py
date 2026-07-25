@@ -453,8 +453,8 @@ class ContinuousSelfAssessment:
                 triggered = sum(1 for s in stats.values() if s.get("trigger_count", 0) > 0)
                 total = len(stats)
                 integration_score = triggered / max(total, 1)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         metrics[PerformanceMetric.INTEGRATION.value] = integration_score
         
         maturity_score = 0.5
@@ -463,8 +463,8 @@ class ContinuousSelfAssessment:
             sm = get_self_model()
             scores = sm.get_maturity_score()
             maturity_score = scores.get("overall", 0.5)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         metrics[PerformanceMetric.SELF_MODEL_MATURITY.value] = maturity_score
         
         return metrics

@@ -265,8 +265,8 @@ async def self_verify_and_correct(
                                 if kb_result and kb_result.get("response"):
                                     final_response = kb_result["response"]
                                     attempts.append(("知识库修正", True, "系统错误输出已用知识库替换"))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"操作降级跳过: {e}")
 
                     if not final_response:
                         final_response = f"关于「{user_input}」，我暂时无法给出满意的回答。请稍后再试。"
@@ -348,15 +348,15 @@ async def self_verify_and_correct(
                     from infrastructure.hardware_monitor import get_gpu_stats
                     _gs = get_gpu_stats()
                     _gpu_temp = _gs.get("temperature", 0) if _gs.get("available") else 0
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"操作降级跳过: {e}")
                 _snap = _hm.check()
                 _gaps_count = 0
                 try:
                     from core.presence.curiosity_engine import get_curiosity_engine
                     _gaps_count = len(get_curiosity_engine().perceive_gaps())
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"操作降级跳过: {e}")
                 scene = scene_awareness.build_scene(
                     resource_mode=_mode.value,
                     gpu_temp=_gpu_temp,
@@ -374,8 +374,8 @@ async def self_verify_and_correct(
                     extension = scene_awareness.compose_extension(scene, final_response)
                     if extension:
                         final_response += f"\n\n{extension}"
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"操作降级跳过: {e}")
 
         if intent_type == "code" and final_response:
             code_verify = _verify_code_response(user_input, final_response)

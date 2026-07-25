@@ -104,8 +104,8 @@ class CapabilityCreationLoop:
                                 cognitive_dispatcher = get_cognitive_dispatcher()
                                 _learned_intent = context.get("intent_type", "hardware") if context else "hardware"
                                 cognitive_dispatcher.learn_keyword_from_experience(query, _learned_intent, source="capability_creation_loop")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"操作降级跳过: {e}")
 
                         return {
                             "handled": True,

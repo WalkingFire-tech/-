@@ -287,8 +287,8 @@ class PathWeightDecay:
             results["total"] = len(path_weight_manager._paths)
             self.last_decay = now
             self.decay_count += 1
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
         return results
 
 

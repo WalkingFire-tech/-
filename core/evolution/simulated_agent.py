@@ -271,8 +271,8 @@ class SimulatedAgent:
                         score = max(0.0, min(1.0, cos_sim))
                         self.fitness += score
                         return score
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"操作降级跳过: {e}")
 
         if expected and expected[:50] in response:
             score = 0.8
