@@ -14,10 +14,10 @@
 - 预测失败时坦诚表达不确定性
 """
 
+import threading
 import json
-import time
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from enum import Enum
 from core.ports.adapters import get_storage_port
@@ -81,13 +81,14 @@ class WorldModel:
 
     def __init__(self, db_path: str = "data/world_model.db"):
         self.db_path = db_path
+        self._db = get_storage_port(self.db_path)
         self._init_db()
 
     def _init_db(self):
         from pathlib import Path
         Path(self.db_path).parent.mkdir(exist_ok=True)
 
-        db = get_storage_port(self.db_path)
+        db = self._db
         db.executescript('''
             CREATE TABLE IF NOT EXISTS causal_nodes (
                 id TEXT PRIMARY KEY,
@@ -134,7 +135,7 @@ class WorldModel:
         ''')
 
     def add_causal_node(self, node_id: str, node_type: str, content: str, properties: Dict = None) -> bool:
-        db = get_storage_port(self.db_path)
+        db = self._db
         now = datetime.now().isoformat()
         db.execute(
             'INSERT OR REPLACE INTO causal_nodes (id, node_type, content, properties, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -146,7 +147,7 @@ class WorldModel:
     def add_causal_edge(self, source_id: str, target_id: str,
                         edge_type: CausalEdgeType = CausalEdgeType.CAUSES,
                         probability: float = 0.5, confidence: float = 0.3) -> bool:
-        db = get_storage_port(self.db_path)
+        db = self._db
         now = datetime.now().isoformat()
         db.execute(
             'INSERT OR REPLACE INTO causal_edges (source_id, target_id, edge_type, probability, confidence, evidence_count, last_verified, created_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)',
@@ -155,9 +156,31 @@ class WorldModel:
         )
         return True
 
-    def predict(self, current_state: Dict, intent: str = "", top_k: int = 3) -> Prediction:
+    def predict(self, current_state: Dict, intent: str = "", top_k: int = 3,
+                injected_edges: List = None) -> Prediction:
         query_hash = self._hash_state(current_state, intent)
         relevant_edges = self._find_relevant_edges(current_state, intent)
+
+        if injected_edges:
+            existing_keys = {(e.source_id, e.target_id, e.edge_type if isinstance(e, CausalEdge) else CausalEdgeType(e.get("edge_type", "causes"))) for e in relevant_edges}
+            converted = []
+            for ie in injected_edges:
+                if isinstance(ie, dict):
+                    ie = CausalEdge(
+                        source_id=ie.get("source_id", ""),
+                        target_id=ie.get("target_id", ""),
+                        edge_type=CausalEdgeType(ie.get("edge_type", "causes")),
+                        probability=ie.get("probability", 0.5),
+                        confidence=ie.get("confidence", 0.3),
+                        evidence_count=1,
+                        last_verified=datetime.now().isoformat(),
+                    )
+                converted.append(ie)
+            for ie in converted:
+                key = (ie.source_id, ie.target_id, ie.edge_type)
+                if key not in existing_keys:
+                    ie._injected = True
+                    relevant_edges.insert(0, ie)
         
         if not relevant_edges:
             return Prediction(
@@ -169,7 +192,7 @@ class WorldModel:
             )
 
         sorted_edges = sorted(relevant_edges, key=lambda e: (
-            1 if e.edge_type in (CausalEdgeType.CAUSES, CausalEdgeType.PREVENTS) else 0,
+            2 if getattr(e, '_injected', False) else (1 if e.edge_type in (CausalEdgeType.CAUSES, CausalEdgeType.PREVENTS) else 0),
             e.probability * e.confidence
         ), reverse=True)
         
@@ -205,7 +228,7 @@ class WorldModel:
 
     def _save_prediction(self, query_hash: str, prediction: Prediction):
         try:
-            db = get_storage_port(self.db_path)
+            db = self._db
             db.execute(
                 'INSERT INTO predictions (query_hash, predicted_state, probability, confidence, causal_path, created_at) VALUES (?, ?, ?, ?, ?, ?)',
                 (query_hash, json.dumps(prediction.predicted_state, ensure_ascii=False),
@@ -237,7 +260,7 @@ class WorldModel:
             "recommendation": recommendation,
             "alternatives": results[1:],
             "total_paths_explored": len(results),
-            "has_high_confidence": recommendation and recommendation["confidence"] >= 0.5 if recommendation else False,
+            "has_high_confidence": (recommendation is not None and recommendation.get("confidence", 0) >= 0.5),
         }
 
     def multi_step_predict(self, current_state: Dict, action_sequence: List[str], intent: str = "", max_depth: int = 3) -> Dict:
@@ -310,7 +333,7 @@ class WorldModel:
 
     def save_counterfactual(self, intent: str, actual_action: str, alternative_action: str,
                             actual_score: float, alt_score: float, would_be_better: bool, lesson: str) -> bool:
-        db = get_storage_port(self.db_path)
+        db = self._db
         db.execute(
             'INSERT INTO counterfactuals (intent, actual_action, alternative_action, actual_score, alternative_score, would_have_been_better, lesson, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             (intent, actual_action, alternative_action, actual_score, alt_score, would_be_better, lesson, datetime.now().isoformat()),
@@ -325,7 +348,7 @@ class WorldModel:
         return result
 
     def verify(self, query_hash: str, actual_outcome: Dict) -> PredictionResult:
-        db = get_storage_port(self.db_path)
+        db = self._db
         row = db.query_one(
             'SELECT id, predicted_state, probability, confidence, causal_path FROM predictions WHERE query_hash = ? ORDER BY created_at DESC LIMIT 1',
             (query_hash,)
@@ -422,13 +445,13 @@ class WorldModel:
         self._upsert_edge(method_id, target_id, edge_type, prob, 0.3)
         self._upsert_edge(source_id, target_id, edge_type, prob * 0.8, 0.2)
 
-        self._extract_content_causal_entities(raw_input, response, source_id, method_id, target_id, success, quality)
+        self._extract_content_causal_entities(raw_input, response, source_id, method_id, target_id, success, quality, outcome_label)
 
         return True
 
     def _extract_content_causal_entities(self, raw_input: str, response: str,
                                           source_id: str, method_id: str, target_id: str,
-                                          success: bool, quality: int):
+                                          success: bool, quality: int, outcome_label: str):
         """从经验内容中提取因果实体——让因果图从真实数据中生长"""
         if not raw_input and not response:
             return
@@ -451,7 +474,7 @@ class WorldModel:
             self._upsert_edge(resp_id, target_id, CausalEdgeType.CORRELATES, 0.3, 0.1)
 
         if success and quality >= 80 and raw_input:
-            pattern_id = f"pattern:{source_id}_{method_id}_{outcome_label if 'outcome_label' in dir() else 'success'}"
+            pattern_id = f"pattern:{source_id}_{method_id}_{outcome_label}"
             try:
                 self.add_causal_node(pattern_id, "success_pattern",
                                      f"{source_id}+{method_id}→{target_id}")
@@ -480,9 +503,7 @@ class WorldModel:
         统计条件概率 P(success|intent=X, method=Y)，发现非模板因果边。
         """
         try:
-            from infrastructure.experience_pool import ExperiencePool
-            pool = ExperiencePool()
-            db = pool._db()
+            db = get_storage_port("data/experience_pool.db")
             rows = db.query(
                 "SELECT intent_type, model_name, success, quality_score, duration "
                 "FROM experiences ORDER BY ROWID DESC LIMIT ?",
@@ -543,7 +564,7 @@ class WorldModel:
         if existing:
             new_prob = (existing.probability * existing.evidence_count + prob) / (existing.evidence_count + 1)
             new_conf = min(1.0, existing.confidence + 0.1)
-            db = get_storage_port(self.db_path)
+            db = self._db
             db.execute(
                 'UPDATE causal_edges SET probability=?, confidence=?, evidence_count=evidence_count+1, last_verified=? WHERE source_id=? AND target_id=? AND edge_type=?',
                 (new_prob, new_conf, datetime.now().isoformat(), source_id, target_id, edge_type.value),
@@ -556,7 +577,7 @@ class WorldModel:
         discovered = []
         visited = {node_id}
         frontier = [node_id]
-        db = get_storage_port(self.db_path)
+        db = self._db
 
         for depth in range(max_depth):
             next_frontier = []
@@ -608,7 +629,7 @@ class WorldModel:
                 "confidence": 0.5,
             })
 
-        modified_pred = self.predict(modified_state, intent)
+        modified_pred = self.predict(modified_state, intent, injected_edges=override_edges)
 
         delta_prob = modified_pred.probability - original_pred.probability
         delta_conf = modified_pred.confidence - original_pred.confidence
@@ -635,7 +656,7 @@ class WorldModel:
     def find_causal_paths(self, source_id: str, target_id: str, max_depth: int = 4) -> List[Dict]:
         paths = []
         visited_edges = set()
-        db = get_storage_port(self.db_path)
+        db = self._db
 
         def _bfs(current_path, current_prob, current_conf):
             current_node = current_path[-1]
@@ -830,7 +851,7 @@ class WorldModel:
             }
 
     def get_stats(self) -> Dict:
-        db = get_storage_port(self.db_path)
+        db = self._db
         node_count = db.query_one('SELECT COUNT(*) FROM causal_nodes')[0]
         edge_count = db.query_one('SELECT COUNT(*) FROM causal_edges')[0]
         pred_count = db.query_one('SELECT COUNT(*) FROM predictions')[0]
@@ -865,7 +886,7 @@ class WorldModel:
         if not search_terms:
             return edges
 
-        db = get_storage_port(self.db_path)
+        db = self._db
         placeholders = ' OR '.join(['source_id LIKE ?' for _ in search_terms])
         params = [f'%{t}%' for t in search_terms]
         rows = db.query(
@@ -904,14 +925,14 @@ class WorldModel:
         return edges
 
     def _get_node(self, node_id: str) -> Optional[CausalNode]:
-        db = get_storage_port(self.db_path)
+        db = self._db
         row = db.query_one('SELECT id, node_type, content, properties FROM causal_nodes WHERE id = ?', (node_id,))
         if row:
             return CausalNode(id=row[0], node_type=row[1], content=row[2], properties=json.loads(row[3]) if row[3] else {})
         return None
 
     def _get_edge(self, source_id: str, target_id: str, edge_type: CausalEdgeType) -> Optional[CausalEdge]:
-        db = get_storage_port(self.db_path)
+        db = self._db
         row = db.query_one(
             'SELECT source_id, target_id, edge_type, probability, confidence, evidence_count, last_verified FROM causal_edges WHERE source_id=? AND target_id=? AND edge_type=?',
             (source_id, target_id, edge_type.value)
@@ -925,7 +946,7 @@ class WorldModel:
         self._update_edge_confidence_in_conn(source_id, target_id, was_correct)
 
     def _update_edge_confidence_in_conn(self, source_id: str, target_id: str, was_correct: bool):
-        db = get_storage_port(self.db_path)
+        db = self._db
         row = db.query_one(
             'SELECT probability, confidence, evidence_count FROM causal_edges WHERE source_id=? AND target_id=?',
             (source_id, target_id)
@@ -966,10 +987,13 @@ class WorldModel:
 
 
 _world_model: Optional[WorldModel] = None
+_world_model_lock = threading.Lock()
 
 
 def get_world_model() -> WorldModel:
     global _world_model
     if _world_model is None:
-        _world_model = WorldModel()
+        with _world_model_lock:
+            if _world_model is None:
+                _world_model = WorldModel()
     return _world_model
