@@ -326,8 +326,13 @@ def _generate_topic_response(topic: str, query: str) -> str:
     return ""
 
 
+_causal_trace_stats = {"attempts": 0, "hits": 0}
+
+
 def _try_causal_trace(query: str, context_type: str) -> str:
     """尝试用因果图精神共振替代固定模板"""
+    global _causal_trace_stats
+    _causal_trace_stats["attempts"] += 1
     try:
         from core.world_model import get_world_model
         wm = get_world_model()
@@ -336,11 +341,16 @@ def _try_causal_trace(query: str, context_type: str) -> str:
             return ""
         causal_paths = trace.get("causal_paths", [])
         if causal_paths:
+            _causal_trace_stats["hits"] += 1
             best = causal_paths[0]
             path_str = " → ".join(best.get("path", [])[:4])
+            if _causal_trace_stats["attempts"] % 10 == 0:
+                from loguru import logger
+                logger.info(f"🔗 因果追溯命中率: {_causal_trace_stats['hits']}/{_causal_trace_stats['attempts']}")
             return f"因果路径: {path_str} (置信度={best.get('score', 0):.2f})"
         deep_trace = trace.get("deep_trace", {})
         if deep_trace.get("guidance"):
+            _causal_trace_stats["hits"] += 1
             return deep_trace["guidance"][:200]
     except Exception:
         pass
