@@ -407,6 +407,22 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
                     methodology.setdefault("behavioral_directive", {})
                     methodology["behavioral_directive"].setdefault("avoid_paths", [])
                     methodology["behavioral_directive"]["avoid_paths"].extend(_avoid)
+            _hypothetical = _pre_enact_result.get("hypothetical_options", [])
+            if _hypothetical:
+                methodology["hypothetical_options"] = _hypothetical
+                for _ho in _hypothetical:
+                    if _ho.get("requires_approval"):
+                        try:
+                            from core.self_modification.patch_sandbox_deployer import PatchSandboxDeployer
+                            _psd = PatchSandboxDeployer()
+                            _psd.save_pending_patch(
+                                action=_ho["action"],
+                                predicted_score=_ho.get("probability", 0) * _ho.get("confidence", 0),
+                                safety_level=_ho.get("safety_level", "normal"),
+                                source="hypothetical_exploration",
+                            )
+                        except Exception as e:
+                            logger.warning(f"假设补丁保存跳过: {e}")
         except Exception as e:
             logger.warning(f"操作降级跳过: {e}")
 

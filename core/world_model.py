@@ -15,6 +15,7 @@
 """
 
 import threading
+import time
 import json
 from datetime import datetime
 from typing import Dict, List, Optional, Any
@@ -329,6 +330,7 @@ class WorldModel:
             })
 
         hypothetical_options = []
+        DESTRUCTIVE_PATTERNS = {"rm", "del", "delete", "format", "drop", "truncate", "erase", "destroy"}
         if exploration_impulse > 0.7:
             known_methods = {a for a in possible_actions}
             rows = self._db.query(
@@ -337,21 +339,31 @@ class WorldModel:
             )
             for row in rows:
                 method = row[0]
-                if method and method not in known_methods:
-                    state_with_action = dict(current_state)
-                    state_with_action["action"] = method
-                    pred = self.predict(state_with_action, intent, exploration_depth=1)
-                    score = pred.probability * pred.confidence
-                    if score >= MIN_SCORE_THRESHOLD:
-                        hypothetical_options.append({
-                            "action": method,
-                            "predicted_outcome": pred.predicted_state,
-                            "probability": pred.probability,
-                            "confidence": pred.confidence,
-                            "causal_path": pred.causal_path,
-                            "hypothetical": True,
-                        })
-                        logger.debug(f"假设action评估: {method} score={score:.4f}")
+                if not method or method in known_methods:
+                    continue
+                method_lower = method.lower()
+                if any(p in method_lower for p in DESTRUCTIVE_PATTERNS):
+                    continue
+                state_with_action = dict(current_state)
+                state_with_action["action"] = method
+                pred = self.predict(state_with_action, intent, exploration_depth=1)
+                score = pred.probability * pred.confidence
+                if score < MIN_SCORE_THRESHOLD:
+                    continue
+                requires_approval = any(kw in method_lower for kw in ["write", "patch", "modify", "update", "create", "insert"])
+                safety_level = "L5_immutable" if requires_approval else "normal"
+                hypothetical_options.append({
+                    "action": method,
+                    "predicted_outcome": pred.predicted_state,
+                    "probability": pred.probability,
+                    "confidence": pred.confidence,
+                    "causal_path": pred.causal_path,
+                    "hypothetical": True,
+                    "auto_execute": False,
+                    "requires_approval": requires_approval,
+                    "safety_level": safety_level,
+                })
+                logger.debug(f"假设action评估: {method} score={score:.4f} approval={requires_approval}")
             known_methods.update(r[0] for r in rows if r[0])
         
         filtered = [r for r in raw_results if r["score"] >= MIN_SCORE_THRESHOLD]
@@ -1044,24 +1056,29 @@ class WorldModel:
 
         counterfactual_exploration = None
         if exploration_impulse > 0.5 and causal_paths:
-            best_path = max(causal_paths, key=lambda p: p.get("score", 0)) if causal_paths else None
-            if best_path and len(best_path.get("path", [])) >= 2:
-                last_node = best_path["path"][-1]
-                alt_edges = self._db.query(
-                    "SELECT target_id, probability FROM causal_edges WHERE source_id = ? AND target_id != ? AND edge_type != ? LIMIT 3",
-                    (best_path["path"][-2] if len(best_path["path"]) >= 2 else last_node, last_node, "prevents")
-                )
-                alternatives = []
-                for alt in alt_edges:
-                    alternatives.append({"alternative": alt[0], "probability": alt[1]})
-                if alternatives:
-                    counterfactual_exploration = {
-                        "trigger": "high_exploration_impulse",
-                        "impulse": round(exploration_impulse, 3),
-                        "original_path": best_path["path"],
-                        "alternatives": alternatives,
-                    }
-                    logger.debug(f"反事实预演触发: impulse={exploration_impulse:.2f}, {len(alternatives)}个替代路径")
+            _cf_cooldown_key = "trace_counterfactual"
+            _cf_now = time.time()
+            _cf_last = getattr(self, "_last_counterfactual_time", 0)
+            if _cf_now - _cf_last >= 60:
+                best_path = max(causal_paths, key=lambda p: p.get("score", 0)) if causal_paths else None
+                if best_path and len(best_path.get("path", [])) >= 2:
+                    last_node = best_path["path"][-1]
+                    alt_edges = self._db.query(
+                        "SELECT target_id, probability FROM causal_edges WHERE source_id = ? AND target_id != ? AND edge_type != ? LIMIT 3",
+                        (best_path["path"][-2] if len(best_path["path"]) >= 2 else last_node, last_node, "prevents")
+                    )
+                    alternatives = []
+                    for alt in alt_edges:
+                        alternatives.append({"alternative": alt[0], "probability": alt[1]})
+                    if alternatives:
+                        counterfactual_exploration = {
+                            "trigger": "high_exploration_impulse",
+                            "impulse": round(exploration_impulse, 3),
+                            "original_path": best_path["path"],
+                            "alternatives": alternatives,
+                        }
+                        self._last_counterfactual_time = _cf_now
+                        logger.debug(f"反事实预演触发: impulse={exploration_impulse:.2f}, {len(alternatives)}个替代路径")
 
         try:
             from core.monitoring.runtime_trigger_monitor import trigger_monitor
