@@ -97,3 +97,4 @@ tests/OLD/
 tests/scripts/
 scripts/diagnostics/
 kun-canvas/
+config/external_api.json
