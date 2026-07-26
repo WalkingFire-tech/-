@@ -1328,3 +1328,7 @@ class TruthAccumulator:
 
 
 truth_accumulator = TruthAccumulator()
+
+
+def get_truth_accumulator():
+    return truth_accumulator

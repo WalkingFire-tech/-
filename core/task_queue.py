@@ -857,3 +857,7 @@ class PersistentTaskQueue:
 
 
 task_queue = PersistentTaskQueue()
+
+
+def get_task_queue():
+    return task_queue

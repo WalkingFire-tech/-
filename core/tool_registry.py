@@ -644,6 +644,10 @@ tool_registry = ToolRegistry()
 tool_executor = ToolExecutor(registry=tool_registry)
 
 
+def get_tool_registry():
+    return tool_registry
+
+
 def register_builtin_tools():
     from core.tools.web_search_tool import WebSearchTool
     from core.tools.calculator_tool import CalculatorTool
