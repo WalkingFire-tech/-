@@ -58,7 +58,7 @@ class PatchGenerator:
         original_code = defect.get("original", "")
         try:
             from core.hashline_editor import HashlineEditor
-            _hle = HashlineEditor()
+            _hle = HashlineEditor(file_path)
             _hash_loc = _hle.locate(file_path, original_code)
             if _hash_loc:
                 logger.debug(f"Hashline定位成功: hash={_hash_loc.content_hash[:8]}")

@@ -21,6 +21,19 @@ from core.defense.self_healing_switch import SelfHealingSwitch
 from core.defense.cognitive_self_repair import CognitiveSelfRepair
 from core.defense.guardian import SystemGuardian
 
+
+def check_safety(context: dict) -> dict:
+    """轻量级安全检查——检查上下文是否包含危险信号"""
+    if not isinstance(context, dict):
+        return {"safe": True}
+    content = str(context.get("query", "")) + str(context.get("user_input", ""))
+    dangerous_patterns = ["rm -rf", "del /s", "format c:", "shutdown", "taskkill /f"]
+    for pattern in dangerous_patterns:
+        if pattern.lower() in content.lower():
+            return {"safe": False, "reason": f"危险命令检测: {pattern}"}
+    return {"safe": True}
+
+
 __all__ = [
     "InputSanitizer",
     "CircuitBreaker",

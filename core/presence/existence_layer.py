@@ -770,9 +770,8 @@ class ExistenceLayer(LoopMixin):
                     pass
 
             result = wm.trace_with_spirit(
-                state={"action": "deep_trace"},
-                max_depth=6 if exploration_impulse > 0.5 else 4,
-                exploration_impulse=exploration_impulse,
+                query=self._formulate_existential_question(),
+                context_type="deep_trace",
             )
             if result.get("paths"):
                 logger.info(

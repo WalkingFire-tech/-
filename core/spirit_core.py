@@ -864,6 +864,10 @@ class SpiritCore(metaclass=_SpiritCoreMeta):
 spirit_core = SpiritCore()
 
 
+def get_spirit_core():
+    return spirit_core
+
+
 # ========== 装饰器：确保函数符合精神内核 ==========
 def ensure_spirit_compliance(func):
     """

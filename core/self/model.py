@@ -139,6 +139,8 @@ class SelfModel(LoopMixin):
         super().__init__(name="self_model", cooldown_seconds=60.0, max_failures_before_degraded=5)
         self._init_time = datetime.now()
         self._update_count = 0
+        self._directive_cache = None
+        self._directive_cache_time = 0.0
 
         self.values: Dict[str, Any] = {}
         self.health: Dict[str, Any] = {}
@@ -465,6 +467,11 @@ class SelfModel(LoopMixin):
         - preferred_depth_score: 连续值(0-1)，0=最浅，1=最深
         - action_probability: 综合执行概率
         """
+        import time as _time
+        _now = _time.time()
+        if hasattr(self, '_directive_cache') and self._directive_cache and (_now - self._directive_cache_time) < 30:
+            return self._directive_cache
+
         directive = {
             "presence_state": "unknown",
             "inner_time_phase": "awake",
@@ -586,6 +593,8 @@ class SelfModel(LoopMixin):
             directive["relationship_style"] = "balanced"
             directive["perspective_mode"] = "companion"
 
+        self._directive_cache = directive
+        self._directive_cache_time = _now
         return directive
 
     def describe_self(self) -> str:
