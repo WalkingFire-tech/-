@@ -200,7 +200,7 @@ class CognitiveDispatcher:
                 "你好", "您好", "hi", "hello", "在吗", "在不在"
             ],
             "confirmation": [
-                "好的", "收到", "明白", "知道了", "谢谢", "感谢"
+                "好的", "收到", "我明白了", "知道了", "谢谢", "感谢"
             ],
             "challenge": [
                 "你确定", "确定吗", "真的吗", "不是吧", "不对吧",
@@ -227,6 +227,7 @@ class CognitiveDispatcher:
                 "你的愿景", "你的使命", "你的存在", "你的意义",
                 "你活着", "你是活的", "你的感受", "你的体会",
                 "如何看待", "怎么看待", "如何评价", "怎么评价",
+                "你怎么看", "你怎么想", "你觉得呢", "怎么看", "怎么想",
                 "我是谁", "你认识我", "你记得我", "你了解我",
                 "我们之间", "我们的关系", "你对我",
                 "同行者", "伙伴", "你的身份", "你的角色",
@@ -510,6 +511,12 @@ class CognitiveDispatcher:
             logger.warning(f"操作降级跳过: {e}")
 
         # 匹配优先级：self_reference > hardware > challenge > complex > simple > 其他
+        # 因果结构检测：如果query包含因果结构，优先归为complex_query
+        _causal_structures = ["是什么导致", "是什么引起", "是什么造成", "是什么使得", "导致了什么", "引起了什么"]
+        for cs in _causal_structures:
+            if cs in query_lower:
+                return "complex_query", 0.85
+        
         # hardware优先于challenge：当用户说"时间不对"时更可能是要求重新执行硬件操作
         match_order = ["self_reference", "time", "weather", "map", "hardware", "challenge", "creative", "complex_query", "learning_trigger", "simple_query", "history_query", "greeting", "confirmation"]
         short_match_intents = {"greeting", "confirmation", "challenge"}
@@ -520,6 +527,8 @@ class CognitiveDispatcher:
             "为什么": "complex_query",
             "如何": "complex_query",
             "怎么样": "complex_query",
+            "怎么看": "self_reference",
+            "怎么想": "self_reference",
         }
         
         for intent_type in match_order:
