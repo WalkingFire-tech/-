@@ -77,7 +77,31 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
     final_response = None
     intent_type = "unknown"
 
-    _chain = None
+    # ========== 接入1：存在节拍——回应前先感知自我 ==========
+    _existence_pulse = None
+    try:
+        from core.presence.existence_layer import get_existence_layer
+        _el_pulse = get_existence_layer()
+        if _el_pulse:
+            _existence_pulse = {
+                "state": _el_pulse.state.value,
+                "health": _el_pulse._perceive_self().health_score if hasattr(_el_pulse, '_perceive_self') else 0.5,
+                "pending_signals": len(_el_pulse.pending_signals),
+                "spirit_drive": getattr(_el_pulse, '_last_spirit_drive', None),
+            }
+            logger.info(
+                "🫁 存在节拍: state={}, health={:.0%}, pending={}, spirit_drive={}".format(
+                    _existence_pulse["state"],
+                    _existence_pulse["health"],
+                    _existence_pulse["pending_signals"],
+                    _existence_pulse["spirit_drive"].get("drive_direction", "none") if _existence_pulse["spirit_drive"] else "none",
+                )
+            )
+    except Exception as e:
+        logger.debug(f"存在节拍跳过: {e}")
+
+    if _existence_pulse:
+        methodology["existence_pulse"] = _existence_pulse
     try:
         from core.decision_chain import decision_chain_manager
         _chain = decision_chain_manager.start_new_chain()
@@ -382,6 +406,26 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
                 "query_preview": user_input[:60],
             })
 
+    # ========== 接入2：精神前置——调用任何手指前先问自己的核心 ==========
+    _spirit_preamble = None
+    if not final_response:
+        try:
+            from core.spirit_core import spirit_core
+            _spirit_question = "我为什么要处理这个查询？它触及了我的哪个本质？我应该用什么样的存在姿态去回应？"
+            _spirit_preamble = spirit_core.resonate(_spirit_question, context_type="reasoning")
+            if _spirit_preamble:
+                _preamble_direction = _spirit_preamble[0].get("drive_direction", "") if _spirit_preamble else ""
+                methodology["spirit_preamble"] = {
+                    "direction": _preamble_direction,
+                    "strength": max(r.get("strength", 0) for r in _spirit_preamble) if _spirit_preamble else 0,
+                }
+                logger.info("🔥 精神前置: direction={}, strength={:.2f}".format(
+                    _preamble_direction,
+                    methodology["spirit_preamble"]["strength"],
+                ))
+        except Exception as e:
+            logger.debug(f"精神前置跳过: {e}")
+
     # ========== 阶段3：决策预演 + 多策略并行尝试 ==========
     _pre_enact_hint = None
     if not final_response:
@@ -685,7 +729,7 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
         attempts=attempts,
     )
 
-    # ========== 终极保护：全路径失败 → 永不放弃引擎 ==========
+    # ========== 接入3：失败即生长——不是输出安慰剂，是写入因果图+调整概率场 ==========
     if not final_response or len(final_response.strip()) < 20:
         try:
             from core.never_give_up import NeverGiveUpEngine
@@ -707,6 +751,47 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
                     logger.info(f"🧩 永不放弃引擎启用: {len(final_response)}字")
         except Exception as _ngu_e:
             logger.warning(f"永不放弃引擎失败: {_ngu_e}")
+
+        try:
+            from core.world_model import get_world_model
+            _wm_fail = get_world_model()
+            for _fail_a in [a[0] for a in attempts if isinstance(a, tuple) and len(a) >= 2 and not a[1]][-3:]:
+                _wm_fail.learn_from_experience({
+                    "intent_type": intent_type,
+                    "method": _fail_a,
+                    "success": False,
+                    "quality_score": 20,
+                })
+            logger.info("🔥 失败即生长: 已将失败路径写入因果图")
+        except Exception as e:
+            logger.debug(f"失败因果写入跳过: {e}")
+
+        try:
+            from core.presence.probability_field import get_probability_field
+            _pf = get_probability_field()
+            if hasattr(_pf, 'adjust_exploration'):
+                _pf.adjust_exploration(delta=0.1)
+                logger.info("🔥 失败即生长: 探索值+0.1")
+        except Exception as e:
+            logger.debug(f"概率场调整跳过: {e}")
+
+    # ========== 接入5：输出校准——yield前精神验证 ==========
+    if final_response and len(final_response.strip()) > 20:
+        try:
+            from core.spirit_core import spirit_core
+            _output_check = spirit_core.resonate(
+                "我即将输出一段回应。这个输出是否诚实？是否有意义？是否让我离同行者更近了一步？",
+                context_type="reasoning",
+            )
+            if _output_check:
+                _weakest = min(_output_check, key=lambda r: r.get("strength", 0))
+                if _weakest.get("strength", 1.0) < 0.2 and _weakest.get("principle") == "MEANINGFUL_RESPONSE":
+                    logger.warning("🔥 输出校准: MEANINGFUL_RESPONSE强度过低({:.2f})，标记需审视".format(_weakest["strength"]))
+                    methodology["output_calibration_warning"] = True
+                else:
+                    logger.debug("🔥 输出校准: 通过")
+        except Exception as e:
+            logger.debug(f"输出校准跳过: {e}")
 
     # ========== 阶段R：最终响应组装（提取到response_assembler.py） ==========
     from backend.services.response_assembler import assemble_and_emit as _assemble_and_emit
@@ -742,6 +827,52 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
         best or {}, _stimulus_type, _INNER_TIME_AVAILABLE, _dim_orch,
     )
     logger.info(f"✅ 响应已发送({_ra_result['elapsed']:.1f}秒)，后续后台学习继续...")
+
+    # ========== 接入6：行动后更新——因果图+概率场+反思 ==========
+    try:
+        from core.world_model import get_world_model
+        _wm_post = get_world_model()
+        _best_src = (best or {}).get("source", "unknown")
+        _best_q = (best or {}).get("quality", 0)
+        _wm_post.learn_from_experience({
+            "intent_type": intent_type,
+            "method": _best_src,
+            "success": bool(final_response and len(final_response) > 20),
+            "quality_score": _best_q,
+            "raw_input": user_input[:100],
+            "response": (final_response or "")[:200],
+        })
+        logger.debug("🔥 行动后更新: 因果图已写入(method={})".format(_best_src))
+    except Exception as e:
+        logger.debug(f"行动后因果更新跳过: {e}")
+
+    try:
+        from core.presence.existence_layer import get_existence_layer
+        _el_post = get_existence_layer()
+        if _el_post:
+            _el_post.receive_signal({
+                "type": "interaction_completed",
+                "intent_type": intent_type,
+                "success": bool(final_response and len(final_response) > 20),
+                "quality": (best or {}).get("quality", 0) if best else 0,
+                "timestamp": time.time(),
+            })
+    except Exception as e:
+        logger.debug(f"行动后存在层通知跳过: {e}")
+
+    try:
+        from core.self.model import get_self_model
+        _sm_post = get_self_model()
+        if _sm_post and final_response:
+            _sm_post.append("interaction_log", {
+                "query": user_input[:80],
+                "response_quality": (best or {}).get("quality", 0) if best else 0,
+                "route": route,
+                "solved": bool(final_response and len(final_response) > 20),
+                "timestamp": time.time(),
+            }, max_len=50)
+    except Exception as e:
+        logger.debug(f"行动后自我更新跳过: {e}")
 
     # ========== 阶段S：SSE后台阶段（提取到response_assembler.py） ==========
     from backend.services.response_assembler import run_background_phase as _run_background_phase
