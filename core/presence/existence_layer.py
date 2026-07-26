@@ -141,6 +141,10 @@ class ExistenceLayer(LoopMixin):
             self._set_thread_priority = None
 
         self._recent_interactions: List[Dict[str, Any]] = []
+        self._last_autonomous_exploration_time: float = 0.0
+        self._autonomous_cooldown_seconds: float = 120.0
+        self._recent_autonomous_queries: List[str] = []
+        self._max_recent_queries: int = 50
         
         logger.info("🌟 第零层（存在层）已初始化")
     
@@ -946,9 +950,18 @@ class ExistenceLayer(LoopMixin):
             logger.debug(f"自主好奇触发跳过: {e}")
 
     def _trigger_autonomous_exploration(self, impulse: float):
+        if impulse <= 0:
+            logger.debug("自主探索跳过: impulse=0")
+            return
+        now = time.time()
+        if now - self._last_autonomous_exploration_time < self._autonomous_cooldown_seconds:
+            logger.debug("自主探索冷却中: 剩余{:.0f}s".format(
+                self._autonomous_cooldown_seconds - (now - self._last_autonomous_exploration_time)))
+            return
         queries = self._generate_autonomous_queries(impulse)
         if not queries:
             return
+        self._last_autonomous_exploration_time = now
         import asyncio
         for query in queries:
             try:
@@ -968,8 +981,10 @@ class ExistenceLayer(LoopMixin):
             from core.world_model import get_world_model
             wm = get_world_model()
             if hasattr(wm, 'get_low_confidence_edges'):
-                weak_edges = wm.get_low_confidence_edges(threshold=0.3, limit=3)
-                for edge in weak_edges:
+                weak_edges = wm.get_low_confidence_edges(threshold=0.3, limit=5)
+                import random
+                random.shuffle(weak_edges)
+                for edge in weak_edges[:3]:
                     src = getattr(edge, 'source_id', '') or edge.get('source_id', '')
                     tgt = getattr(edge, 'target_id', '') or edge.get('target_id', '')
                     if src and tgt:
@@ -981,8 +996,10 @@ class ExistenceLayer(LoopMixin):
             from infrastructure.experience_pool import get_experience_pool
             pool = get_experience_pool()
             if hasattr(pool, 'get_failed_experiences'):
-                failed = pool.get_failed_experiences(limit=3)
-                for exp in failed:
+                failed = pool.get_failed_experiences(limit=5)
+                import random
+                random.shuffle(failed)
+                for exp in failed[:3]:
                     intent = exp.get("intent_type", "")
                     if intent:
                         queries.append("深化理解: {} 的更优解法".format(intent))
@@ -992,8 +1009,8 @@ class ExistenceLayer(LoopMixin):
         try:
             from core.ports.adapters import get_storage_port
             db = get_storage_port("data/knowledge_graph.db")
-            sparse = db.query("SELECT name FROM nodes WHERE connection_count < 3 ORDER BY RANDOM() LIMIT 2")
-            for row in sparse:
+            sparse = db.query("SELECT name FROM nodes WHERE connection_count < 3 ORDER BY RANDOM() LIMIT 3")
+            for row in sparse[:2]:
                 queries.append("扩展知识: {} 的关联领域".format(row[0]))
         except Exception:
             pass
@@ -1002,16 +1019,29 @@ class ExistenceLayer(LoopMixin):
             from core.truth_accumulator import TruthAccumulator
             ta = TruthAccumulator()
             if hasattr(ta, 'get_unverified_truths'):
-                unverified = ta.get_unverified_truths(limit=2)
-                for truth in unverified:
+                unverified = ta.get_unverified_truths(limit=3)
+                import random
+                random.shuffle(unverified)
+                for truth in unverified[:2]:
                     stmt = getattr(truth, 'statement', '') or (truth.get('statement', '') if isinstance(truth, dict) else '')
                     if stmt:
                         queries.append("验证真谛: {}".format(stmt[:80]))
         except Exception:
             pass
 
+        deduped = []
+        seen = set(self._recent_autonomous_queries)
+        for q in queries:
+            q_key = q[:40]
+            if q_key not in seen:
+                deduped.append(q)
+                seen.add(q_key)
+                self._recent_autonomous_queries.append(q_key)
+        if len(self._recent_autonomous_queries) > self._max_recent_queries:
+            self._recent_autonomous_queries = self._recent_autonomous_queries[-self._max_recent_queries:]
+
         max_queries = 1 + int(impulse * 2)
-        return queries[:max_queries]
+        return deduped[:max_queries]
 
     async def _process_autonomous_query(self, query: str):
         logger.info("🧭 自主处理: {}...".format(query[:50]))
@@ -1037,9 +1067,11 @@ class ExistenceLayer(LoopMixin):
             try:
                 from infrastructure.experience_pool import get_experience_pool
                 pool = get_experience_pool()
-                similar = pool.search_successful_responses(min_quality=60, limit=2)
+                similar = pool.search_successful_responses(min_quality=60, limit=5)
                 if similar:
-                    result["self_reason"] = "经验回溯: {}".format(similar[0].get("response", "")[:300])
+                    import random
+                    chosen = random.choice(similar)
+                    result["self_reason"] = "经验回溯: {}".format(chosen.get("response", "")[:300])
             except Exception:
                 pass
 
@@ -1059,9 +1091,11 @@ class ExistenceLayer(LoopMixin):
         try:
             from infrastructure.experience_pool import get_experience_pool
             pool = get_experience_pool()
-            similar = pool.search_successful_responses(min_quality=50, limit=2)
+            similar = pool.search_successful_responses(min_quality=50, limit=5)
             if similar:
-                result["knowledge_supplement"] = similar[0].get("response", "")[:300]
+                import random
+                chosen = random.choice(similar)
+                result["knowledge_supplement"] = chosen.get("response", "")[:300]
         except Exception as e:
             logger.debug(f"自主知识补充跳过: {e}")
 

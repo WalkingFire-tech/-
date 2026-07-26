@@ -68,8 +68,15 @@ async def fetch_knowledge(query: str, ports: dict = None) -> dict:
         def _query_know():
             db = get_storage_port("data/knowledge_store.db")
 
-            row = db.query_one("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{query[:30]}%",))
-
+            safe_query = query[:200]
+            row = db.query_one("SELECT content FROM knowledge WHERE content LIKE ? LIMIT 1", (f"%{safe_query}%",))
+            if row:
+                return row
+            keywords = [w for w in safe_query.replace("，", " ").replace("。", " ").replace("？", " ").replace("、", " ").split() if len(w) >= 2]
+            if keywords:
+                conditions = " OR ".join(["content LIKE ?" for _ in keywords[:5]])
+                params = [f"%{kw}%" for kw in keywords[:5]]
+                row = db.query_one(f"SELECT content FROM knowledge WHERE {conditions} LIMIT 1", tuple(params))
             return row
         row = await asyncio.wait_for(loop.run_in_executor(_fast_executor, _query_know), timeout=5)
         if row and len(row[0]) > 30:

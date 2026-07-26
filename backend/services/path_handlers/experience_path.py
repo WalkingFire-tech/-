@@ -11,20 +11,28 @@ def _extract_keywords(query: str, max_kw: int = 8) -> list:
     cleaned = re.sub(r'[？?！!。，,、；;：:""''（）()\[\]【】\s]+', ' ', cleaned)
     segments = re.split(r'\s+', cleaned.strip())
     tokens = []
+    _meaningless_2g = {"什么", "怎么", "如何", "为什么", "可以", "能够", "告诉", "知道", "的话", "的话", "一个", "这个", "那个", "就是", "不是", "没有", "已经", "我们", "他们", "因为", "所以", "但是", "如果", "虽然", "而且", "或者", "以及", "之后", "之前", "关于", "通过", "进行", "使用", "需要", "应该", "可能", "已经", "还是", "什么"}
     for seg in segments:
         if not seg:
             continue
         if re.match(r'^[a-zA-Z0-9]{1,}$', seg):
             tokens.append(seg)
         else:
-            # 重叠2-gram切分中文，避免贪心{2,4}造成无意义词边界
-            cn_grams = re.findall(r'(?=([\u4e00-\u9fff]{2}))', seg)
-            for t in cn_grams:
-                if t not in ("什么", "怎么", "如何", "为什么", "可以", "能够", "告诉", "知道") and not t.startswith("的"):
-                    tokens.append(t)
+            cn_chars = re.findall(r'[\u4e00-\u9fff]+', seg)
+            for chunk in cn_chars:
+                if len(chunk) >= 4:
+                    tokens.append(chunk[:6])
+                if len(chunk) >= 3:
+                    for i in range(len(chunk) - 2):
+                        g3 = chunk[i:i+3]
+                        if not any(s in g3 for s in _meaningless_2g):
+                            tokens.append(g3)
+                for i in range(len(chunk) - 1):
+                    g2 = chunk[i:i+2]
+                    if g2 not in _meaningless_2g and not g2.startswith("的") and not g2.endswith("的"):
+                        tokens.append(g2)
             for m in re.finditer(r'[a-zA-Z0-9]{2,}', seg):
                 tokens.append(m.group())
-    # 去重保序
     seen = set()
     unique = []
     for t in tokens:
