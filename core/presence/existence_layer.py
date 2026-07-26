@@ -932,7 +932,219 @@ class ExistenceLayer(LoopMixin):
                             logger.debug(f"好奇心行动分发跳过: {e}")
             except Exception as e:
                 logger.debug(f"好奇心探索跳过: {e}")
-    
+
+        try:
+            from core.presence.curiosity_engine import get_curiosity_engine
+            _ce = get_curiosity_engine()
+            _impulse = _ce.evaluate_current_state() if hasattr(_ce, 'evaluate_current_state') else 0.0
+            if not isinstance(_impulse, (int, float)):
+                _impulse = 0.0
+            if _impulse > 0.6:
+                logger.info("🔥 自主好奇触发: impulse={:.3f}".format(_impulse))
+                self._trigger_autonomous_exploration(_impulse)
+        except Exception as e:
+            logger.debug(f"自主好奇触发跳过: {e}")
+
+    def _trigger_autonomous_exploration(self, impulse: float):
+        queries = self._generate_autonomous_queries(impulse)
+        if not queries:
+            return
+        import asyncio
+        for query in queries:
+            try:
+                asyncio.create_task(self._process_autonomous_query(query))
+            except RuntimeError:
+                try:
+                    loop = asyncio.get_event_loop()
+                    loop.create_task(self._process_autonomous_query(query))
+                except Exception:
+                    pass
+        logger.info("🌱 自主探索启动: {}个查询, impulse={:.3f}".format(len(queries), impulse))
+
+    def _generate_autonomous_queries(self, impulse: float) -> list:
+        queries = []
+
+        try:
+            from core.world_model import get_world_model
+            wm = get_world_model()
+            if hasattr(wm, 'get_low_confidence_edges'):
+                weak_edges = wm.get_low_confidence_edges(threshold=0.3, limit=3)
+                for edge in weak_edges:
+                    src = getattr(edge, 'source_id', '') or edge.get('source_id', '')
+                    tgt = getattr(edge, 'target_id', '') or edge.get('target_id', '')
+                    if src and tgt:
+                        queries.append("验证因果: {} 如何影响 {}".format(src, tgt))
+        except Exception:
+            pass
+
+        try:
+            from infrastructure.experience_pool import get_experience_pool
+            pool = get_experience_pool()
+            if hasattr(pool, 'get_failed_experiences'):
+                failed = pool.get_failed_experiences(limit=3)
+                for exp in failed:
+                    intent = exp.get("intent_type", "")
+                    if intent:
+                        queries.append("深化理解: {} 的更优解法".format(intent))
+        except Exception:
+            pass
+
+        try:
+            from core.ports.adapters import get_storage_port
+            db = get_storage_port("data/knowledge_graph.db")
+            sparse = db.query("SELECT name FROM nodes WHERE connection_count < 3 ORDER BY RANDOM() LIMIT 2")
+            for row in sparse:
+                queries.append("扩展知识: {} 的关联领域".format(row[0]))
+        except Exception:
+            pass
+
+        try:
+            from core.truth_accumulator import TruthAccumulator
+            ta = TruthAccumulator()
+            if hasattr(ta, 'get_unverified_truths'):
+                unverified = ta.get_unverified_truths(limit=2)
+                for truth in unverified:
+                    stmt = getattr(truth, 'statement', '') or (truth.get('statement', '') if isinstance(truth, dict) else '')
+                    if stmt:
+                        queries.append("验证真谛: {}".format(stmt[:80]))
+        except Exception:
+            pass
+
+        max_queries = 1 + int(impulse * 2)
+        return queries[:max_queries]
+
+    async def _process_autonomous_query(self, query: str):
+        logger.info("🧭 自主处理: {}...".format(query[:50]))
+
+        result = {
+            "query": query,
+            "self_reason": None,
+            "causal_pred": None,
+            "knowledge_supplement": None,
+            "final_insight": None,
+            "timestamp": time.time(),
+        }
+
+        try:
+            from backend.services.orchestrator_helpers import self_reason
+            sr = await self_reason(query, conversation_context="", truth_insights="")
+            if sr and sr.get("response"):
+                result["self_reason"] = sr["response"]
+        except Exception as e:
+            logger.debug(f"自主推理跳过: {e}")
+
+        if not result["self_reason"]:
+            try:
+                from infrastructure.experience_pool import get_experience_pool
+                pool = get_experience_pool()
+                similar = pool.search_successful_responses(min_quality=60, limit=2)
+                if similar:
+                    result["self_reason"] = "经验回溯: {}".format(similar[0].get("response", "")[:300])
+            except Exception:
+                pass
+
+        try:
+            from core.world_model import get_world_model
+            wm = get_world_model()
+            pred = wm.predict({"query": query}, "autonomous_exploration", exploration_depth=2)
+            if pred and getattr(pred, "confidence", 0) > 0.2:
+                ps = getattr(pred, "predicted_state", {})
+                result["causal_pred"] = {
+                    "outcome": ps.get("outcome", "") if isinstance(ps, dict) else str(ps)[:200],
+                    "confidence": getattr(pred, "confidence", 0),
+                }
+        except Exception as e:
+            logger.debug(f"自主因果推理跳过: {e}")
+
+        try:
+            from infrastructure.experience_pool import get_experience_pool
+            pool = get_experience_pool()
+            similar = pool.search_successful_responses(min_quality=50, limit=2)
+            if similar:
+                result["knowledge_supplement"] = similar[0].get("response", "")[:300]
+        except Exception as e:
+            logger.debug(f"自主知识补充跳过: {e}")
+
+        result["final_insight"] = self._synthesize_autonomous_result(result)
+        await self._inject_autonomous_result(result)
+        logger.info("🧭 自主完成: {}... insight_len={}".format(query[:50], len(result["final_insight"] or "")))
+
+    def _synthesize_autonomous_result(self, result: dict) -> str:
+        parts = []
+        if result["self_reason"]:
+            parts.append("【内部推理】{}".format(result["self_reason"][:300]))
+        if result["causal_pred"]:
+            parts.append("【因果预测】{}".format(result["causal_pred"]["outcome"][:200]))
+        if result["knowledge_supplement"]:
+            parts.append("【知识补充】{}".format(result["knowledge_supplement"][:300]))
+        if not parts:
+            return ""
+        return "\n".join(parts)
+
+    async def _inject_autonomous_result(self, result: dict):
+        query = result["query"]
+        insight = result["final_insight"] or ""
+        if len(insight) < 50:
+            logger.debug("自主洞察过短，跳过注入")
+            return
+
+        try:
+            from infrastructure.experience_pool import get_experience_pool
+            pool = get_experience_pool()
+            pool.add_experience(
+                intent_type="autonomous_exploration",
+                raw_input=query,
+                plan=insight[:500],
+                model_name="self",
+                quality_score=50,
+                user_feedback=0,
+                success=True,
+                duration=0.0,
+                response=insight[:2000],
+            )
+            logger.info("💉 自主结果注入经验池")
+        except Exception as e:
+            logger.debug(f"自主注入经验池跳过: {e}")
+
+        try:
+            from core.world_model import get_world_model
+            wm = get_world_model()
+            wm.learn_from_experience({
+                "intent_type": "autonomous_exploration",
+                "model_name": "self_reason",
+                "success": True,
+                "quality_score": 50,
+                "raw_input": query,
+                "response": insight[:200],
+            })
+            logger.info("💉 自主结果注入因果图")
+        except Exception as e:
+            logger.debug(f"自主注入因果图跳过: {e}")
+
+        if len(insight) > 200 and "因果预测" in insight:
+            try:
+                from core.truth_accumulator import TruthAccumulator
+                ta = TruthAccumulator()
+                ta._save_truth(
+                    name="auto_{}".format(int(time.time())),
+                    level="L2",
+                    domain="autonomous_exploration",
+                    statement=insight[:500],
+                    source="autonomous_exploration",
+                )
+                logger.info("💉 自主结果尝试写入真谛库")
+            except Exception as e:
+                logger.debug(f"自主注入真谛库跳过: {e}")
+
+        try:
+            from core.presence.probability_field import get_probability_field
+            pf = get_probability_field()
+            if hasattr(pf, 'adjust_exploration'):
+                pf.adjust_exploration(delta=0.05)
+                logger.info("💉 自主探索成功，概率场探索值+0.05")
+        except Exception as e:
+            logger.debug(f"自主概率场更新跳过: {e}")
+
     def _can_grow(self) -> bool:
         """双重门控：概率场活跃度 + 资源感知调度"""
         import random
