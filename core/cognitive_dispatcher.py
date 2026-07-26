@@ -514,6 +514,14 @@ class CognitiveDispatcher:
         match_order = ["self_reference", "time", "weather", "map", "hardware", "challenge", "creative", "complex_query", "learning_trigger", "simple_query", "history_query", "greeting", "confirmation"]
         short_match_intents = {"greeting", "confirmation", "challenge"}
         
+        _ambiguous_patterns = {
+            "是什么": "simple_query",
+            "什么是": "simple_query",
+            "为什么": "complex_query",
+            "如何": "complex_query",
+            "怎么样": "complex_query",
+        }
+        
         for intent_type in match_order:
             patterns = self.intent_patterns.get(intent_type, [])
             for pattern in patterns:
@@ -527,7 +535,11 @@ class CognitiveDispatcher:
                         return intent_type, confidence
                 else:
                     if pattern in query_lower:
+                        if pattern in _ambiguous_patterns and _ambiguous_patterns[pattern] != intent_type:
+                            continue
                         confidence = min(1.0, len(pattern) / max(len(query_lower), 1) + 0.5)
+                        if confidence < 0.55 and len(pattern) <= 2:
+                            continue
                         return intent_type, confidence
         
         # 向量相似度匹配（如果可用）

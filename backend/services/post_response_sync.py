@@ -70,10 +70,10 @@ async def sync_post_response(
                             }
                     if _path_results:
                         _sm.integrate_experience({
-                            "intent": user_input[:100],
+                            "intent": user_input[:500],
                             "paths_used": _paths_used,
                             "path_results": _path_results,
-                            "final_response": final_response[:200] if final_response else "",
+                            "final_response": final_response[:500] if final_response else "",
                         })
                 except Exception as _ie:
                     logger.debug(f"integrate_experience跳过: {_ie}")

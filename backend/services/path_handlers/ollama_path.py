@@ -155,7 +155,7 @@ async def fetch_ollama(query: str, model: str, timeout: int = 60, conversation_c
             prompt = "\n\n".join(prompt_parts)
             prompt += "\n\n【重要】请简洁回答，控制在800字以内，避免冗长展开。"
             
-            MAX_PROMPT_LENGTH = 8000
+            MAX_PROMPT_LENGTH = 12000
             if len(prompt) > MAX_PROMPT_LENGTH:
                 if _INPUT_PROCESSOR_AVAILABLE:
                     try:
@@ -175,19 +175,33 @@ async def fetch_ollama(query: str, model: str, timeout: int = 60, conversation_c
                         )
                         logger.warning(f"Prompt动态提炼: {len(prompt)}字符, 策略={cognitive_strategy}")
                     except Exception:
-                        query_part = f"【当前问题】\n{query[:2000]}"
-                        if len(prompt_parts) > 2:
-                            context_part = "\n\n".join(prompt_parts[:-2])[:MAX_PROMPT_LENGTH - len(query_part) - 200]
-                            prompt = context_part + "\n\n" + query_part + "\n\n请结合上下文，给出连贯、准确、完整的回答。"
+                        query_part = f"【当前问题】\n{query[:1500]}"
+                        ctx_budget = MAX_PROMPT_LENGTH - len(query_part) - 300
+                        if conversation_context and ctx_budget > 500:
+                            ctx_lines = conversation_context.split("\n")
+                            kept = []
+                            for line in ctx_lines:
+                                if len("\n".join(kept) + "\n" + line) > ctx_budget:
+                                    break
+                                kept.append(line)
+                            context_part = "\n".join(kept)
+                            prompt = f"{context_part}\n\n{query_part}\n\n请结合上下文，给出连贯、准确、完整的回答。"
                         else:
-                            prompt = prompt[:MAX_PROMPT_LENGTH]
+                            prompt = query_part + "\n\n请给出准确、完整的回答。"
                 else:
-                    query_part = f"【当前问题】\n{query[:2000]}"
-                    if len(prompt_parts) > 2:
-                        context_part = "\n\n".join(prompt_parts[:-2])[:MAX_PROMPT_LENGTH - len(query_part) - 200]
-                        prompt = context_part + "\n\n" + query_part + "\n\n请结合上下文，给出连贯、准确、完整的回答。"
+                    query_part = f"【当前问题】\n{query[:1500]}"
+                    ctx_budget = MAX_PROMPT_LENGTH - len(query_part) - 300
+                    if conversation_context and ctx_budget > 500:
+                        ctx_lines = conversation_context.split("\n")
+                        kept = []
+                        for line in ctx_lines:
+                            if len("\n".join(kept) + "\n" + line) > ctx_budget:
+                                break
+                            kept.append(line)
+                        context_part = "\n".join(kept)
+                        prompt = f"{context_part}\n\n{query_part}\n\n请结合上下文，给出连贯、准确、完整的回答。"
                     else:
-                        prompt = prompt[:MAX_PROMPT_LENGTH]
+                        prompt = query_part + "\n\n请给出准确、完整的回答。"
                 logger.warning(f"Prompt截断: {len(prompt)}字符")
             
             loop = asyncio.get_running_loop()
