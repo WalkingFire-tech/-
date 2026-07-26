@@ -76,6 +76,7 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
     failed_steps = []
     final_response = None
     intent_type = "unknown"
+    methodology = {}
 
     # ========== 接入1：存在节拍——回应前先感知自我 ==========
     _existence_pulse = None

@@ -770,7 +770,7 @@ class ExistenceLayer(LoopMixin):
                     pass
 
             result = wm.trace_with_spirit(
-                query=self._formulate_existential_question(),
+                query=self._formulate_existential_question(perception),
                 context_type="deep_trace",
             )
             if result.get("paths"):

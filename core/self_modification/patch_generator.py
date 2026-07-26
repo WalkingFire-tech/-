@@ -59,11 +59,12 @@ class PatchGenerator:
         try:
             from core.hashline_editor import HashlineEditor
             _hle = HashlineEditor(file_path)
-            _hash_loc = _hle.locate(file_path, original_code)
-            if _hash_loc:
-                logger.debug(f"Hashline定位成功: hash={_hash_loc.content_hash[:8]}")
+            if _hle.load() and original_code:
+                _line_num = _hle.find_line(_hle._hash_line(original_code))
+                if _line_num is not None:
+                    logger.debug(f"Hashline定位成功: line={_line_num}")
         except Exception as e:
-            logger.warning(f"操作降级跳过: {e}")
+            logger.debug(f"Hashline定位跳过: {e}")
         category = defect.get("category", "")
         description = defect.get("description", "")
 
