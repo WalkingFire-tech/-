@@ -176,7 +176,9 @@ async def discover_methodology(
                         methodology.setdefault("source_priority", []).insert(0, _preferred)
                 elif _ra.startswith("reroute:"):
                     _alt = _ra.split(":", 1)[1]
-                    methodology["strategy"] = _alt
+                    if _alt and _alt != methodology.get("strategy"):
+                        methodology["strategy_original"] = methodology.get("strategy", "")
+                        methodology["strategy"] = _alt
                 elif _ra.startswith("trigger_reflection"):
                     methodology.setdefault("force_reflection", True)
                 elif _ra.startswith("set_intent:"):

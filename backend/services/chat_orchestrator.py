@@ -247,7 +247,8 @@ async def chat_stream(user_input, context: dict = None, event_sink=None):
     intent_type = _id_result["intent_type"]
     route = _id_result["route"]
     confidence = _id_result["confidence"]
-    methodology = _id_result["methodology"]
+    if _id_result.get("methodology"):
+        methodology.update(_id_result["methodology"])
     dispatch_result = _id_result["dispatch_result"]
     _cognitive_perception = _id_result["cognitive_perception"]
     cp = _id_result["cp"]
